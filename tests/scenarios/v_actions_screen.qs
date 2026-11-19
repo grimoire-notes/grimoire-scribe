@@ -42,6 +42,8 @@ key 17 0
 expect settings.theme is classic
 expect display.presents is full 0 0 1860 2480
 key 17 0
+expect settings.theme is cassette
+key 17 0
 expect settings.theme is gothic
 key 18 0
 expect settings.side_button is 3

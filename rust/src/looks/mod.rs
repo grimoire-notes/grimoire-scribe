@@ -16,12 +16,14 @@ use crate::prelude::*;
 
 pub mod classic;
 mod gothic;
+mod cassette;
 
 /// Every theme, in the order Settings' Style row and the theme shortcut step through them. Gothic first
 /// (the default and Settings.theme 0), Classic second (Settings.theme 1): settings.ini names them by id.
 pub static LOOKS: &[&dyn Look] = &[
     &gothic::Gothic,
     &classic::Classic,
+    &cassette::Cassette,
 ];
 
 /// A theme: an index of LOOKS (Settings.theme's number), settings.ini's `theme=` by its id.

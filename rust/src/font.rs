@@ -9,6 +9,7 @@
 use crate::assets::{
     FONT_ATKINSON_BOLD, FONT_ATKINSON_REGULAR, FONT_DOTGOTHIC16, FONT_JACQUARD24, FONT_JERSEY10, FONT_LITERATA_BOLD,
     FONT_LITERATA_REGULAR, FONT_NOTO_SANS_BOLD, FONT_NOTO_SANS_REGULAR, FONT_TERMINESS_BOLD, FONT_TERMINESS_REGULAR,
+    FONT_ARCHIVO_BLACK, FONT_JETBRAINS_BOLD, FONT_JETBRAINS_REGULAR, FONT_SPACEMONO_BOLD, FONT_SPACEMONO_REGULAR,
 };
 use crate::ffi_stb::*;
 use crate::fontcheck::{Outliner, SafeFace, FONT_CJK_EM, FONT_PX_MAX, FONT_PX_MIN};
@@ -57,7 +58,12 @@ const TTF_NOTO: usize = 7;
 const TTF_NOTO_BOLD: usize = 8;
 const TTF_LITERATA: usize = 9;
 const TTF_LITERATA_BOLD: usize = 10;
-const TTF_COUNT: usize = 11;
+pub(crate) const TTF_JETBRAINS: usize = 11;
+pub(crate) const TTF_JETBRAINS_BOLD: usize = 12;
+pub(crate) const TTF_SPACEMONO: usize = 13;
+pub(crate) const TTF_SPACEMONO_BOLD: usize = 14;
+pub(crate) const TTF_ARCHIVO: usize = 15;
+const TTF_COUNT: usize = 16;
 // After the embedded files, the faces of the owner's own fonts (2.1.0-beta.2), which are no file of the
 // binary and never stb's to open: the font in use (its regular, and its bold when it has one), then the
 // one the Font sheet shows a sample of. A glyph's cache slot names its face by these numbers too.
@@ -78,7 +84,12 @@ fn ttf_data(ttf: usize) -> &'static [u8] {
         TTF_NOTO => FONT_NOTO_SANS_REGULAR,
         TTF_NOTO_BOLD => FONT_NOTO_SANS_BOLD,
         TTF_LITERATA => FONT_LITERATA_REGULAR,
-        _ => FONT_LITERATA_BOLD,
+        TTF_LITERATA_BOLD => FONT_LITERATA_BOLD,
+        TTF_JETBRAINS => FONT_JETBRAINS_REGULAR,
+        TTF_JETBRAINS_BOLD => FONT_JETBRAINS_BOLD,
+        TTF_SPACEMONO => FONT_SPACEMONO_REGULAR,
+        TTF_SPACEMONO_BOLD => FONT_SPACEMONO_BOLD,
+        _ => FONT_ARCHIVO_BLACK,
     }
 }
 
@@ -2702,8 +2713,9 @@ mod tests {
                 files.extend([f.regular, f.bold]);
             }
         }
-        // every embedded file is a family's, Gothic's or the Japanese one, once
+        // every embedded file is a family's, Gothic's, Cassette's or the Japanese one, once
         files.extend([TTF_JACQUARD, TTF_JERSEY, TTF_JP]);
+        files.extend([TTF_JETBRAINS, TTF_JETBRAINS_BOLD, TTF_SPACEMONO, TTF_SPACEMONO_BOLD, TTF_ARCHIVO]);
         files.sort();
         assert_eq!(files, (0..TTF_COUNT).collect::<Vec<_>>());
         assert_eq!(font_family_find(b"comic-sans"), None);
