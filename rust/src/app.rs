@@ -783,7 +783,7 @@ pub fn app_init(a: &mut App, w: i32, h: i32, dpi: f32) -> i32 {
     if font_init() != 0 {
         return -1;
     }
-    ui_set_theme(if a.settings.theme == UiTheme::Classic as i32 { UiTheme::Classic } else { UiTheme::Gothic });
+    ui_set_theme(UiTheme::from_i32(a.settings.theme));
     font_set_family(a.settings.font.max(0) as usize);
     // A font of the owner's own (font=file:...), if it passed its check and the crash guard lets it in:
     // before the first screen is drawn, so that screen is the one the guard waits for.
@@ -1802,7 +1802,7 @@ fn live_push_screen(a: &mut App, r: Rect) {
 pub fn live_view_open(a: &mut App) {
     if !live_on() {
         let mut ok = live_start(a.w, a.h) == 0;
-        if ok && httpd_acquire(HTTPD_LIVE, a.settings.http_port, a.dpi, ui_theme() == UiTheme::Gothic,
+        if ok && httpd_acquire(HTTPD_LIVE, a.settings.http_port, a.dpi, look().share_pages_gothic(),
             ) != 0 {
             live_stop();
             ok = false;
@@ -2640,6 +2640,7 @@ fn app_flush_in(a: &mut App) {
         notice_flush(a); // (the staying notice alone, the same way)
         return;
     }
+    crate::editor::editor_backdrop_sync(a); // (a sheet's blur behind it, after it opened or closed: Look::blurs_behind_sheets)
     toast_follow(a); // (a screen that moves its floor redraws, so there is something to flush)
     let mut m = a.dirty_mode;
     // The quick panel is overlaid for this present, like the toast: its pixels are put back after.
@@ -3319,7 +3320,7 @@ pub fn app_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
             csnprintf!(out, cap, "%s", "");
         }
     } else if key == "settings.theme" {
-        csnprintf!(out, cap, "%s", if st.theme == UiTheme::Classic as i32 { "classic" } else { "gothic" });
+        csnprintf!(out, cap, "%s", UiTheme::from_i32(st.theme).id());
     } else if key == "settings.font" {
         // (terminess for a font this version does not have: settings.kept.font has the file's value)
         if st.font_file.is_empty() {
@@ -4086,10 +4087,10 @@ pub fn app_global_action(a: &mut App, action: i32, src: ActionSrc) -> bool {
             msg.push_str(if a.settings.pinch_zoom { tr("Pinch zoom on.") } else { tr("Pinch zoom off.") });
         }
         SHORTCUT_THEME => {
-            a.settings.theme = if a.settings.theme == UiTheme::Classic as i32 { UiTheme::Gothic as i32 } else { UiTheme::Classic as i32 };
-            ui_set_theme(if a.settings.theme == UiTheme::Classic as i32 { UiTheme::Classic } else { UiTheme::Gothic });
+            a.settings.theme = UiTheme::from_i32(a.settings.theme).next().index();
+            ui_set_theme(UiTheme::from_i32(a.settings.theme));
             crate::userfonts::userfonts_apply(a); // (Classic's own font, if it has one; Gothic holds none)
-            httpd_restyle(ui_theme() == UiTheme::Gothic); // (the share pages, if Live view is on)
+            httpd_restyle(look().share_pages_gothic()); // (the share pages, if Live view is on)
             relayout = true;
         }
         SHORTCUT_SIDE_BUTTON => {

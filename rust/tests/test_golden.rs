@@ -361,7 +361,7 @@ fn papers() {
     paper_set_panel_ppi(0.0, DPI);
     for gothic in 0..2 {
         // Paper labels and clefs come from Terminess in both themes: the theme never shows on a page.
-        font_set_gothic(gothic != 0);
+        font_set_faces(if gothic != 0 { UiTheme::Gothic.look().faces() } else { None });
         // (every fixed kind: those 1.0.0-beta knows, then K_LATER_PAPERS; a kind added later has no value
         // recorded, and fails until it has one)
         for k in 0..PAPER_COUNT {
@@ -383,13 +383,13 @@ fn papers() {
             }
         }
     }
-    font_set_gothic(false);
+    font_set_faces(None);
     canvas_free(&mut c);
 }
 
 fn renderers_fingerprint() {
     paper_set_panel_ppi(0.0, DPI);
-    font_set_gothic(false);
+    font_set_faces(None);
     let fp = page_render_fingerprint();
     if g_print() {
         println!("    // K_RENDER_FINGERPRINT: 0x{fp:016x}");

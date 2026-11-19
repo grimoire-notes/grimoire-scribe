@@ -547,10 +547,11 @@ def l10n(args, hooks):
         print('l10n: skipped the check that po/*.mo match po/*.po (msgfmt is not installed)')
     b = args.build
     langs = args.langs.split()
-    # The styles, and the settings.ini lines each runs with: Gothic and Classic (in Terminess, its default
-    # font), then Classic in each other font of Settings > Font (2.1, the Rust build's), in English and
-    # Spanish (Japanese takes its letters from DotGothic16 in every font).
-    inis = {'gothic': ['theme=gothic'], 'classic': ['theme=classic']}
+    # The styles, and the settings.ini lines each runs with: every theme (rust/src/looks/, a file each, named
+    # by its id; Classic in Terminess, its default font), then Classic in each other font of Settings > Font
+    # (2.1, the Rust build's), in English and Spanish (Japanese takes its letters from DotGothic16 in every font).
+    looks = sorted(p[:-3] for p in listdir('rust/src/looks') if p.endswith('.rs') and p != 'mod.rs')
+    inis = {t: [f'theme={t}'] for t in looks}
     for font in CLASSIC_FONTS:
         inis[f'classic-{font}'] = ['theme=classic', f'font={font}']
 

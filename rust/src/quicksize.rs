@@ -286,7 +286,7 @@ pub fn quicksize_draw(q: &mut QuickSize, a: &mut App) -> Rect {
         }
         draw_sample(a, q, well, i);
         let lr = Rect { x: r.x + u(6.0), y: well.y + well.h, w: r.w - u(12.0), h: r.y + r.h - well.y - well.h - u(6.0) };
-        ui_text(&mut a.screen, FontFace::Regular, ui_small_size(), ui_small_size() * 0.8, lr, &quicksize_mm_label(width), 1, true, if on { 255 } else { 0 });
+        ui_text(&mut a.screen, FontFace::Regular, ui_small_size(), ui_small_size() * 0.8, lr, &quicksize_mm_label(width), 1, true, ui_on_fg(on));
         hits_add(&mut q.hits, r, QS_CHIP, i as i32);
     }
     if t == TOOL_ERASER {

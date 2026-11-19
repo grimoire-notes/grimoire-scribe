@@ -94,7 +94,7 @@ pub struct Settings {
     pub sleep_mode: i32,
     /// sleep after this long without input (0 = never)
     pub sleep_minutes: i32,
-    /// UiTheme: 0 gothic, 1 classic (settings.ini: theme=gothic|classic)
+    /// UiTheme: an index of looks::LOOKS, 0 gothic, 1 classic (settings.ini: theme=, the theme's id)
     pub theme: i32,
     /// Classic's font, an index of font.rs's FONT_FAMILIES (settings.ini font=, the family's id:
     /// terminess, atkinson, noto-sans or literata; 2.1). Gothic keeps its own faces whatever it is.
@@ -5313,16 +5313,9 @@ fn settings_cb(s: &mut Settings, k: &[u8], v: &[u8]) -> bool {
         b"invert" => s.invert = keep_bool("invert", v),
         b"pinch_zoom" => s.pinch_zoom = keep_bool("pinch_zoom", v),
         b"theme" => {
-            s.theme = if v == b"classic" { 1 } else { 0 };
-            keep_value(
-                "theme",
-                v,
-                if s.theme == 1 || v == b"gothic" {
-                    None
-                } else {
-                    Some("gothic")
-                },
-            );
+            let t = UiTheme::from_id(v);
+            s.theme = t.unwrap_or(UiTheme::Gothic).index();
+            keep_value("theme", v, if t.is_some() { None } else { Some("gothic") });
         }
         b"font" => {
             s.font_file.clear();
@@ -5713,7 +5706,7 @@ pub fn settings_save(s: &Settings) -> i32 {
     put(
         &mut b,
         "theme",
-        if s.theme == 1 { "classic" } else { "gothic" },
+        UiTheme::from_i32(s.theme).id(),
     );
     // A newer version's settings_version stays as it is: its own upgrades have already run.
     put_int(

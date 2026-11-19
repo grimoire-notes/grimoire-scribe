@@ -46,10 +46,10 @@ impl FontFace {
 // 10 for text and labels. DotGothic16 is the Japanese fallback, in the same pixel style. Then
 // the Classic families the Font sheet offers (2.1), each a Regular and a Bold (assets/README.md
 // says how they were made: static, Latin only; what they lack comes from Terminess).
-const TTF_TERM: usize = 0;
-const TTF_TERM_BOLD: usize = 1;
-const TTF_JACQUARD: usize = 2;
-const TTF_JERSEY: usize = 3;
+pub(crate) const TTF_TERM: usize = 0;
+pub(crate) const TTF_TERM_BOLD: usize = 1;
+pub(crate) const TTF_JACQUARD: usize = 2;
+pub(crate) const TTF_JERSEY: usize = 3;
 const TTF_JP: usize = 4;
 const TTF_ATKINSON: usize = 5;
 const TTF_ATKINSON_BOLD: usize = 6;
@@ -190,19 +190,19 @@ fn k_unit(ttf: usize) -> i32 {
 /// whether to embolden by overprinting (one design pixel for pixel faces), and the Terminess weight a
 /// glyph the file lacks comes from (the bold faces' from its Bold).
 #[derive(Clone, Copy)]
-struct FaceMap {
-    ttf: usize,
-    scale: f32,
-    embolden: bool,
-    fallback: usize,
+pub struct FaceMap {
+    pub(crate) ttf: usize,
+    pub(crate) scale: f32,
+    pub(crate) embolden: bool,
+    pub(crate) fallback: usize,
 }
 
-const fn fm(ttf: usize, scale: f32, embolden: bool) -> FaceMap {
+pub(crate) const fn fm(ttf: usize, scale: f32, embolden: bool) -> FaceMap {
     FaceMap { ttf, scale, embolden, fallback: if embolden { TTF_TERM_BOLD } else { TTF_TERM } }
 }
 
 /// The same for a face of a family's own Bold (it needs no overprint, and its fallback is bold).
-const fn fm_bold(ttf: usize, scale: f32) -> FaceMap {
+pub(crate) const fn fm_bold(ttf: usize, scale: f32) -> FaceMap {
     FaceMap { ttf, scale, embolden: false, fallback: TTF_TERM_BOLD }
 }
 
@@ -272,7 +272,8 @@ struct State {
     font: [Box<stbtt_fontinfo>; TTF_COUNT],
     ready: bool,
     map: [FaceMap; FontFace::COUNT],
-    gothic: bool,
+    /// the theme's own faces (Look::faces): it takes no family and no custom font
+    theme_faces: Option<[FaceMap; FontFace::COUNT]>,
     /// the Classic family (FONT_FAMILIES)
     family: usize,
     cache: Vec<Glyph>,
@@ -306,7 +307,7 @@ impl State {
             font: std::array::from_fn(|_| Box::new(stbtt_fontinfo::default())),
             ready: false,
             map: [fm(0, 0.0, false); FontFace::COUNT],
-            gothic: false,
+            theme_faces: None,
             family: 0,
             cache: (0..CACHE_SLOTS).map(|_| Glyph::default()).collect(),
             cache_used: 0,
@@ -509,7 +510,7 @@ fn own_text_has(st: &mut State, cp: u32) -> bool {
     // (the Bold face draws most of the chrome: a Bold file that lacks the letter would show the missing-glyph
     // box where the regular has it, so both must have it)
     let Some(m) = st.own_map[0] else { return false };
-    !st.gothic && !st.own_off && face_has(st, TTF_OWN, cp) && (!m.bold_face || face_has(st, TTF_OWN + 1, cp))
+    st.theme_faces.is_none() && !st.own_off && face_has(st, TTF_OWN, cp) && (!m.bold_face || face_has(st, TTF_OWN + 1, cp))
 }
 
 /// Tests (the simulator's build): GRIMOIRE_FONT_TEST_DRAW_CRASH ends the app at the first glyph a custom
@@ -545,7 +546,7 @@ fn own_glyph(st: &mut State, ttf: usize, px: f32, cp: u32) -> (i32, Vec<u8>, i32
 
 // ---- faces ----
 
-fn map_faces(st: &mut State, gothic: bool) {
+fn map_faces(st: &mut State) {
     // Classic: the family's Regular for text, its Bold for bold, titles and caps (Terminess's are the
     // classic faces of every version before 2.1); FIXED always Terminess.
     let f = &FONT_FAMILIES[st.family];
@@ -567,15 +568,7 @@ fn map_faces(st: &mut State, gothic: bool) {
         classic[FontFace::Title as usize] = bold;
         classic[FontFace::Caps as usize] = bold;
     }
-    const GOTH: [FaceMap; FontFace::COUNT] = [
-        fm(TTF_JERSEY, 1.15, false),   // FONT_REGULAR
-        fm(TTF_JERSEY, 1.15, true),    // FONT_BOLD
-        fm(TTF_JACQUARD, 1.1, false),  // FONT_TITLE
-        fm(TTF_JERSEY, 1.15, true),    // FONT_CAPS
-        fm(TTF_TERM, 1.0, false),      // FONT_FIXED
-        fm(TTF_TERM_BOLD, 1.0, false), // FONT_FIXED_BOLD
-    ];
-    st.map = if gothic { GOTH } else { classic };
+    st.map = st.theme_faces.unwrap_or(classic);
 }
 
 /// Pixel faces: how many screen pixels one design pixel becomes at a requested line height.
@@ -610,8 +603,7 @@ pub fn font_init() -> i32 {
                 return Some(i);
             }
         }
-        let gothic = st.gothic;
-        map_faces(st, gothic);
+        map_faces(st);
         st.ready = true;
         None
     });
@@ -624,15 +616,18 @@ pub fn font_init() -> i32 {
     }
 }
 
-pub fn font_set_gothic(gothic: bool) {
+/// The theme's own faces from now on (ui_set_theme: Look::faces), or None: Classic's family, or the
+/// owner's own font.
+pub fn font_set_faces(faces: Option<[FaceMap; FontFace::COUNT]>) {
     with(|st| {
-        st.gothic = gothic;
-        map_faces(st, gothic);
+        st.theme_faces = faces;
+        map_faces(st);
     });
 }
 
-pub fn font_gothic() -> bool {
-    with(|st| st.gothic)
+/// Whether the theme in use draws in faces of its own (no family, no custom font).
+pub fn font_theme_faces() -> bool {
+    with(|st| st.theme_faces.is_some())
 }
 
 /// Classic's text from now on in FONT_FAMILIES[family] (one past the list: Terminess). Gothic keeps
@@ -641,8 +636,7 @@ pub fn font_gothic() -> bool {
 pub fn font_set_family(family: usize) {
     with(|st| {
         st.family = if family < FONT_FAMILIES.len() { family } else { 0 };
-        let gothic = st.gothic;
-        map_faces(st, gothic);
+        map_faces(st);
     });
 }
 
@@ -677,8 +671,7 @@ fn set_own_slot(st: &mut State, which: usize, f: Option<OwnFont>) {
     st.own_map[which] = map;
     // (a slot's number names another font now: nothing cached for it holds)
     cache_flush(st);
-    let gothic = st.gothic;
-    map_faces(st, gothic);
+    map_faces(st);
 }
 
 /// Classic's text from now on in a font of the owner's own (None: in the family again). It passed the
@@ -714,16 +707,14 @@ pub fn font_with_own<R>(sample: bool, f: impl FnOnce() -> R) -> R {
         let was = (st.own_pick, st.own_off);
         st.own_pick = sample as usize;
         st.own_off = false;
-        let gothic = st.gothic;
-        map_faces(st, gothic);
+        map_faces(st);
         was
     });
     let r = f();
     with(|st| {
         st.own_pick = was_pick;
         st.own_off = was_off;
-        let gothic = st.gothic;
-        map_faces(st, gothic);
+        map_faces(st);
     });
     r
 }
@@ -3022,7 +3013,7 @@ mod tests {
         for cp in [0x323, 0xfe0f, 0xe0067, 0x7, 0x1f468, 0x1f469, 0x1f467, 0x1f3f3, 0x1f308, 0x1f3f4] {
             assert!(!font_has_glyph(FontFace::Regular, cp), "U+{cp:04X}");
         }
-        for theme in [UiTheme::Classic, UiTheme::Gothic] {
+        for theme in UiTheme::all() {
             ui_set_theme(theme);
             for f in [FontFace::Regular, FontFace::Bold, FontFace::Title] {
                 let shot = |text: &str| {

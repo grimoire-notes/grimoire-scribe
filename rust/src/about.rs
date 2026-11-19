@@ -375,10 +375,6 @@ fn rows_h(rows: &[Row]) -> i32 {
     rows.iter().enumerate().map(|(i, r)| r.h + if i == 0 { 0 } else { r.gap }).sum()
 }
 
-fn gothic() -> bool {
-    ui_theme() == UiTheme::Gothic
-}
-
 fn draw_items(c: &mut Canvas, items: &[Item], at: Rect) {
     for it in items {
         let r = Rect::new(at.x + it.r.x, at.y + it.r.y, it.r.w, it.r.h);
@@ -386,11 +382,7 @@ fn draw_items(c: &mut Canvas, items: &[Item], at: Rect) {
             Ink::Text { s, f, px } => font_draw_left_name(c, *f, *px, r, s, 0),
             Ink::Dot(k) => {
                 let (cx, cy) = (r.x as f32 + r.w as f32 * 0.4, r.y as f32 + r.h as f32 / 2.0);
-                if gothic() {
-                    canvas_lozenge(c, cx, cy, ui_px(10.0 * k) as f32, 0);
-                } else {
-                    canvas_disc_aa(c, cx, cy, ui_px(8.0 * k) as f32, 0, 1.0);
-                }
+                look().bullet(c, cx, cy, *k);
             }
             Ink::Sign => draw_signature(c, r),
         }
@@ -696,7 +688,7 @@ thread_local! {
     /// note_set's answers: the notes (their text's place and length), the screen's width and height,
     /// the look, Classic's font (2.1, Settings > Font; 0 in Gothic, which has one) and the body type's
     /// size, and how note_fit set them.
-    static NOTE_FIT: RefCell<Vec<((usize, usize, i32, i32, bool, usize, u32), Fit)>> = const { RefCell::new(Vec::new()) };
+    static NOTE_FIT: RefCell<Vec<((usize, usize, i32, i32, UiTheme, usize, u32), Fit)>> = const { RefCell::new(Vec::new()) };
 }
 #[cfg(test)]
 thread_local! {
@@ -707,8 +699,8 @@ thread_local! {
 /// note_set's answer for the notes in a body w wide and room high (the full-screen browser's
 /// reader), found once for each note, size, look and font as note_set's is.
 fn note_set_in(md: &'static str, bl: &[Block], w: i32, room: i32) -> Fit {
-    let family = if gothic() { 0 } else { font_look() };
-    let key = (md.as_ptr() as usize, md.len(), w, room, gothic(), family, ui_text_size().to_bits());
+    let family = if font_theme_faces() { 0 } else { font_look() };
+    let key = (md.as_ptr() as usize, md.len(), w, room, ui_theme(), family, ui_text_size().to_bits());
     if let Some(f) = NOTE_FIT.with_borrow(|v| v.iter().find(|e| e.0 == key).map(|e| e.1)) {
         return f;
     }
@@ -799,7 +791,7 @@ mod tests {
 
     #[test]
     fn the_browser_lists_every_version_and_reads_the_selected_one() {
-        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+        for theme in UiTheme::all() {
             up(theme);
             for (aw, ah) in [(1860, 2480), (2480, 1860)] {
                 let mut c = screen(aw, ah);
@@ -837,7 +829,7 @@ mod tests {
 
     #[test]
     fn every_versions_notes_read_whole_and_signed() {
-        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+        for theme in UiTheme::all() {
             up(theme);
             for (aw, ah) in [(1860, 2480), (2480, 1860)] {
                 let mut c = screen(aw, ah);
@@ -884,7 +876,7 @@ mod tests {
         let link = format!("See {url} for the rest.");
         let ja = "グリモアはキンドルスクライブのためのノートです。「すべて読む」を押すと、すべての版のお知らせが一覧になり、タップするとその版のお知らせが一画面に収まります。".repeat(3);
         let strip = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
-        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+        for theme in UiTheme::all() {
             up(theme);
             for w in [900, 1200] {
                 for px in [ui_text_size(), ui_small_size()] {

@@ -138,7 +138,7 @@ fn a_web_links_card_shows_the_whole_address_in_every_look() {
     let spoof = format!("https://{host}/");
     check!(spoof.len() == WEBLINK_ADDRESS_MAX && weblinks_address_ok(spoof.as_bytes()));
     for (name, gothic, family) in looks {
-        font_set_gothic(gothic);
+        font_set_faces(if gothic { UiTheme::Gothic.look().faces() } else { None });
         font_set_family(family);
         let mut worst = (0, ' ');
         for b in 0x21u8..=0x7e {
@@ -162,7 +162,7 @@ fn a_web_links_card_shows_the_whole_address_in_every_look() {
         let mut out = String::new();
         check!(linkcard_probe(&c, "web_lines", &mut out, 64) && out == format!("{0} {0}", linkcard_web_lines(&spoof)));
     }
-    font_set_gothic(false);
+    font_set_faces(None);
     font_set_family(0);
 }
 

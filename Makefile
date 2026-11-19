@@ -263,7 +263,7 @@ XGETTEXT_JS_FLAGS := --from-code=UTF-8 --language=JavaScript --add-comments=TRAN
 MSGFMT_FLAGS := --check --no-hash --endianness=little
 l10n:
 	@mkdir -p $(BUILD)/l10n
-	xgettext $(XGETTEXT_FLAGS) -o $(BUILD)/l10n/app.pot $(sort $(wildcard rust/src/*.rs rust/src/editor/*.rs))
+	xgettext $(XGETTEXT_FLAGS) -o $(BUILD)/l10n/app.pot $(sort $(wildcard rust/src/*.rs rust/src/editor/*.rs rust/src/looks/*.rs))
 	xgettext $(XGETTEXT_JS_FLAGS) -o $(BUILD)/l10n/studio.pot web/studio.js
 	awk '/^msgid / { if (n++) print "msgctxt \"studio\"" } { print }' $(BUILD)/l10n/studio.pot > $(BUILD)/l10n/studio-ctx.pot
 	msgcat --use-first -o po/grimoire.pot $(BUILD)/l10n/app.pot $(BUILD)/l10n/studio-ctx.pot
@@ -273,7 +273,7 @@ l10n:
 # The languages, checked (part of make check). Each committed po/<lang>.mo must be what msgfmt
 # makes of po/<lang>.po now: a .po changed without make l10n fails (where gettext is not
 # installed this part is skipped, and says so). Then tests/scenarios/y_all_screens.qs, which visits
-# every screen and sheet, runs in every language, Gothic and Classic, with GRIMOIRE_CHECK_FIT=1:
+# every screen and sheet, runs in every language and theme (rust/src/looks/), with GRIMOIRE_CHECK_FIT=1:
 # a run that cuts any text short to fit lists each ("fit[es]: ...") and exits with status 3. Its
 # shots, build/shots/l10n/<lang>-<style>/, show translators every screen in context. Then, in each
 # language, tests/l10n/long_root.qs opens Settings from a data root whose path is longer than the

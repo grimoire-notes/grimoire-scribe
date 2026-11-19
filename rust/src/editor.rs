@@ -1350,6 +1350,10 @@ fn draw_pen_button(c: &mut Canvas, st: &Settings, s: &mut EditorState, r: Rect, 
 }
 
 fn draw_panel(a: &mut App) {
+    ui_with_bare_buttons(|| draw_panel_cells(a));
+}
+
+fn draw_panel_cells(a: &mut App) {
     let App { screen: c, settings: st, ed, .. } = a;
     let s = ed.as_deref_mut().unwrap();
     let p = s.panel;
@@ -1358,9 +1362,7 @@ fn draw_panel(a: &mut App) {
     s.white_mark = false;
     s.tool_button_shows = TB_NONE;
     if s.collapsed {
-        ui_frame(c, p, ui_px(22.0), 255, true, 0);
-        // (the floating clock's outline: the toolbar and the clock match, issue #194)
-        ui_frame(c, p, ui_px(22.0), 0, false, ui_px(2.0));
+        ui_panel_frame(c, p, ui_px(22.0));
         let mut ir = rect_inflate(p, -ui_px(20.0));
         ir.h -= ui_px(12.0);
         if s.sel.state != SelState::Off {
@@ -1382,9 +1384,7 @@ fn draw_panel(a: &mut App) {
         hits_add(&mut s.hits, p, P_EXPAND, 0);
         return;
     }
-    ui_frame(c, p, ui_px(22.0), 255, true, 0);
-    // (the floating clock's outline: the toolbar and the clock match, issue #194)
-    ui_frame(c, p, ui_px(22.0), 0, false, ui_px(2.0));
+    ui_panel_frame(c, p, ui_px(22.0));
     let x = p.x + ui_px(14.0);
     let w = p.w - ui_px(28.0);
     // Header: grip (drag) + collapse.
@@ -1400,8 +1400,7 @@ fn draw_panel(a: &mut App) {
     hits_add(&mut s.hits, rect_inflate(col, ui_px(10.0)), P_COLLAPSE, 0);
     s.panel_cells.extend([grip, rect_inflate(col, ui_px(10.0))]);
     let mut y = p.y + head_h();
-    canvas_hline(c, p.x + ui_px(6.0), p.x + p.w - ui_px(6.0), y - ui_px(4.0), ui_px(3.0), 0,
-    );
+    look().panel_head_rule(c, p, y);
     y += gap();
     // The drawing tool (tap: the picker), the pens pinned under it, and the eraser. When the
     // drawing tool is one of the pins, its pin shows it: the tool button shows a grid instead.
@@ -1456,8 +1455,12 @@ fn draw_panel(a: &mut App) {
     let shapes = Rect { x, y, w, h:btn_h() };
     ui_button(c, shapes, IconKind::None, "", ButtonStyle::Plain);
     let icon = Rect { x:x+ui_px(24.0), y:y+ui_px(16.0), w:w-ui_px(48.0), h:btn_h()-ui_px(32.0) };
-    font_draw_icon(c, FontFace::Regular, if st.shapes {0xF0831} else {0xF0832}, icon, 0);
-    if !st.shapes { canvas_slash(c, icon, ui_px(4.0)); }
+    let cp = if st.shapes {0xF0831} else {0xF0832};
+    let on = st.shapes;
+    look().sign(c, icon, &|c, r, gray| {
+        font_draw_icon(c, FontFace::Regular, cp, r, gray);
+        if !on { canvas_slash(c, r, ui_px(4.0)); }
+    });
     hits_add(&mut s.hits, shapes, P_SHAPES, 0);
     s.panel_cells.push(shapes);
     y += btn_h() + gap();
@@ -1466,7 +1469,7 @@ fn draw_panel(a: &mut App) {
     hits_add(&mut s.hits, pen, P_PENSET, 0);
     s.panel_cells.push(pen);
     y += btn_h() + gap();
-    canvas_hline(c, x, x + w, y + div_h() / 2 - ui_px(6.0), ui_px(3.0), 160);
+    ui_panel_divider(c, x, w, y + div_h() / 2 - ui_px(6.0), 160);
     y += div_h();
     let h = if s.open { s.cur_hist() } else { None };
     let cu = h.is_some_and(|i| history_can_undo(&s.hist[i].h));
@@ -1500,7 +1503,7 @@ fn draw_panel(a: &mut App) {
     }
     s.panel_cells.push(rc);
     y += btn_h() + gap();
-    canvas_hline(c, x, x + w, y + div_h() / 2 - ui_px(6.0), ui_px(3.0), 160);
+    ui_panel_divider(c, x, w, y + div_h() / 2 - ui_px(6.0), 160);
     y += div_h();
     let rp = Rect { x, y, w, h: btn_h() ,
     };
@@ -1515,9 +1518,7 @@ fn draw_panel(a: &mut App) {
     let lab = panel_page_label(if s.peek.active { s.peek.index } else { s.index } + 1, s.nb.npages(), g_fit());
     let lr = Rect { x: x - ui_px(6.0), y, w: panel_chip_w(), h: label_h() ,
     };
-    ui_frame(c, lr, ui_px(10.0), 0, false, ui_px(2.0)); // a tappable chip: opens Pages
-    font_draw_centered(c, FontFace::Bold, panel_chip_px(g_fit()), lr, &lab, 0,
-    );
+    look().counter_chip(c, lr, panel_chip_px(g_fit()), &lab); // a tappable chip: opens Pages
     hits_add(&mut s.hits, lr, P_PAGES, 0);
     s.panel_cells.push(lr);
     y += label_h() + gap();
@@ -1535,7 +1536,7 @@ fn draw_panel(a: &mut App) {
     hits_add(&mut s.hits, rl, P_LINKS, 0);
     s.panel_cells.push(rl);
     y += btn_h() + gap();
-    canvas_hline(c, x, x + w, y + div_h() / 2 - ui_px(6.0), ui_px(3.0), 160);
+    ui_panel_divider(c, x, w, y + div_h() / 2 - ui_px(6.0), 160);
     y += div_h();
     // Widgets, Paper, Settings and Library (icons only, like the rest of the panel).
     let rest: [(IconKind, i32); 4] = [
@@ -1847,17 +1848,10 @@ fn draw_paper_sheet(a: &mut App) {
             canvas_blit_fit(c, pv, tr_);
         }
         let sel = if custom { page_custom } else { page_k == Some(k) };
-        ui_frame(
-            c,
-            rect_inflate(tr_, if sel { ui_px(10.0) } else { 0 }),
-            ui_px(12.0),
-            0,
-            false,
-            if sel { ui_px(9.0) } else { ui_px(3.0) },
-        );
+        paper_tile_frame(c, tr_, gap_, g.cell_h, sel);
         // (Custom music... as in New notebook, which says its room.)
         let label = if custom { tr("Custom music...") } else { paper_label(k) };
-        paper_tile_label(c, tr_, gap_, label, sel);
+        paper_tile_label_n(c, tr_, gap_, i + 1, label, sel);
         hits_add(
             &mut s.modal_hits,
             Rect { x: tr_.x, y: tr_.y, w: g.tw, h: g.th + ui_px(90.0) ,
@@ -1866,6 +1860,7 @@ fn draw_paper_sheet(a: &mut App) {
             k.0 as i32,
         );
     }
+    paper_grid_marks(c, in_.x + (in_.w - gridw) / 2, in_.y, &g, gap_);
     // Along the bottom, right to left: Cancel, Photos... (the Templates sheet on the photos) and More
     // layouts... (the Templates sheet), selected while the page is on a picture.
     let (bw, bh, bgap) = (ui_px(380.0), ui_px(140.0), ui_px(30.0));
@@ -2946,6 +2941,11 @@ const K_INKS: [Ink; 2] = [
 const N_INKS: i32 = K_INKS.len() as i32;
 
 fn draw_tools(a: &mut App) {
+    // (the picker's cells a toolbar's, as the panel's)
+    ui_with_bare_buttons(|| draw_tools_cells(a));
+}
+
+fn draw_tools_cells(a: &mut App) {
     ed(a).tools_pressed = None;
     if ed_ref(a).shapes_menu { draw_shape_menu(a); return; }
     let (aw, ah) = (a.w, a.h);
@@ -3261,7 +3261,7 @@ fn draw_shape_menu(a: &mut App) {
     s.tools_rect=Rect{x,y,w,h};
     ui_frame(c,s.tools_rect,ui_px(22.0),255,true,0);
     ui_frame(c,s.tools_rect,ui_px(22.0),0,false,ui_px(6.0));
-    font_draw_left(c,if ui_theme()==UiTheme::Gothic{FontFace::Title}else{FontFace::Bold},ui_title_size(),Rect{x:x+ui_px(30.0),y:y+ui_px(15.0),w:w-ui_px(60.0),h:ui_px(85.0)},tr("Smart shapes"),0);
+    font_draw_left(c,look().heading_face(),ui_title_size(),Rect{x:x+ui_px(30.0),y:y+ui_px(15.0),w:w-ui_px(60.0),h:ui_px(85.0)},tr("Smart shapes"),0);
     for (i,(id,label)) in rows.into_iter().enumerate() {
         let r=Rect{x:x+ui_px(30.0),y:y+ui_px(110.0)+i as i32*(rh+g),w:w-ui_px(60.0),h:rh};
         if shape_slider_id(id) {
@@ -3505,11 +3505,19 @@ fn compose(a: &mut App, r: Rect) {
         return;
     }
     a.toast_floor = 0;
-    let r = rect_intersect(r, Rect { x: 0, y: 0, w: a.w, h: a.h ,
-        },
-    );
+    // (a theme whose sheets stand over the page blurred: with one up, any part drawn again is the whole
+    // screen, or the blur would be patched with sharp page)
+    let full = Rect { x: 0, y: 0, w: a.w, h: a.h };
+    let blur = sheet_blur_wanted(a);
+    let r = if blur { full } else { rect_intersect(r, full) };
     if rect_is_empty(r) {
         return;
+    }
+    if blur || r == full {
+        SHEET_BLURRED.set(blur);
+    }
+    if blur {
+        app_invalidate(a, full, RefreshMode::Ui);
     }
     let top = status_reserved(a);
     canvas_fill(&mut a.screen, rect_intersect(r, Rect { x: 0, y: 0, w: a.w, h: top ,
@@ -3560,7 +3568,11 @@ fn compose(a: &mut App, r: Rect) {
         draw_panel(a);
         a.screen.clip = clip;
     }
-    draw_menus(a, r);
+    if blur {
+        ui_with_backdrop(|| draw_menus(a, r));
+    } else {
+        draw_menus(a, r);
+    }
     sel_draw(a, r);
     let strip = Rect::new(0, 0, a.w, gui_status_h());
     if a.settings.status_on && a.settings.status_in_notebooks && rect_overlaps(r, strip) {
@@ -3568,6 +3580,30 @@ fn compose(a: &mut App, r: Rect) {
         // still shows; a tap hides it, and another on the top strip brings it back (status.rs).
         // A draw of part of the strip repeats the time the whole strip was drawn with (status_bar_time).
         crate::globalui::gui_status_bar_transparent(&mut a.screen, a.w, status_bar_time(rect_contains_rect(r, strip)));
+    }
+}
+
+thread_local! {
+    /// Whether the screen was last composed whole with a sheet's blur behind it (Look::blurs_behind_sheets).
+    static SHEET_BLURRED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// A sheet up over the page (Paper, Templates, Display, Custom music), in a theme that blurs and fades
+/// the page behind it (Look::blurs_behind_sheets), as in the Library.
+fn sheet_blur_wanted(a: &App) -> bool {
+    look().blurs_behind_sheets() && a.ed.as_deref().is_some_and(|s| s.paper_open || s.ts.open || s.dm.open || s.mb.open)
+}
+
+/// Before a refresh (app_flush): a sheet that opened or closed by drawing itself over the screen, or by
+/// drawing again only where it was, leaves the page behind it as it was; the whole screen is composed
+/// once more then, blurred behind the sheet or sharp again without it.
+pub fn editor_backdrop_sync(a: &mut App) {
+    if a.scr != ScreenId::Editor || a.ed.is_none() {
+        SHEET_BLURRED.set(false);
+        return;
+    }
+    if sheet_blur_wanted(a) != SHEET_BLURRED.get() {
+        compose_all(a, RefreshMode::Ui);
     }
 }
 
@@ -17357,7 +17393,7 @@ mod tests {
         let mut st = Settings::default();
         settings_default(&mut st);
         let band = Rect { x: 598, y: 866, w: 1056, h: 136 };
-        for th in [UiTheme::Gothic, UiTheme::Classic] {
+        for th in UiTheme::all() {
             ui_set_theme(th);
             let (c, m) = (shape_slider(P_SHAPE_CORNER, band, &st), shape_slider(P_SHAPE_MIN, band, &st));
             assert_eq!((c.track, c.text_w), (m.track, m.text_w));

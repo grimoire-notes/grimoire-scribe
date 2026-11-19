@@ -179,11 +179,9 @@ fn drawn(rt: &mut Rt) -> Canvas {
 
 const HOSTS: [Host; 2] = [Host::Widget, Host::App];
 
+// (the goldens' keys: "g" Gothic, "c" Classic)
 fn look(theme: UiTheme) -> &'static str {
-    match theme {
-        UiTheme::Gothic => "g",
-        UiTheme::Classic => "c",
-    }
+    &theme.id()[..1]
 }
 
 fn tag(host: Host) -> &'static str {

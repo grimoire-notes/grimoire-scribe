@@ -838,7 +838,7 @@ fn inverted_exclamation_is_not_an_i() {
         (FontFace::Fixed, 44.0),
         (FontFace::FixedBold, 44.0),
     ];
-    for theme in [UiTheme::Gothic, UiTheme::Classic] {
+    for theme in UiTheme::all() {
         ui_set_theme(theme);
         for z in 0..K.len() {
             let (f, px) = K[z];

@@ -8,13 +8,14 @@
 use crate::prelude::*;
 use std::cell::Cell;
 
-// ui.c: widgets, in two themes. Classic: Terminess, rounded corners. Gothic: book and
-// blackletter type, cut-stone corners, double rules, lozenges and pointed arches. Icons are
-// Terminess Nerd Font in both.
+// ui.c: widgets. How each is drawn is the theme's (looks/: look()); these lay them out and keep
+// their measures. Icons are Terminess Nerd Font in every theme.
 
 thread_local! {
     static G_SCALE: Cell<f32> = const { Cell::new(1.0) };
     static G_THEME: Cell<UiTheme> = const { Cell::new(UiTheme::Gothic) };
+    static G_BARE: Cell<bool> = const { Cell::new(false) };
+    static G_BACKDROP: Cell<bool> = const { Cell::new(false) };
 }
 
 #[repr(i32)]
@@ -129,109 +130,32 @@ pub struct UiMetrics {
     pub scale: f32,
 }
 
-#[repr(i32)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum UiTheme {
-    #[default]
-    Gothic = 0,  // THEME_GOTHIC
-    Classic = 1,  // THEME_CLASSIC
-}
 /// also switches the fonts
 pub fn ui_set_theme(t: UiTheme) {
-    let theme = if t == UiTheme::Classic { UiTheme::Classic } else { UiTheme::Gothic };
-    G_THEME.set(theme);
-    font_set_gothic(theme == UiTheme::Gothic);
+    G_THEME.set(t);
+    font_set_faces(t.look().faces());
 }
 pub fn ui_theme() -> UiTheme {
     G_THEME.get()
 }
 
-fn gothic() -> bool {
-    G_THEME.get() == UiTheme::Gothic
-}
 
 /// A box in the theme's shape (rounded, or cut corners), same arguments as canvas_round_rect.
 pub fn ui_frame(c: &mut Canvas, r: Rect, radius: i32, gray: u8, filled: bool, t: i32) {
-    if gothic() {
-        canvas_chamfer_rect(c, r, radius + radius / 4, gray, filled, t);
-    } else {
-        canvas_round_rect(c, r, radius, gray, filled, t);
-    }
+    look().frame(c, r, radius, gray, filled, t);
 }
 
-/// A pointed (equilateral) arch: springers at (x0, ys) and (x1, ys), stroked with width w.
-// (3.14159265f is the C's float literal, not f32::consts::PI)
-#[allow(clippy::approx_constant, clippy::excessive_precision)]
-fn arch(c: &mut Canvas, x0: f32, x1: f32, ys: f32, w: f32, gray: u8) {
-    let span = x1 - x0;
-    const SEG: i32 = 8;
-    for side in 0..2 {
-        // Left half: arc centred on the right springer; right half mirrored.
-        let ccx = if side == 0 { x1 } else { x0 };
-        let a0 = if side == 0 { 3.14159265f32 } else { 0.0 };
-        let a1 = if side == 0 { 2.0943951f32 } else { 1.0471976 };
-        // (ccx + span * cosf(a0) and ys - span * sinf(a0) are contracted multiply-adds in the C build: fmla)
-        let mut px = fmla(span, a0.cos(), ccx);
-        let mut py = fmla(-span, a0.sin(), ys);
-        for i in 1..=SEG {
-            let th = a0 + (a1 - a0) * i as f32 / SEG as f32;
-            let qx = fmla(span, th.cos(), ccx);
-            let qy = fmla(-span, th.sin(), ys);
-            canvas_line_aa(c, px, py, qx, qy, w, gray);
-            px = qx;
-            py = qy;
-        }
-    }
-}
 
-/// Gothic only: a cornice of pointed arches h px deep hanging from y.
+/// The theme's ornament h px deep hanging from a header's rule at y (Gothic's arches; none in Classic).
 pub fn ui_frieze(c: &mut Canvas, x0: i32, x1: i32, y: i32, h: i32, gray: u8) {
-    if !gothic() || x1 - x0 < h {
-        return;
-    }
-    // A cornice of pointed arches hanging from the rule at y, a lozenge drop at every springer.
-    let mut span = h as f32 / 0.866;
-    let n = ((x1 - x0) as f32 / span) as i32;
-    if n < 1 {
-        return;
-    }
-    span = (x1 - x0) as f32 / n as f32;
-    let ys = fmla(span, 0.866, y as f32);
-    let w = ui_px(3.0) as f32;
-    for i in 0..n {
-        arch(c, fmla(span, i as f32, x0 as f32), fmla(span, (i + 1) as f32, x0 as f32), ys, w, gray,
-        );
-    }
-    for i in 0..=n {
-        let x = fmla(span, i as f32, x0 as f32);
-        canvas_line_aa(c, x, y as f32, x, ys, w, gray);
-        canvas_lozenge(c, x, ys + ui_px(7.0) as f32, ui_px(7.0) as f32, gray);
-    }
+    look().frieze(c, x0, x1, y, h, gray);
 }
 
 /// A horizontal rule (gothic: thick over thin).
 pub fn ui_rule(c: &mut Canvas, x0: i32, x1: i32, y: i32, t: i32, gray: u8) {
-    if !gothic() {
-        canvas_hline(c, x0, x1, y, t, gray);
-        return;
-    }
-    // Thick over thin, the way a printer's rule frames a title page.
-    canvas_hline(c, x0, x1, y, t, gray);
-    canvas_hline(c, x0, x1, y + t + ui_px(5.0), ui_px(2.0), gray);
+    look().rule(c, x0, x1, y, t, gray);
 }
 
-/// An ornamental divider: thin rule broken by a lozenge with two small ones beside it.
-fn ornament(c: &mut Canvas, x0: i32, x1: i32, y: i32, gray: u8) {
-    let mid = (x0 + x1) / 2;
-    let gap = ui_px(60.0);
-    canvas_hline(c, x0, mid - gap, y - ui_px(1.0), ui_px(2.0), gray);
-    canvas_hline(c, mid + gap, x1, y - ui_px(1.0), ui_px(2.0), gray);
-    canvas_lozenge(c, mid as f32, y as f32, ui_px(16.0) as f32, gray);
-    canvas_lozenge(c, (mid - ui_px(36.0)) as f32, y as f32, ui_px(8.0) as f32, gray,
-    );
-    canvas_lozenge(c, (mid + ui_px(36.0)) as f32, y as f32, ui_px(8.0) as f32, gray,
-    );
-}
 
 /// Gothic quatrefoil ornament of radius r.
 pub fn ui_emblem(c: &mut Canvas, cx: f32, cy: f32, r: f32, ink: u8, bg: u8) {
@@ -357,6 +281,7 @@ const K_ICON_CP: [u32; IconKind::COUNT] = {
     k
 };
 
+
 /// The icon for a drawing tool (ToolKind value).
 pub fn ui_tool_icon(tool: i32) -> IconKind {
     const K: [IconKind; 10] = [
@@ -383,9 +308,7 @@ pub fn ui_icon(c: &mut Canvas, k: IconKind, r: Rect, gray: u8) {
     if k == IconKind::None || K_ICON_CP[k as usize] == 0 {
         return;
     }
-    let inset = (if r.w < r.h { r.w } else { r.h }) / 10;
-    font_draw_icon(c, FontFace::Regular, K_ICON_CP[k as usize], rect_inflate(r, -inset), gray,
-    );
+    look().icon(c, k, K_ICON_CP[k as usize], r, gray);
 }
 /// A page tile whose preview is still being made (the Pages view's, a page picker's): an hourglass in
 /// the middle of the tile, black, a third of its smaller side, drawn once with the tile and left until
@@ -420,21 +343,9 @@ pub enum ButtonStyle {
     Disabled = 2,  // BTN_DISABLED
     Primary = 3,  // BTN_PRIMARY
 }
-fn radius() -> i32 {
-    // Classic is the modern rounded design (2.3, issue #209); Gothic keeps its carved corners.
-    if gothic() {
-        ui_px(16.0)
-    } else {
-        ui_px(22.0)
-    }
-}
 
-// In Gothic a button big enough for one has the inner line of a carved panel, 2 px wide, this far
-// inside its edge.
-fn carved(w: i32, h: i32) -> bool {
-    gothic() && h >= ui_px(90.0) && w >= ui_px(90.0)
-}
-fn carve_in(st: ButtonStyle) -> i32 {
+// Where a theme carves a button (Look::carved), its inner line is 2 px wide, this far inside its edge.
+pub(crate) fn carve_in(st: ButtonStyle) -> i32 {
     if st == ButtonStyle::Primary {
         ui_px(13.0)
     } else {
@@ -443,7 +354,7 @@ fn carve_in(st: ButtonStyle) -> i32 {
 }
 // How far a label stays from each side of its button: inside the edge, and inside the carved line
 // where there is one, clear of it by 4 px (a word up to the edge's inset would run into it).
-fn label_inset(carve: bool, st: ButtonStyle) -> i32 {
+pub(crate) fn label_inset(carve: bool, st: ButtonStyle) -> i32 {
     if carve {
         carve_in(st) + ui_px(2.0) + ui_px(4.0)
     } else {
@@ -452,77 +363,69 @@ fn label_inset(carve: bool, st: ButtonStyle) -> i32 {
 }
 // A label's size under an icon, and a label's alone (before a long one shrinks), for a button
 // whose inside (its rect less 8 px all round) is in_h tall.
-fn icon_label_px(in_h: i32) -> f32 {
+pub(crate) fn icon_label_px(in_h: i32) -> f32 {
     ui_small_size().min(in_h as f32 * 0.28)
 }
-fn text_label_px(in_h: i32) -> f32 {
+pub(crate) fn text_label_px(in_h: i32) -> f32 {
     ui_text_size().min(in_h as f32 * 0.6)
 }
+
+/// A label as the theme prints it on a control (in capitals, where it prints them so).
+pub fn ui_caps_label(label: &str) -> String {
+    if look().caps_labels() { label.to_uppercase() } else { label.to_string() }
+}
+
+/// The text's gray on a control in style st.
+pub fn ui_style_fg(st: ButtonStyle) -> u8 {
+    look().style_fg(st)
+}
+
+/// The text's gray on a choice, chosen (on) or not (Classic's white on black).
+pub fn ui_on_fg(on: bool) -> u8 {
+    ui_style_fg(if on { ButtonStyle::Selected } else { ButtonStyle::Plain })
+}
+
+/// f with the buttons it draws as a toolbar's cells (a theme may draw them bare: Look::button reads
+/// ui_bare).
+pub fn ui_with_bare_buttons<R>(f: impl FnOnce() -> R) -> R {
+    let was = G_BARE.replace(true);
+    let r = f();
+    G_BARE.set(was);
+    r
+}
+/// Whether the buttons drawn now are a toolbar's cells (ui_with_bare_buttons).
+pub fn ui_bare() -> bool {
+    G_BARE.get()
+}
+/// f with the whole screen just drawn under the sheets it draws, so a theme may blur it behind them
+/// (Look::sheet reads ui_backdrop). Not where a screen draws a sheet again over what it drew before (the
+/// editor's): it would blur it again on every redraw.
+pub fn ui_with_backdrop<R>(f: impl FnOnce() -> R) -> R {
+    let was = G_BACKDROP.replace(true);
+    let r = f();
+    G_BACKDROP.set(was);
+    r
+}
+/// Whether the screen under the sheet drawn now was just drawn whole (ui_with_backdrop).
+pub fn ui_backdrop() -> bool {
+    G_BACKDROP.get()
+}
+
+/// A toolbar's or a floating panel's frame.
+pub fn ui_panel_frame(c: &mut Canvas, p: Rect, radius: i32) {
+    look().panel_frame(c, p, radius);
+}
+/// A divider across a toolbar at y.
+pub fn ui_panel_divider(c: &mut Canvas, x: i32, w: i32, y: i32, gray: u8) {
+    look().panel_divider(c, x, w, y, gray);
+}
+
+
 
 // ui_button, with a label alone drawn at text_px when that is not 0 (one line at that size, else
 // two), not at the size of its own that fits.
 fn button(c: &mut Canvas, r: Rect, icon: IconKind, label: &str, st: ButtonStyle, text_px: f32) {
-    let bg: u8 = if st == ButtonStyle::Selected { 0 } else { 255 };
-    let fg: u8 = if st == ButtonStyle::Selected {
-        255
-    } else if st == ButtonStyle::Disabled {
-        170
-    } else {
-        0
-    };
-    let edge: u8 = if st == ButtonStyle::Disabled { 170 } else { 0 };
-    ui_frame(c, r, radius(), bg, true, 0);
-    ui_frame(c, r, radius(), edge, false, if st == ButtonStyle::Primary { ui_px(6.0) } else { ui_px(3.0) },
-    );
-    let carve = carved(r.w, r.h);
-    if carve {
-        // The inner line of a carved panel.
-        let inset = carve_in(st);
-        canvas_chamfer_rect(
-            c,
-            rect_inflate(r, -inset),
-            radius() - inset / 3,
-            if st == ButtonStyle::Selected { 255 } else { edge },
-            false,
-            ui_px(2.0),
-        );
-    }
-    let has_label = !label.is_empty();
-    let inner = rect_inflate(r, -ui_px(8.0));
-    let li = label_inset(carve, st);
-    let lx = r.x + li;
-    let lw = r.w - 2 * li; // the label's columns
-    if icon != IconKind::None && has_label {
-        let ts = icon_label_px(inner.h);
-        let lh = (ts * 1.15) as i32;
-        let ir = Rect { x: inner.x, y: inner.y, w: inner.w, h: inner.h - lh ,
-        };
-        ui_icon(c, icon, ir, fg);
-        let mut lr = Rect { x: lx, y: inner.y + inner.h - lh, w: lw, h: lh ,
-        };
-        if gothic() {
-            lr = Rect { x: lx, y: inner.y + inner.h - lh - ui_px(6.0), w: lw, h: lh ,
-            };
-        }
-        font_draw_centered(c, FontFace::Caps, ts, lr, label, fg);
-    } else if icon != IconKind::None {
-        ui_icon(c, icon, rect_inflate(inner, -ui_px(6.0)), fg);
-    } else if has_label {
-        // A label too long for the button (a translation) takes the small size, then two lines.
-        let ts = if text_px > 0.0 { text_px } else { text_label_px(inner.h) };
-        ui_text(
-            c,
-            FontFace::Caps,
-            ts,
-            if text_px > 0.0 { ts } else { ts.min(ui_small_size()) },
-            Rect { x: lx, y: inner.y, w: lw, h: inner.h ,
-            },
-            label,
-            2,
-            true,
-            fg,
-        );
-    }
+    look().button(c, r, icon, label, st, text_px);
 }
 
 /// Icon above label if both given; selected = inverted (black fill, white glyph). The label keeps
@@ -532,20 +435,16 @@ fn button(c: &mut Canvas, r: Rect, icon: IconKind, label: &str, st: ButtonStyle,
 pub fn ui_button(c: &mut Canvas, r: Rect, icon: IconKind, label: &str, st: ButtonStyle) {
     button(c, r, icon, label, st, 0.0);
 }
+/// A button that is its word alone where the theme has such (a row of sheet actions), ui_button elsewhere.
+pub fn ui_button_bare(c: &mut Canvas, r: Rect, label: &str, st: ButtonStyle) {
+    look().button_bare(c, r, label, st);
+}
 /// A button with its icon alone, drawn hollow (ui_icon_hollow) where ui_button draws it: the
 /// editor's panel shows the pen in use so while it draws white ink.
 pub fn ui_button_hollow(c: &mut Canvas, r: Rect, icon: IconKind, st: ButtonStyle) {
     button(c, r, IconKind::None, "", st, 0.0);
-    let bg: u8 = if st == ButtonStyle::Selected { 0 } else { 255 };
-    let fg: u8 = if st == ButtonStyle::Selected {
-        255
-    } else if st == ButtonStyle::Disabled {
-        170
-    } else {
-        0
-    };
-    ui_icon_hollow(c, icon, rect_inflate(rect_inflate(r, -ui_px(8.0)), -ui_px(6.0)), fg, bg,
-    ); // where button() puts it
+    let (fg, bg) = look().hollow_colors(st);
+    ui_icon_hollow(c, icon, rect_inflate(rect_inflate(r, -ui_px(8.0)), -ui_px(6.0)), fg, bg); // where button() puts it
 }
 /// The size ui_button draws a label alone at in r (the small size where it takes two lines), and
 /// such a button with its label at px instead (one line at px, else two): a grid of buttons draws
@@ -556,7 +455,8 @@ pub fn ui_button_text_px(r: Rect, label: &str, st: ButtonStyle) -> f32 {
     }
     let ts = text_label_px(r.h - 2 * ui_px(8.0));
     let min = ts.min(ui_small_size());
-    let s = font_fit_px(FontFace::Caps, ts, min, label, r.w - 2 * label_inset(carved(r.w, r.h), st),
+    let caps = ui_caps_label(label);
+    let s = font_fit_px(FontFace::Caps, ts, min, &caps, r.w - 2 * label_inset(look().carved(r.w, r.h), st),
     );
     if s > 0.0 {
         s
@@ -576,7 +476,7 @@ pub fn ui_button_need_w(h: i32, icon: IconKind, label: &str, st: ButtonStyle) ->
     }
     let in_h = h - 2 * ui_px(8.0);
     let ts = if icon != IconKind::None { icon_label_px(in_h) } else { text_label_px(in_h) };
-    font_measure(FontFace::Caps, ts, label) + 2 * label_inset(carved(ui_px(90.0), h), st)
+    font_measure(FontFace::Caps, ts, &ui_caps_label(label)) + 2 * label_inset(look().carved(ui_px(90.0), h), st)
 }
 
 // ---- rows and lists: the one Settings row design ----
@@ -595,15 +495,11 @@ pub fn ui_row_space() -> i32 {
 }
 /// The side of a row's icon.
 pub fn ui_row_icon() -> i32 {
-    ui_px(60.0)
+    look().row_icon_px()
 }
 /// The radius of a Settings card's corners (`ui_card`), in the theme's shape.
 pub fn ui_card_radius() -> i32 {
-    if gothic() {
-        ui_px(16.0)
-    } else {
-        ui_px(22.0)
-    }
+    look().corner_radius()
 }
 /// The width of a card's outline.
 pub fn ui_line() -> i32 {
@@ -613,11 +509,7 @@ pub fn ui_line() -> i32 {
 /// A Settings card: the one shape a row, a choice or a control sits in, from the main page to About.
 /// The chosen one is filled; the rest are outlined (a disabled one in gray), all at one radius.
 pub fn ui_card(c: &mut Canvas, r: Rect, st: ButtonStyle) {
-    match st {
-        ButtonStyle::Selected => ui_frame(c, r, ui_card_radius(), 0, true, 0),
-        ButtonStyle::Disabled => ui_frame(c, r, ui_card_radius(), crate::globalui::GUI_GRAY_DISABLED, false, ui_line()),
-        _ => ui_frame(c, r, ui_card_radius(), 0, false, ui_line()),
-    }
+    look().card(c, r, st);
 }
 
 /// Settings' switch, at the right end of its card: a track with the knob at the side its state is on,
@@ -627,11 +519,7 @@ pub fn ui_switch(c: &mut Canvas, r: Rect, on: bool) {
     let sw_h = ui_px(62.0).min(r.h - ui_px(12.0)).max(ui_px(24.0));
     let sw_w = sw_h * 120 / 62;
     let track = Rect::new(r.x + r.w - ui_px(30.0) - sw_w, r.y + (r.h - sw_h) / 2, sw_w, sw_h);
-    ui_frame(c, track, sw_h / 2, 0, on, ui_px(3.0));
-    let kw = sw_h * 46 / 62;
-    let inset = sw_h * 8 / 62;
-    let kx = if on { track.x + track.w - kw - inset } else { track.x + inset };
-    ui_frame(c, Rect::new(kx, track.y + (track.h - kw) / 2, kw, kw), kw / 2, if on { 255 } else { 0 }, true, 0);
+    look().switch(c, track, sw_h, on);
 }
 /// One row of any list drawn in the app's design: Settings' page, its submenus, the Display sheet.
 /// An icon, a label, and an on/off switch at the right end when the row is a choice.
@@ -693,13 +581,7 @@ fn ui_row_with(c: &mut Canvas, r: Rect, row: &Row, app_icon: Option<&AppIcon>) {
         return;
     }
     ui_card(c, r, row.style);
-    let fg: u8 = if row.style == ButtonStyle::Selected {
-        255
-    } else if row.style == ButtonStyle::Disabled {
-        crate::globalui::GUI_GRAY_DISABLED
-    } else {
-        0
-    };
+    let fg = ui_style_fg(row.style);
     let isz = ui_row_icon();
     let mut lx = r.x + ui_row_pad();
     if let Some(icon) = app_icon {
@@ -716,6 +598,7 @@ fn ui_row_with(c: &mut Canvas, r: Rect, row: &Row, app_icon: Option<&AppIcon>) {
         ui_switch(c, r, on);
     }
     let lr = Rect::new(lx, r.y, lw.max(0), r.h);
+    let row = &Row { font: look().row_face(row.font, row.style), ..*row };
     if row.name {
         ui_text_name(c, row.font, ui_text_size(), ui_small_size(), lr, row.label, 2, fg);
     } else {
@@ -866,7 +749,7 @@ fn slider_t(s: &Slider) -> f32 {
 
 /// The knob's radius (the Gothic lozenge is wider than the gap ui_slider_layout leaves it).
 pub fn ui_slider_knob_radius() -> i32 {
-    ui_px(if gothic() { 32.0 } else { 26.0 })
+    look().slider_knob_radius()
 }
 
 pub fn ui_slider_draw(c: &mut Canvas, s: &Slider, value_text: Option<&str>) {
@@ -892,25 +775,7 @@ pub fn ui_slider_draw(c: &mut Canvas, s: &Slider, value_text: Option<&str>) {
     let t = slider_t(s);
     let fx = tr.x + (t * tr.w as f32).round_ties_even() as i32;
     let cy = tr.y as f32 + tr.h as f32 / 2.0;
-    if gothic() {
-        // A groove of two hairlines, filled solid up to a lozenge knob.
-        canvas_hline(c, tr.x, tr.x + tr.w, tr.y, ui_px(2.0), 0);
-        canvas_hline(c, tr.x, tr.x + tr.w, tr.y + tr.h - ui_px(2.0), ui_px(2.0), 0,
-        );
-        canvas_fill(c, Rect { x: tr.x, y: tr.y, w: fx - tr.x, h: tr.h ,
-            }, 0,
-        );
-        canvas_lozenge(c, fx as f32, cy, ui_slider_knob_radius() as f32, 0);
-        canvas_lozenge(c, fx as f32, cy, ui_px(20.0) as f32, 255);
-        canvas_lozenge(c, fx as f32, cy, ui_px(10.0) as f32, 0);
-        return;
-    }
-    canvas_round_rect(c, tr, tr.h / 2, 190, true, 0);
-    canvas_round_rect(c, Rect { x: tr.x, y: tr.y, w: fx - tr.x + tr.h / 2, h: tr.h ,
-        }, tr.h / 2, 0, true, 0,
-    );
-    canvas_disc_aa(c, fx as f32, cy, ui_slider_knob_radius() as f32, 0, 1.0);
-    canvas_disc_aa(c, fx as f32, cy, ui_px(12.0) as f32, 255, 1.0);
+    look().slider_track(c, tr, fx, cy);
 }
 fn slider_set_value(s: &mut Slider, mut v: f32) -> bool {
     if s.step > 0.0 {
@@ -972,54 +837,24 @@ pub fn ui_slider_drag_to(s: &mut Slider, drag: &mut SliderDrag, x: f32, y: f32, 
 /// The content rect ui_sheet returns for card, with a title or without, before anything is drawn:
 /// what a sheet's edges and title take, for a sheet sized to what it holds (about.rs).
 pub fn ui_sheet_inner(card: Rect, titled: bool) -> Rect {
-    let (th, inset, bare) = if gothic() { (ui_px(130.0), ui_px(40.0), ui_px(44.0)) } else { (ui_px(120.0), ui_px(36.0), ui_px(36.0)) };
+    let (th, inset, bare) = look().sheet_metrics();
     if titled {
         return rect_inflate(Rect { y: card.y + th, h: card.h - th, ..card }, -inset);
     }
     rect_inflate(card, -bare)
 }
 
+
+
+/// A page's heading (Settings and its submenus) in r, left-aligned.
+pub fn ui_page_title(c: &mut Canvas, r: Rect, title: &str) {
+    look().page_title(c, r, title);
+}
+
 /// Modal sheet: dims nothing (e-ink), draws a white card with a thick border + title bar.
 /// Returns the content rect inside the card (ui_sheet_inner's).
 pub fn ui_sheet(c: &mut Canvas, card: Rect, title: &str) -> Rect {
-    if gothic() {
-        canvas_chamfer_rect(c, card, ui_px(34.0), 255, true, 0);
-        canvas_chamfer_rect(c, card, ui_px(34.0), 0, false, ui_px(6.0));
-        let inner = rect_inflate(card, -ui_px(16.0));
-        canvas_chamfer_rect(c, inner, ui_px(26.0), 0, false, ui_px(2.0));
-        let th = ui_px(130.0);
-        if !title.is_empty() {
-            font_draw_centered(
-                c,
-                FontFace::Title,
-                ui_title_size(),
-                Rect { x: card.x + ui_px(80.0), y: card.y + ui_px(10.0), w: card.w - ui_px(160.0), h: th - ui_px(20.0) ,
-                },
-                title,
-                0,
-            );
-            ornament(c, card.x + ui_px(60.0), card.x + card.w - ui_px(60.0), card.y + th, 0,
-            );
-            return ui_sheet_inner(card, true);
-        }
-        return ui_sheet_inner(card, false);
-    }
-    canvas_round_rect(c, card, ui_px(24.0), 255, true, 0);
-    canvas_round_rect(c, card, ui_px(24.0), 0, false, ui_px(6.0));
-    let th = ui_px(120.0);
-    if !title.is_empty() {
-        font_draw_left(
-            c,
-            FontFace::Bold,
-            ui_title_size(),
-            Rect { x: card.x + ui_px(40.0), y: card.y, w: card.w - ui_px(80.0), h: th ,
-            },
-            title,
-            0,
-        );
-        return ui_sheet_inner(card, true);
-    }
-    ui_sheet_inner(card, false)
+    look().sheet(c, card, title)
 }
 // A toast is one line of text, or two at the same size when it needs them: the box grows by a
 // line, as wide as the longer line needs, and keeps the ends of a one-line box (Gothic's points,
@@ -1028,11 +863,7 @@ fn toast_one_h() -> i32 {
     ui_px(110.0)
 }
 fn toast_inset() -> i32 {
-    if gothic() {
-        ui_px(50.0)
-    } else {
-        ui_px(30.0)
-    }
+    look().toast_inset()
 }
 
 /// Toast-style message box centered near the bottom of the screen: one line, or two (taller) for
@@ -1071,14 +902,7 @@ pub fn ui_toast_at(c: &mut Canvas, r: Rect, msg: &str) {
     let ts = ui_text_size();
     let ends = toast_one_h() / 2; // the ends' depth (or radius): half a one-line box
     let tr = rect_inflate(r, -toast_inset());
-    if gothic() {
-        // A black banner with pointed ends and a white inner line.
-        canvas_chamfer_rect(c, r, ends, 0, true, 0);
-        canvas_chamfer_rect(c, rect_inflate(r, -ui_px(9.0)), ends - ui_px(9.0), 255, false, ui_px(2.0),
-        );
-    } else {
-        canvas_round_rect(c, r, ends, 0, true, 0);
-    }
+    look().toast_plate(c, r, ends);
     if r.h > toast_one_h() {
         font_draw_wrapped(c, FontFace::Bold, ts, tr, msg, 2, 0, true, 255);
     } else {
@@ -1094,23 +918,7 @@ pub fn ui_checkbox(c: &mut Canvas, r: Rect, label: &str, checked: bool) {
     let bs = ui_px(64.0);
     let b = Rect { x: r.x, y: r.y + (r.h - bs) / 2, w: bs, h: bs ,
     };
-    if gothic() {
-        // A lozenge, filled when ticked.
-        let cx = b.x as f32 + bs as f32 / 2.0;
-        let cy = b.y as f32 + bs as f32 / 2.0;
-        let rr = bs as f32 / 2.0 + ui_px(4.0) as f32;
-        canvas_lozenge(c, cx, cy, rr, 0);
-        canvas_lozenge(c, cx, cy, rr - ui_px(5.0) as f32, 255);
-        if checked {
-            canvas_lozenge(c, cx, cy, rr - ui_px(14.0) as f32, 0);
-        }
-    } else {
-        canvas_round_rect(c, b, ui_px(10.0), if checked { 0 } else { 255 }, true, 0);
-        canvas_round_rect(c, b, ui_px(10.0), 0, false, ui_px(4.0));
-        if checked {
-            ui_icon(c, IconKind::Check, b, 255);
-        }
-    }
+    look().checkbox_box(c, b, checked);
     ui_text(
         c,
         FontFace::Regular,
@@ -1173,10 +981,7 @@ pub fn ui_text_box_w(f: FontFace, px: f32, text: &str, pad: i32, min_w: i32, max
 /// The same for a chip h px tall with ends as round as it can be (ui_frame with radius h / 2):
 /// the text keeps clear of Gothic's pointed ends, which are h / 2 deep.
 pub fn ui_chip_w(f: FontFace, px: f32, text: &str, h: i32, min_w: i32, max_w: i32) -> i32 {
-    // Gothic's ends are points as deep as half the chip (ui_frame's cut corners): the text keeps
-    // all but 7 px of that from each tip. Classic's round ends leave the text room closer in.
-    ui_text_box_w(f, px, text, if gothic() { h / 2 - ui_px(7.0) } else { ui_px(24.0) }, min_w, max_w,
-    )
+    ui_text_box_w(f, px, text, look().chip_pad(h), min_w, max_w)
 }
 /// A notebook's or folder's name as the screens show it: name itself, a letter no font has as a box
 /// (2.1.0-beta.2), else without the characters that show nothing (font_drawable_copy: a control or
@@ -1299,15 +1104,15 @@ mod tests {
     #[test]
     fn the_theme_switches_the_fonts() {
         up(300.0);
-        // (ui_theme starts out Gothic but font_gothic false, as in the C: the fonts take the theme
+        // (ui_theme starts out Gothic but the fonts Classic's, as in the C: the fonts take the theme
         // when ui_set_theme first runs, which the app does at startup)
         ui_set_theme(UiTheme::Gothic);
-        assert!(font_gothic());
+        assert!(font_theme_faces());
         ui_set_theme(UiTheme::Classic);
         assert_eq!(ui_theme(), UiTheme::Classic);
-        assert!(!font_gothic());
+        assert!(!font_theme_faces());
         ui_set_theme(UiTheme::Gothic);
-        assert!(font_gothic());
+        assert!(font_theme_faces());
     }
 
     #[test]
@@ -1455,7 +1260,7 @@ mod tests {
     #[test]
     fn a_sheet_returns_the_room_inside_its_card() {
         up(300.0);
-        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+        for theme in UiTheme::all() {
             ui_set_theme(theme);
             let card = Rect { x: 50, y: 60, w: 600, h: 500 ,
             };
@@ -1486,8 +1291,8 @@ mod tests {
         // the Classic frame does not carve; the Gothic one does, and keeps the label further in
         ui_set_theme(UiTheme::Gothic);
         assert!(ui_button_need_w(140, IconKind::None, "Save", ButtonStyle::Plain) > 0);
-        assert!(carved(ui_px(90.0), ui_px(90.0)));
-        assert!(!carved(ui_px(89.0), ui_px(200.0)));
+        assert!(look().carved(ui_px(90.0), ui_px(90.0)));
+        assert!(!look().carved(ui_px(89.0), ui_px(200.0)));
     }
 
     #[test]

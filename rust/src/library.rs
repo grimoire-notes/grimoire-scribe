@@ -1625,13 +1625,7 @@ fn draw_card(c: &mut Canvas, s: &mut LibraryState, dpi: f32, r: Rect, idx: usize
         r.w - more - ui_px(10.0),
         ui_px(96.0),
     );
-    // Gothic names use the pixel face's regular weight: its overprinted bold turns a name in
-    // capitals into a solid black bar.
-    let face = if ui_theme() == UiTheme::Gothic {
-        FontFace::Regular
-    } else {
-        FontFace::Bold
-    };
+    let face = look().name_face();
     ui_text_name(c, face, ui_text_size()*0.88, ui_small_size(), tr_, title, 2, 0);
     let lr = Rect::new(r.x, tr_.y + tr_.h, r.w - more - ui_px(10.0), ui_px(40.0));
     let mut ls = ui_small_size();
@@ -1671,7 +1665,7 @@ fn draw_files_card(c: &mut Canvas, s: &mut LibraryState, r: Rect, idx: usize) {
     ui_frame(c, tb, gui_radius(), 0, false, ui_px(4.0));
     let more = ui_px(110.0);
     let tr_ = Rect::new(r.x, r.y + th + ui_px(14.0), r.w - more - ui_px(10.0), ui_px(96.0));
-    let face = if ui_theme() == UiTheme::Gothic { FontFace::Regular } else { FontFace::Bold };
+    let face = look().name_face();
     ui_text_name(c, face, ui_text_size() * 0.88, ui_small_size(), tr_, tr("Files"), 2, 0);
     if let Some(line) = s.files_free.as_deref() {
         let lr = Rect::new(r.x, tr_.y + tr_.h, r.w - more - ui_px(10.0), ui_px(40.0));
@@ -2081,6 +2075,9 @@ fn draw_base(a: &mut App) {
         hits_add(&mut s.hits, nr, H_NEXT, 0);
     }
     let mut pl = String::new();
+    if look().library_pager(c, pr, nr, s.page, pages) {
+        return;
+    }
     // TRANSLATORS: between the home's page buttons, as before (1320 px at 44 px).
     csnprintf!(&mut pl, 96, tr("Page %d of %d"), s.page + 1, pages);
     font_draw_centered(
@@ -2095,9 +2092,9 @@ fn draw_base(a: &mut App) {
 
 /// Where a sheet `h` px tall goes on a screen (Files' Delete question is drawn in the same place: browser.rs).
 pub(crate) fn sheet_rect(aw: i32, ah: i32, mut h: i32) -> Rect {
-    let m = ui_px(70.0);
-    if h > ah - 2 * ui_px(40.0) {
-        h = ah - 2 * ui_px(40.0); // landscape: keep it on screen
+    let (m, my) = (look().sheet_margin(), ui_px(40.0));
+    if h > ah - 2 * my {
+        h = ah - 2 * my; // landscape: keep it on screen
     }
     let mut w = aw - 2 * m;
     if w > ui_px(1800.0) {
@@ -2135,28 +2132,39 @@ fn draw_new(a: &mut App) {
     let card = sheet_rect(aw, ah, ui_px(2300.0));
     // TRANSLATORS: the title of the sheet that makes a notebook, and its heading over the papers.
     let in_ = ui_sheet(c, card, tr("New notebook"));
-    font_draw_left(
-        c,
-        FontFace::Bold,
-        ui_text_size(),
-        Rect::new(in_.x, in_.y, in_.w, ui_px(70.0)),
-        tr("Paper"),
-        0,
-    );
+    let chosen = if !s.new_tpl.is_empty() {
+        s.new_tpl.as_str().to_string()
+    } else if paper_is_custom(s.new_paper) {
+        tr("Custom music...").to_string()
+    } else {
+        paper_label(s.new_paper).to_string()
+    };
+    let heading = Rect::new(in_.x, in_.y, in_.w, ui_px(70.0));
+    if !look().new_notebook_heading(c, heading, &chosen) {
+        font_draw_left(c, FontFace::Bold, ui_text_size(), heading, tr("Paper"), 0);
+    }
     // The tiles over the name rows and the buttons (420 px), under the heading (80): upright in 6
     // columns, sideways in 7 (tplsheet.h).
-    let gap = ui_px(30.0);
+    let sp = look().new_sheet_spacing();
+    let gap = sp.gap;
     let g = paper_grid_cols(
         PAPER_SHEET_TILES,
         in_.w,
-        in_.h - ui_px(80.0) - ui_px(420.0),
+        in_.h - sp.head - sp.foot,
         gap,
         ui_px(100.0),
         ui_px(300.0),
         PAPER_PICKER_COLS,
     );
+    // (a theme may spread the rows over the room the tiles leave, so the air is even, not a gap at the foot)
+    let g = if sp.spread {
+        let room = in_.h - sp.head - sp.foot;
+        PaperGrid { cell_h: (room / g.rows).clamp(g.cell_h, g.th + ui_px(170.0)), ..g }
+    } else {
+        g
+    };
     let gridw = g.cols * g.tw + (g.cols - 1) * gap;
-    let ty = in_.y + ui_px(80.0);
+    let ty = in_.y + sp.head;
     let tpl = !s.new_tpl.is_empty() || s.new_tpl_page.is_some();
     let new_custom = !tpl && paper_is_custom(s.new_paper);
     for i in 0..PAPER_SHEET_TILES {
@@ -2184,14 +2192,7 @@ fn draw_new(a: &mut App) {
             canvas_blit_fit(c, pv, tr_);
         }
         let sel = if custom { new_custom } else { !tpl && s.new_paper == k };
-        ui_frame(
-            c,
-            rect_inflate(tr_, if sel { ui_px(10.0) } else { 0 }),
-            ui_px(12.0),
-            0,
-            false,
-            if sel { ui_px(9.0) } else { ui_px(3.0) },
-        );
+        paper_tile_frame(c, tr_, gap, g.cell_h, sel);
         let mut label = paper_label(k);
         if custom {
             // TRANSLATORS: the last paper's tile, here and in the editor's paper sheet: it opens a sheet
@@ -2201,7 +2202,7 @@ fn draw_new(a: &mut App) {
         }
         // (A label wider than its tile goes on two lines under it, as most do sideways: labels side
         // by side never run into each other.)
-        paper_tile_label(c, tr_, gap, label, sel);
+        paper_tile_label_n(c, tr_, gap, i + 1, label, sel);
         hits_add(
             &mut s.hits,
             Rect::new(tr_.x, tr_.y, tr_.w, g.th + ui_px(90.0)),
@@ -2209,8 +2210,17 @@ fn draw_new(a: &mut App) {
             k.0 as i32,
         );
     }
+    paper_grid_marks(c, in_.x + (in_.w - gridw) / 2, ty, &g, gap);
     let mut y = ty + g.rows * g.cell_h + ui_px(20.0);
     let mut line = String::new();
+    if let Some(f) = look().new_notebook_foot(c, in_, y, s.new_name.as_str(), s.cur_folder.as_str(), tpl) {
+        hits_add(&mut s.hits, f.rename, H_NEW_RENAME, 0);
+        hits_add(&mut s.hits, f.cancel, H_CANCEL, 0);
+        hits_add(&mut s.hits, f.more, H_PAPER_MORE, PAPER_BLANK.0 as i32);
+        hits_add(&mut s.hits, f.file, H_NEW_FILE, 0);
+        hits_add(&mut s.hits, f.create, H_NEW_CREATE, 0);
+        return;
+    }
     // TRANSLATORS: the new notebook's name, then its Rename button (268 px at 29 px, under its
     // icon, inside Gothic's carved line), then the folder it goes in, or the Library itself.
     csnprintf!(&mut line, 320, tr("Name: %s"), &s.new_name);
@@ -3920,6 +3930,9 @@ pub(crate) fn settings_strip(c: &mut Canvas, r: Rect, n: i32, on: i32) -> Vec<Re
         let x = r.x + i * w;
         Rect { x, y: r.y, w: if i == n - 1 { r.x + r.w - x } else { w }, h: r.h }
     };
+    if look().segmented(c, r, n, on, &seg) {
+        return (0..n).map(seg).collect();
+    }
     if (0..n).contains(&on) {
         let s = seg(on);
         let rad = ui_px(16.0);
@@ -4201,6 +4214,7 @@ fn draw_menu(a: &mut App, title: &str, rows: &[MenuRow]) -> Vec<Rect> {
     for (i, row) in rows.iter().enumerate() {
         let r = Rect::new(in_.x, in_.y + i as i32 * (rh + gap), in_.w, rh);
         rects.push(r);
+        if !look().menu_row_card(c, r, row.st) {
         ui_frame(
             c,
             r,
@@ -4229,22 +4243,18 @@ fn draw_menu(a: &mut App, title: &str, rows: &[MenuRow]) -> Vec<Rect> {
                 ui_px(3.0)
             },
         );
-        let fg: u8 = if row.st == ButtonStyle::Selected {
-            255
-        } else if row.st == ButtonStyle::Disabled {
-            170
-        } else {
-            0
-        };
+        }
+        let fg = ui_style_fg(row.st);
         if row.icon != IconKind::None {
+            let side = look().menu_icon_side(rh);
             ui_icon(
                 c,
                 row.icon,
                 Rect::new(
-                    r.x + ui_px(20.0),
-                    r.y + ui_px(15.0),
-                    rh - ui_px(30.0),
-                    rh - ui_px(30.0),
+                    r.x + ui_px(20.0) + (rh - ui_px(30.0) - side) / 2,
+                    r.y + (rh - side) / 2,
+                    side,
+                    side,
                 ),
                 fg,
             );
@@ -5550,7 +5560,7 @@ fn draw_bind_row(
     let selected = learning;
     // (a submenu's rows are Settings' cards: the row being learned is filled, the rest outlined)
     settings_card(c, r, if selected { ButtonStyle::Selected } else { ButtonStyle::Plain });
-    let fg = if selected { 255 } else { 0 };
+    let fg = ui_on_fg(selected);
     let pad = settings_pad();
     let mut text_x = r.x + pad;
     if row.icon != IconKind::None {
@@ -5992,7 +6002,8 @@ fn setting_hit(id: settingsmenu::SettingId) -> i32 {
 /// settingsmenu.rs; this function only lays them out and maps each row to its action.
 fn draw_settings(a: &mut App) {
     let (aw, ah) = (a.w, a.h);
-    let classic = ui_theme() == UiTheme::Classic;
+    // (Classic's rows: where the theme takes Settings' fonts, not faces of its own)
+    let classic = look().faces().is_none();
     let App {
         screen: c,
         lib,
@@ -6083,11 +6094,7 @@ fn draw_settings(a: &mut App) {
                     settingsmenu::DISPLAY_NO_LIGHT
                 })
             }
-            settingsmenu::Label::Style => tr(if classic {
-                settingsmenu::STYLE_CLASSIC
-            } else {
-                settingsmenu::STYLE_GOTHIC
-            }),
+            settingsmenu::Label::Style => tr(look().style_label()),
             settingsmenu::Label::Font => {
                 label_buf.clear();
                 // (one of the owner's own fonts by its family's name, cut short as a name is)
@@ -6395,7 +6402,7 @@ fn draw_font_sheet_in(a: &mut App, applied: Option<usize>) {
     for (i, f) in FONT_FAMILIES.iter().enumerate() {
         let r = cell(i, y);
         let on = own_pick.is_none() && i == pick;
-        let fg: u8 = if on { 255 } else { 0 };
+        let fg = ui_on_fg(on);
         settings_card(c, r, if on { ButtonStyle::Selected } else { ButtonStyle::Plain });
         let mark = rh - ui_px(30.0);
         font_with_family(i, || {
@@ -6516,7 +6523,7 @@ fn font_apply_pick(a: &mut App) -> bool {
         // owner's own that could not be loaded just now (too little memory free, or its file changed).
         app_toast(a, tr("Couldn't use that font."), 3000);
     }
-    httpd_restyle(ui_theme() == UiTheme::Gothic); // (the share pages, if Live view is on)
+    httpd_restyle(look().share_pages_gothic()); // (the share pages, if Live view is on)
     settings_save(&a.settings);
     true
 }
@@ -6622,7 +6629,7 @@ pub fn library_fonts_checked(a: &mut App, changed: bool) {
         font_notice(a);
     }
     if changed {
-        httpd_restyle(ui_theme() == UiTheme::Gothic);
+        httpd_restyle(look().share_pages_gothic());
         redraw(a, RefreshMode::Full);
     } else if lib(a).modal == Modal::Font && !lib(a).files.open {
         // (not while the font pick is over the sheet: its rows are drawn when the pick closes)
@@ -7631,7 +7638,7 @@ fn draw_front(a: &mut App) {
         // Library's top, its two answers the only targets)
         if lib(a).modal == Modal::Exit {
             hits_clear(&mut lib(a).hits);
-            draw_modal(a);
+            ui_with_backdrop(|| draw_modal(a));
             a.toast_floor = toast_floor(a);
         }
         return;
@@ -7648,9 +7655,19 @@ fn draw_front(a: &mut App) {
     } else {draw_base(a);}
     if lib(a).modal != Modal::None {
         hits_clear(&mut lib(a).hits); // a modal captures all input
-        draw_modal(a);
+        ui_with_backdrop(|| draw_modal(a));
     }
+    library_overlay(a);
     a.toast_floor = toast_floor(a);
+}
+
+/// The theme's frame round the Library and its pages (Look::library_overlay), on a whole redraw.
+fn library_overlay(a: &mut App) {
+    if a.scr != ScreenId::Library {
+        return;
+    }
+    let info = ScreenInfo { w: a.w, h: a.h, dpi: a.dpi, items: lib(a).items.len() };
+    look().library_overlay(&mut a.screen, &info);
 }
 
 /// The device's name for About: the Kindle's own model (its device tree, else /proc/usid's model
@@ -7832,7 +7849,7 @@ fn draw_pick_cards(a: &mut App, title: &str, rows: &[(String, i32, bool)], pick:
         let ri = k as i32 % per;
         let r = Rect::new(in_.x + col * (cw + gap), in_.y + ri * (rh + gap), cw, rh);
         settings_card(c, r, if *selected { ButtonStyle::Selected } else { ButtonStyle::Plain });
-        let fg: u8 = if *selected { 255 } else { 0 };
+        let fg = ui_on_fg(*selected);
         ui_text(
             c,
             FontFace::Regular,
@@ -8874,18 +8891,10 @@ fn act(a: &mut App, h: &Hit) {
             redraw(a, RefreshMode::Ui);
         }
         H_SET_THEME => {
-            a.settings.theme = if a.settings.theme == UiTheme::Classic as i32 {
-                UiTheme::Gothic as i32
-            } else {
-                UiTheme::Classic as i32
-            };
-            ui_set_theme(if a.settings.theme == UiTheme::Classic as i32 {
-                UiTheme::Classic
-            } else {
-                UiTheme::Gothic
-            });
+            a.settings.theme = UiTheme::from_i32(a.settings.theme).next().index();
+            ui_set_theme(UiTheme::from_i32(a.settings.theme));
             crate::userfonts::userfonts_apply(a); // (Classic's own font, if it has one; Gothic holds none)
-            httpd_restyle(ui_theme() == UiTheme::Gothic);
+            httpd_restyle(look().share_pages_gothic());
             settings_save(&a.settings);
             redraw(a, RefreshMode::Full);
         }
@@ -10296,7 +10305,7 @@ pub fn library_enter(a: &mut App) {
         // The font settings.ini asks for, if its check ended while a notebook was open: from now on (never in
         // the middle of a page).
         if crate::userfonts::userfonts_waiting() && crate::userfonts::userfonts_apply(a) {
-            httpd_restyle(ui_theme() == UiTheme::Gothic);
+            httpd_restyle(look().share_pages_gothic());
         }
     }
     let s = lib(a);
@@ -13495,7 +13504,7 @@ mod tests {
         font_set_overflow_hook(Some(|text, need, have| panic!("{text:?} needs {need}px, has {have}px")));
         for language in ["en", "es"] {
             i18n_set(language);
-            for theme in [UiTheme::Gothic, UiTheme::Classic] {
+            for theme in UiTheme::all() {
                 ui_set_theme(theme);
                 for (w, h) in [(1860, 2480), (2480, 1860)] {
                     let mut a = App { w, h, dpi: 300.0, ..Default::default() };
@@ -13521,7 +13530,7 @@ mod tests {
     #[test]
     fn buttons_rows_have_separate_reachable_touch_targets() {
         assert_eq!(font_init(), 0);
-        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+        for theme in UiTheme::all() {
             ui_set_theme(theme);
             for (w, h, dpi) in [(1860, 2480, 300.0), (1986, 2648, 320.0)] {
                 ui_init(dpi);
@@ -13610,7 +13619,7 @@ mod tests {
             .position(|c| c.items.iter().any(|it| it.id == settingsmenu::SettingId::Wifi))
             .expect("the Wi-Fi row's category") as i32;
         for lang in ["en", "es", "ja"] {
-            for theme in [UiTheme::Gothic, UiTheme::Classic] {
+            for theme in UiTheme::all() {
                 for (w, h) in [(1860, 2480), (2480, 1860)] {
                     ui_init(300.0);
                     ui_set_theme(theme);
@@ -13649,7 +13658,7 @@ mod tests {
         assert_eq!(store_init(root.to_str().unwrap()), 0);
         assert_eq!(font_init(), 0);
         i18n_set("en");
-        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+        for theme in UiTheme::all() {
             for (w, h) in [(1860, 2480), (2480, 1860)] {
                 ui_init(300.0);
                 ui_set_theme(theme);

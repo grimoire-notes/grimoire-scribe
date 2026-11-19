@@ -1063,6 +1063,9 @@ fn button(v: &mut MapView, c: &mut Canvas, r: Rect, id: u8, text: &str, icon: Ic
     }
 }
 fn ring(c: &mut Canvas, x: f32, y: f32, r: f32, t: f32) {
+    if look().map_ring(c, x, y, r, t) {
+        return;
+    }
     canvas_disc_aa(c, x, y, r, 0, 1.0);
     if r > t {
         canvas_disc_aa(c, x, y, r - t, 255, 1.0);
@@ -1119,7 +1122,7 @@ fn render(v: &mut MapView, c: &mut Canvas, nav: &Nav) {
             };
         if incoming {
             canvas_dash_poly(c, &[a, b], u(5.0), u(20.0), u(14.0), 0, 0);
-        } else {
+        } else if !look().map_link(c, a, b, width, selected) {
             canvas_line_aa(c, a.0, a.1, b.0, b.1, width, 0);
         }
     }
@@ -1153,6 +1156,7 @@ fn render(v: &mut MapView, c: &mut Canvas, nav: &Nav) {
         // node has the selected ring.
         if is_selected(v, i) {
             ring(c, x, y, r + 12.0, 8.0);
+            look().map_lock(c, x, y, r);
         } else if same_book == Some(n.book) {
             ring(c, x, y, r + 5.0, 1.5);
         }
@@ -1167,10 +1171,12 @@ fn render(v: &mut MapView, c: &mut Canvas, nav: &Nav) {
             2 | 3 => 2,
             _ => 4,
         };
+        if !look().map_node(c, x, y, r, level) {
         canvas_disc_pattern(c, x, y, r, level);
         if level < 4 {
             ring(c, x, y, r, 3.0);
             canvas_disc_pattern(c, x, y, (r - 3.0).max(0.0), level);
+        }
         }
         if n.index_links > 0 {
             canvas_lozenge(c, x + r, y - r, u(8.0) as f32, 0);

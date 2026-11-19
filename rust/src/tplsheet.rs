@@ -127,7 +127,14 @@ fn templates_sheet_rect(a: &App, new_notebook: bool, g: &mut PaperGrid) -> (Rect
 /// preferred: "Narrow," over "no margin"), so that labels side by side never run into each other.
 /// In bold for the selected tile, on as many lines as it has in regular.
 pub fn paper_tile_label(c: &mut Canvas, tile: Rect, gap: i32, label: &str, selected: bool) {
+    paper_tile_label_n(c, tile, gap, 0, label, selected);
+}
+/// The same with the tile's number (1 up; 0: none), which a theme may print before the label (Look::tile_label).
+pub fn paper_tile_label_n(c: &mut Canvas, tile: Rect, gap: i32, n: i32, label: &str, selected: bool) {
     let tr = tile;
+    if look().tile_label(c, tile, gap, n, label, selected) {
+        return;
+    }
     let lf = if selected { FontFace::Bold } else { FontFace::Regular };
     let ls = ui_small_size() * 0.9;
     // By its regular width, so that a label keeps its lines when its tile is selected (in bold).
@@ -146,6 +153,14 @@ pub fn paper_tile_label(c: &mut Canvas, tile: Rect, gap: i32, label: &str, selec
     } else {
         font_draw_centered(c, lf, ls, Rect { x: tr.x - gap / 2, y: tr.y + tr.h + ui_px(16.0), w: tr.w + gap, h: ui_px(64.0) }, label, 0);
     }
+}
+/// A paper tile's frame: a thin line round it, a thick one round the selected tile (cell_h: the grid's).
+pub fn paper_tile_frame(c: &mut Canvas, tile: Rect, gap: i32, cell_h: i32, sel: bool) {
+    look().tile_frame(c, tile, gap, cell_h, sel);
+}
+/// The theme's marks round a grid of tiles (x0, y0: the first tile's corner), if it has any.
+pub fn paper_grid_marks(c: &mut Canvas, x0: i32, y0: i32, g: &PaperGrid, gap: i32) {
+    look().grid_marks(c, x0, y0, g, gap);
 }
 /// The More papers... tile's picture when it has none to show (the paper is no picture): a blank
 /// page with the sign for more.
@@ -424,7 +439,7 @@ pub fn pdf_page_suffix(page: u32) -> String {
 // names are (the fit check does not hear of a name, which is the owner's). A PDF's page (#172) keeps its number in
 // view: the file's name is cut short before it.
 fn tile_name(c: &mut Canvas, tr: Rect, name: &str, page: u32, selected: bool) {
-    let f = if selected && ui_theme() != UiTheme::Gothic { FontFace::Bold } else { FontFace::Regular }; // (as the cards' names)
+    let f = if selected { look().name_face() } else { FontFace::Regular }; // (as the cards' names)
     let px = ui_small_size() * 0.9;
     let mut lr = Rect { x: tr.x, y: tr.y + tr.h + ui_px(16.0), w: tr.w, h: ui_px(64.0) };
     let w = font_measure(f, px, name);

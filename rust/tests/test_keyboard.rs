@@ -368,13 +368,13 @@ fn symbols_page() {
 fn symbols_in_every_face() {
     const FACES: [FontFace; FontFace::COUNT] = [FontFace::Regular, FontFace::Bold, FontFace::Title, FontFace::Caps, FontFace::Fixed, FontFace::FixedBold];
     for cp in "1234567890!@#$%^&*()?,\":;_+=/~[]<>\u{20ac}\u{a3}\u{b0}-'.".chars().map(|c| c as u32) {
-        for th in [UiTheme::Classic, UiTheme::Gothic] {
+        for th in UiTheme::all() {
             ui_set_theme(th);
             for (f, face) in FACES.into_iter().enumerate() {
                 // (Classic's faces are Terminess's: there a symbol above U+007F must be its own)
                 let ok = font_has_glyph(face, cp) || (cp > 0x7F && th == UiTheme::Gothic);
                 if !ok {
-                    eprintln!("  U+{:04X} missing in face {} ({:?})", cp, f, th as i32);
+                    eprintln!("  U+{:04X} missing in face {} ({:?})", cp, f, th.id());
                 }
                 check!(ok);
             }
@@ -423,7 +423,7 @@ fn accents_in_every_face() {
             continue;
         }
         found += 1;
-        for (theme, th) in [UiTheme::Gothic, UiTheme::Classic].into_iter().enumerate() {
+        for (theme, th) in UiTheme::all().enumerate() {
             ui_set_theme(th);
             for (f, face) in FACES.into_iter().enumerate() {
                 let ok = font_face_has_glyph(face, cp) && font_face_has_glyph(face, keyboard_upper(cp));
@@ -637,7 +637,7 @@ fn japanese_kana_page() {
 // DotGothic16's fallback covers what the pixel and Terminess faces lack.
 fn kana_in_every_face() {
     const ALL: &str = "\u{3042}\u{3044}\u{3046}\u{3048}\u{304a}\u{304b}\u{304d}\u{304f}\u{3051}\u{3053}\u{3055}\u{3057}\u{3059}\u{305b}\u{305d}\u{305f}\u{3061}\u{3063}\u{3064}\u{3065}\u{3066}\u{3068}\u{306a}\u{306b}\u{306c}\u{306d}\u{306e}\u{306f}\u{3071}\u{3072}\u{3075}\u{3078}\u{307b}\u{307e}\u{307f}\u{3080}\u{3081}\u{3082}\u{3083}\u{3084}\u{3086}\u{3088}\u{3089}\u{308a}\u{308b}\u{308c}\u{308d}\u{308f}\u{3092}\u{3093}\u{3094}\u{309b}\u{30a1}\u{30a2}\u{30ab}\u{30fc}\u{3001}\u{3002}\u{300c}\u{300d}\u{30fb}\u{ff1f}\u{ff01}\u{5c0f}";
-    for (theme, th) in [UiTheme::Gothic, UiTheme::Classic].into_iter().enumerate() {
+    for (theme, th) in UiTheme::all().enumerate() {
         ui_set_theme(th);
         for ch in ALL.chars() {
             for (f, face) in [FontFace::Bold, FontFace::Title].into_iter().enumerate() {

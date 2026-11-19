@@ -56,7 +56,7 @@ fn run(args: Vec<String>) -> i32 {
     if !(1..=16).contains(&k) || font_init() != 0 {
         return 1;
     }
-    font_set_gothic(true);
+    font_set_faces(UiTheme::Gothic.look().faces());
     // The title face is Jacquard at 1.1x the asked size; 43 design pixels make one line.
     let px = 43.0f32 * k as f32 / 1.1f32;
     let word = "Grimoire";
