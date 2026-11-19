@@ -25,10 +25,11 @@ impl Look for Cassette {
         n_("Cassette")
     }
     // The mockups' type. Mono text, Space Mono for caps (button words, headings), Archivo Black for
-    // titles; the FIXED faces (clock, counts) Space Mono too.
+    // titles; the FIXED faces (clock, counts) Space Mono too. (The text a little smaller than the bold: a
+    // mono face is wide, and the narrowest columns, the Links bar's "pág. 2000", hold it so.)
     fn faces(&self) -> Option<[FaceMap; FontFace::COUNT]> {
         let mut m = [
-            fm_bold(TTF_JETBRAINS, 1.08),      // FONT_REGULAR (its fallback Terminess regular, below)
+            fm_bold(TTF_JETBRAINS, 1.03),      // FONT_REGULAR (its fallback Terminess regular, below)
             fm_bold(TTF_JETBRAINS_BOLD, 1.08), // FONT_BOLD
             fm_bold(TTF_ARCHIVO, 1.05),        // FONT_TITLE
             fm_bold(TTF_SPACEMONO_BOLD, 1.08), // FONT_CAPS
