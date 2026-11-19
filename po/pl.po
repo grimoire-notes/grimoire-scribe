@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Grimoire 2.1.0\n"
 "Report-Msgid-Bugs-To: https://github.com/ganten1998/grimoire-scribe/issues\n"
-"POT-Creation-Date: 2026-11-27 18:04+0100\n"
+"POT-Creation-Date: 2026-11-27 17:57+0100\n"
 "PO-Revision-Date: 2026-11-16 00:00+0000\n"
 "Last-Translator: draft\n"
 "Language-Team: Polish\n"
@@ -239,7 +239,7 @@ msgstr "Dopasuj stronę"
 msgid "Tool picker"
 msgstr "Wybór narzędzia"
 
-#: rust/src/actions.rs rust/src/library.rs
+#: rust/src/actions.rs rust/src/library.rs rust/src/looks/cassette.rs
 msgid "Paper"
 msgstr "Papier"
 
@@ -1152,7 +1152,8 @@ msgstr "Importuj PDF lub obrazy"
 #. TRANSLATORS: (also) the last tile of the Templates and Photos sheets, under its picture (a tile of about 250
 #. px, on two lines if need be): it opens the file picker to copy a picture from anywhere on the Kindle into
 #. grimoire/templates or grimoire/photos.
-#: rust/src/browser.rs rust/src/library.rs rust/src/tplsheet.rs
+#: rust/src/browser.rs rust/src/library.rs rust/src/looks/cassette.rs
+#: rust/src/tplsheet.rs
 msgid "From a file..."
 msgstr "Z pliku..."
 
@@ -1368,7 +1369,8 @@ msgstr "Początek: %s"
 #. the main one), or at 34 px, or two lines of that.
 #: rust/src/browser.rs rust/src/calibrate.rs rust/src/editor.rs
 #: rust/src/keyboard.rs rust/src/library.rs rust/src/linkbar.rs
-#: rust/src/musicbuild.rs rust/src/pagesview.rs rust/src/share.rs
+#: rust/src/looks/cassette.rs rust/src/musicbuild.rs rust/src/pagesview.rs
+#: rust/src/share.rs
 msgid "Cancel"
 msgstr "Anuluj"
 
@@ -1454,8 +1456,8 @@ msgstr[2] "Importuj %d obrazów jako notatnik"
 
 #. TRANSLATORS: a held page's sheet in the Pages view, a row (about 950 px at 34 px): give the page
 #. a name (its naming keyboard, titled Page name).
-#: rust/src/browser.rs rust/src/library.rs rust/src/mapview.rs
-#: rust/src/pagesview.rs
+#: rust/src/browser.rs rust/src/library.rs rust/src/looks/cassette.rs
+#: rust/src/mapview.rs rust/src/pagesview.rs
 msgid "Rename"
 msgstr "Zmień nazwę"
 
@@ -1520,7 +1522,8 @@ msgstr "Brak rzeczy do użycia."
 #. TRANSLATORS: between the Library's page buttons (1320 px at 44 px).
 #. TRANSLATORS: between the home's page buttons, as before (1320 px at 44 px).
 #. TRANSLATORS: (also) between the Templates sheet's page buttons, in bold: 440 px at 44 px.
-#: rust/src/browser.rs rust/src/library.rs rust/src/tplsheet.rs
+#: rust/src/browser.rs rust/src/library.rs rust/src/looks/cassette.rs
+#: rust/src/tplsheet.rs
 #, c-format
 msgid "Page %d of %d"
 msgstr "Strona %d z %d"
@@ -1837,7 +1840,7 @@ msgstr "Własna muzyka..."
 
 #. TRANSLATORS: the paper sheets' button that opens the Templates sheet, of pictures copied into
 #. grimoire/templates to write on as paper (a button: 348 px at 44 px, or two lines at 34 px).
-#: rust/src/editor.rs rust/src/library.rs
+#: rust/src/editor.rs rust/src/library.rs rust/src/looks/cassette.rs
 msgid "More layouts..."
 msgstr "Więcej układów..."
 
@@ -3229,21 +3232,21 @@ msgstr "Dotknij +, aby zacząć."
 
 #. TRANSLATORS: the new notebook's name, then its Rename button (268 px at 29 px, under its
 #. icon, inside Gothic's carved line), then the folder it goes in, or the Library itself.
-#: rust/src/library.rs
+#: rust/src/library.rs rust/src/looks/cassette.rs
 #, c-format
 msgid "Name: %s"
 msgstr "Nazwa: %s"
 
-#: rust/src/library.rs
+#: rust/src/library.rs rust/src/looks/cassette.rs
 #, c-format
 msgid "In: %s"
 msgstr "W: %s"
 
-#: rust/src/library.rs
+#: rust/src/library.rs rust/src/looks/cassette.rs
 msgid "Library (top level)"
 msgstr "Biblioteka (główny poziom)"
 
-#: rust/src/library.rs
+#: rust/src/library.rs rust/src/looks/cassette.rs
 msgid "Create"
 msgstr "Utwórz"
 
@@ -4792,6 +4795,16 @@ msgstr "Usuń odnośnik"
 #: rust/src/linkcard.rs
 msgid "To change one, hold it on the page."
 msgstr "Aby zmienić jeden, przytrzymaj go na stronie."
+
+#: rust/src/looks/cassette.rs
+msgid "Style (Cassette)"
+msgstr "Styl (Cassette)"
+
+#. TRANSLATORS: a style in Settings > Display > Style: monospace type, corner brackets, dot-matrix
+#. icons (cassette futurism).
+#: rust/src/looks/cassette.rs
+msgid "Cassette"
+msgstr "Cassette"
 
 #: rust/src/looks/classic.rs
 msgid "Style (Classic)"
