@@ -1,5 +1,4 @@
-//! Cassette's brushes: corner brackets, crosshairs, dot-matrix signs, a grainy ink bleed, sprayed
-//! letters, the blurred backdrop and the frame of instruments. The Look in ../cassette.rs draws with them.
+//! Cassette's brushes: corner brackets, crosshairs, dot-matrix signs, sprayed letters, the blurred backdrop and the frame of instruments. The Look in ../cassette.rs draws with them.
 
 use crate::prelude::*;
 
@@ -24,18 +23,6 @@ fn hash(x: i32, y: i32, seed: u32) -> u32 {
 fn rnd(x: i32, y: i32, seed: u32) -> f32 {
     (hash(x, y, seed) & 0xffff) as f32 / 65535.0
 }
-/// Smooth value noise, 0..1, with cells `cell` px wide.
-fn value_noise(x: i32, y: i32, cell: i32, seed: u32) -> f32 {
-    let cell = cell.max(1);
-    let (gx, gy) = (x.div_euclid(cell), y.div_euclid(cell));
-    let fx = x.rem_euclid(cell) as f32 / cell as f32;
-    let fy = y.rem_euclid(cell) as f32 / cell as f32;
-    let (sx, sy) = (fx * fx * (3.0 - 2.0 * fx), fy * fy * (3.0 - 2.0 * fy));
-    let a = rnd(gx, gy, seed) + (rnd(gx + 1, gy, seed) - rnd(gx, gy, seed)) * sx;
-    let b = rnd(gx, gy + 1, seed) + (rnd(gx + 1, gy + 1, seed) - rnd(gx, gy + 1, seed)) * sx;
-    a + (b - a) * sy
-}
-
 /// Four L-shaped corner brackets around r: arms `arm` px long, `t` px thick, inside r.
 pub fn cs_brackets(c: &mut Canvas, r: Rect, arm: i32, t: i32, gray: u8) {
     let arm = arm.min(r.w / 2).min(r.h / 2);
@@ -54,48 +41,11 @@ pub fn cs_cross(c: &mut Canvas, cx: i32, cy: i32, arm: i32, t: i32, gray: u8) {
     canvas_fill(c, Rect::new(cx - t / 2, cy - arm, t.max(1), 2 * arm + 1), gray);
 }
 
-/// The bleed: a photocopier's soft toner haze along r's inside edges, darkest at the edge and gone
-/// `depth` px in, in blurred patches with a little fine grain, all of it light gray. Drawn over what is
-/// there (darken only).
-pub fn cs_bleed(c: &mut Canvas, r: Rect, depth: i32, seed: u32) {
-    if depth <= 0 || r.w <= 0 || r.h <= 0 {
-        return;
-    }
-    let clip = rect_intersect(r, c.clip);
-    let big = (depth * 3).max(8);
-    let small = (depth / 3).max(3);
-    let paint = |c: &mut Canvas, x: i32, y: i32| {
-        let d = (x - r.x).min(r.x + r.w - 1 - x).min(y - r.y).min(r.y + r.h - 1 - y);
-        if d >= depth {
-            return;
-        }
-        let edge = 1.0 - d as f32 / depth as f32;
-        // two blurred layers of noise (patches, and smudges inside them), a touch of grain on top
-        let haze = 0.55 * value_noise(x, y, big, seed) + 0.45 * value_noise(x, y, small, seed ^ 0x77);
-        let mut g = edge * edge * haze * 1.3;
-        g += (rnd(x, y, seed ^ 0x5eed) - 0.5) * 0.12 * edge;
-        let g = g.clamp(0.0, 1.0);
-        // at most a light gray: the haze never reads as ink
-        let v = (255.0 - 72.0 * g) as u8;
-        let px = &mut c.px[(y * c.stride + x) as usize];
-        *px = (*px).min(v);
-    };
-    for y in clip.y..clip.y + clip.h {
-        let band = y - r.y < depth || r.y + r.h - 1 - y < depth;
-        if band {
-            for x in clip.x..clip.x + clip.w {
-                paint(c, x, y);
-            }
-        } else {
-            for x in (clip.x..clip.x + clip.w.min(depth)).chain((clip.x + clip.w - depth).max(clip.x)..clip.x + clip.w) {
-                paint(c, x, y);
-            }
-        }
-    }
-}
+/// How much the screen behind a sheet is dimmed (paper becomes this much of white).
+const BACKDROP_DIM: f32 = 0.88;
 
-/// What a sheet stands over: the screen outside `keep`, blurred and washed out like a faded photocopy,
-/// so the sheet floats over it. Cheap enough for every redraw: block averages, blurred, scaled back up.
+/// What a sheet stands over: the screen outside `keep`, blurred, washed out like a faded photocopy and
+/// dimmed a little, so the sheet floats over it. Cheap enough for every redraw: block averages, blurred, scaled back up.
 pub fn cs_backdrop(c: &mut Canvas, keep: Rect) {
     let area = c.clip;
     if area.w <= 0 || area.h <= 0 {
@@ -152,8 +102,9 @@ pub fn cs_backdrop(c: &mut Canvas, keep: Rect) {
             let top = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * tx;
             let bot = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * tx;
             let v = top + (bot - top) * ty;
-            // washed out: the ink keeps a third of its darkness
-            c.px[(y * c.stride + x) as usize] = (255.0 - (255.0 - v) * 0.34) as u8;
+            // washed out (the ink keeps a third of its darkness), then dimmed: the screen behind steps back
+            // under a light gray, so the sheet's paper stands out from it
+            c.px[(y * c.stride + x) as usize] = ((255.0 - (255.0 - v) * 0.34) * BACKDROP_DIM) as u8;
         }
     }
 }

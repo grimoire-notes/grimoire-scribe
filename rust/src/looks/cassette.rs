@@ -113,10 +113,9 @@ impl Look for Cassette {
             _ => CS_INK,
         }
     }
-    // brackets over an ink bleed
+    // brackets on clean paper
     fn panel_frame(&self, c: &mut Canvas, p: Rect, _radius: i32) {
         canvas_fill(c, p, 255);
-        cs_bleed(c, p, ui_px(40.0), (p.h as u32) << 3);
         cs_brackets(c, p, ui_px(30.0), ui_px(5.0), CS_INK);
     }
     fn panel_divider(&self, c: &mut Canvas, x: i32, w: i32, y: i32, _gray: u8) {
@@ -246,18 +245,14 @@ impl Look for Cassette {
         sheet_title(c, Rect::new(card.x + ui_px(56.0), card.y + ui_px(24.0), card.w - ui_px(112.0), ui_px(112.0)), title);
         ui_sheet_inner(card, true)
     }
-    // the same small spaced capitals as a sheet's title, left-aligned, centred vertically
+    // the same small spaced capitals as a sheet's title, sprayed at the end, left-aligned, centred vertically
     fn page_title(&self, c: &mut Canvas, r: Rect, title: &str) {
-        let caps = title.to_uppercase();
-        for (px, track) in [(ui_px(50.0), ui_px(14.0)), (ui_px(50.0), ui_px(7.0)), (ui_px(44.0), ui_px(4.0))] {
-            let px = px as f32;
-            if cs_tracked_w(FontFace::Title, px, &caps, track) <= r.w {
-                let w = cs_tracked(c, FontFace::Title, px, r, &caps, track, CS_INK);
-                cs_rail(c, r.x + w + ui_px(40.0), r.x + r.w, r.y + r.h / 2, &format!("MOD.{}", cs_serial(title)));
-                return;
-            }
-        }
-        ui_text(c, FontFace::Title, ui_px(44.0) as f32, ui_small_size(), r, &caps, 2, false, CS_INK);
+        tracked_title(c, r, title, "MOD");
+    }
+    // a screen's header (Files, a folder) as a page's heading
+    fn header_title(&self, c: &mut Canvas, r: Rect, title: &str) -> bool {
+        tracked_title(c, r, title, "DIR");
+        true
     }
     // an ink plate with paper brackets inside its corners
     fn toast_plate(&self, c: &mut Canvas, r: Rect, _ends: i32) {
@@ -574,6 +569,25 @@ fn sheet_title(c: &mut Canvas, r: Rect, title: &str) {
         }
     }
     ui_text(c, FontFace::Title, ui_px(46.0) as f32, ui_small_size(), tr, &caps, 2, false, CS_INK);
+}
+
+/// A heading in r: small spaced capitals, sprayed into grain at their end as a sheet's title is, and a
+/// leader rail with its tag (`MOD.2213`) to r's end. Too long for that (a translation, a folder's name): the
+/// spacing closes up, then a smaller size, then two lines, as ui_text does.
+fn tracked_title(c: &mut Canvas, r: Rect, title: &str, tag: &str) {
+    let caps = title.to_uppercase();
+    for (px, track) in [(ui_px(50.0), ui_px(14.0)), (ui_px(50.0), ui_px(7.0)), (ui_px(44.0), ui_px(4.0))] {
+        let px = px as f32;
+        if cs_tracked_w(FontFace::Title, px, &caps, track) <= r.w {
+            let w = cs_tracked(c, FontFace::Title, px, r, &caps, track, CS_INK);
+            cs_spray(c, Rect::new(r.x - ui_px(10.0), r.y, w + ui_px(20.0), r.h), r.x + w / 2, r.x + w, caps.len() as u32);
+            if r.x + w + ui_px(80.0) < r.x + r.w {
+                cs_rail(c, r.x + w + ui_px(40.0), r.x + r.w, r.y + r.h / 2, &format!("{tag}.{}", cs_serial(title)));
+            }
+            return;
+        }
+    }
+    ui_text(c, FontFace::Title, ui_px(44.0) as f32, ui_small_size(), r, &caps, 2, false, CS_INK);
 }
 
 /// The crosshair a title starts with: a dot-matrix plus, open at its heart.
