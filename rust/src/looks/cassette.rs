@@ -1,6 +1,6 @@
 //! Cassette futurism on e-ink (Rust only): monospace type, corner brackets instead of outlines, gray
 //! (not inverted) selection, dot-matrix icons, sprayed titles, a frame of instruments round the
-//! Library and a blurred backdrop behind sheets. Its brushes are in cassette/ink.rs.
+//! Library and its other screens and a dimmed backdrop behind sheets. Its brushes are in cassette/ink.rs.
 
 mod ink;
 
@@ -59,7 +59,7 @@ impl Look for Cassette {
     fn sheet_metrics(&self) -> (i32, i32, i32) {
         (ui_px(140.0), ui_px(40.0), ui_px(44.0))
     }
-    // (more of the blurred screen round a sheet, so it reads as floating over it)
+    // (more of the dimmed screen round a sheet, so it reads as floating over it)
     fn sheet_margin(&self) -> i32 {
         ui_px(110.0)
     }
@@ -232,7 +232,7 @@ impl Look for Cassette {
         canvas_rect_outline(c, kr, ui_px(4.0), CS_INK);
         canvas_hline(c, kr.x + ui_px(6.0), kr.x + kr.w - ui_px(6.0), mid - ui_px(1.0), ui_px(3.0), CS_INK);
     }
-    // the screen behind blurred and faded, the sheet clean paper over it (where it was just drawn)
+    // the screen behind dimmed, the sheet clean paper over it (where it was just drawn)
     fn sheet(&self, c: &mut Canvas, card: Rect, title: &str) -> Rect {
         if ui_backdrop() {
             cs_backdrop(c, card);
@@ -417,9 +417,10 @@ impl Look for Cassette {
         font_draw_left(c, FontFace::Fixed, px, Rect::new(x + ww + ui_px(24.0), mid.y, cw + 2, mid.h), &count, CS_INK);
         true
     }
-    // The frame of instruments in the margin round the Library and its pages, with what the system knows
-    // (version, panel, notebooks, date, time, battery), then the edge of the picture out of focus. Only on
-    // a whole redraw: the band is blurred once over what was just drawn.
+    // The frame of instruments in the margin round a screen (the Library and its Settings, Files, Pen feel,
+    // the editor with a sheet up), with what the system knows (version, panel, what the screen lists, date,
+    // time, battery), then the edge of the picture out of focus. Only on a whole redraw: the band is
+    // softened once over what was just drawn.
     fn screen_overlay(&self, c: &mut Canvas, info: &ScreenInfo) {
         let t = sys_wall_clock();
         let tm = local_tm(t);

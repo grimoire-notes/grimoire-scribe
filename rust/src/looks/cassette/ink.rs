@@ -1,4 +1,5 @@
-//! Cassette's brushes: corner brackets, crosshairs, dot-matrix signs, sprayed letters, the blurred backdrop and the frame of instruments. The Look in ../cassette.rs draws with them.
+//! Cassette's brushes: corner brackets, crosshairs, dot-matrix signs, sprayed letters, the dimmed backdrop
+//! and the frame of instruments. The Look in ../cassette.rs draws with them.
 
 use crate::prelude::*;
 
@@ -44,67 +45,23 @@ pub fn cs_cross(c: &mut Canvas, cx: i32, cy: i32, arm: i32, t: i32, gray: u8) {
 /// How much the screen behind a sheet is dimmed (paper becomes this much of white).
 const BACKDROP_DIM: f32 = 0.88;
 
-/// What a sheet stands over: the screen outside `keep`, blurred, washed out like a faded photocopy and
-/// dimmed a little, so the sheet floats over it. Cheap enough for every redraw: block averages, blurred, scaled back up.
+/// What a sheet stands over: the screen outside `keep`, dimmed under a light gray (BACKDROP_DIM), as it is
+/// otherwise, so the sheet's paper stands out from it.
 pub fn cs_backdrop(c: &mut Canvas, keep: Rect) {
     let area = c.clip;
     if area.w <= 0 || area.h <= 0 {
         return;
     }
-    let b = ui_px(10.0).max(2); // one cell of the small image
-    let (gw, gh) = ((area.w + b - 1) / b, (area.h + b - 1) / b);
-    let (gwu, ghu) = (gw as usize, gh as usize);
-    let mut g = vec![0f32; gwu * ghu];
-    for gy in 0..gh {
-        for gx in 0..gw {
-            let (x0, y0) = (area.x + gx * b, area.y + gy * b);
-            let (x1, y1) = ((x0 + b).min(area.x + area.w), (y0 + b).min(area.y + area.h));
-            let mut sum = 0u32;
-            for y in y0..y1 {
-                let row = (y * c.stride) as usize;
-                sum += c.px[row + x0 as usize..row + x1 as usize].iter().map(|&v| v as u32).sum::<u32>();
-            }
-            g[gy as usize * gwu + gx as usize] = sum as f32 / ((x1 - x0) * (y1 - y0)).max(1) as f32;
-        }
-    }
-    // three passes of a 3x3 box: close to a gaussian of about two cells
-    for _ in 0..3 {
-        let src = g.clone();
-        for y in 0..ghu {
-            for x in 0..gwu {
-                let mut s = 0.0;
-                let mut n = 0.0;
-                for dy in -1i32..=1 {
-                    for dx in -1i32..=1 {
-                        let (xx, yy) = (x as i32 + dx, y as i32 + dy);
-                        if xx >= 0 && yy >= 0 && (xx as usize) < gwu && (yy as usize) < ghu {
-                            s += src[yy as usize * gwu + xx as usize];
-                            n += 1.0;
-                        }
-                    }
-                }
-                g[y * gwu + x] = s / n;
-            }
-        }
-    }
     let keep = rect_intersect(keep, area);
-    let at = |gx: i32, gy: i32| g[gy.clamp(0, gh - 1) as usize * gwu + gx.clamp(0, gw - 1) as usize];
     for y in area.y..area.y + area.h {
-        let fy = (y - area.y) as f32 / b as f32 - 0.5;
-        let (y0, ty) = (fy.floor() as i32, fy - fy.floor());
+        let row = (y * c.stride) as usize;
         let inside_rows = y >= keep.y && y < keep.y + keep.h;
         for x in area.x..area.x + area.w {
             if inside_rows && x >= keep.x && x < keep.x + keep.w {
                 continue;
             }
-            let fx = (x - area.x) as f32 / b as f32 - 0.5;
-            let (x0, tx) = (fx.floor() as i32, fx - fx.floor());
-            let top = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * tx;
-            let bot = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * tx;
-            let v = top + (bot - top) * ty;
-            // washed out (the ink keeps a third of its darkness), then dimmed: the screen behind steps back
-            // under a light gray, so the sheet's paper stands out from it
-            c.px[(y * c.stride + x) as usize] = ((255.0 - (255.0 - v) * 0.34) * BACKDROP_DIM) as u8;
+            let v = &mut c.px[row + x as usize];
+            *v = (*v as f32 * BACKDROP_DIM) as u8;
         }
     }
 }
