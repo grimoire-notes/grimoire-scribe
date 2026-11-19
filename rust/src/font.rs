@@ -3002,7 +3002,8 @@ mod tests {
     // What is meant to be unseen never shows as a box, even where no face has it: an emoji's ZWJ sequence
     // is a box for each pictograph (its joiners are Terminess's, blank as before), a variation selector and a
     // flag's tags are nothing, as are a combining mark no face has (on a letter that is drawn) and a
-    // control; whitespace no face has is a space. Measured as drawn.
+    // control; whitespace no face has is a space. Measured as drawn. (A theme's own face may have the mark,
+    // U+0323: there it is drawn, as any letter the face has.)
     #[test]
     fn what_is_meant_to_be_unseen_shows_nothing() {
         up();
@@ -3024,7 +3025,8 @@ mod tests {
                     (c, w)
                 };
                 let (a, wa) = shot(name);
-                let (b, wb) = shot(seen);
+                let mark = if font_has_glyph(f, 0x323) { seen.replacen('e', "e\u{323}", 1) } else { seen.to_string() };
+                let (b, wb) = shot(&mark);
                 assert!(wa == wb && a.px == b.px, "{theme:?} {f:?}: {wa} {wb}");
                 assert_eq!(boxes_at(&a, px, 90).len(), 6, "{theme:?} {f:?}");
                 // a control is nothing; whitespace no face has (a line separator) is a space
