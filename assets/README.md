@@ -119,3 +119,7 @@ files byte for byte what it makes.
 `eraser-sample.qpg` contains the maintainer's handwritten “erase me!” practice ink, contributed
 to Grimoire under the project's GPL-3.0 license. The app fits a private in-memory copy to the
 eraser pad. It does not read or modify a notebook to provide this sample.
+
+`JetBrainsMono-Regular.ttf` and `-Bold.ttf` (JetBrains Mono's static release, github.com/JetBrains/JetBrainsMono),
+`SpaceMono-Regular.ttf`, `SpaceMono-Bold.ttf` and `ArchivoBlack-Regular.ttf` (from github.com/google/fonts) are
+the Cassette theme's faces, unmodified, each under the SIL Open Font License 1.1 (the `*-OFL-1.1.txt` beside them).
