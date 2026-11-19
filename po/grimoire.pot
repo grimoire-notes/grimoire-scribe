@@ -5782,6 +5782,23 @@ msgstr ""
 msgid "Style (Classic)"
 msgstr ""
 
+#. TRANSLATORS: the title of the list of the app's styles (Settings > Display > Style): Gothic,
+#. Classic and any other.
+#: rust/src/library.rs
+msgid "Style"
+msgstr ""
+
+#. TRANSLATORS: a style in Settings > Display > Style: book and blackletter type, pointed arches.
+#: rust/src/looks/gothic.rs
+msgid "Gothic"
+msgstr ""
+
+#. TRANSLATORS: a style in Settings > Display > Style: Terminess (or the font Settings > Font picks),
+#. rounded corners.
+#: rust/src/looks/classic.rs
+msgid "Classic"
+msgstr ""
+
 #: rust/src/settingsmenu.rs
 msgid "Display: brightness, warmth"
 msgstr ""

@@ -60,6 +60,9 @@ enum Modal {
     LinkQr = 395,
     /// The Files card's menu (2.2, Rust only; a number of its own as LinkQr's): Open, Hide from Library, Cancel
     FilesMore = 397,
+    /// Settings > Display > Style (Rust only; a number of its own): every theme (looks::LOOKS), as the Darker
+    /// lines list
+    Theme = 398,
     /// Settings > System > Darker lines in imported PDFs (2.2, issue #173, Rust only; a number of its own, beside the
     /// eraser's): Off, Medium, Strong, as the eraser's list
     DarkerLines = 385,
@@ -292,6 +295,9 @@ const H_APPS_NEXT: i32 = 282;
 // Installed app tiles use an argument past the built-in app ids (0 Files, 1 Share, 2 Settings,
 // 3 Package Store, 6 What's new, 7 About): an index into the sorted installed app package list.
 const H_APP_PKG_BASE: i32 = 30_000;
+// Settings > Display's Style list: a theme (arg: its index, UiTheme), and Back. (Beside Darker lines' ids.)
+const H_THEME_PICK: i32 = 253;
+const H_THEME_BACK: i32 = 254;
 // Settings > Wi-Fi's top controls and lists: Nearby/Saved (arg: 0 or 1), Rescan, Other... (a hidden
 // network), a saved row's trash (arg: a row), and a network a scan found (arg: an index of
 // WifiSheet.near). The saved rows keep H_WIFI_NET.
@@ -7483,6 +7489,14 @@ fn draw_modal(a: &mut App) {
             // TRANSLATORS: the title of the list of what the eraser does (Settings > Pen).
             draw_pick_sheet(a, tr("Eraser"), &rows, H_ERASER_PICK, H_ERASER_BACK);
         }
+        Modal::Theme => {
+            let cur = UiTheme::from_i32(a.settings.theme);
+            let rows: Vec<(String, i32, bool)> =
+                UiTheme::all().map(|t| (tr(t.look().name()).to_string(), t.index(), t == cur)).collect();
+            // TRANSLATORS: the title of the list of the app's styles (Settings > Display > Style): Gothic,
+            // Classic and any other.
+            draw_pick_cards(a, tr("Style"), &rows, H_THEME_PICK, H_THEME_BACK, 1);
+        }
         Modal::DarkerLines => {
             let cur = clampi(a.settings.pdf_gamma, 0, 2);
             let rows: Vec<(String, i32, bool)> = settingsmenu::DARKER_NAMES
@@ -7991,6 +8005,7 @@ fn settings_sheet(m: Modal) -> bool {
             | Modal::SideButton
             | Modal::EraserMode
             | Modal::DarkerLines
+            | Modal::Theme
             | Modal::DeviceInfo
             | Modal::LinkQr
             | Modal::Updates
@@ -8890,13 +8905,23 @@ fn act(a: &mut App, h: &Hit) {
             settings_save(&a.settings);
             redraw(a, RefreshMode::Ui);
         }
-        H_SET_THEME => {
-            a.settings.theme = UiTheme::from_i32(a.settings.theme).next().index();
-            ui_set_theme(UiTheme::from_i32(a.settings.theme));
-            crate::userfonts::userfonts_apply(a); // (Classic's own font, if it has one; Gothic holds none)
-            httpd_restyle(look().share_pages_gothic());
-            settings_save(&a.settings);
+        // Style: the list of the themes; a pick applies at once and goes back to Settings.
+        H_SET_THEME => open_modal(a, Modal::Theme),
+        H_THEME_PICK => {
+            lib(a).modal = Modal::Settings;
+            let pick = UiTheme::from_i32(h.arg);
+            if pick.index() != a.settings.theme {
+                a.settings.theme = pick.index();
+                ui_set_theme(pick);
+                crate::userfonts::userfonts_apply(a); // (Classic's own font, if it has one; Gothic holds none)
+                httpd_restyle(look().share_pages_gothic());
+                settings_save(&a.settings);
+            }
             redraw(a, RefreshMode::Full);
+        }
+        H_THEME_BACK => {
+            lib(a).modal = Modal::Settings;
+            redraw(a, RefreshMode::Ui);
         }
         H_SET_DARK => {
             a.settings.invert = !a.settings.invert;
@@ -10139,7 +10164,7 @@ pub fn library_back(a: &mut App) -> bool {
         Modal::FolderPicture => tap(a, H_LOOK_BACK),
         Modal::FolderLook => tap(a, H_LOOK_DONE),
         Modal::Language | Modal::Koreader | Modal::Shortcuts | Modal::PairMenu | Modal::Updates | Modal::Wifi
-        | Modal::SideButton | Modal::EraserMode | Modal::DarkerLines | Modal::DeviceInfo => {
+        | Modal::SideButton | Modal::EraserMode | Modal::DarkerLines | Modal::Theme | Modal::DeviceInfo => {
             if modal == Modal::Updates {
                 crate::packagestore::updates_close(a);
             }
@@ -11286,6 +11311,8 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
         csnprintf!(out, cap, "eraser-mode");
     } else if key == "sheet" && s.modal == Modal::DarkerLines {
         csnprintf!(out, cap, "darker-lines");
+    } else if key == "sheet" && s.modal == Modal::Theme {
+        csnprintf!(out, cap, "style");
     } else if key == "sheet" && s.modal == Modal::DeviceInfo {
         csnprintf!(out, cap, "about-device");
     } else if key == "device.name" {
@@ -11480,12 +11507,16 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_SET_ERASER => "eraser-mode", H_ERASER_PICK => "eraser-mode.", H_ERASER_BACK => "eraser-mode.back",
                 H_SET_DARKER => "darker-lines", H_DARKER_PICK => "darker-lines.", H_DARKER_BACK => "darker-lines.back",
                 H_SET_KINDLE => "kindle-notebooks",
+                H_THEME_PICK => "theme.", H_THEME_BACK => "theme.back",
                 H_SET_PINCH => "pinch", H_SET_MIRROR => "mirror",
                 H_SET_DEVICE => "about-device", H_DEVICE_BACK => "about-device.back",
                 _ => "",
             });
             if hit.id == H_LANG_PICK {
                 name.push_str(i18n_language_code(hit.arg).unwrap_or("auto"));
+            }
+            if hit.id == H_THEME_PICK {
+                name.push_str(UiTheme::from_i32(hit.arg).id());
             }
             if matches!(hit.id, H_SIDE_PICK | H_ERASER_PICK | H_DARKER_PICK) { name.push_str(&hit.arg.to_string()); }
             // A folder look's tiles by name (2.3, issue #230): the icon's, or the picture's file name.

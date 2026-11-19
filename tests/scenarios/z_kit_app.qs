@@ -48,6 +48,9 @@ shot 02-settings-system-gothic
 tap library settings.cat.1
 wait 100
 tap library theme
+wait 100
+expect library.sheet is style
+tap library theme.classic
 wait 300
 expect settings.theme is classic
 tap library settings.cat.5

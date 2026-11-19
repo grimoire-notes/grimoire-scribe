@@ -139,6 +139,9 @@ tap library rotate
 wait 600
 expect settings.follow_rotation is 1
 tap library theme
+wait 100
+expect library.sheet is style
+tap library theme.classic
 wait 600
 expect settings.theme is classic
 expect live.stale.1704.220.128.1734 is 0

@@ -114,6 +114,8 @@ pub trait Look: Sync {
     fn id(&self) -> &'static str;
     /// Settings' Style row with this theme on, untranslated (marked with n_ where it is written)
     fn style_label(&self) -> &'static str;
+    /// The theme's name in Settings' Style list, untranslated (marked with n_)
+    fn name(&self) -> &'static str;
     /// The theme's own faces, whatever font Settings has (None: Classic's family, or the owner's own
     /// font, and Settings' Font row with them).
     fn faces(&self) -> Option<[FaceMap; FontFace::COUNT]> {

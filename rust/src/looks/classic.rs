@@ -15,6 +15,11 @@ impl Look for Classic {
     fn style_label(&self) -> &'static str {
         n_("Style (Classic)")
     }
+    fn name(&self) -> &'static str {
+        // TRANSLATORS: a style in Settings > Display > Style: Terminess (or the font Settings > Font picks),
+        // rounded corners.
+        n_("Classic")
+    }
 }
 
 /// Classic's button (Gothic's too, which carves it and lifts its label): an outline, filled black when

@@ -14,6 +14,10 @@ impl Look for Gothic {
     fn style_label(&self) -> &'static str {
         n_("Style (Gothic)")
     }
+    fn name(&self) -> &'static str {
+        // TRANSLATORS: a style in Settings > Display > Style: book and blackletter type, pointed arches.
+        n_("Gothic")
+    }
     fn faces(&self) -> Option<[FaceMap; FontFace::COUNT]> {
         Some([
             fm(TTF_JERSEY, 1.15, false),   // FONT_REGULAR

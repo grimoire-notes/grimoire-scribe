@@ -64,6 +64,9 @@ tap library settings.cat.1
 wait 50
 tap library theme
 wait 100
+expect library.sheet is style
+tap library theme.classic
+wait 100
 expect settings.theme is classic
 tap library done
 wait 50

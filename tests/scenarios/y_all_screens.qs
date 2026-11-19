@@ -378,8 +378,9 @@ tap library settings.cat.1
 wait 50
 tap library theme
 wait 100
-shot 03-settings-other-style
-tap library theme
+expect library.sheet is style
+shot 03-settings-style-list
+tap library theme.back
 wait 100
 tap library settings.cat.5
 wait 50
