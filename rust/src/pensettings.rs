@@ -367,7 +367,13 @@ fn draw_pad_frame(a: &mut App) {
     }
 }
 
+/// The whole page, framed by the theme (Look::screen_overlay).
 fn draw_all(a: &mut App) {
+    draw_page(a);
+    crate::library::screen_overlay(a, 0);
+}
+
+fn draw_page(a: &mut App) {
     let (aw, ah) = (a.w, a.h);
     hits_clear(&mut st(a).hits);
     let mut title = String::new();

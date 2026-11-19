@@ -2576,6 +2576,7 @@ impl Browser {
         if self.card.is_some() {
             self.draw_card(a);
         }
+        crate::library::screen_overlay(a, self.rows.len());
         a.toast_floor = 0;
         // the rename keyboard over it all (2.2, issue #144); a toast stays above its keys
         if self.kb.open {

@@ -7675,13 +7675,19 @@ fn draw_front(a: &mut App) {
     a.toast_floor = toast_floor(a);
 }
 
-/// The theme's frame round the Library and its pages (Look::library_overlay), on a whole redraw.
+/// The theme's frame round the Library and its pages (Look::screen_overlay), on a whole redraw.
 fn library_overlay(a: &mut App) {
     if a.scr != ScreenId::Library {
         return;
     }
-    let info = ScreenInfo { w: a.w, h: a.h, dpi: a.dpi, items: lib(a).items.len() };
-    look().library_overlay(&mut a.screen, &info);
+    let items = lib(a).items.len();
+    screen_overlay(a, items);
+}
+
+/// The theme's frame round the screen drawn whole (Look::screen_overlay), items what it lists.
+pub(crate) fn screen_overlay(a: &mut App, items: usize) {
+    let info = ScreenInfo { w: a.w, h: a.h, dpi: a.dpi, items };
+    look().screen_overlay(&mut a.screen, &info);
 }
 
 /// The device's name for About: the Kindle's own model (its device tree, else /proc/usid's model

@@ -78,12 +78,13 @@ pub struct ShelfInfo<'a> {
     pub folder: &'a str,
 }
 
-/// The Library as a theme frames it on a whole redraw (Look::library_overlay).
+/// A screen as a theme frames it on a whole redraw (Look::screen_overlay): the Library and its Settings, Files,
+/// Pen feel, the editor with a sheet up.
 pub struct ScreenInfo {
     pub w: i32,
     pub h: i32,
     pub dpi: f32,
-    /// the entries of the shelf shown
+    /// what the screen lists (the shelf's entries, a folder's, a notebook's pages; 0 for none)
     pub items: usize,
 }
 
@@ -194,9 +195,9 @@ pub trait Look: Sync {
     fn new_sheet_spacing(&self) -> NewSheetSpacing {
         NewSheetSpacing { head: ui_px(80.0), gap: ui_px(30.0), foot: ui_px(420.0), spread: false }
     }
-    /// Whether the editor's sheets stand over the page blurred behind them (the screen is then composed
-    /// whole while one is up, with ui_with_backdrop).
-    fn blurs_behind_sheets(&self) -> bool {
+    /// Whether the editor's sheets stand over a backdrop of the theme's (Look::sheet with ui_backdrop) and its
+    /// frame (Look::screen_overlay): the screen is then composed whole while one is up.
+    fn backdrop_behind_sheets(&self) -> bool {
         false
     }
 
@@ -382,8 +383,8 @@ pub trait Look: Sync {
     fn library_pager(&self, _c: &mut Canvas, _pr: Rect, _nr: Rect, _page: i32, _pages: i32) -> bool {
         false
     }
-    /// The Library framed on a whole redraw, over everything.
-    fn library_overlay(&self, _c: &mut Canvas, _info: &ScreenInfo) {}
+    /// A screen framed on a whole redraw, over everything (ScreenInfo says which).
+    fn screen_overlay(&self, _c: &mut Canvas, _info: &ScreenInfo) {}
     /// New notebook's heading over the papers, with the paper chosen. true: drawn.
     fn new_notebook_heading(&self, _c: &mut Canvas, _r: Rect, _chosen: &str) -> bool {
         false

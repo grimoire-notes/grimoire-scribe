@@ -2640,7 +2640,7 @@ fn app_flush_in(a: &mut App) {
         notice_flush(a); // (the staying notice alone, the same way)
         return;
     }
-    crate::editor::editor_backdrop_sync(a); // (a sheet's blur behind it, after it opened or closed: Look::blurs_behind_sheets)
+    crate::editor::editor_backdrop_sync(a); // (a sheet's backdrop behind it, after it opened or closed: Look::backdrop_behind_sheets)
     toast_follow(a); // (a screen that moves its floor redraws, so there is something to flush)
     let mut m = a.dirty_mode;
     // The quick panel is overlaid for this present, like the toast: its pixels are put back after.

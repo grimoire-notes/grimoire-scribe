@@ -3505,18 +3505,18 @@ fn compose(a: &mut App, r: Rect) {
         return;
     }
     a.toast_floor = 0;
-    // (a theme whose sheets stand over the page blurred: with one up, any part drawn again is the whole
-    // screen, or the blur would be patched with sharp page)
+    // (a theme whose sheets stand over a backdrop: with one up, any part drawn again is the whole screen, or
+    // the backdrop would be patched with bare page)
     let full = Rect { x: 0, y: 0, w: a.w, h: a.h };
-    let blur = sheet_blur_wanted(a);
-    let r = if blur { full } else { rect_intersect(r, full) };
+    let backdrop = sheet_backdrop_wanted(a);
+    let r = if backdrop { full } else { rect_intersect(r, full) };
     if rect_is_empty(r) {
         return;
     }
-    if blur || r == full {
-        SHEET_BLURRED.set(blur);
+    if backdrop || r == full {
+        SHEET_BACKDROP.set(backdrop);
     }
-    if blur {
+    if backdrop {
         app_invalidate(a, full, RefreshMode::Ui);
     }
     let top = status_reserved(a);
@@ -3568,7 +3568,7 @@ fn compose(a: &mut App, r: Rect) {
         draw_panel(a);
         a.screen.clip = clip;
     }
-    if blur {
+    if backdrop {
         ui_with_backdrop(|| draw_menus(a, r));
     } else {
         draw_menus(a, r);
@@ -3581,28 +3581,32 @@ fn compose(a: &mut App, r: Rect) {
         // A draw of part of the strip repeats the time the whole strip was drawn with (status_bar_time).
         crate::globalui::gui_status_bar_transparent(&mut a.screen, a.w, status_bar_time(rect_contains_rect(r, strip)));
     }
+    if backdrop {
+        let pages = ed_ref(a).nb.page_ids.len();
+        crate::library::screen_overlay(a, pages);
+    }
 }
 
 thread_local! {
-    /// Whether the screen was last composed whole with a sheet's blur behind it (Look::blurs_behind_sheets).
-    static SHEET_BLURRED: Cell<bool> = const { Cell::new(false) };
+    /// Whether the screen was last composed whole with a sheet's backdrop behind it (Look::backdrop_behind_sheets).
+    static SHEET_BACKDROP: Cell<bool> = const { Cell::new(false) };
 }
 
-/// A sheet up over the page (Paper, Templates, Display, Custom music), in a theme that blurs and fades
-/// the page behind it (Look::blurs_behind_sheets), as in the Library.
-fn sheet_blur_wanted(a: &App) -> bool {
-    look().blurs_behind_sheets() && a.ed.as_deref().is_some_and(|s| s.paper_open || s.ts.open || s.dm.open || s.mb.open)
+/// A sheet up over the page (Paper, Templates, Display, Custom music), in a theme that draws a backdrop behind
+/// it and frames the screen (Look::backdrop_behind_sheets), as in the Library.
+fn sheet_backdrop_wanted(a: &App) -> bool {
+    look().backdrop_behind_sheets() && a.ed.as_deref().is_some_and(|s| s.paper_open || s.ts.open || s.dm.open || s.mb.open)
 }
 
 /// Before a refresh (app_flush): a sheet that opened or closed by drawing itself over the screen, or by
 /// drawing again only where it was, leaves the page behind it as it was; the whole screen is composed
-/// once more then, blurred behind the sheet or sharp again without it.
+/// once more then, with the backdrop behind the sheet or bare again without it.
 pub fn editor_backdrop_sync(a: &mut App) {
     if a.scr != ScreenId::Editor || a.ed.is_none() {
-        SHEET_BLURRED.set(false);
+        SHEET_BACKDROP.set(false);
         return;
     }
-    if sheet_blur_wanted(a) != SHEET_BLURRED.get() {
+    if sheet_backdrop_wanted(a) != SHEET_BACKDROP.get() {
         compose_all(a, RefreshMode::Ui);
     }
 }

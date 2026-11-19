@@ -397,9 +397,9 @@ pub fn ui_with_bare_buttons<R>(f: impl FnOnce() -> R) -> R {
 pub fn ui_bare() -> bool {
     G_BARE.get()
 }
-/// f with the whole screen just drawn under the sheets it draws, so a theme may blur it behind them
-/// (Look::sheet reads ui_backdrop). Not where a screen draws a sheet again over what it drew before (the
-/// editor's): it would blur it again on every redraw.
+/// f with the whole screen just drawn under the sheets it draws, so a theme may draw a backdrop over it
+/// behind them (Look::sheet reads ui_backdrop). Not where a screen draws a sheet again over what it drew
+/// before (the editor's): it would lay the backdrop again on every redraw.
 pub fn ui_with_backdrop<R>(f: impl FnOnce() -> R) -> R {
     let was = G_BACKDROP.replace(true);
     let r = f();
