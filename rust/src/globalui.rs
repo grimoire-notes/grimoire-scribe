@@ -234,24 +234,30 @@ pub fn gui_fab(c: &mut Canvas, r: Rect, icon: IconKind) {
     ui_icon(c, icon, Rect::new(r.x + (r.w - isz) / 2, r.y + (r.h - isz) / 2, isz, isz), 255);
 }
 
-/// An app tile: the app's icon and its name in a card, as the home's app row and the full Apps page
-/// show them.
+/// A small app launcher: the icon in a rounded rectangle, its name below it, as a phone's home
+/// screen lays apps out. `r` is the whole item; the name sits outside the icon's surface.
 pub fn gui_app_tile(c: &mut Canvas, r: Rect, icon: IconKind, label: &str, selected: bool) {
-    gui_surface(c, r, selected, ui_px(3.0));
+    let label_h = ui_px(52.0).min(r.h / 3).max(ui_px(30.0));
+    let icon_r = Rect::new(r.x, r.y, r.w, (r.h - label_h - ui_px(6.0)).max(ui_px(40.0)));
+    gui_surface(c, icon_r, selected, ui_px(3.0));
     let fg: u8 = if selected { 255 } else { 0 };
-    let label_h = ui_px(56.0);
-    let isz = (r.h - label_h - ui_px(26.0)).min(r.w - ui_px(40.0)).max(ui_px(36.0));
-    ui_icon(c, icon, Rect::new(r.x + (r.w - isz) / 2, r.y + ui_px(16.0) + (r.h - label_h - ui_px(16.0) - isz) / 2, isz, isz), fg);
+    let isz = (icon_r.w.min(icon_r.h) - 2 * ui_px(24.0)).max(ui_px(28.0));
+    ui_icon(
+        c,
+        icon,
+        Rect::new(icon_r.x + (icon_r.w - isz) / 2, icon_r.y + (icon_r.h - isz) / 2, isz, isz),
+        fg,
+    );
     ui_text(
         c,
         FontFace::Bold,
-        ui_small_size().min(label_h as f32 * 0.72),
+        ui_small_size().min(label_h as f32 * 0.7),
         ui_small_size() * 0.75,
-        Rect::new(r.x + ui_px(8.0), r.y + r.h - label_h - ui_px(6.0), (r.w - ui_px(16.0)).max(0), label_h),
+        Rect::new(r.x, icon_r.y + icon_r.h + ui_px(6.0), r.w, label_h),
         label,
         1,
         true,
-        fg,
+        0,
     );
 }
 

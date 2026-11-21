@@ -3,7 +3,7 @@
 
 use crate::prelude::*;
 use crate::about::AboutView;
-use crate::globalui::{gui_app_tile, gui_chip, gui_fab, gui_icon_button, gui_popup, gui_radius, gui_select, gui_status_bar, gui_text_field, gui_gap, gui_margin, gui_status_h, GuiPopupItem};
+use crate::globalui::{gui_app_tile, gui_chip, gui_fab, gui_icon_button, gui_popup, gui_radius, gui_select, gui_status_bar, gui_gap, gui_margin, gui_status_h, GuiPopupItem};
 use crate::settingsmenu;
 use crate::ui::{ui_row, ui_row_page, ui_row_pager, Row as UiRow};
 use crate::browser::{BrowseMode, Browser, BrowserResult, FilesPrefs, PickSpec};
@@ -248,13 +248,12 @@ const H_DARKER_BACK: i32 = 252;
 // Settings > Packages > Widgets (2.2, issue #200): the widget package manager (widgetpkgui.rs).
 const H_SET_PACKAGES: i32 = 260;
 // The home's global elements (2.3, issue #209): its filter chips (arg: 0 All, 1 Notebooks, 2 Folders),
-// the Sort select and its choices (arg: the sort), the search field and its clear button, the + button
-// and its slide-up's rows (arg: 0 notebook, 1 folder, 2 Share), the apps buttons and the All apps page.
+// the Sort select and its choices (arg: the sort), the Search button, the + button and its popup's rows
+// (arg: 0 notebook, 1 folder, 2 Share), the apps buttons and the All apps page.
 const H_FILTER: i32 = 270;
 const H_SORT: i32 = 271;
 const H_SORT_PICK: i32 = 272;
 const H_SEARCH: i32 = 273;
-const H_SEARCH_CLEAR: i32 = 274;
 const H_ADD: i32 = 275;
 const H_ADD_ACTION: i32 = 276;
 const H_APPS: i32 = 277;
@@ -548,7 +547,7 @@ const LABEL_CAP: usize = STORE_NAME_LEN + 32;
 fn top_h() -> i32 {
     gui_status_h() + head_h()
 }
-/// The header's height under the status bar: the Library's name, search, apps and settings buttons.
+/// The header's height under the status bar: the Library's name and the Search, apps and settings buttons.
 fn head_h() -> i32 {
     ui_px(150.0)
 }
@@ -567,18 +566,18 @@ pub(crate) fn bottom_h() -> i32 {
 fn margin() -> i32 {
     gui_margin()
 }
-/// The global search field's height, the apps row's and the filter chips'.
-fn search_h() -> i32 {
-    ui_px(100.0)
-}
+/// The app row's height, and the width of one small app launcher in it.
 fn apps_h() -> i32 {
-    ui_px(240.0)
+    ui_px(200.0)
+}
+fn app_tile_w() -> i32 {
+    ui_px(190.0)
 }
 fn filters_h() -> i32 {
     ui_px(88.0)
 }
 fn grid_top() -> i32 {
-    top_h() + 4 * gui_gap() + search_h() + apps_h() + filters_h()
+    top_h() + 3 * gui_gap() + apps_h() + filters_h()
 }
 fn card_label_h() -> i32 {
     ui_px(150.0)
@@ -617,7 +616,7 @@ fn fab_rect(aw: i32, ah: i32) -> Rect {
 
 fn sort_rect(aw: i32) -> Rect {
     let sort_w = ui_px(400.0).min(aw / 3);
-    let fy = top_h() + gui_gap() + search_h() + gui_gap() + apps_h() + gui_gap();
+    let fy = top_h() + 2 * gui_gap() + apps_h();
     Rect::new(aw - margin() - sort_w, fy, sort_w, filters_h())
 }
 
@@ -1064,10 +1063,10 @@ fn draw_base(a: &mut App) {
         hits_add(&mut s.hits, br, H_BACK, 0);
         title_x = br.x + bh + ui_px(22.0);
     }
-    // The header's two round buttons, right to left: Settings and All apps. Search is the field
-    // below the title; it has no duplicate button in the header.
+    // The header's round buttons, right to left: Settings, All apps and Search. Search opens the
+    // keyboard over the Library, and the filtered grid follows each key typed.
     let mut rx = aw - m;
-    for (icon, id) in [(IconKind::Gear, H_SETTINGS), (IconKind::Grid, H_APPS)] {
+    for (icon, id) in [(IconKind::Gear, H_SETTINGS), (IconKind::Grid, H_APPS), (IconKind::Search, H_SEARCH)] {
         let r = Rect::new(rx - bh, by, bh, bh);
         gui_icon_button(c, r, icon, ButtonStyle::Plain);
         hits_add(&mut s.hits, r, id, 0);
@@ -1087,23 +1086,13 @@ fn draw_base(a: &mut App) {
         ui_text(c, FontFace::Title, title_px, ui_small_size(), title_r, title, 1, false, 0);
     }
 
-    // The global search: a field, not just an icon, so it is visible on the home itself. A tap
-    // opens the keyboard and filters as the text is typed.
-    let sy = top_h() + gap;
-    let sr = Rect::new(m, sy, aw - 2 * m, search_h());
-    let clear = gui_text_field(c, sr, IconKind::Search, s.query.as_str(), tr("Search notebooks and folders"));
-    hits_add(&mut s.hits, sr, H_SEARCH, 0);
-    if !rect_is_empty(clear) {
-        hits_add(&mut s.hits, clear, H_SEARCH_CLEAR, 0);
-    }
-
-    // The app carousel: one square tile per installed app, in a row above the notebooks. Only
-    // Files, Share and Settings are apps; Exit is at the foot of Settings' sidebar.
-    let ay = sy + search_h() + gap;
+    // The app row: small launchers with the icon in a rectangle and its name below, as a phone
+    // lays them out. Only Files, Share and Settings are apps; Exit is at the foot of Settings.
+    let ay = top_h() + gap;
     let apps = home_apps();
-    let ts = apps_h();
+    let (ts, tw) = (apps_h(), app_tile_w());
     for (i, (icon, label, arg)) in apps.iter().enumerate() {
-        let r = Rect::new(m + i as i32 * (ts + gap), ay, ts, ts);
+        let r = Rect::new(m + i as i32 * (tw + gap), ay, tw, ts);
         gui_app_tile(c, r, *icon, tr(label), false);
         hits_add(&mut s.hits, r, H_APP, *arg);
     }
@@ -5642,7 +5631,7 @@ fn home_app(a: &mut App, app: i32) {
     }
 }
 
-/// The home's All apps page (2.3, issue #209): the three installed apps as square tiles, then the
+/// The home's All apps page (2.3, issue #209): the three installed apps as small launchers, then the
 /// What's new utility link. Exit is in Settings' sidebar.
 fn draw_apps(a: &mut App) {
     let (aw, ah) = (a.w, a.h);
@@ -5660,10 +5649,10 @@ fn draw_apps(a: &mut App) {
     let title_px = ui_title_size() * if ui_theme() == UiTheme::Gothic { 1.75 } else { 1.1 };
     font_draw_left(c, FontFace::Title, title_px, Rect::new(m, hy, (close.x - m - ui_px(20.0)).max(0), hh), tr("Apps"), 0);
     let gap = gui_gap();
-    let ts = ui_px(270.0);
+    let (ts, tw) = (apps_h(), app_tile_w());
     let top = hy + hh + gap;
     for (i, (icon, label, arg)) in home_apps().iter().enumerate() {
-        let r = Rect::new(m + i as i32 * (ts + gap), top, ts, ts);
+        let r = Rect::new(m + i as i32 * (tw + gap), top, tw, ts);
         gui_app_tile(c, r, *icon, tr(label), false);
         hits_add(&mut s.hits, r, H_APP, *arg);
     }
@@ -6735,6 +6724,14 @@ fn about_step(a: &mut App) {
     app_invalidate(a, rect_union(was, now), RefreshMode::Ui);
 }
 
+/// The anchored menus drawn by `gui_popup` rather than as a full dialog or sheet.
+fn is_popup_modal(m: Modal) -> bool {
+    matches!(
+        m,
+        Modal::Add | Modal::Sort | Modal::More | Modal::FolderMore | Modal::FilesMore
+    )
+}
+
 fn close_modal(a: &mut App) {
     if lib(a).settings_return_editor {
         if lib(a).modal==Modal::Settings {let changed=lib(a).settings_editor_fit!=a.settings.landscape_fit;lib(a).settings_return_editor=false;lib(a).modal=Modal::None;library_leave(a);if changed {editor_fit_changed(a,true);}crate::editor::editor_settings_background(a);app_invalidate_all(a,RefreshMode::Ui);}
@@ -7261,14 +7258,6 @@ fn act(a: &mut App, h: &Hit) {
             let initial = lib(a).query.as_bytes().to_vec();
             lib(a).search_active = true;
             open_kb_sel(a, KbPurpose::Search, tr("Search"), &initial, !initial.is_empty());
-        }
-        H_SEARCH_CLEAR => {
-            let s = lib(a);
-            s.query.clear();
-            s.search_active = false;
-            s.page = 0;
-            refresh_view(a);
-            redraw(a, RefreshMode::Ui);
         }
         H_ADD => open_modal(a, Modal::Add),
         H_ADD_ACTION => {
@@ -9259,6 +9248,12 @@ fn library_event_in(a: &mut App, ev: &InEvent) {
     if modal == Modal::Wifi && wifi_sheet_scroll(a, ph, ev) {
         return;
     }
+    // A popup's rows are its only targets: a tap anywhere else (on the page behind it included)
+    // dismisses the menu instead of reaching a control under it.
+    if ph == 0 && is_popup_modal(modal) && hits_find(&lib(a).hits, ev.x, ev.y).is_none() {
+        close_modal(a);
+        return;
+    }
     if ph == 0 {
         // The question before a notebook is deleted takes its Delete once it has been shown, never before
         // (app_asked_seen): a contact that came down on that row sooner answers nothing, down to its lift. Keep it
@@ -9882,7 +9877,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_CARD => "card.", H_CARD_MORE => "card-menu.",
                 H_ADD => "add", H_ADD_ACTION => "add.", H_APPS => "apps", H_APPS_CLOSE => "apps.close",
                 H_APP => "app.", H_FILTER => "filter.", H_SORT => "sort", H_SORT_PICK => "sort.",
-                H_SEARCH => "search", H_SEARCH_CLEAR => "search.clear",
+                H_SEARCH => "search",
                 H_PREV => "prev", H_NEXT => "next",
                 H_ABOUT_PREV => "about.prev", H_ABOUT_NEXT => "about.next", H_ABOUT_MORE => "about.more",
                 H_ABOUT_ROW => "about.row.", H_ABOUT_BACK => "about.back",
@@ -10212,6 +10207,32 @@ mod tests {
         let mut out = String::new();
         assert_eq!(library_probe(a, key, &mut out, 512), 0, "{key}");
         out
+    }
+
+    // The global popup menus close on a tap outside their rows; the page under them does not act.
+    #[test]
+    fn a_tap_outside_a_popup_closes_it() {
+        let mut a = pen_record_app();
+        a.scr = ScreenId::Library;
+        lib(&mut a).modal = Modal::None;
+        lib(&mut a).items.clear();
+        redraw(&mut a, RefreshMode::Ui);
+        act(&mut a, &Hit { id: H_ADD, ..Default::default() });
+        assert_eq!(lib(&mut a).modal, Modal::Add);
+        assert!(a.lib.as_ref().unwrap().hits.h.iter().any(|h| h.id == H_ADD_ACTION));
+        library_event(&mut a, &InEvent { type_: InType::TouchDown, x: 8.0, y: 8.0, t_ms: 100, ..Default::default() });
+        assert_eq!(lib(&mut a).modal, Modal::None, "tapping outside the + popup closes it");
+        assert!(lib(&mut a).pressed.is_none(), "the page behind did not take the tap");
+
+        act(&mut a, &Hit { id: H_SORT, ..Default::default() });
+        assert_eq!(lib(&mut a).modal, Modal::Sort);
+        assert!(a.lib.as_ref().unwrap().hits.h.iter().any(|h| h.id == H_SORT_PICK));
+        library_event(&mut a, &InEvent { type_: InType::TouchDown, x: 8.0, y: 8.0, t_ms: 200, ..Default::default() });
+        assert_eq!(lib(&mut a).modal, Modal::None, "tapping outside the Sort popup closes it");
+        assert!(!is_popup_modal(Modal::Apps) && is_popup_modal(Modal::FilesMore));
+
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
     }
 
     fn pen_record_app() -> App {
