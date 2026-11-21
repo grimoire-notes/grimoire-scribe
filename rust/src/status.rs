@@ -1,7 +1,8 @@
 //! status.rs: the clock and battery corner. A small indicator in one corner of a notebook page (settings.ini
 //! status_corner: the top left unless the owner picks another): the time (format_time_short, as the app
 //! writes times everywhere, or its 12-hour form with settings.ini clock_12h), a pixel art battery that
-//! shows the charge and, while it charges, a bolt, and the percent. A finger tap in a 14 mm square in that corner turns it on and off; the shortcut action
+//! shows the charge and, while it charges, a bolt, and the percent. The same size and 12-hour choice
+//! also scale the shared top status bar and set its clock (globalui.rs). A finger tap in a 14 mm square in that corner turns it on and off; the shortcut action
 //! `status-toggle` does the same, `status-corner` (and the Display sheet's row) moves it to the next
 //! corner, and the Display sheet sets its size (settings.ini status_on, status_corner, status_size;
 //! docs/FORMAT.md).
@@ -163,7 +164,8 @@ fn corner_box(corner: i32, w: i32, h: i32, bw: i32, bh: i32, m: i32) -> Rect {
     Rect { x: if right { w - m - bw } else { m }, y: if bottom { h - m - bh } else { m }, w: bw, h: bh }
 }
 
-/// The clock corner overlays the page; no status strip is reserved.
+/// The clock corner overlays the page; no status strip is reserved. The universal bar is drawn
+/// over the page's top margin by the editor, beside this corner when it is on.
 pub fn status_reserved(_a: &App) -> i32 { 0 }
 
 /// Compatibility for the retired status-mode action.
@@ -707,6 +709,7 @@ pub fn status_toggle(a: &mut App) {
 /// Settings > Sleep & Clock > Clock settings > the size row: the next size, small to medium to large and round.
 pub fn status_cycle_size(a: &mut App) {
     a.settings.status_size = (a.settings.status_size + 1) % STATUS_SIZES;
+    crate::globalui::gui_status_style(a.settings.status_size, a.settings.clock_12h);
     save_later();
     ask_change(a);
 }

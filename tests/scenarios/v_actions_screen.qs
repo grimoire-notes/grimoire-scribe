@@ -34,6 +34,10 @@ key 16 0
 expect settings.pinch_zoom is 1
 expect editor.panel_rect is 1704 220 128 1842
 expect display.presents not clear
+# Let the startup's timed repaints pass before counting the screens the actions below make: a slow
+# machine can otherwise land one between the invert and its check.
+wait 4000
+expect display.presents not clear
 key 17 0
 expect settings.theme is classic
 expect display.presents is full 0 0 1860 2480

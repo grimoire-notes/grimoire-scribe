@@ -11,12 +11,12 @@ tap library card.1
 wait 300
 expect editor.page is 1
 key 38 0
-pen line 40 40 300 300 30 0.6 0.6
+pen line 100 100 300 300 30 0.6 0.6
 # Link to... opens: Choose from the pages... picks in the Pages view
 expect editor.ui_at.930.2370 is linkto.pages
 tap 930 2370
 expect editor.picking is new
-tap 450 95
+tap 450 170
 expect editor.pages_tab is pages
 tap 703 340
 expect editor.links is 4 4
@@ -38,7 +38,7 @@ expect editor.bar.entries is 2
 expect editor.bar.1 is p2 x2
 expect editor.bar.2 is p3 x2
 expect status.front is 0
-tap 60 60
+tap 400 200
 wait 300
 expect settings.status_on is 0
 expect editor.bar is 0
@@ -51,7 +51,7 @@ tap 479 2218
 wait 300
 expect editor.bar is peek
 expect editor.bar.peek is 2
-tap 60 60
+tap 400 200
 wait 300
 expect settings.status_on is 0
 expect editor.bar is 0

@@ -1844,7 +1844,7 @@ expect editor.map.mode is all
 shot 72-index-map
 expect editor.map.scope is all
 # No Notebook chip (the owner's ruling of 2026-11-03, "remove it"): the Graph is every notebook's.
-expect editor.map.ui_at.400.215 is
+expect editor.map.ui_at.400.293 is
 tap editor map.current
 shot 73-map-card
 rotate 1
@@ -1861,7 +1861,7 @@ expect editor.map.list is 1
 shot 77-index-counts
 tap panel map.graph
 expect editor.map is graph
-tap 100 95
+tap 100 170
 expect editor.map is 0
 pentap panel library
 wait 300
@@ -1904,35 +1904,35 @@ expect library.sheet is none
 expect library.folders is A, a
 tap library folder.A
 wait 100
-# What's new: the card, Read all's list of every version's notes (this version marked, the newest
-# unreleased) and a version's notes with Back and the page arrows, upright and sideways (from the top
-# level: a folder's bar has its name where the bat is).
+# The Apps page's foot buttons, then What's new: the full-screen browser with every version down
+# the left and the selected notes in the reader, upright and sideways; a version tapped in the
+# sidebar, and its X.
 tap library back
 wait 100
 tap library apps
+wait 100
+shot 78-apps
 tap library app.whats-new
 wait 100
 expect library.sheet is about
-shot 78-whatsnew-card
+expect library.about.view is browser
+shot 79-whatsnew-browser
 rotate 1
 wait 100
-shot 79-whatsnew-card-sideways
-tap library about.more
-wait 100
-expect library.about.view is list
-shot 80-whatsnew-list-sideways
+expect library.sheet is about
+shot 80-whatsnew-browser-sideways
 rotate 0
 wait 100
-shot 81-whatsnew-list
 tap library about.row.2.0.0
 wait 100
-expect library.about.view is note
+expect library.about.note is 2.0.0
 expect library.about.pages is 1
-shot 82-whatsnew-notes
+shot 81-whatsnew-version
 rotate 1
 wait 100
+expect library.about.note is 2.0.0
 expect library.about.pages is 1
-shot 83-whatsnew-notes-sideways
+shot 82-whatsnew-version-sideways
 rotate 0
 wait 100
 tap library about.close

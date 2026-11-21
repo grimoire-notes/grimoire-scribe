@@ -41,7 +41,7 @@ expect editor.picking is new
 expect editor.link_area is 1000 600 500 200
 expect editor.live_matches_render is 1
 # The Pages view's Back is Link to... again; its Cancel: no link, and still no ink
-tap 125 95
+tap 125 170
 wait 100
 expect editor.modal is linkto
 expect editor.linkto is pick

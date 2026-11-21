@@ -31,7 +31,7 @@ tap panel pages
 tap panel pages.graph
 expect editor.map.scope is all
 expect editor.map.visible.ids is lib000:1 lib000:2 lib000:3 lib002:1 lib002:2 lib002:3
-expect editor.map.ui_at.400.215 is
+expect editor.map.ui_at.400.293 is
 tap panel map.back
 tap panel library
 expect screen is library

@@ -98,8 +98,8 @@ static K_MODE_ROWS: [&str; 4] = [
 /// choice so a language can put its words in order. Each has room for an icon and two lines of text at
 /// 34 px.
 static K_STATUS_ROWS: [&str; 3] = [
-    // TRANSLATORS: the Clock settings page's row for how large the clock and battery on a notebook page
-    // are, which a tap moves to the next size. Two lines of about 365 px at 34 px.
+    // TRANSLATORS: the Clock settings page's row for how large the clock and battery are, on a notebook
+    // page and in the top status bar, which a tap moves to the next size. Two lines of about 365 px at 34 px.
     n_("Clock size: small"),
     n_("Clock size: medium"),
     n_("Clock size: large"),
@@ -296,6 +296,7 @@ pub fn dispmenu_draw(m: &mut DispMenu, a: &mut App) -> Rect {
     m.pressed = None;
     let (aw, ah) = (a.w, a.h);
     m.rect = Rect::new(0, 0, aw, ah);
+    crate::globalui::gui_status_style(a.settings.status_size, a.settings.clock_12h);
     // TRANSLATORS: the titles of Settings' Sleep and Clock pages: the sleep screen and timer; the clock
     // and battery on the page.
     let title = match m.page {
@@ -536,6 +537,7 @@ pub fn dispmenu_pointer(m: &mut DispMenu, a: &mut App, phase: i32, x: f32, y: f3
         }
         D_TIME12 => {
             a.settings.clock_12h = !a.settings.clock_12h;
+            crate::globalui::gui_status_style(a.settings.status_size, a.settings.clock_12h);
             settings_save(&a.settings);
             crate::status::ask_change(a);
             dispmenu_draw(m, a);

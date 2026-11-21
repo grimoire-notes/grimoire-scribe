@@ -152,7 +152,7 @@ expect wifi.state is off
 expect wifi.current is
 shot 13-turned-off
 # The sheet's top-right X, which closes Settings with it.
-tap 1730 90
+tap 1730 153
 wait 100
 expect library.sheet is none
 quit

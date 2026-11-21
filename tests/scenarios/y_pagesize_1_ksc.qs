@@ -80,7 +80,7 @@ pentap panel pages
 wait 400
 shot 06-pages
 expect editor.modal is pages
-tap 125 95
+tap 125 170
 wait 400
 expect editor.modal is none
 expect editor.page is 2

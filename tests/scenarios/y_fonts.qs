@@ -94,7 +94,7 @@ expect display.presents has full 0 0 1860 2480
 tap library font.done
 wait 100
 expect library.sheet is none
-expect display.presents is fast 1660 20 150 150, ui 0 0 1860 2480
+expect display.presents is fast 1702 93 120 120, ui 0 0 1860 2480
 expect font is atkinson
 expect settings.font is atkinson
 # Settings again, in Atkinson, its Font row naming it

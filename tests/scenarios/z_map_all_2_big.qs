@@ -31,5 +31,5 @@ wait 600
 expect editor.map.layout is done
 expect editor.map.books is 50
 shot 02-laid-out
-tap 100 95
+tap 100 170
 expect editor.map is 0

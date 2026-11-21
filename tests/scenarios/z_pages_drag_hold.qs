@@ -47,7 +47,7 @@ finger 1 move 1300 640
 frame
 expect editor.pages.context is 0
 expect editor.pages.drag is 2 before 3
-expect display.presents is fast 1230 214 12 674
+expect display.presents is fast 1230 292 12 648
 # Still dragging past the card's 600 ms (700 ms after the down): no card, nothing drawn
 wait 700
 expect editor.pages.context is 0
@@ -169,7 +169,7 @@ expect editor.pages.drag is
 expect editor.pages.context is 0
 expect editor.ticked is 1
 expect editor.page_ids is 1,2,3,4,5,6,7,8,9,10,11,12
-expect display.presents is ui 1248 912 588 674, ui 0 2310 1860 170
+expect display.presents is ui 1248 964 588 648, ui 0 2310 1860 170
 # (Select on keeps page 6 selected; page 4 ticked with it)
 tap panel pages.multi
 tap panel pages.page.4

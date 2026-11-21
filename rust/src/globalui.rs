@@ -15,7 +15,7 @@
 //! gets the same design at its scale.
 
 use crate::prelude::*;
-use crate::status::{battery_from_sysfs, Battery};
+use crate::status::{battery_from_sysfs, Battery, STATUS_SIZES};
 use std::cell::Cell;
 use crate::ui::{
     ui_button, ui_card, ui_frame, ui_icon, ui_slider_draw, ui_small_size, ui_text,
@@ -44,9 +44,104 @@ pub fn gui_margin() -> i32 {
     ui_px(50.0)
 }
 
-/// The status bar's height (`gui_status_bar`).
+/// The top status bar's scale at Clock size small, medium and large. Medium is the bar as it has
+/// always been; the Clock settings size scales all of it, not just its clock.
+const STATUS_SCALE: [f32; 3] = [0.82, 1.0, 1.18];
+
+thread_local! {
+    /// The Clock settings the top status bar draws with (size, 12-hour time).
+    static STATUS_STYLE: Cell<(i32, bool)> = const { Cell::new((1, false)) };
+}
+
+/// Applies Clock settings to every top status bar (Settings > Sleep & Clock > Clock settings). The
+/// main page and the Clock page call this when either choice changes.
+pub fn gui_status_style(size: i32, twelve: bool) {
+    STATUS_STYLE.with(|s| s.set((clampi(size, 0, STATUS_SIZES - 1), twelve)));
+}
+
+fn status_style() -> (i32, bool) {
+    STATUS_STYLE.with(|s| s.get())
+}
+
+fn status_scale() -> f32 {
+    STATUS_SCALE[status_style().0 as usize]
+}
+
+/// The status bar's height (`gui_status_bar`): the whole bar grows and shrinks with Clock settings'
+/// size.
 pub fn gui_status_h() -> i32 {
-    ui_px(78.0)
+    ui_px(78.0 * status_scale())
+}
+
+/// The header under the status bar: its title and its round action buttons.
+pub fn gui_head_h() -> i32 {
+    ui_px(150.0)
+}
+
+/// The header's round action buttons, centred in it.
+pub fn gui_top_button_h() -> i32 {
+    ui_px(96.0)
+}
+
+/// Where a header's title, Back and actions are.
+pub struct GuiHeader {
+    /// The Back button at the left (empty when the screen has none).
+    pub back: Rect,
+    /// The title, between Back and the actions.
+    pub title: Rect,
+    /// The first row under the header: a screen's content starts here.
+    pub foot: i32,
+}
+
+/// The one header under the status bar: the title at the left, an optional Back button, and evenly
+/// separated icon actions at the right. The actions' hits are returned in the order given, so a
+/// screen adds the ids it already owns. Every full screen uses this, so its title and buttons stand
+/// where every other screen's do.
+pub fn gui_header(
+    c: &mut Canvas,
+    aw: i32,
+    title: &str,
+    back: bool,
+    actions: &[(IconKind, i32)],
+) -> (GuiHeader, Vec<(Rect, i32)>) {
+    gui_status_bar(c, aw, wall_time());
+    let m = gui_margin();
+    let top = gui_status_h();
+    let th = gui_head_h();
+    let bh = gui_top_button_h();
+    // The title and every round button share one vertical axis: the buttons' centres are the title
+    // band's centre, whichever theme and title size is in use.
+    let by = top + (th - bh) / 2;
+    let mut rx = aw - m;
+    let mut rects = Vec::with_capacity(actions.len());
+    for &(icon, id) in actions.iter().rev() {
+        let r = Rect::new(rx - bh, by, bh, bh);
+        gui_icon_button(c, r, icon, ButtonStyle::Plain);
+        rects.push((r, id));
+        rx = r.x - ui_px(12.0);
+    }
+    rects.reverse();
+    let mut back_r = RECT_EMPTY;
+    let mut tx = m;
+    if back {
+        back_r = Rect::new(m, by, bh, bh);
+        gui_icon_button(c, back_r, IconKind::Back, ButtonStyle::Plain);
+        tx = back_r.x + bh + ui_px(22.0);
+    }
+    let title_r = Rect::new(tx, top, (rx - tx - ui_px(20.0)).max(0), th);
+    gui_page_title(c, title_r, title);
+    (GuiHeader { back: back_r, title: title_r, foot: top + th }, rects)
+}
+
+/// A screen's title in the modern header's type: the same size and position on the home, Apps,
+/// Files and every Settings page.
+pub fn gui_page_title(c: &mut Canvas, r: Rect, title: &str) {
+    let px = ui_title_size() * if gui_gothic() { 1.75 } else { 1.1 };
+    if gui_gothic() {
+        font_draw_left_name(c, FontFace::Title, px, r, title, 0);
+    } else {
+        ui_text(c, FontFace::Title, px, ui_small_size(), r, title, 1, false, 0);
+    }
 }
 
 /// A surface the kit's rows and cards sit on. `filled` is the black of a chosen element; the outline
@@ -518,14 +613,17 @@ fn battery_cached() -> Option<Battery> {
 /// The status bar's battery: the pixel-art kind of shape (a body with its terminal and a fill by
 /// percent), drawn here rather than taken from the icon font, which need not carry a battery.
 pub fn gui_battery(c: &mut Canvas, r: Rect, percent: i32) {
-    let rad = if gui_gothic() { ui_px(5.0) } else { ui_px(10.0) };
-    let tw = ui_px(8.0);
-    let body = Rect::new(r.x, r.y, r.w - tw - ui_px(5.0), r.h);
+    // The art keeps its proportions at every status bar size (34 px tall is the medium bar's).
+    let k = r.h.max(1) / 34;
+    let rad = (if gui_gothic() { 5 * k } else { 10 * k }).max(1);
+    let tw = (8 * k).max(2);
+    let gap = (5 * k).max(1);
+    let body = Rect::new(r.x, r.y, r.w - tw - gap, r.h);
     ui_frame(c, body, rad, 255, true, 0);
-    ui_frame(c, body, rad, 0, false, ui_px(3.0));
-    let term = Rect::new(body.x + body.w + ui_px(2.0), r.y + r.h * 30 / 100, tw, r.h * 40 / 100);
+    ui_frame(c, body, rad, 0, false, (3 * k).max(1));
+    let term = Rect::new(body.x + body.w + (2 * k).max(1), r.y + r.h * 30 / 100, tw, r.h * 40 / 100);
     ui_frame(c, term, tw / 2, 0, true, 0);
-    let inner = rect_inflate(body, -ui_px(7.0));
+    let inner = rect_inflate(body, -(7 * k).max(2));
     let fill = (inner.w as i64 * clampi(percent, 0, 100) as i64 / 100) as i32;
     if fill > 0 {
         let fr = Rect::new(inner.x, inner.y, fill.min(inner.w), inner.h);
@@ -533,54 +631,66 @@ pub fn gui_battery(c: &mut Canvas, r: Rect, percent: i32) {
     }
 }
 
-/// The home's status bar: the time and date at the left, then (when the device has them) Wi-Fi,
-/// Bluetooth and the battery percent at the right. Drawn by the Library above its header; a tap in
+/// The app's status bar: the time and date at the left, then (when the device has them) Wi-Fi,
+/// Bluetooth and the battery percent at the right. Every screen draws it above its header; a tap in
 /// it is a tap on no control (the caller adds no hit).
 pub fn gui_status_bar(c: &mut Canvas, aw: i32, now: i64) {
+    gui_status_bar_in(c, aw, now, true);
+}
+
+/// The same bar with only the connection icons at the right: the notebook page uses it when its own
+/// clock corner is on, so the time and battery appear once, in that corner.
+pub fn gui_status_bar_connections(c: &mut Canvas, aw: i32, now: i64) {
+    gui_status_bar_in(c, aw, now, false);
+}
+
+fn gui_status_bar_in(c: &mut Canvas, aw: i32, now: i64, clock: bool) {
+    let scale = status_scale();
+    let u = |v: f32| ui_px(v * scale);
     let h = gui_status_h();
     let m = gui_margin();
     canvas_fill(c, Rect::new(0, 0, aw, h), 255);
-    let tm = local_tm(now);
-    let mut time = String::new();
-    csnprintf!(&mut time, 16, "%02d:%02d", tm.tm_hour, tm.tm_min);
-    let time_w = ui_px(128.0);
-    font_draw_left(c, FontFace::Bold, ui_px(38.0) as f32, Rect::new(m, 0, time_w, h), &time, 0);
-    let mut date = String::new();
-    format_date_short(now, &mut date, 64);
-    let date_x = m + time_w + ui_px(18.0);
-    font_draw_left(
-        c,
-        FontFace::Regular,
-        ui_small_size().min(ui_px(32.0) as f32),
-        Rect::new(date_x, 0, (aw / 2 - date_x).max(0), h),
-        &date,
-        90,
-    );
-    let isz = ui_px(48.0);
-    let mut x = aw - m;
-    if let Some(b) = battery_cached() {
-        x -= isz + ui_px(8.0);
-        gui_battery(c, Rect::new(x, (h - ui_px(34.0)) / 2, isz + ui_px(8.0), ui_px(34.0)), b.percent);
-        x -= ui_px(10.0);
-        let mut pct = String::new();
-        csnprintf!(&mut pct, 16, "%d%%", clampi(b.percent, 0, 100));
-        let pw = font_measure(FontFace::Regular, ui_small_size().min(ui_px(30.0) as f32), &pct);
-        x -= pw;
+    if clock {
+        let mut time = String::new();
+        format_clock_short(now, status_style().1, &mut time, 64);
+        let time_px = u(38.0);
+        let time_w = font_measure(FontFace::Bold, time_px as f32, &time) + u(2.0);
+        font_draw_left(c, FontFace::Bold, time_px as f32, Rect::new(m, 0, time_w, h), &time, 0);
+        let mut date = String::new();
+        format_date_short(now, &mut date, 64);
+        let date_x = m + time_w + u(18.0);
         font_draw_left(
             c,
             FontFace::Regular,
-            ui_small_size().min(ui_px(30.0) as f32),
-            Rect::new(x, 0, pw + 2, h),
-            &pct,
-            0,
+            u(32.0) as f32,
+            Rect::new(date_x, 0, (aw / 2 - date_x).max(0), h),
+            &date,
+            90,
         );
-        x -= ui_px(28.0);
+    }
+    let isz = u(48.0);
+    let mut x = aw - m;
+    if clock {
+        if let Some(b) = battery_cached() {
+            let bw = u(56.0);
+            let bh = u(34.0);
+            x -= bw + u(8.0);
+            gui_battery(c, Rect::new(x, (h - bh) / 2, bw, bh), b.percent);
+            x -= u(10.0);
+            let mut pct = String::new();
+            csnprintf!(&mut pct, 16, "%d%%", clampi(b.percent, 0, 100));
+            let pct_px = u(30.0);
+            let pw = font_measure(FontFace::Regular, pct_px as f32, &pct);
+            x -= pw;
+            font_draw_left(c, FontFace::Regular, pct_px as f32, Rect::new(x, 0, pw + 2, h), &pct, 0);
+            x -= u(28.0);
+        }
     }
     if bt_present() {
         x -= isz;
         let fg = if bt_state() == BtState::Stopped { 170 } else { 0 };
         ui_icon(c, IconKind::Bluetooth, Rect::new(x, (h - isz) / 2, isz, isz), fg);
-        x -= ui_px(22.0);
+        x -= u(22.0);
     }
     if wifi_available() {
         x -= isz;
@@ -617,6 +727,32 @@ mod tests {
         let low = popup_place(screen, Rect::new(900, 40, 80, 80), 500, 300);
         assert_eq!(low.x, 1000 - 500 - ui_px(24.0));
         assert_eq!(low.y, 40 + 80 + ui_px(18.0));
+    }
+
+    #[test]
+    fn the_status_bar_scales_with_clock_size_and_headers_share_the_title_axis() {
+        ui_init(300.0);
+        gui_status_style(1, false);
+        let medium = gui_status_h();
+        assert_eq!(medium, ui_px(78.0));
+        gui_status_style(0, false);
+        let small = gui_status_h();
+        gui_status_style(2, true);
+        let large = gui_status_h();
+        assert!(small < medium && medium < large, "{small} {medium} {large}");
+        // The whole bar's contents scale too: the clock, date, icons and battery all use the same
+        // factor, so a large bar is taller rather than just more padded.
+        assert!(large - medium > ui_px(10.0));
+        gui_status_style(1, false);
+        assert_eq!(gui_status_h(), medium);
+
+        let mut c = Canvas::default();
+        assert_eq!(canvas_init(&mut c, 1860, 500), 0);
+        let (head, actions) = gui_header(&mut c, 1860, "Library", true, &[(IconKind::Gear, 1)]);
+        assert_eq!(head.back.y + head.back.h / 2, head.title.y + head.title.h / 2);
+        assert_eq!(actions[0].0.y + actions[0].0.h / 2, head.title.y + head.title.h / 2);
+        canvas_free(&mut c);
+        gui_status_style(1, false);
     }
 
     #[test]

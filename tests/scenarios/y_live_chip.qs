@@ -52,7 +52,7 @@ tap panel display
 wait 400
 expect editor.modal is display
 expect live.chip is
-tap 70 70
+tap 70 150
 wait 400
 expect editor.modal is none
 expect live.chip is 136 657 42 42

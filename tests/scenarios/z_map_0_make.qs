@@ -20,7 +20,7 @@ shot 01-forty-pages
 tap map-node 7
 expect editor.map.selected is 7
 shot 02-selected
-tap 100 95
+tap 100 170
 expect editor.map is 0
 pentap panel library
 waitbg

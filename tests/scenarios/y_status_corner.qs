@@ -109,7 +109,7 @@ wait 400
 expect editor.modal is display
 expect status.front is 0
 expect status.shown is 0
-tap 70 70
+tap 70 150
 wait 300
 expect editor.modal is none
 expect settings.status_on is 1
@@ -138,6 +138,15 @@ tap library display.size
 wait 300
 expect settings.status_size is 2
 shot 02-display-sheet-large
+# The Clock page's two choices also set the shared top status bar: large (the whole bar, not just
+# its sample) and 12-hour time. The bar's own clock is at the top left of this Settings screen.
+tap library display.time12
+wait 300
+expect settings.clock_12h is 1
+shot 02b-display-sheet-large-12h
+tap library display.time12
+wait 300
+expect settings.clock_12h is 0
 tap library display.done
 wait 400
 expect editor.modal is none

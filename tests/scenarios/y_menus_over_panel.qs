@@ -51,7 +51,7 @@ wait 400
 expect editor.modal is display
 expect editor.layers is ok
 shot 03-display-over-panel
-tap 70 70
+tap 70 150
 wait 400
 expect editor.modal is none
 expect editor.layers is ok
@@ -61,7 +61,7 @@ wait 400
 expect editor.modal is paper
 expect editor.layers is ok
 shot 04-paper-over-panel
-tap 70 70
+tap 70 150
 wait 400
 expect editor.modal is none
 expect editor.layers is ok
@@ -110,7 +110,7 @@ tap panel display
 wait 400
 expect editor.layers is ok
 shot 07-display-covers-the-panel
-tap 70 70
+tap 70 150
 wait 400
 expect editor.layers is ok
 # The same with the panel in the middle of the page: the card goes beside it, never over the held button.

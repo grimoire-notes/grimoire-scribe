@@ -135,13 +135,15 @@ pub struct Settings {
     pub before_eraser: i32,
     /// The clock and battery corner is on (settings.ini status_on; status.rs)
     pub status_on: bool,
-    /// and how large it is: 0 small, 1 medium, 2 large (settings.ini status_size)
+    /// and how large it is: 0 small, 1 medium, 2 large (settings.ini status_size). The size scales
+    /// the whole top status bar too, not just the corner clock (globalui.rs).
     pub status_size: i32,
     /// and in which corner of the page it sits: 0 top left (the default), 1 top right, 2 bottom right,
     /// 3 bottom left (settings.ini status_corner; the tap zone follows it)
     pub status_corner: i32,
     /// The clock shows the time on the 12-hour clock (settings.ini clock_12h): "2:32 PM" instead of
-    /// "14:32". The Display sheet's "Display time as 12 hour" row.
+    /// "14:32", in the corner and in the top status bar. The Clock settings page's "Display time as
+    /// 12 hour" row.
     pub clock_12h: bool,
     /// Rotation to hold while locked (settings.ini rotation_lock): 0 follows the Kindle, 1..=4
     /// hold the current rotation plus one. The app resolves the current orientation at lock time.

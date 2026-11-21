@@ -58,7 +58,7 @@ expect editor.page is 1
 tap 1250 1100
 expect editor.modal is map
 expect editor.map.list is 0
-tap 125 95
+tap 100 170
 expect editor.modal is none
 expect editor.page is 1
 # Page 4 (never opened before): inside the small ring the small link wins

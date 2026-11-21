@@ -51,7 +51,7 @@ expect display.last_fast is wait
 touch up 1768 1242
 wait 300
 expect editor.modal is pages
-tap 125 95
+tap 125 170
 wait 300
 expect editor.modal is none
 # Pen feel (Library, Settings, Pen feel): the test pad's stroke is live ink, without the pen mode
@@ -83,7 +83,7 @@ expect display.last_fast is wait
 expect display.ink is 0
 touch up 1150 1789
 wait 200
-tap 125 95
+tap 125 170
 wait 300
 expect screen is library
 # Calibration: the check box's stroke is live ink, without the pen mode (plain DU, as before)

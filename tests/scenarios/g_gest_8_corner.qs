@@ -36,7 +36,7 @@ expect settings.status_on is 0
 wait 200
 swipe 2 930 1400 0 -400
 expect editor.bar is open
-tap 60 60
+tap 400 200
 expect settings.status_on is 0
 expect editor.bar is 0
 expect editor.modal is none
@@ -98,7 +98,7 @@ pentap panel previous
 wait 100
 expect editor.pages is 2
 key 38 0
-pen line 40 40 300 300 30 0.6 0.6
+pen line 100 100 300 300 30 0.6 0.6
 # Link to... opens: Choose from the pages... picks in the Pages view
 expect editor.ui_at.930.2370 is linkto.pages
 tap 930 2370

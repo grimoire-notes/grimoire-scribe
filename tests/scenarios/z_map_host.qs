@@ -62,7 +62,7 @@ tap panel map.graph
 wait 200
 expect editor.map is graph
 # The map owns Back even with the notebook clock on.
-tap 100 95
+tap 100 170
 expect editor.map is 0
 expect editor.modal is none
 expect settings.status_on is 1

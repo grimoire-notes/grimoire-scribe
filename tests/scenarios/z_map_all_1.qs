@@ -35,8 +35,8 @@ shot 03-around-across
 tap panel map.view
 expect editor.map.mode is all
 # No Notebook choice (the owner's ruling of 2026-11-03, "remove it"): where the chip was, nothing.
-expect editor.map.ui_at.400.215 is
-tap 400 215
+expect editor.map.ui_at.400.293 is
+tap 400 293
 expect editor.map is graph
 expect editor.map.scope is all
 expect editor.map.mode is all
@@ -72,5 +72,5 @@ expect editor.screen_composed is 1
 shot 08-all-landscape
 rotate 0
 wait 200
-tap 100 95
+tap 100 170
 expect editor.map is 0

@@ -74,7 +74,7 @@ wait 400
 shot 05-all-deleted
 expect editor.pages is 1
 expect editor.strokes is 0
-tap 125 95
+tap 125 170
 wait 300
 shot 06-back-in-editor
 expect editor.modal is none

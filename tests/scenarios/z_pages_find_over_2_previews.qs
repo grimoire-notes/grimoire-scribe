@@ -33,7 +33,7 @@ wait 300
 expect editor.find is 0
 expect editor.modal is pages
 expect editor.pages.cached is 9
-expect display.presents is ui 20 214 1820 2246
+expect display.presents is ui 20 292 1820 2168
 shot 01-previews-after-find
 # opened and closed again with no new previews: only what the sheet covered (its card with no rows yet)
 tap panel pages.goto

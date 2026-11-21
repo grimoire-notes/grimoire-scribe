@@ -22,8 +22,8 @@ expect library.map.visible.ids is lib000:1 lib000:2 lib000:3 lib001:1 lib001:2 l
 expect library.map.edges is 6
 shot 01-graph-from-library
 # No Notebook chip: where it was, nothing, and a tap there opens no browser.
-expect library.map.ui_at.400.215 is
-tap 400 215
+expect library.map.ui_at.400.293 is
+tap 400 293
 expect library.map is graph
 expect library.map.picker is 0
 expect library.map.scope is all

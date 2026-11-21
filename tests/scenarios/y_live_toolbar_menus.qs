@@ -62,7 +62,7 @@ wait 400
 expect editor.modal is none
 # (the sheet again after the drag, the New page row pressed and the sheet again, the X pressed and the screen
 # without the sheet)
-expect display.presents is ui 0 0 1860 2480, fast 80 704 1700 120, ui 0 0 1860 2480, fast 1660 20 150 150, ui 0 0 1860 2480
+expect display.presents is ui 0 0 1860 2480, fast 80 706 1700 120, ui 0 0 1860 2480, fast 1702 93 120 120, ui 0 0 1860 2480
 expect live.panel is 1704 220 128 1842
 expect live.stale.1704.220.128.1842 is 0
 # Another sheet beside it (Paper), and closed again.

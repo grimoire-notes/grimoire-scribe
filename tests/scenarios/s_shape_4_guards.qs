@@ -130,8 +130,8 @@ finger 1 up 1200 900
 frame
 expect fshape.fired is 0
 expect editor.strokes is 1
-# A shape starts inside the clock corner and still acts; a tap only toggles the clock.
-shape Z 300 300 45 600
+# A shape starts below the shared status bar and still acts.
+shape Z 500 500 45 600
 expect editor.strokes is 0
 expect fshape.fired is 1
 expect settings.status_on is 0

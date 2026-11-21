@@ -2,8 +2,7 @@
 //! plus the sheets: new notebook (paper picker), settings, notebook actions, move, delete.
 
 use crate::prelude::*;
-use crate::about::AboutView;
-use crate::globalui::{gui_app_tile, gui_chip, gui_fab, gui_icon_button, gui_popup, gui_radius, gui_select, gui_status_bar, gui_gap, gui_margin, gui_status_h, GuiPopupItem};
+use crate::globalui::{gui_app_tile, gui_chip, gui_fab, gui_gap, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_select, gui_status_bar, gui_status_h, gui_top_button_h, GuiPopupItem};
 use crate::settingsmenu;
 use crate::ui::{ui_row, ui_row_page, ui_row_pager, Row as UiRow};
 use crate::browser::{BrowseMode, Browser, BrowserResult, FilesPrefs, PickSpec};
@@ -183,11 +182,9 @@ const H_ABOUT_CLOSE: i32 = 72;
 // (73 was Don't show this again, gone in 2.0.0: the owner's rule of 2026-11-05)
 const H_ABOUT_PREV: i32 = 74;
 const H_ABOUT_NEXT: i32 = 75;
-const H_ABOUT_MORE: i32 = 76;
-// 2.1.0: Read all's list of every version's notes, its rows (arg: the entry in about::notes()), and Back
-// from a version's notes to it.
+// What's new's versions sidebar: its rows (arg: the entry in about::notes()) and its page arrows.
 const H_ABOUT_ROW: i32 = 87;
-const H_ABOUT_BACK: i32 = 88;
+const H_ABOUT_SIDEBAR: i32 = 99;
 const H_FMORE_MOVE: i32 = 77;
 // 2.0.0-beta.2: a notebook's or a folder's Leave out of the Graph / Show in the Graph.
 const H_MORE_GRAPH: i32 = 78;
@@ -422,23 +419,17 @@ pub struct LibraryState {
     gestures_file_readable: bool,
     gestures_refused: i32,
     gestures_reset_confirm: bool,
-    /// The About sheet (What's new): its view (the card, Read all's list, a version's notes), the
-    /// version's notes shown (their entry in about::notes()), the list's page and the notes' page, and
-    /// where the bat is (the card hangs from it). As it last drew: the view's pages, the list's
-    /// entries on its page and the row marked as this version's, whether the signature shows, the
-    /// card's notes (the blocks shown, of how many, the last one cut), a version's notes' body size (0
-    /// elsewhere), and where the card or sheet is (a step on the sheet refreshes there alone:
-    /// about_step).
-    about_view: AboutView,
+    /// What's new, the full-screen browser: the version shown (its entry in about::notes()), the
+    /// versions sidebar's page and the reader's page. As it last drew: the sidebar's rows and selected
+    /// row, the reader's pages, whether its page has the signature, its body size and leading, and the
+    /// screen (a step on it redraws what changed).
     about_note: usize,
     about_list_page: i32,
     about_page: i32,
     about_pages: i32,
-    about_bat: Rect,
     about_rows: Vec<usize>,
     about_marked: i32,
     about_signed: bool,
-    about_card: (i32, i32, bool),
     about_body_px: f32,
     about_lead: f32,
     about_area: Rect,
@@ -549,15 +540,7 @@ fn top_h() -> i32 {
 }
 /// The header's height under the status bar: the Library's name and the Search, apps and settings buttons.
 fn head_h() -> i32 {
-    ui_px(150.0)
-}
-/// The header's round buttons, centred in it.
-fn top_btn_h() -> i32 {
-    ui_px(96.0)
-}
-/// Where the header's buttons end; about.rs starts a sheet that would cut across them at the margin.
-pub(crate) fn top_buttons_foot() -> i32 {
-    top_h()
+    gui_head_h()
 }
 /// The pager and + button's bar at the foot (its rule above it); about.rs keeps a version's notes off it.
 pub(crate) fn bottom_h() -> i32 {
@@ -1052,38 +1035,26 @@ fn draw_base(a: &mut App) {
 
     let m = margin();
     let gap = gui_gap();
-    let hy = gui_status_h();
-    let hh = head_h();
-    let bh = top_btn_h();
-    let by = hy + (hh - bh) / 2;
-    let mut title_x = m;
-    if !s.cur_folder.is_empty() {
-        let br = Rect::new(m, by, bh, bh);
-        gui_icon_button(c, br, IconKind::Back, ButtonStyle::Plain);
-        hits_add(&mut s.hits, br, H_BACK, 0);
-        title_x = br.x + bh + ui_px(22.0);
-    }
-    // The header's round buttons, right to left: Settings, All apps and Search. Search opens the
-    // keyboard over the Library, and the filtered grid follows each key typed.
-    let mut rx = aw - m;
-    for (icon, id) in [(IconKind::Gear, H_SETTINGS), (IconKind::Grid, H_APPS), (IconKind::Search, H_SEARCH)] {
-        let r = Rect::new(rx - bh, by, bh, bh);
-        gui_icon_button(c, r, icon, ButtonStyle::Plain);
-        hits_add(&mut s.hits, r, id, 0);
-        rx = r.x - ui_px(12.0);
-    }
     let mut title_buf = String::new();
     let title = if !s.cur_folder.is_empty() {
         ui_name_label(s.cur_folder.as_str(), &mut title_buf, LABEL_CAP)
     } else {
         tr("Library")
     };
-    let title_px = ui_title_size() * if ui_theme() == UiTheme::Gothic { 1.75 } else { 1.1 };
-    let title_r = Rect::new(title_x, hy, (rx - title_x).max(0), hh);
-    if ui_theme() == UiTheme::Gothic {
-        font_draw_left_name(c, FontFace::Title, title_px, title_r, title, 0);
-    } else {
-        ui_text(c, FontFace::Title, title_px, ui_small_size(), title_r, title, 1, false, 0);
+    // The one header: title at the left, its round actions right to left. Search opens the keyboard
+    // over the Library, and the filtered grid follows each key typed.
+    let (head, actions) = gui_header(
+        c,
+        aw,
+        title,
+        !s.cur_folder.is_empty(),
+        &[(IconKind::Gear, H_SETTINGS), (IconKind::Grid, H_APPS), (IconKind::Search, H_SEARCH)],
+    );
+    if !rect_is_empty(head.back) {
+        hits_add(&mut s.hits, head.back, H_BACK, 0);
+    }
+    for (r, id) in actions {
+        hits_add(&mut s.hits, r, id, 0);
     }
 
     // The app row: small launchers with the icon in a rectangle and its name below, as a phone
@@ -1197,8 +1168,6 @@ fn draw_base(a: &mut App) {
         &pl,
         0,
     );
-    // About hangs its card from the bat; the modern header has no bat, so it opens under the title.
-    s.about_bat = Rect::new(aw / 2, hy + hh, ui_px(4.0), ui_px(4.0));
 }
 
 /// Where a sheet `h` px tall goes on a screen (Files' Delete question is drawn in the same place: browser.rs).
@@ -4882,30 +4851,22 @@ pub(crate) fn settings_page(
     footer: bool,
 ) -> SettingsPage {
     canvas_fill(c, Rect::new(0, 0, aw, ah), 255);
-    let pad = ui_px(50.0);
-    let th = ui_px(190.0);
-    let bh = ui_px(150.0);
-    let mut back_r = RECT_EMPTY;
-    let mut tx = pad;
-    if back {
-        back_r = Rect::new(pad, (th - bh) / 2, bh, bh);
-        ui_button(c, back_r, IconKind::Back, "", ButtonStyle::Plain);
-        tx = back_r.x + bh + ui_px(30.0);
-    }
+    // Every page carries the app's chrome: the one status bar and header the home uses.
+    let pad = gui_margin();
+    let (head, actions) = gui_header(c, aw, title, back, &[(IconKind::Close, 0)]);
+    // The controls draw compact; their touch targets keep the 10 mm the old header gave them.
+    let touch = gui_top_button_h().max(ui_px(120.0));
+    let touch_rect = |r: Rect| {
+        Rect::new(r.x - (touch - r.w) / 2, r.y - (touch - r.h) / 2, touch, touch)
+    };
+    let back_r = if back { touch_rect(head.back) } else { RECT_EMPTY };
     // Every Settings page closes with this X alone at the top right (never a Done at the foot).
-    let close_r = Rect::new(aw - pad - bh, (th - bh) / 2, bh, bh);
-    ui_button(c, close_r, IconKind::Close, "", ButtonStyle::Plain);
-    // (the same title face and size on the main page and on every submenu)
-    font_draw_left(
-        c,
-        FontFace::Title,
-        ui_title_size(),
-        Rect::new(tx, 0, (close_r.x - tx - ui_px(30.0)).max(0), th),
-        title,
-        0,
-    );
+    let close_r = touch_rect(actions[0].0);
+    // The header is the page's chrome: its content starts directly under it, as Settings' old
+    // title band did, so the extra status bar does not take room away from the page.
+    let header_foot = head.foot;
     let footer_h = if footer { ui_px(170.0) } else { ui_px(36.0) };
-    let content = Rect::new(pad, th + ui_px(36.0), aw - 2 * pad, ah - th - ui_px(36.0) - footer_h);
+    let content = Rect::new(pad, header_foot, aw - 2 * pad, ah - header_foot - footer_h);
     let footer_r = if footer {
         Rect::new(pad, ah - ui_px(30.0) - ui_px(120.0), aw - 2 * pad, ui_px(120.0))
     } else {
@@ -5607,7 +5568,7 @@ fn name_label(name: &str) -> String {
 }
 
 /// What the home's app tiles do: Files, Share and Settings are the three installed apps. What's
-/// new is the All apps page's utility link, not an app tile.
+/// new and About are the All apps page's links at the foot, not app tiles.
 fn home_app(a: &mut App, app: i32) {
     match app {
         0 => {
@@ -5627,38 +5588,47 @@ fn home_app(a: &mut App, app: i32) {
             about_open(lib(a));
             open_modal(a, Modal::About);
         }
+        7 => {
+            // The About page of Settings' System category, directly; its Back returns there.
+            let s = lib(a);
+            s.modal = Modal::None;
+            s.settings_cat = 6;
+            s.settings_cat_shown = -1;
+            s.settings_rows_page = 0;
+            s.device_links_page = 0;
+            open_modal(a, Modal::DeviceInfo);
+        }
         _ => {}
     }
 }
 
-/// The home's All apps page (2.3, issue #209): the three installed apps as small launchers, then the
-/// What's new utility link. Exit is in Settings' sidebar.
+/// The home's All apps page (2.3, issue #209): the three installed apps as small launchers, then
+/// What's new and About as the page's two foot buttons. Exit is in Settings' sidebar.
 fn draw_apps(a: &mut App) {
     let (aw, ah) = (a.w, a.h);
     let App { screen: c, lib, .. } = a;
     let s = lib.as_deref_mut().unwrap();
     canvas_fill(c, Rect::new(0, 0, aw, ah), 255);
-    gui_status_bar(c, aw, wall_time());
+    let (head, actions) = gui_header(c, aw, tr("Apps"), false, &[(IconKind::Close, H_APPS_CLOSE)]);
+    hits_add(&mut s.hits, actions[0].0, H_APPS_CLOSE, 0);
     let m = margin();
-    let hy = gui_status_h();
-    let hh = head_h();
-    let bh = top_btn_h();
-    let close = Rect::new(aw - m - bh, hy + (hh - bh) / 2, bh, bh);
-    gui_icon_button(c, close, IconKind::Close, ButtonStyle::Plain);
-    hits_add(&mut s.hits, close, H_APPS_CLOSE, 0);
-    let title_px = ui_title_size() * if ui_theme() == UiTheme::Gothic { 1.75 } else { 1.1 };
-    font_draw_left(c, FontFace::Title, title_px, Rect::new(m, hy, (close.x - m - ui_px(20.0)).max(0), hh), tr("Apps"), 0);
     let gap = gui_gap();
     let (ts, tw) = (apps_h(), app_tile_w());
-    let top = hy + hh + gap;
+    let top = head.foot + gap;
     for (i, (icon, label, arg)) in home_apps().iter().enumerate() {
         let r = Rect::new(m + i as i32 * (tw + gap), top, tw, ts);
         gui_app_tile(c, r, *icon, tr(label), false);
         hits_add(&mut s.hits, r, H_APP, *arg);
     }
-    let whats = Rect::new(m, top + ts + gap * 2, ui_px(380.0), ui_px(110.0));
+    let bh = ui_px(110.0);
+    let by = ah - m - bh;
+    let bw = ui_px(380.0);
+    let whats = Rect::new(m, by, bw, bh);
     ui_button(c, whats, IconKind::Castle, tr("What's new"), ButtonStyle::Plain);
     hits_add(&mut s.hits, whats, H_APP, 6);
+    let about = Rect::new(whats.x + whats.w + gap, by, bw, bh);
+    ui_button(c, about, IconKind::Castle, tr("About"), ButtonStyle::Plain);
+    hits_add(&mut s.hits, about, H_APP, 7);
 }
 
 /// Draw any of the home's small menus in the one global popup, anchored to the control that opened
@@ -5726,25 +5696,25 @@ fn draw_modal(a: &mut App) {
             let (aw, ah) = (a.w, a.h);
             let App { screen: c, lib, .. } = a;
             let s = lib.as_deref_mut().unwrap();
-            let list = s.about_view == AboutView::List;
-            let page = if list { s.about_list_page } else { s.about_page };
-            let h = crate::about::about_draw(c, aw, ah, s.about_bat, s.about_view, s.about_note, page);
-            if list {
-                s.about_list_page = h.page;
-            } else {
-                s.about_page = h.page;
-            }
+            let h = crate::about::about_draw(c, aw, ah, s.about_note, s.about_page, s.about_list_page);
+            s.about_list_page = h.sidebar_page;
+            s.about_page = h.page;
             s.about_pages = h.pages;
             s.about_rows = h.rows.iter().map(|r| r.1).collect();
             s.about_marked = h.marked;
             s.about_signed = h.signed;
-            s.about_card = (h.card_blocks, h.card_notes, h.card_cut);
             s.about_body_px = h.body_px;
             s.about_lead = h.lead;
             s.about_area = h.area;
-            for (r, id) in [(h.close, H_ABOUT_CLOSE), (h.prev, H_ABOUT_PREV), (h.next, H_ABOUT_NEXT), (h.more, H_ABOUT_MORE), (h.back, H_ABOUT_BACK)] {
+            for (r, id, arg) in [
+                (h.close, H_ABOUT_CLOSE, 0),
+                (h.prev, H_ABOUT_PREV, 0),
+                (h.next, H_ABOUT_NEXT, 0),
+                (h.sidebar_prev, H_ABOUT_SIDEBAR, -1),
+                (h.sidebar_next, H_ABOUT_SIDEBAR, 1),
+            ] {
                 if !rect_is_empty(r) {
-                    hits_add(&mut s.hits, r, id, 0);
+                    hits_add(&mut s.hits, r, id, arg);
                 }
             }
             for (r, i) in &h.rows {
@@ -6698,30 +6668,20 @@ fn open_modal(a: &mut App, m: Modal) {
     redraw(a, RefreshMode::Ui);
 }
 
-/// What's new as the bat and the first start after an update open it: the card.
+/// What's new as the bat and the first start after an update open it: this version's notes in the
+/// full-screen browser.
 fn about_open(s: &mut LibraryState) {
-    s.about_view = AboutView::Card;
+    let all = crate::about::notes();
+    s.about_note = crate::about::current(all, GRIMOIRE_VERSION);
     s.about_page = 0;
     s.about_list_page = 0;
     s.about_area = RECT_EMPTY;
 }
 
-/// What's new after a step on it (Read all, a version's notes, Back, a page, Esc back to the list or the
-/// card): the screen drawn again, and the panel refreshed only where the card or sheet was and where it
-/// is now, as the sheet refreshes (Ui): the Library around it has not changed. Opening and Dismiss
-/// refresh the whole screen, as every sheet's do.
+/// What's new after a step on it (another version, a page, Esc): the screen drawn again. The sidebar
+/// and reader together fill it, so there is no smaller place to refresh.
 fn about_step(a: &mut App) {
-    let was = lib(a).about_area;
-    if rect_is_empty(was) || graph_shown(a) || lib(a).settings_return_editor {
-        redraw(a, RefreshMode::Ui);
-        return;
-    }
-    draw_base(a);
-    hits_clear(&mut lib(a).hits);
-    draw_modal(a);
-    a.toast_floor = toast_floor(a);
-    let now = lib(a).about_area;
-    app_invalidate(a, rect_union(was, now), RefreshMode::Ui);
+    redraw(a, RefreshMode::Ui);
 }
 
 /// The anchored menus drawn by `gui_popup` rather than as a full dialog or sheet.
@@ -7302,33 +7262,24 @@ fn act(a: &mut App, h: &Hit) {
         }
         H_ABOUT_CLOSE => close_modal(a),
         H_ABOUT_PREV | H_ABOUT_NEXT => {
-            // (the page shown's neighbour, when there is one: a greyed arrow does nothing)
+            // (the reader's neighbour, when there is one: a greyed arrow does nothing)
             let s = lib(a);
-            let page = if s.about_view == AboutView::List { &mut s.about_list_page } else { &mut s.about_page };
-            let to = *page + if h.id == H_ABOUT_NEXT { 1 } else { -1 };
+            let to = s.about_page + if h.id == H_ABOUT_NEXT { 1 } else { -1 };
             if to >= 0 && to < s.about_pages {
-                *page = to;
+                s.about_page = to;
                 about_step(a);
             }
         }
-        // Read all: the list of every version's notes, from its first page.
-        H_ABOUT_MORE => {
+        H_ABOUT_SIDEBAR => {
             let s = lib(a);
-            s.about_view = AboutView::List;
-            s.about_list_page = 0;
+            s.about_list_page = (s.about_list_page + h.arg).max(0);
             about_step(a);
         }
-        // A row of the list: that version's notes, from their first page.
+        // A version in the sidebar: its notes in the reader, from their first page.
         H_ABOUT_ROW => {
             let s = lib(a);
-            s.about_view = AboutView::Note;
             s.about_note = h.arg.max(0) as usize;
             s.about_page = 0;
-            about_step(a);
-        }
-        // Back from a version's notes: the list, at the page it was left at.
-        H_ABOUT_BACK => {
-            lib(a).about_view = AboutView::List;
             about_step(a);
         }
         H_PREV | H_NEXT => turn(a, h.id == H_NEXT),
@@ -8839,13 +8790,6 @@ pub fn library_back(a: &mut App) -> bool {
         }
         Modal::Pair | Modal::Buttons => tap(a, H_BUTTONS_DONE),
         Modal::Font => tap(a, H_FONT_CANCEL),
-        // (What's new, one layer a press: a version's notes back to the list, the list back to the card
-        // that opened it, as the Templates sheet goes back to New notebook; the card closes)
-        Modal::About if lib(a).about_view == AboutView::Note => tap(a, H_ABOUT_BACK),
-        Modal::About if lib(a).about_view == AboutView::List => {
-            lib(a).about_view = AboutView::Card;
-            about_step(a);
-        }
         Modal::Gestures if reset_asked => tap(a, H_GESTURES_RESET_CANCEL),
         Modal::Gestures => tap(a, H_GESTURES_DONE),
         Modal::New | Modal::Settings | Modal::More | Modal::FolderMore | Modal::Move | Modal::Delete
@@ -8889,22 +8833,10 @@ pub fn library_modal_key(a: &mut App, code: i32) -> bool {
             act(a, &Hit { id: H_NEW_CREATE, ..Default::default() });
             true
         }
-        Modal::Apps | Modal::Add | Modal::Sort => {
+        Modal::Apps | Modal::Add | Modal::Sort | Modal::About => {
             if code == 1 {
                 close_modal(a);
             }
-            true
-        }
-        // What's new's Enter opens: the card's Read all (the list), and on the list the notes of the row
-        // marked as this version's (the card's notes; the newest when no row is this version's).
-        Modal::About if (code == ENTER || code == KP_ENTER) && s.about_view != AboutView::Note => {
-            let hit = if s.about_view == AboutView::Card {
-                Hit { id: H_ABOUT_MORE, ..Default::default() }
-            } else {
-                let all = crate::about::notes();
-                Hit { id: H_ABOUT_ROW, arg: crate::about::current(all, GRIMOIRE_VERSION) as i32, ..Default::default() }
-            };
-            act(a, &hit);
             true
         }
         _ => false,
@@ -9730,33 +9662,21 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
             None => csnprintf!(out, cap, "%d", s.modal as i32),
         };
     } else if let Some(k) = key.strip_prefix("about.") {
-        // What's new (docs/SIM.md): its view; its page (from 1) and pages; 1 on Read all's sheet (the list
-        // or a version's notes); the list's rows on its page, the row marked as this version's, each
-        // row's versions and date; the notes shown, their body size, their leading and whether the page
-        // shown has the signature; the card's notes: the blocks it shows, of how many, and 1 when the
-        // last shown is cut.
+        // What's new (docs/SIM.md): the full-screen browser's selected version; the reader's page
+        // (from 1) and pages; the versions sidebar's rows on its page, the selected row, each row's
+        // versions and date; the notes' body size and leading, and whether the page shown has the
+        // signature. The old card's keys remain 0: there is no card now.
         let open = s.modal == Modal::About;
-        let view = if open { Some(s.about_view) } else { None };
         let all = crate::about::notes();
         let row = |n: &str| -> Option<&crate::about::Entry> {
             let n = n.parse::<usize>().ok()?.checked_sub(1)?;
-            all.get(*s.about_rows.get(n).filter(|_| view == Some(AboutView::List))?)
+            all.get(*s.about_rows.get(n).filter(|_| open)?)
         };
         if k == "view" {
-            let v = match view {
-                Some(AboutView::Card) => "card",
-                Some(AboutView::List) => "list",
-                Some(AboutView::Note) => "note",
-                None => "",
-            };
-            csnprintf!(out, cap, "%s", v);
+            csnprintf!(out, cap, "%s", if open { "browser" } else { "" });
             return 0;
         } else if k == "note" {
-            let e = match view {
-                Some(AboutView::Card) => all.get(crate::about::current(all, GRIMOIRE_VERSION)),
-                Some(AboutView::Note) => all.get(s.about_note),
-                _ => None,
-            };
+            let e = if open { all.get(s.about_note) } else { None };
             csnprintf!(out, cap, "%s", &e.map_or(String::new(), |e| e.label()));
             return 0;
         } else if let Some(n) = k.strip_prefix("row.") {
@@ -9766,34 +9686,29 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
             csnprintf!(out, cap, "%s", row(n).map_or("", |e| crate::about::date_label(e.date)));
             return 0;
         } else if k == "body_px" {
-            // (in px to a tenth, "44" or "38.5"; 0 but on a version's notes)
-            let px = if view == Some(AboutView::Note) { s.about_body_px } else { 0.0 };
+            // (in px to a tenth, "44" or "38.5"; 0 while What's new is not open)
+            let px = if open { s.about_body_px } else { 0.0 };
             let t = format!("{px:.1}");
             csnprintf!(out, cap, "%s", t.strip_suffix(".0").unwrap_or(&t));
             return 0;
         } else if k == "lead" {
-            // (to a hundredth, "1.3" or "1.22"; 0 but on a version's notes)
-            let lead = if view == Some(AboutView::Note) { s.about_lead } else { 0.0 };
+            // (to a hundredth, "1.3" or "1.22"; 0 while What's new is not open)
+            let lead = if open { s.about_lead } else { 0.0 };
             let t = format!("{lead:.2}");
             let t = t.trim_end_matches('0').trim_end_matches('.');
             csnprintf!(out, cap, "%s", if t.is_empty() { "0" } else { t });
             return 0;
         }
-        let card = view == Some(AboutView::Card);
-        let list = view == Some(AboutView::List);
         let v = match k {
-            "page" if open => if list { s.about_list_page + 1 } else { s.about_page + 1 },
+            "page" if open => s.about_page + 1,
             "pages" if open => s.about_pages,
-            "full" if open => !card as i32,
+            "full" if open => 1,
             "entries" if open => all.len() as i32,
-            "rows" if list => s.about_rows.len() as i32,
-            "marked" if list => s.about_marked,
-            "signature" if open && !list => s.about_signed as i32,
-            "card_blocks" if card => s.about_card.0,
-            "card_notes" if card => s.about_card.1,
-            "card_cut" if card => s.about_card.2 as i32,
-            "page" | "pages" | "full" | "entries" | "rows" | "marked" | "signature" | "card_blocks" | "card_notes"
-            | "card_cut" => 0,
+            "rows" if open => s.about_rows.len() as i32,
+            "marked" if open => s.about_marked,
+            "signature" if open => s.about_signed as i32,
+            "page" | "pages" | "full" | "entries" | "rows" | "marked" | "signature" | "card_blocks"
+            | "card_notes" | "card_cut" => 0,
             _ => return -1,
         };
         csnprintf!(out, cap, "%d", v);
@@ -9879,8 +9794,9 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_APP => "app.", H_FILTER => "filter.", H_SORT => "sort", H_SORT_PICK => "sort.",
                 H_SEARCH => "search",
                 H_PREV => "prev", H_NEXT => "next",
-                H_ABOUT_PREV => "about.prev", H_ABOUT_NEXT => "about.next", H_ABOUT_MORE => "about.more",
-                H_ABOUT_ROW => "about.row.", H_ABOUT_BACK => "about.back",
+                H_ABOUT_PREV => "about.prev", H_ABOUT_NEXT => "about.next",
+                H_ABOUT_ROW => "about.row.",
+                H_ABOUT_SIDEBAR => if hit.arg < 0 { "about.versions.prev" } else { "about.versions.next" },
                 H_LINK => "about.link.", H_LINK_PAGE => if hit.arg < 0 { "about.link.prev" } else { "about.link.next" },
                 H_SET_FONT => "font", H_FONT_PICK => "font.", H_FONT_DONE => "font.done", H_FONT_CANCEL => "font.cancel",
                 H_FONT_OWN => "font.file:", H_FONT_PAGE => if hit.arg < 0 { "font.prev" } else { "font.next" },
@@ -9933,7 +9849,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
             if hit.id == H_SORT_PICK { name.push_str(["name-az", "name-za", "newest", "oldest"].get(hit.arg as usize).copied().unwrap_or("")); }
             if hit.id == H_ADD_ACTION { name.push_str(["new-notebook", "new-folder", "share"].get(hit.arg as usize).copied().unwrap_or("")); }
             if hit.id == H_APP {
-                name.push_str(["files", "share", "settings", "", "", "", "whats-new", "exit"].get(hit.arg as usize).copied().unwrap_or(""));
+                name.push_str(["files", "share", "settings", "", "", "", "whats-new", "about"].get(hit.arg as usize).copied().unwrap_or(""));
             }
             if matches!(hit.id, H_GESTURE_GROUP | H_BUTTON_GROUP) {
                 if let Some(group) = ACTION_GROUPS.get(hit.arg as usize) { name.push_str(group.probe); }

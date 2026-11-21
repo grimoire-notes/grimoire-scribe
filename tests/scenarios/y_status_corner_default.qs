@@ -24,9 +24,9 @@ expect status.reserved is 0
 expect status.text has 87%
 expect editor.scale is 1.00
 shot 01-default-corner
-# The old strip is page space again.
-pen down 300 30 0.6
-pen up 300 30
+# The shared bar covers the page's top edge: writing starts below it.
+pen down 300 200 0.6
+pen up 300 200
 pen leave
 wait 100
 expect editor.strokes is 1

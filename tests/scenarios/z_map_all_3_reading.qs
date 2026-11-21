@@ -28,5 +28,5 @@ expect editor.map.building is 0
 expect editor.map.books is 120
 expect editor.map.visible.ids has lib119:2
 shot 02-read
-tap 100 95
+tap 100 170
 expect editor.map is 0

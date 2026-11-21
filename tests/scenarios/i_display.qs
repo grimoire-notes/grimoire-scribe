@@ -33,7 +33,7 @@ expect light.intensity is 12
 touch down 1000 296
 wait 100
 touch move 1100 296
-expect display.last_fast_rect is 80 236 1700 120
+expect display.last_fast_rect is 80 238 1700 120
 touch up 1100 296
 wait 300
 drag touch 1000 296 1500 296 5

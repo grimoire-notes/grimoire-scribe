@@ -1,4 +1,5 @@
 //! The Index map. This view owns its raster and interaction; the editor owns navigation and names.
+use crate::globalui::{gui_status_bar, gui_status_h};
 use crate::prelude::*;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -188,9 +189,9 @@ fn plot(v: &MapView) -> Rect {
     let bottom = if v.selected >= 0 { u(370.0) } else { u(170.0) };
     Rect {
         x: u(16.0),
-        y: u(290.0),
+        y: gui_status_h() + u(290.0),
         w: v.w - u(32.0) - if v.foreign.is_empty(){0}else{u(470.0)},
-        h: v.h - u(290.0) - bottom,
+        h: v.h - gui_status_h() - u(290.0) - bottom,
     }
 }
 // The graph-all.ini this process last read or wrote (it is read once, then kept: the Graph opens without
@@ -1088,6 +1089,7 @@ fn visible_rect(v: &MapView, i: usize) -> Rect {
 fn render(v: &mut MapView, c: &mut Canvas, nav: &Nav) {
     canvas_reset_clip(c);
     canvas_fill(c, full(v), 255);
+    gui_status_bar(c, v.w, wall_time());
     v.hits.clear();
     v.labels.clear();
     if v.list {render_list(v,c,nav);return;}
@@ -1504,6 +1506,9 @@ pub const PEN_REOPEN_MS: u32 = 450;
 
 pub fn mapview_pointer(v: &mut MapView, a: &mut App, nav: &Nav, phase: i32, e: &InEvent) -> MapResult {
     v.last_input_ms = e.t_ms;
+    if phase == 0 && e.y < gui_status_h() as f32 {
+        return MapResult::None;
+    }
     if phase == 0 {
         v.drag = Some(MapDrag {
             x: e.x,
@@ -2069,7 +2074,7 @@ mod tests {
     // The Notebook chip is gone (the owner's ruling of 2026-11-03, "remove it"): where it was, under the Index's
     // tabs at the left, there is no control, and a tap there selects nothing and changes no scope or view.
     fn assert_no_notebook_chip(v: &mut MapView, a: &mut App, nav: &Nav) {
-        let (x, y) = (u(400.0) as f32, u(215.0) as f32);
+        let (x, y) = (u(400.0) as f32, gui_status_h() as f32 + u(215.0) as f32);
         assert!(!matches!(hit(v, x, y), Some(MapHitKind::Control(_))), "a control where the Notebook chip was");
         let (scope, mode, id, list) = (v.scope, v.mode, v.id, v.list);
         let down = InEvent { type_: InType::TouchDown, x, y, t_ms: 100, ..Default::default() };
@@ -3048,31 +3053,31 @@ fn node_spec(v: &MapView, spec: &str) -> i32 {
 
 /// One navigation bar for the three Index views. Back always returns to the notebook.
 pub fn index_navigation(c:&mut Canvas,w:i32,selected:usize)->[Rect;4] {
-    let u=ui_px;let back=Rect::new(u(20.0),u(20.0),u(150.0),u(150.0));
+    let u=ui_px;let top=gui_status_h();let back=Rect::new(u(20.0),top+u(20.0),u(150.0),u(150.0));
     let gap=u(20.0);let first=u(200.0);let width=(w-first-u(20.0)-2*gap)/3;
     let mut tabs=[back;4];ui_button(c,back,IconKind::Back,"",ButtonStyle::Plain);
     for (i,text) in [tr("Graph"),tr("List"),tr("Pages")].into_iter().enumerate(){
-        tabs[i+1]=Rect::new(first+i as i32*(width+gap),u(20.0),width,u(150.0));
+        tabs[i+1]=Rect::new(first+i as i32*(width+gap),top+u(20.0),width,u(150.0));
         ui_button(c,tabs[i+1],IconKind::None,text,if i==selected{ButtonStyle::Selected}else{ButtonStyle::Plain});
     }
-    canvas_hline(c,0,w,u(190.0),u(3.0),0);tabs
+    canvas_hline(c,0,w,top+u(190.0),u(3.0),0);tabs
 }
 /// The Graph's bar when it was opened from the Library (no notebook open): Back, and the Graph tab alone, as
 /// wide as index_navigation's (there is no List or Pages to go to).
 pub fn graph_navigation(c:&mut Canvas,w:i32)->[Rect;2] {
-    let u=ui_px;let back=Rect::new(u(20.0),u(20.0),u(150.0),u(150.0));
+    let u=ui_px;let top=gui_status_h();let back=Rect::new(u(20.0),top+u(20.0),u(150.0),u(150.0));
     let gap=u(20.0);let first=u(200.0);let width=(w-first-u(20.0)-2*gap)/3;
     ui_button(c,back,IconKind::Back,"",ButtonStyle::Plain);
-    let tab=Rect::new(first,u(20.0),width,u(150.0));
+    let tab=Rect::new(first,top+u(20.0),width,u(150.0));
     ui_button(c,tab,IconKind::None,tr("Graph"),ButtonStyle::Selected);
-    canvas_hline(c,0,w,u(190.0),u(3.0),0);[back,tab]
+    canvas_hline(c,0,w,top+u(190.0),u(3.0),0);[back,tab]
 }
 fn render_list(v:&mut MapView,c:&mut Canvas,nav:&Nav) {
     let tabs=index_navigation(c,v.w,1);
     for (i,id) in [BACK,GRAPH,LIST,PAGES].into_iter().enumerate(){v.hits.push(MapHit{rect:tabs[i],kind:MapHitKind::Control(id),centre:(0.0,0.0),radius:0.0});}
     let heading=cformat!(tr("Links from %s"),&v.list_name);
-    font_draw_left_name(c,FontFace::Bold,ui_text_size(),Rect::new(u(40.0),u(205.0),v.w-u(80.0),u(65.0)),&heading,0);
-    let mut y=u(290.0);let mut group=String::new();
+    font_draw_left_name(c,FontFace::Bold,ui_text_size(),Rect::new(u(40.0),gui_status_h()+u(205.0),v.w-u(80.0),u(65.0)),&heading,0);
+    let mut y=gui_status_h()+u(290.0);let mut group=String::new();
     if v.list_rows.is_empty(){font_draw_left_name(c,FontFace::Regular,ui_text_size(),Rect::new(u(50.0),y,v.w-u(100.0),u(120.0)),tr("No links in this notebook yet."),0);return;}
     for i in v.list_offset..v.list_rows.len(){
         let l=v.list_rows[i];let key=nav_external_target(l.target.as_str()).map_or(String::new(),|(id,_)|id.to_string());

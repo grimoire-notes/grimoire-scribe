@@ -103,9 +103,9 @@ tap panel display.fit
 wait 300
 expect settings.landscape_fit is 1
 expect toast is
-expect display.presents is fast 80 548 1700 120, ui 0 0 1860 2480
+expect display.presents is fast 80 550 1700 120, ui 0 0 1860 2480
 tap panel display.fit
 wait 300
 expect settings.landscape_fit is 0
 expect toast is
-expect display.presents is fast 80 548 1700 120, ui 0 0 1860 2480
+expect display.presents is fast 80 550 1700 120, ui 0 0 1860 2480
