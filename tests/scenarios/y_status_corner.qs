@@ -26,8 +26,8 @@ expect status.text is
 expect status.rect is
 expect status.front is 0
 expect status.zone is 0 0 165 165
-# The Library has no corner; What's new opens from the Apps page, and the Display sheet's size
-# shows nothing on it.
+# The Library has no corner; What's new opens from the Apps page at the app row's Show All, and
+# the Display sheet's size shows nothing on it.
 tap library apps
 tap library app.whats-new
 wait 300

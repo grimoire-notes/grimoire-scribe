@@ -1909,6 +1909,7 @@ wait 100
 # sidebar, and its X.
 tap library back
 wait 100
+shot 77b-library-app-row
 tap library apps
 wait 100
 shot 78-apps

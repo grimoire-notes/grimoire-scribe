@@ -517,6 +517,28 @@ fn settings_roundtrip() {
     check_near!(t.pen_calib.ax, -1860.0f32, 1e-2);
 }
 
+fn recent_apps_roundtrip() {
+    let path = format!("{}/settings.ini", store_root());
+    let mut s = Settings::default();
+    let mut t = Settings::default();
+    settings_default(&mut s);
+    check!(settings_app_order(&s) == [0, 1, 2]);
+    check!(!settings_app_used(&mut s, 0));
+    check!(!settings_app_used(&mut s, -1));
+    check!(settings_app_used(&mut s, 2) && settings_app_order(&s) == [2, 0, 1]);
+    check!(settings_save(&s) == 0 && has_pins_line(&path, "recent_apps=settings,files,share"));
+    check!(settings_load(&mut t) == 0 && t.recent_apps.as_str() == "settings,files,share");
+    check!(settings_app_used(&mut t, 1) && settings_app_order(&t) == [1, 2, 0]);
+    check!(settings_save(&t) == 0 && has_pins_line(&path, "recent_apps=share,settings,files"));
+    // A repeated or unknown name is dropped, and apps the line leaves out follow in default order.
+    check!(write_file_atomic(&path, b"recent_apps=share,share,files,calendar\n") == 0);
+    check!(settings_load(&mut t) == 0 && t.recent_apps.as_str() == "share,files,settings");
+    check!(settings_save(&t) == 0 && has_pins_line(&path, "recent_apps=share,files,settings"));
+    check!(write_file_atomic(&path, b"recent_apps=\n") == 0);
+    check!(settings_load(&mut t) == 0 && settings_app_order(&t) == [0, 1, 2]);
+    unlink(&path);
+}
+
 fn settings_upgrade_keeps_tweaks() {
     // An old settings file (no settings_version): pencil size still the old default,
     // tilt widening tuned by hand.
@@ -1417,6 +1439,7 @@ fn test_store() {
     run!(fuzz_deserialize);
     run!(custom_music_paper_roundtrip);
     run!(settings_roundtrip);
+    run!(recent_apps_roundtrip);
     run!(settings_upgrade_keeps_tweaks);
     run!(settings_upgrade_ballpoint_smoothing);
     run!(settings_upgrade_quick_size_pairs);

@@ -538,7 +538,7 @@ const LABEL_CAP: usize = STORE_NAME_LEN + 32;
 fn top_h() -> i32 {
     gui_status_h() + head_h()
 }
-/// The header's height under the status bar: the Library's name and the Search, apps and settings buttons.
+/// The header's height under the status bar: the Library's name and the Search and settings buttons.
 fn head_h() -> i32 {
     gui_head_h()
 }
@@ -566,14 +566,17 @@ fn card_label_h() -> i32 {
     ui_px(150.0)
 }
 
-/// The installed apps' order on the carousel and the All apps page. Only these three are apps; Exit
-/// lives at the foot of Settings' sidebar, and What's new is a utility link on the All apps page.
-fn home_apps() -> [(IconKind, &'static str, i32); 3] {
-    [
+/// The installed apps, most recently used first, on the carousel and the All apps page. Only these
+/// three are apps; Exit lives at the foot of Settings' sidebar, and What's new is a utility link on
+/// the All apps page.
+fn home_apps(s: &Settings) -> [(IconKind, &'static str, i32); 3] {
+    let all = [
         (IconKind::Browser, "Files", 0),
         (IconKind::Share, "Share", 1),
         (IconKind::Gear, "Settings", 2),
-    ]
+    ];
+    let order = settings_app_order(s);
+    [all[order[0] as usize], all[order[1] as usize], all[order[2] as usize]]
 }
 
 /// cols, rows, cw, ch for a screen aw x ah. The covers are portrait (4:3) and the labels sit under
@@ -1025,6 +1028,7 @@ fn draw_files_card(c: &mut Canvas, s: &mut LibraryState, r: Rect, idx: usize) {
 
 fn draw_base(a: &mut App) {
     let (aw, ah, dpi) = (a.w, a.h, a.dpi);
+    let apps = home_apps(&a.settings);
     let App { screen: c, lib, .. } = a;
     let s = lib.as_deref_mut().unwrap();
     hits_clear(&mut s.hits);
@@ -1048,7 +1052,7 @@ fn draw_base(a: &mut App) {
         aw,
         title,
         !s.cur_folder.is_empty(),
-        &[(IconKind::Gear, H_SETTINGS), (IconKind::Grid, H_APPS), (IconKind::Search, H_SEARCH)],
+        &[(IconKind::Gear, H_SETTINGS), (IconKind::Search, H_SEARCH)],
     );
     if !rect_is_empty(head.back) {
         hits_add(&mut s.hits, head.back, H_BACK, 0);
@@ -1058,15 +1062,20 @@ fn draw_base(a: &mut App) {
     }
 
     // The app row: small launchers with the icon in a rectangle and its name below, as a phone
-    // lays them out. Only Files, Share and Settings are apps; Exit is at the foot of Settings.
+    // lays them out, most recently used first. Show All is a plain text link at the row's right
+    // margin, opening the Apps page.
     let ay = top_h() + gap;
-    let apps = home_apps();
     let (ts, tw) = (apps_h(), app_tile_w());
     for (i, (icon, label, arg)) in apps.iter().enumerate() {
         let r = Rect::new(m + i as i32 * (tw + gap), ay, tw, ts);
         gui_app_tile(c, r, *icon, tr(label), false);
         hits_add(&mut s.hits, r, H_APP, *arg);
     }
+    let show = tr("Show All");
+    let show_w = font_measure(FontFace::Bold, ui_text_size(), show);
+    let show_r = Rect::new(aw - m - show_w, ay, show_w, ts);
+    ui_text(c, FontFace::Bold, ui_text_size(), ui_small_size(), show_r, show, 1, false, 0);
+    hits_add(&mut s.hits, Rect::new(show_r.x - ui_px(20.0), show_r.y, show_r.w + ui_px(20.0), show_r.h), H_APPS, 0);
 
     // The filter chips and the Sort select: the global elements' chip and select.
     let fy = ay + apps_h() + gap;
@@ -5567,6 +5576,14 @@ fn name_label(name: &str) -> String {
     ui_name_label(name, &mut label, LABEL_CAP).to_string()
 }
 
+/// Record that one of the home's apps was opened, so it leads the row next time. The file is written
+/// only when the order changes.
+pub(crate) fn library_app_used(a: &mut App, app: i32) {
+    if settings_app_used(&mut a.settings, app) {
+        settings_save(&a.settings);
+    }
+}
+
 /// What the home's app tiles do: Files, Share and Settings are the three installed apps. What's
 /// new and About are the All apps page's links at the foot, not app tiles.
 fn home_app(a: &mut App, app: i32) {
@@ -5606,6 +5623,7 @@ fn home_app(a: &mut App, app: i32) {
 /// What's new and About as the page's two foot buttons. Exit is in Settings' sidebar.
 fn draw_apps(a: &mut App) {
     let (aw, ah) = (a.w, a.h);
+    let apps = home_apps(&a.settings);
     let App { screen: c, lib, .. } = a;
     let s = lib.as_deref_mut().unwrap();
     canvas_fill(c, Rect::new(0, 0, aw, ah), 255);
@@ -5615,7 +5633,7 @@ fn draw_apps(a: &mut App) {
     let gap = gui_gap();
     let (ts, tw) = (apps_h(), app_tile_w());
     let top = head.foot + gap;
-    for (i, (icon, label, arg)) in home_apps().iter().enumerate() {
+    for (i, (icon, label, arg)) in apps.iter().enumerate() {
         let r = Rect::new(m + i as i32 * (tw + gap), top, tw, ts);
         gui_app_tile(c, r, *icon, tr(label), false);
         hits_add(&mut s.hits, r, H_APP, *arg);
@@ -7193,6 +7211,7 @@ fn act(a: &mut App, h: &Hit) {
         H_NEWFOLDER => open_kb(a, KbPurpose::NewFolder, c_("keyboard", "Folder"), b""),
         H_SHARE => share_open(a),
         H_SETTINGS => {
+            library_app_used(a, 2);
             let s = lib(a);
             s.settings_cat_page = 0;
             s.settings_cat_shown = -1;
@@ -8237,6 +8256,7 @@ fn files_open_font(a: &mut App) {
 /// Files, the place (2.2): from the Files card, its menu's Open, and the `files` action (whether or not the card is
 /// in the Library), over the Library as it is.
 fn files_open_place(a: &mut App) {
+    library_app_used(a, 0);
     let ok = files_place(a);
     files_opened(a, ok);
 }

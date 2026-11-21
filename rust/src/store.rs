@@ -183,6 +183,9 @@ pub struct Settings {
     pub whatsnew_due: bool,
     /// One-time hints already shown, a bitmask (settings.ini hints; bit numbers: docs/FORMAT.md).
     pub hints: i32,
+    /// The home app row's order, most recently used first (settings.ini `recent_apps`): app ids 0 Files,
+    /// 1 Share, 2 Settings, comma separated. An app missing from the line follows in the default order.
+    pub recent_apps: FixedStr<32>,
     /// The eye: dotted boxes over the page where a finger tap follows a link (settings.ini link_areas).
     pub link_areas: bool,
     /// Memory only, never saved: settings.ini was an existing version 3 file without a gestures key,
@@ -219,6 +222,66 @@ pub const FILES_SORT_NAMES: [&str; 3] = ["name", "newest", "size"];
 pub const FILES_SHOW_NAMES: [&str; 2] = ["usable", "all"];
 /// files_view's: a list, or the previews in a grid (Covers, 2.2, issue #145).
 pub const FILES_VIEW_NAMES: [&str; 2] = ["list", "covers"];
+/// The home apps, by id (settings.ini recent_apps): Files, Share, Settings.
+pub const APP_ORDER_NAMES: [&str; 3] = ["files", "share", "settings"];
+/// recent_apps' order as this build has it: known apps once each, then any it does not name in default order.
+fn app_order_from(v: &[u8]) -> [i32; 3] {
+    let mut order = [-1; 3];
+    let mut n = 0;
+    for part in v.split(|&c| c == b',') {
+        if let Some(id) = APP_ORDER_NAMES.iter().position(|name| name.as_bytes() == part) {
+            let id = id as i32;
+            if !order[..n].contains(&id) {
+                order[n] = id;
+                n += 1;
+            }
+        }
+    }
+    for id in 0..3 {
+        if !order[..n].contains(&id) {
+            order[n] = id;
+            n += 1;
+        }
+    }
+    order
+}
+
+fn app_order_text(order: &[i32; 3]) -> String {
+    let mut text = String::new();
+    for (i, id) in order.iter().enumerate() {
+        if i > 0 {
+            text.push(',');
+        }
+        text.push_str(APP_ORDER_NAMES[*id as usize]);
+    }
+    text
+}
+
+/// The home app row, most recently used first.
+pub fn settings_app_order(s: &Settings) -> [i32; 3] {
+    app_order_from(s.recent_apps.as_str().as_bytes())
+}
+
+/// Move `app` to the front of the home app row. Returns false when the saved order does not change.
+pub fn settings_app_used(s: &mut Settings, app: i32) -> bool {
+    if !(0..3).contains(&app) {
+        return false;
+    }
+    let mut order = [app, -1, -1];
+    let mut n = 1;
+    for id in settings_app_order(s) {
+        if id != app {
+            order[n] = id;
+            n += 1;
+        }
+    }
+    let text = app_order_text(&order);
+    if text == s.recent_apps.as_str() {
+        return false;
+    }
+    s.recent_apps.set(&text);
+    true
+}
 
 // ---- state ----
 
@@ -4602,6 +4665,7 @@ pub fn settings_default(s: &mut Settings) {
     s.shape_corner = 0;
     s.whatsnew_due = false;
     s.hints = 0;
+    s.recent_apps.set("files,share,settings");
     s.link_areas = false;
 }
 
@@ -4976,6 +5040,9 @@ fn settings_cb(s: &mut Settings, k: &[u8], v: &[u8]) -> bool {
         b"files_view" => s.files_view = keep_named("files_view", v, &FILES_VIEW_NAMES),
         // 2.2: darker lines in imported PDFs (issue #173), read strictly: only the three known values
         b"pdf_gamma" => s.pdf_gamma = keep_named("pdf_gamma", v, &crate::pdfwork::Gamma::NAMES),
+        b"recent_apps" => {
+            s.recent_apps.set(&app_order_text(&app_order_from(v)));
+        }
         // 2.2: the home folder (issue #160), read strictly (home.rs). A value that names no home is not used and
         // not kept: home is Notebooks, the Library says so once, and the next save leaves the line out. (The
         // value is never logged: it may hold a name.)
@@ -5391,6 +5458,12 @@ pub fn settings_save(s: &Settings) -> i32 {
     // have, written back as it was).
     let g = crate::pdfwork::Gamma::from_index(s.pdf_gamma);
     put_unless_default(&mut b, "pdf_gamma", g.name(), crate::pdfwork::Gamma::Off.name());
+    // The home apps' order, most recently used first (2.3).
+    if s.recent_apps.is_empty() {
+        put(&mut b, "recent_apps", "files,share,settings");
+    } else {
+        put(&mut b, "recent_apps", s.recent_apps.as_str());
+    }
     // Lines this build does not know, as they were; but a pen.panel or touch.panel this build could
     // not read goes once the calibration's panel is recorded (written above in its place).
     let unknown = with(|st| st.g_set_unknown.clone());

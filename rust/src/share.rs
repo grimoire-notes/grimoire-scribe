@@ -1028,6 +1028,7 @@ fn invite(a: &mut App) {
 /// switch to SCR_SHARE (returns to prev_scr). While Live view is on, Share opens its pairing card
 /// directly, the same card the Live view button shows.
 pub fn share_open(a: &mut App) {
+    crate::library::library_app_used(a, 1);
     if live_on() {
         s(a).wifi_open = false;
         share_open_live(a);

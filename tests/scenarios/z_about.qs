@@ -9,7 +9,7 @@
 wait 200
 expect screen is library
 expect library.sheet is none
-expect library.ui_at.1654.153 is apps
+expect library.ui_has.apps is 1
 tap library apps
 wait 50
 shot 00-apps
