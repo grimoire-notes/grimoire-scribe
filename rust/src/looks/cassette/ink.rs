@@ -291,7 +291,7 @@ pub fn cs_rail(c: &mut Canvas, x0: i32, x1: i32, y: i32, tag: &str) {
 /// The screen's frame of instruments, in the margin round it (`band` px): a scale down the left edge with
 /// readings every 200 px, ticks along the top, two broken rails down the right, registration crosses in the
 /// corners, and two lines of system data along the foot (`left`, `right`). Drawn small and gray: it is
-/// the edge of the picture, which cs_defocus then softens.
+/// the edge of the picture.
 pub fn cs_hud(c: &mut Canvas, scr: Rect, band: i32, left: &str, right: &str) {
     let t = ui_px(2.0).max(1);
     let (x1, y1) = (scr.x + scr.w, scr.y + scr.h);
@@ -344,105 +344,9 @@ pub fn cs_hud(c: &mut Canvas, scr: Rect, band: i32, left: &str, right: &str) {
     let _ = lw;
 }
 
-/// The edge of the picture out of focus: within `band` px of the screen's edges everything is blurred,
-/// more the nearer the edge, as a lens's depth of field falls off (Blade Runner 2049's screens). The
-/// middle, where the controls are, stays sharp.
-pub fn cs_defocus(c: &mut Canvas, band: i32) {
-    let full = Rect::new(0, 0, c.w, c.h);
-    if band <= 0 || c.w < band * 3 || c.h < band * 3 {
-        return;
-    }
-    let rad = ui_px(7.0).max(1) as usize;
-    for strip in [
-        Rect::new(0, 0, c.w, band),
-        Rect::new(0, c.h - band, c.w, band),
-        Rect::new(0, band, band, c.h - 2 * band),
-        Rect::new(c.w - band, band, band, c.h - 2 * band),
-    ] {
-        // the strip and a margin round it, blurred by three box passes each way (close to a gaussian, so
-        // nothing leaves a square ghost), then mixed in by how near the edge each pixel is
-        let src = rect_intersect(rect_inflate(strip, 3 * rad as i32), full);
-        let (w, h) = (src.w as usize, src.h as usize);
-        let mut buf: Vec<f32> = (0..h)
-            .flat_map(|y| {
-                let base = ((src.y + y as i32) * c.stride + src.x) as usize;
-                c.px[base..base + w].iter().map(|&v| v as f32).collect::<Vec<_>>()
-            })
-            .collect();
-        let mut tmp = vec![0f32; w.max(h)];
-        for _ in 0..3 {
-            for y in 0..h {
-                box_line(&mut buf[y * w..(y + 1) * w], &mut tmp, rad);
-            }
-            let mut col = vec![0f32; h];
-            for x in 0..w {
-                for y in 0..h {
-                    col[y] = buf[y * w + x];
-                }
-                box_line(&mut col, &mut tmp, rad);
-                for y in 0..h {
-                    buf[y * w + x] = col[y];
-                }
-            }
-        }
-        for y in strip.y..strip.y + strip.h {
-            for x in strip.x..strip.x + strip.w {
-                let d = x.min(c.w - 1 - x).min(y).min(c.h - 1 - y);
-                if d >= band {
-                    continue;
-                }
-                let k = (1.0 - d as f32 / band as f32).powf(1.2);
-                let blur = buf[(y - src.y) as usize * w + (x - src.x) as usize];
-                let p = &mut c.px[(y * c.stride + x) as usize];
-                *p = (*p as f32 + (blur - *p as f32) * k) as u8;
-            }
-        }
-    }
-}
-
-/// A moving average of radius r along one line, in place (tmp: scratch at least as long).
-fn box_line(line: &mut [f32], tmp: &mut [f32], r: usize) {
-    let n = line.len();
-    if n == 0 {
-        return;
-    }
-    tmp[..n].copy_from_slice(line);
-    let mut acc = 0f32;
-    let mut cnt = 0f32;
-    for i in 0..=r.min(n - 1) {
-        acc += tmp[i];
-        cnt += 1.0;
-    }
-    for i in 0..n {
-        line[i] = acc / cnt;
-        if i + r + 1 < n {
-            acc += tmp[i + r + 1];
-            cnt += 1.0;
-        }
-        if i >= r {
-            acc -= tmp[i - r];
-            cnt -= 1.0;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn defocus_softens_the_edge_and_leaves_the_middle() {
-        ui_init(300.0);
-        let mut c = Canvas::default();
-        assert_eq!(canvas_init(&mut c, 400, 400), 0);
-        // a hard black line at the very edge and one in the middle
-        canvas_fill(&mut c, Rect::new(0, 100, 400, 4), 0);
-        canvas_fill(&mut c, Rect::new(200, 0, 4, 400), 0);
-        cs_defocus(&mut c, 40);
-        let at = |c: &Canvas, x: i32, y: i32| c.px[(y * c.stride + x) as usize];
-        assert!(at(&c, 2, 101) > 40, "the edge is blurred");
-        assert_eq!(at(&c, 201, 200), 0, "the middle is not");
-    }
 
     #[test]
     fn brackets_stay_inside_and_leave_the_middle() {

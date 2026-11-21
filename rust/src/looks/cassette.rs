@@ -419,8 +419,7 @@ impl Look for Cassette {
     }
     // The frame of instruments in the margin round a screen (the Library and its Settings, Files, Pen feel,
     // the editor with a sheet up), with what the system knows (version, panel, what the screen lists, date,
-    // time, battery), then the edge of the picture out of focus. Only on a whole redraw: the band is
-    // softened once over what was just drawn.
+    // time, battery).
     fn screen_overlay(&self, c: &mut Canvas, info: &ScreenInfo) {
         let t = sys_wall_clock();
         let tm = local_tm(t);
@@ -437,8 +436,6 @@ impl Look for Cassette {
         );
         let band = ui_px(46.0);
         cs_hud(c, Rect::new(0, 0, info.w, info.h), band, &left, &right);
-        // (the focus falls off a little inside the margin too, so the edge of the content softens with it)
-        cs_defocus(c, ui_px(64.0));
     }
     // PAPER, spaced out, and the paper chosen at the right: "▸ Narrow, no margin"
     fn new_notebook_heading(&self, c: &mut Canvas, hr: Rect, chosen: &str) -> bool {
