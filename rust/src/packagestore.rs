@@ -1402,10 +1402,10 @@ fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
         let info = Rect::new(area.x, area.y, area.w * 43 / 100, area.h);
         let shot = Rect::new(area.x + info.w + gap * 2, area.y, area.w - info.w - gap * 2, area.h);
         let desc_h = (info.h - header_h - ui_px(18.0) - actions_h - meta_h - ui_px(52.0))
-            .clamp(ui_px(260.0), ui_px(560.0));
+            .clamp(ui_px(260.0), ui_px(760.0));
         (info, shot, desc_h)
     } else {
-        let desc_h = ui_px(320.0);
+        let desc_h = ui_px(460.0);
         let fixed = header_h + ui_px(18.0) + desc_h + ui_px(8.0) + meta_h + ui_px(16.0) + actions_h + ui_px(14.0);
         let max_info = (area.h - gap - ui_px(520.0)).max(ui_px(760.0));
         let info_h = fixed.min(max_info).max(ui_px(760.0));
