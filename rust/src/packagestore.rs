@@ -93,6 +93,13 @@ pub struct StoreIndex {
     pub packages: Vec<StorePackage>,
 }
 
+/// One installed package the catalog has a newer version of.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PackageUpdate {
+    pub package: StorePackage,
+    pub installed_version: String,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum FetchStage {
     #[default]
@@ -168,7 +175,14 @@ pub struct PackageStoreUi {
     shot_for: String,
     shot_tried: bool,
     shot_index: i32,
-    refreshing: bool,
+    pub refreshing: bool,
+    /// The General > Updates page uses this catalog, its icons and its install machinery without
+    /// opening the Store screen.
+    pub updates_center: bool,
+    pub update_installing: bool,
+    pub update_status: String,
+    pub update_error: String,
+    pub update_target: String,
 }
 
 impl PackageStoreUi {
@@ -537,6 +551,131 @@ pub fn store_open(a: &mut App) {
     }
 }
 
+/// Opens the package half of Settings > Updates. It uses the Store's cached catalog, icons and
+/// install path, but never puts the Store screen in front of the Library.
+pub fn updates_open(a: &mut App) {
+    let ui = &mut a.store;
+    ui.updates_center = true;
+    ui.update_installing = false;
+    ui.update_target.clear();
+    ui.update_status.clear();
+    ui.update_error.clear();
+    ui.selected = None;
+    ui.cancel_jobs();
+    ui.clear_selection();
+    ui.reset_list_icons();
+    ui.index = StoreIndex::default();
+    ui.status.clear();
+    ui.error.clear();
+    ui.index_url = catalog_url();
+    let cached = load_cached_index(ui);
+    if cached {
+        ui.reset_list_icons();
+        ui.status = tr("Showing the saved catalog.").to_string();
+    }
+    start_catalog(ui);
+    if !cached && ui.index.packages.is_empty() && ui.view != StoreView::Error {
+        ui.view = StoreView::Busy;
+        ui.status = tr("Reading the Store...").to_string();
+    }
+}
+
+/// Settings > Updates is leaving: nothing keeps downloading behind it. The catalog and its icons
+/// stay cached for the next visit.
+pub fn updates_close(a: &mut App) {
+    let ui = &mut a.store;
+    if !ui.updates_center {
+        return;
+    }
+    ui.updates_center = false;
+    ui.cancel_jobs();
+    ui.selected = None;
+    ui.clear_selection();
+    ui.update_installing = false;
+    ui.update_target.clear();
+    ui.update_status.clear();
+    ui.update_error.clear();
+}
+
+pub fn updates_tick(a: &mut App, _now: u32) {
+    if !a.store.updates_center {
+        return;
+    }
+    let mut changed = tick_catalog(a);
+    changed |= tick_install(a);
+    changed |= tick_asset(a);
+    changed |= start_list_icons(a);
+    if changed {
+        crate::library::store_redraw(a);
+    }
+}
+
+pub fn updates_refresh(a: &mut App) {
+    if !a.store.updates_center {
+        return;
+    }
+    a.store.error.clear();
+    start_catalog(&mut a.store);
+    crate::library::store_redraw(a);
+}
+
+/// Every installed package whose catalog listing is newer, by name.
+pub fn package_updates(ui: &PackageStoreUi) -> Vec<PackageUpdate> {
+    let mut out = Vec::new();
+    for p in &ui.index.packages {
+        let Some(it) = installed_for(p) else { continue };
+        if update_version_cmp(&p.version, &it.version) <= 0 {
+            continue;
+        }
+        out.push(PackageUpdate {
+            package: p.clone(),
+            installed_version: it.version,
+        });
+    }
+    out.sort_by(|a, b| {
+        a.package
+            .name
+            .to_lowercase()
+            .cmp(&b.package.name.to_lowercase())
+            .then_with(|| a.package.id.cmp(&b.package.id))
+    });
+    out
+}
+
+/// A package's catalog icon, once its cached image has been decoded (start_list_icons fills these).
+pub fn update_icon<'a>(ui: &'a PackageStoreUi, id: &str) -> Option<&'a Canvas> {
+    let i = ui.index.packages.iter().position(|p| p.id == id)?;
+    ui.list_icons.get(i).filter(|icon| !icon.px.is_empty())
+}
+
+/// Starts installing the catalog's newer version of `id`, through the same manifest, artifact and
+/// hash checks as a Store install. The Updates page stays in front while it downloads.
+pub fn updates_install(a: &mut App, id: &str) {
+    let ui = &mut a.store;
+    if !ui.updates_center || ui.update_installing {
+        return;
+    }
+    let Some(pkg) = ui.index.packages.iter().find(|p| p.id == id).cloned() else { return };
+    let newer = installed_for(&pkg).is_some_and(|it| update_version_cmp(&pkg.version, &it.version) > 0);
+    if !newer {
+        return;
+    }
+    ui.selected = None;
+    ui.clear_selection();
+    ui.selected = Some(pkg.id.clone());
+    ui.update_target = pkg.id.clone();
+    ui.update_installing = true;
+    ui.update_status = tr("Downloading update...").to_string();
+    ui.update_error.clear();
+    ui.status.clear();
+    ui.error.clear();
+    ui.manifest_url = pkg.manifest_url.clone();
+    if let Err(e) = begin_fetch(ui, FetchSlot::Install, FetchStage::Manifest, &pkg.manifest_url, WIDGET_PKG_MANIFEST_MAX, "") {
+        update_failed(a, e);
+    }
+    crate::library::store_redraw(a);
+}
+
 fn close(a: &mut App) {
     a.store.cancel_jobs();
     a.store.open = false;
@@ -679,31 +818,35 @@ fn validate_for_kind(p: &WidgetPackage, kind: &str, w: i32, h: i32) -> Result<()
     }
 }
 
-fn install_pending(a: &mut App, icon: Option<&[u8]>) {
+/// Installs what the last download left ready. The caller has validated the manifest; the
+/// installers check the artifact's size and hash again before writing anything.
+fn install_from_pending(a: &mut App, icon: Option<&[u8]>) -> Result<(String, String), String> {
     let Some(m) = a.store.manifest.clone() else {
-        a.store.error = tr("The package's manifest was lost.").to_string();
-        a.store.view = StoreView::Error;
-        return;
+        return Err(tr("The package's manifest was lost.").to_string());
     };
     let manifest = std::mem::take(&mut a.store.manifest_yaml);
     let artifact = std::mem::take(&mut a.store.pending_artifact);
     let source = a.store.manifest_url.clone();
-    let installed = match a.store.index.packages.iter().find(|p| p.id == m.id) {
-        Some(p) => p,
-        None => {
-            a.store.error = tr("That package is no longer in the Store.").to_string();
-            a.store.view = StoreView::Error;
-            return;
-        }
-    };
-    let result = if installed.kind == "app" {
-        app_package_install(&manifest, &artifact, icon, &source, a.w, a.h - status_reserved(a))
+    let listed = a
+        .store
+        .index
+        .packages
+        .iter()
+        .find(|p| p.id == m.id)
+        .cloned()
+        .ok_or_else(|| tr("That package is no longer in the Store.").to_string())?;
+    let it = if listed.kind == "app" {
+        app_package_install(&manifest, &artifact, icon, &source, a.w, a.h - status_reserved(a))?
     } else {
-        widget_package_install(&manifest, &artifact, &source, a.w, a.h - status_reserved(a))
+        widget_package_install(&manifest, &artifact, &source, a.w, a.h - status_reserved(a))?
     };
-    match result {
-        Ok(it) => {
-            a.store.status = format!("{} {}", tr("Installed"), it.name);
+    Ok((it.name, it.version))
+}
+
+fn install_pending(a: &mut App, icon: Option<&[u8]>) {
+    match install_from_pending(a, icon) {
+        Ok((name, _)) => {
+            a.store.status = format!("{} {}", tr("Installed"), name);
             a.store.view = StoreView::Detail;
             a.store.error.clear();
         }
@@ -711,6 +854,28 @@ fn install_pending(a: &mut App, icon: Option<&[u8]>) {
             a.store.error = e;
             a.store.view = StoreView::Error;
         }
+    }
+}
+
+fn install_update_pending(a: &mut App, icon: Option<&[u8]>) {
+    match install_from_pending(a, icon) {
+        Ok((name, version)) => {
+            let ui = &mut a.store;
+            ui.update_installing = false;
+            ui.update_target.clear();
+            ui.update_error.clear();
+            ui.manifest = None;
+            ui.manifest_url.clear();
+            ui.manifest_yaml.clear();
+            ui.artifact_url.clear();
+            ui.icon_url = None;
+            ui.install_icon_key.clear();
+            ui.pending_artifact.clear();
+            let mut msg = String::new();
+            csnprintf!(&mut msg, 300, tr("Updated %s to %s."), &name, &version);
+            ui.update_status = msg;
+        }
+        Err(e) => update_failed(a, e),
     }
 }
 
@@ -776,7 +941,8 @@ fn start_asset_job(a: &mut App, stage: FetchStage, url: &str, cap: usize, key: &
 /// Load the catalog cards' own icons, one cached image at a time and one download at a time.
 /// Returns whether an image was loaded without waiting on the network.
 fn start_list_icons(a: &mut App) -> bool {
-    if !a.store.open || a.store.view != StoreView::List || a.store.asset_job.is_some() {
+    let showing = a.store.updates_center || (a.store.open && a.store.view == StoreView::List);
+    if !showing || a.store.asset_job.is_some() {
         return false;
     }
     if a.store.list_icons.len() != a.store.index.packages.len() || a.store.list_tried.len() != a.store.index.packages.len() {
@@ -890,32 +1056,20 @@ fn apply_screenshot(ui: &mut PackageStoreUi, data: &[u8]) {
     }
 }
 
-fn after_manifest(ui: &mut PackageStoreUi, data: &[u8], w: i32, h: i32) {
+fn accept_manifest(ui: &mut PackageStoreUi, data: &[u8], w: i32, h: i32) -> Result<WidgetPackage, String> {
     let text = String::from_utf8_lossy(data);
-    let Some(selected) = ui.selected_package().cloned() else {
-        ui.error = tr("The selected package is gone.").to_string();
-        ui.view = StoreView::Error;
-        return;
-    };
-    let p = match widget_package_parse(&text).and_then(|p| {
+    let selected = ui
+        .selected_package()
+        .cloned()
+        .ok_or_else(|| tr("The selected package is gone.").to_string())?;
+    let p = widget_package_parse(&text).and_then(|p| {
         validate_for_kind(&p, &selected.kind, w, h).map(|_| p)
-    }) {
-        Ok(p) => p,
-        Err(e) => {
-            ui.error = e;
-            ui.view = StoreView::Error;
-            return;
-        }
-    };
+    })?;
     if p.id != selected.id || p.name != selected.name {
-        ui.error = tr("The manifest does not match its Store listing.").to_string();
-        ui.view = StoreView::Error;
-        return;
+        return Err(tr("The manifest does not match its Store listing.").to_string());
     }
     if update_version_cmp(&p.version, &selected.version) != 0 {
-        ui.error = tr("The manifest's version does not match its Store listing.").to_string();
-        ui.view = StoreView::Error;
-        return;
+        return Err(tr("The manifest's version does not match its Store listing.").to_string());
     }
     ui.manifest_yaml = text.into_owned();
     ui.artifact_url = widget_package_artifact_url(&ui.manifest_url, &p).unwrap_or_default();
@@ -926,10 +1080,80 @@ fn after_manifest(ui: &mut PackageStoreUi, data: &[u8], w: i32, h: i32) {
             ui.install_icon_key = key;
         }
     }
-    ui.manifest = Some(p);
-    ui.status.clear();
-    ui.error.clear();
-    ui.view = StoreView::Trust;
+    Ok(p)
+}
+
+fn after_manifest(ui: &mut PackageStoreUi, data: &[u8], w: i32, h: i32) {
+    match accept_manifest(ui, data, w, h) {
+        Ok(p) => {
+            ui.manifest = Some(p);
+            ui.status.clear();
+            ui.error.clear();
+            ui.view = StoreView::Trust;
+        }
+        Err(e) => {
+            ui.error = e;
+            ui.view = StoreView::Error;
+        }
+    }
+}
+
+fn update_failed(a: &mut App, error: String) {
+    let ui = &mut a.store;
+    qlog!("package update: %s", &error);
+    ui.update_installing = false;
+    ui.update_target.clear();
+    ui.update_status.clear();
+    ui.update_error = error;
+    ui.pending_artifact.clear();
+}
+
+fn after_update_manifest(a: &mut App, data: &[u8]) {
+    let w = a.w;
+    let h = a.h - status_reserved(a);
+    match accept_manifest(&mut a.store, data, w, h) {
+        Ok(p) => {
+            a.store.manifest = Some(p);
+            a.store.update_status = tr("Downloading update...").to_string();
+            a.store.update_error.clear();
+            start_update_artifact(a);
+        }
+        Err(e) => update_failed(a, e),
+    }
+}
+
+fn start_update_artifact(a: &mut App) {
+    let Some(m) = a.store.manifest.as_ref() else {
+        update_failed(a, tr("The package's manifest was lost.").to_string());
+        return;
+    };
+    let Some(url) = widget_package_artifact_url(&a.store.manifest_url, m) else {
+        update_failed(a, tr("The manifest names no artifact that can be downloaded.").to_string());
+        return;
+    };
+    let ui = &mut a.store;
+    ui.artifact_url = url.clone();
+    ui.update_status = tr("Downloading update...").to_string();
+    if let Err(e) = begin_fetch(ui, FetchSlot::Install, FetchStage::Artifact, &url, WIDGET_PKG_ARTIFACT_MAX as usize, "") {
+        update_failed(a, e);
+    }
+}
+
+fn start_update_icon(a: &mut App) {
+    let icon_url = a.store.icon_url.clone();
+    let Some(url) = icon_url else {
+        install_update_pending(a, None);
+        return;
+    };
+    let key = a.store.install_icon_key.clone();
+    if let Some(data) = read_cached_asset(&key, INSTALL_ICON_MAX) {
+        install_update_pending(a, Some(&data));
+        return;
+    }
+    a.store.update_status = tr("Downloading the package icon...").to_string();
+    if let Err(e) = begin_fetch(&mut a.store, FetchSlot::Install, FetchStage::InstallIcon, &url, INSTALL_ICON_MAX, &key) {
+        update_failed(a, e);
+    }
 }
 
 fn tick_catalog(a: &mut App) -> bool {
@@ -991,13 +1215,23 @@ fn tick_install(a: &mut App) -> bool {
     match res {
         Ok(data) => match job.stage {
             FetchStage::Manifest => {
-                let w = a.w;
-                let h = a.h - status_reserved(a);
-                after_manifest(&mut a.store, &data, w, h);
+                if a.store.update_installing {
+                    after_update_manifest(a, &data);
+                } else {
+                    let w = a.w;
+                    let h = a.h - status_reserved(a);
+                    after_manifest(&mut a.store, &data, w, h);
+                }
             }
             FetchStage::Artifact => {
                 a.store.pending_artifact = data;
-                if a.store.icon_url.is_some() {
+                if a.store.update_installing {
+                    if a.store.icon_url.is_some() {
+                        start_update_icon(a);
+                    } else {
+                        install_update_pending(a, None);
+                    }
+                } else if a.store.icon_url.is_some() {
                     start_install_icon(a);
                 } else {
                     install_pending(a, None);
@@ -1008,13 +1242,21 @@ fn tick_install(a: &mut App) -> bool {
                     write_cached_asset(&job.key, &data);
                 }
                 let icon = data.clone();
-                install_pending(a, Some(&icon));
+                if a.store.update_installing {
+                    install_update_pending(a, Some(&icon));
+                } else {
+                    install_pending(a, Some(&icon));
+                }
             }
             _ => {}
         },
         Err(e) => {
-            a.store.error = e;
-            a.store.view = StoreView::Error;
+            if a.store.update_installing {
+                update_failed(a, e);
+            } else {
+                a.store.error = e;
+                a.store.view = StoreView::Error;
+            }
         }
     }
     true
@@ -1058,7 +1300,7 @@ fn tick_asset(a: &mut App) -> bool {
             }
         }
     }
-    if a.store.view == StoreView::Detail {
+    if a.store.open && a.store.view == StoreView::Detail {
         start_selected_assets(a);
     } else {
         start_list_icons(a);

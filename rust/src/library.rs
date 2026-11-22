@@ -3,7 +3,7 @@
 
 use crate::prelude::*;
 use crate::appicon::AppIcon;
-use crate::globalui::{gui_app_tile, gui_chip, gui_fab, gui_gap, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_select, gui_status_bar, gui_status_h, gui_top_button_h, GuiPopupItem};
+use crate::globalui::{gui_app_tile, gui_button, gui_chip, gui_fab, gui_gap, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_select, gui_status_bar, gui_status_h, gui_top_button_h, GuiPopupItem};
 use crate::settingsmenu;
 use crate::ui::{ui_row, ui_row_page, ui_row_pager, Row as UiRow};
 use crate::browser::{BrowseMode, Browser, BrowserResult, FilesPrefs, PickSpec};
@@ -165,6 +165,11 @@ const H_PAIR_AGAIN: i32 = 53;
 const H_UPDATES: i32 = 54;
 const H_UPD_CHANNEL: i32 = 55;
 const H_UPD_NOW: i32 = 57;
+// Settings > Updates' package list: the Update button on a row (arg: its place in
+// packagestore::package_updates), its page arrows, and a catalog retry.
+const H_UPD_PKG: i32 = 262;
+const H_UPD_PKG_PAGE: i32 = 263;
+const H_UPD_PKG_REFRESH: i32 = 264;
 const H_MOVE_PREV: i32 = 69;
 const H_MOVE_NEXT: i32 = 70;
 const H_GESTURES: i32 = 58;
@@ -494,12 +499,14 @@ pub struct LibraryState {
     wifi: WifiSheet,
     /// The Wi-Fi submenu was opened from Share's bottom button: Back or X returns to Share.
     share_wifi_return: bool,
-    // The Updates sheet: its check (UPD_*), the newest version it found, why it failed.
+    // The Updates sheet: its check (UPD_*), the newest version it found, why it failed, and the
+    // page of package updates it shows.
     upd: i32,
     /// at most UPDATE_VERSION_LEN - 1 bytes
     upd_latest: String,
     /// at most 15 bytes
     upd_why: String,
+    upd_pkg_page: i32,
     modal: Modal,
     kbp: KbPurpose,
     kb: Keyboard,
@@ -3058,65 +3065,192 @@ pub(crate) fn settings_strip(c: &mut Canvas, r: Rect, n: i32, on: i32) -> Vec<Re
 
 pub(crate) use crate::ui::ui_switch as settings_switch;
 
-/// Settings > Updates: one Update button that carries the version, and a switch for the branch the
-/// updates come from (Preview: betas and releases; Stable: releases only). The check runs as the
-/// page opens, so the version it shows is the feed's, not the last visit's.
+/// Draw one package update: its Store icon, name, old-to-new version, kind, and Update button.
+/// Returns the button's rect (the caller adds its hit when nothing else is installing).
+fn draw_package_update_row(c: &mut Canvas, store: &PackageStoreUi, r: Rect, u: &PackageUpdate, busy: bool, active: bool) -> Rect {
+    ui_card(c, r, ButtonStyle::Plain);
+    let pad = ui_px(22.0);
+    let isz = ui_px(96.0);
+    let icon_r = Rect::new(r.x + pad, r.y + (r.h - isz) / 2, isz, isz);
+    ui_frame(c, icon_r, gui_radius(), 255, true, 0);
+    ui_frame(c, icon_r, gui_radius(), 0, false, ui_px(2.0));
+    if let Some(image) = crate::packagestore::update_icon(store, &u.package.id) {
+        canvas_blit_fit(c, image, rect_inflate(icon_r, -ui_px(10.0)));
+    } else {
+        ui_icon(c, IconKind::Package, rect_inflate(icon_r, -ui_px(20.0)), 0);
+    }
+    let bw = ui_px(220.0).min(r.w / 3).max(ui_px(150.0));
+    let bh = ui_px(76.0);
+    let br = Rect::new(r.x + r.w - pad - bw, r.y + (r.h - bh) / 2, bw, bh);
+    let tx = icon_r.x + icon_r.w + ui_px(20.0);
+    let tw = (br.x - ui_px(18.0) - tx).max(0);
+    ui_text(c, FontFace::Bold, ui_text_size(), ui_small_size(), Rect::new(tx, r.y + ui_px(18.0), tw, ui_px(50.0)), &u.package.name, 1, false, 0);
+    let mut ver = String::new();
+    csnprintf!(&mut ver, 220, "%s → %s", &u.installed_version, &u.package.version);
+    font_draw_left(c, FontFace::Bold, ui_small_size(), Rect::new(tx, r.y + ui_px(68.0), tw, ui_px(32.0)), &ver, 0);
+    let kind = if u.package.kind == "app" { tr("App update") } else { tr("Widget update") };
+    font_draw_left(c, FontFace::Regular, ui_small_size(), Rect::new(tx, r.y + ui_px(102.0), tw, ui_px(30.0)), kind, 90);
+    let label = if active { tr("Updating...") } else { tr("Update") };
+    gui_button(c, br, IconKind::Download, label, if busy { ButtonStyle::Disabled } else { ButtonStyle::Plain });
+    br
+}
+
+/// Settings > Updates, in the shape of a system updater: Grimoire under System Updates (with the
+/// Update branch below it), then one row per package the Store has a newer version of. Both checks
+/// start as the page opens; the Store catalog is cached, so the package list survives offline.
 fn draw_updates(a: &mut App) {
     let (aw, ah) = (a.w, a.h);
     let preview = upd_preview(a);
-    let App { screen: c, lib, .. } = a;
+    let App { screen: c, lib, store, .. } = a;
     let s = lib.as_deref_mut().unwrap();
     let page = settings_page(c, aw, ah, tr("Updates"), true, false);
     hits_add(&mut s.hits, page.back, H_SETTINGS_BACK, 0);
     hits_add(&mut s.hits, page.close, H_SETTINGS_CLOSE, 0);
     let in_ = page.content;
+    let gap = ui_px(16.0);
+    let section_h = ui_px(54.0);
+    let branch_h = ui_px(116.0);
+    let pkg_head_h = ui_px(54.0);
+    let status_h = ui_px(72.0);
+    let pad = ui_px(24.0);
     let avail = update_available();
-    let (upd, newer, latest, why) = (s.upd, upd_newer(s), s.upd_latest.clone(), s.upd_why.clone());
-    // The button says what the check found, and the version is on it either way; a failed check's
-    // button is the way to ask again.
-    let mut label = String::new();
-    let st = if upd == UPD_CHECKING {
-        csnprintf!(&mut label, 200, "%s", tr("Checking for updates..."));
-        ButtonStyle::Disabled
-    } else if !avail || (upd == UPD_FAILED && why == "no-kpm") {
-        csnprintf!(&mut label, 200, "%s", tr("Updates come through KPM, which is not here."));
-        ButtonStyle::Disabled
+    let newer = upd_newer(s);
+    let (upd, latest, why) = (s.upd, s.upd_latest.clone(), s.upd_why.clone());
+
+    // ---- System Updates ----
+    let mut y = in_.y;
+    font_draw_left(c, FontFace::Bold, ui_text_size(), Rect::new(in_.x, y, in_.w, section_h), tr("System Updates"), 0);
+    y += section_h;
+    let sys_h = ui_px(154.0);
+    let sys_r = Rect::new(in_.x, y, in_.w, sys_h);
+    ui_card(c, sys_r, ButtonStyle::Plain);
+    let isz = ui_px(96.0);
+    let icon_r = Rect::new(sys_r.x + pad, sys_r.y + (sys_h - isz) / 2, isz, isz);
+    ui_frame(c, icon_r, gui_radius(), 255, true, 0);
+    ui_frame(c, icon_r, gui_radius(), 0, false, ui_px(2.0));
+    ui_icon(c, IconKind::Castle, rect_inflate(icon_r, -ui_px(16.0)), 0);
+    let bw = ui_px(250.0);
+    let bh = ui_px(76.0);
+    let br = Rect::new(sys_r.x + sys_r.w - pad - bw, sys_r.y + (sys_h - bh) / 2, bw, bh);
+    let mut detail = String::new();
+    let mut action = "";
+    let mut action_icon = IconKind::Update;
+    let mut action_style = ButtonStyle::Plain;
+    if !avail || (upd == UPD_FAILED && why == "no-kpm") {
+        detail = tr("System updates use KPM, which isn't installed.").to_string();
+    } else if upd == UPD_CHECKING {
+        detail = tr("Checking for system updates...").to_string();
+        action = tr("Checking...");
+        action_style = ButtonStyle::Disabled;
     } else if upd == UPD_DONE && newer {
-        // TRANSLATORS: Settings > Updates' button when the check found a newer Grimoire (%s): a tap
-        // closes Grimoire, KPM installs it, and Grimoire starts again.
-        csnprintf!(&mut label, 200, tr("Update to %s"), &latest);
-        ButtonStyle::Primary
+        // TRANSLATORS: Settings > Updates, the system update's version change (%s is the version
+        // installed, %s the one the update branch offers).
+        csnprintf!(&mut detail, 300, tr("Version %s → %s"), GRIMOIRE_VERSION, &latest);
+        action = tr("Update");
+        action_icon = IconKind::Download;
+        action_style = ButtonStyle::Primary;
     } else if upd == UPD_DONE {
-        csnprintf!(&mut label, 200, tr("Grimoire %s is the newest."), GRIMOIRE_VERSION);
-        ButtonStyle::Disabled
+        // TRANSLATORS: Settings > Updates, when the system update branch has nothing newer (%s is
+        // the Grimoire version in use).
+        csnprintf!(&mut detail, 300, tr("Grimoire %s is up to date."), GRIMOIRE_VERSION);
     } else if upd == UPD_FAILED && why == "network" {
-        csnprintf!(&mut label, 200, "%s", tr("Could not check. Is Wi-Fi on?"));
-        ButtonStyle::Plain
+        detail = tr("Couldn't check for system updates. Is Wi-Fi on?").to_string();
+        action = tr("Retry");
     } else if upd == UPD_FAILED {
-        csnprintf!(&mut label, 200, "%s", tr("Could not check for updates."));
-        ButtonStyle::Plain
+        detail = tr("Couldn't check for system updates.").to_string();
+        action = tr("Retry");
     } else {
-        csnprintf!(&mut label, 200, "%s", tr("Check for updates"));
-        ButtonStyle::Plain
-    };
-    let br = Rect::new(in_.x, in_.y, in_.w, ui_px(150.0));
-    ui_button(c, br, if newer { IconKind::Download } else { IconKind::Update }, &label, st);
-    if st != ButtonStyle::Disabled {
-        hits_add(&mut s.hits, br, H_UPD_NOW, 0);
+        detail = tr("System update not checked yet.").to_string();
+        action = tr("Check");
     }
-    // The branch, as a switch: on (Preview) for betas and releases, off (Stable) for releases only.
-    let row = Rect::new(in_.x, br.y + br.h + ui_px(24.0), in_.w, ui_px(140.0));
-    ui_frame(c, row, ui_px(16.0), 0, false, ui_px(3.0));
+    let tx = icon_r.x + icon_r.w + ui_px(20.0);
+    let tw = (br.x - ui_px(18.0) - tx).max(0);
+    font_draw_left(c, FontFace::Bold, ui_text_size(), Rect::new(tx, sys_r.y + ui_px(20.0), tw, ui_px(42.0)), tr("Grimoire"), 0);
+    ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), Rect::new(tx, sys_r.y + ui_px(66.0), tw, sys_h - ui_px(80.0)), &detail, 2, false, 90);
+    if !action.is_empty() {
+        gui_button(c, br, action_icon, action, action_style);
+        if action_style != ButtonStyle::Disabled {
+            hits_add(&mut s.hits, br, H_UPD_NOW, 0);
+        }
+    }
+    y = sys_r.y + sys_h + gap;
+
+    // ---- Update branch ----
+    let row = Rect::new(in_.x, y, in_.w, branch_h);
+    ui_card(c, row, ButtonStyle::Plain);
     // TRANSLATORS: Settings > Updates, the row whose switch picks the branch updates come from.
-    font_draw_left(c, FontFace::Regular, ui_text_size(), rect_inflate(row, -ui_px(30.0)), tr("Update branch"), 0);
+    font_draw_left(c, FontFace::Regular, ui_text_size(), Rect::new(row.x + ui_px(28.0), row.y, row.w - ui_px(56.0), row.h), tr("Update branch"), 0);
     settings_switch(c, row, preview);
     // TRANSLATORS: Settings > Updates, the branch the switch is on: Preview gets betas and releases,
     // Stable only releases.
     let branch = if preview { tr("Preview") } else { tr("Stable") };
-    let bw = font_measure(FontFace::Bold, ui_text_size(), branch);
-    let sx = row.x + row.w - ui_px(30.0) - ui_px(120.0);
-    font_draw_left(c, FontFace::Bold, ui_text_size(), Rect::new(sx - ui_px(24.0) - bw, row.y, bw, row.h), branch, 0);
+    let label_w = font_measure(FontFace::Bold, ui_text_size(), branch);
+    let sx = row.x + row.w - ui_px(30.0) - ui_px(120.0) - ui_px(24.0) - label_w;
+    font_draw_left(c, FontFace::Bold, ui_text_size(), Rect::new(sx, row.y, label_w, row.h), branch, 0);
     hits_add(&mut s.hits, row, H_UPD_CHANNEL, 0);
+    y = row.y + row.h + ui_px(32.0);
+
+    // ---- Package Updates ----
+    let updates = crate::packagestore::package_updates(store);
+    font_draw_left(c, FontFace::Bold, ui_text_size(), Rect::new(in_.x, y, in_.w, pkg_head_h), tr("Package Updates"), 0);
+    if !updates.is_empty() {
+        let label = updates.len().to_string();
+        let badge_w = (font_measure(FontFace::Bold, ui_small_size(), &label) + ui_px(34.0)).max(ui_px(48.0));
+        let badge = Rect::new(in_.x + in_.w - badge_w, y + ui_px(8.0), badge_w, ui_px(38.0));
+        ui_frame(c, badge, badge.h / 2, 255, true, 0);
+        ui_frame(c, badge, badge.h / 2, 0, false, ui_px(2.0));
+        font_draw_centered(c, FontFace::Bold, ui_small_size() * 0.85, badge, &label, 0);
+    }
+    y += pkg_head_h;
+    let mut status = String::new();
+    if store.update_installing {
+        status = store.update_status.clone();
+    } else if !store.update_error.is_empty() {
+        status = store.update_error.clone();
+    } else if store.refreshing {
+        status = tr("Checking the Package Store...").to_string();
+    } else if !store.update_status.is_empty() {
+        status = store.update_status.clone();
+    } else if !store.error.is_empty() {
+        status = store.error.clone();
+    }
+    let retry = !store.refreshing && store.index.packages.is_empty() && !store.error.is_empty();
+    if !status.is_empty() {
+        let sr = Rect::new(in_.x, y, in_.w, status_h);
+        let text_w = if retry { (sr.w - ui_px(220.0)).max(0) } else { sr.w };
+        ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), Rect::new(sr.x, sr.y, text_w, sr.h), &status, 2, false, if store.update_error.is_empty() { 100 } else { 0 });
+        if retry {
+            let rb = Rect::new(sr.x + sr.w - ui_px(190.0), sr.y + (sr.h - ui_px(62.0)) / 2, ui_px(190.0), ui_px(62.0));
+            gui_button(c, rb, IconKind::Update, tr("Retry"), ButtonStyle::Plain);
+            hits_add(&mut s.hits, rb, H_UPD_PKG_REFRESH, 0);
+        }
+        y += status_h;
+    }
+    let area = Rect::new(in_.x, y, in_.w, (in_.y + in_.h - y).max(0));
+    if updates.is_empty() {
+        if status.is_empty() {
+            let msg = if store.refreshing { tr("Looking for package updates...") } else { tr("All your packages are up to date.") };
+            font_draw_centered(c, FontFace::Bold, ui_text_size(), Rect::new(area.x, area.y + ui_px(36.0), area.w, ui_px(70.0)), msg, 0);
+        }
+        return;
+    }
+    let list = ui_row_page(area, updates.len(), s.upd_pkg_page, ui_px(146.0), ui_px(104.0));
+    s.upd_pkg_page = list.page;
+    let busy = store.update_installing;
+    for (i, u) in updates.iter().enumerate().skip(list.first).take(list.rows.len()) {
+        let active = busy && store.update_target == u.package.id;
+        let btn = draw_package_update_row(c, store, list.rows[i - list.first], u, busy, active);
+        if !busy {
+            hits_add(&mut s.hits, btn, H_UPD_PKG, i as i32);
+        }
+    }
+    ui_row_pager(c, &list);
+    if list.page > 0 {
+        hits_add(&mut s.hits, list.prev, H_UPD_PKG_PAGE, -1);
+    }
+    if list.page + 1 < list.pages {
+        hits_add(&mut s.hits, list.next, H_UPD_PKG_PAGE, 1);
+    }
 }
 
 /// A Settings submenu's full screen: Back and the title above a rule, the list's rows below (its own
@@ -6810,6 +6944,9 @@ fn is_popup_modal(m: Modal) -> bool {
 }
 
 fn close_modal(a: &mut App) {
+    if lib(a).modal == Modal::Updates {
+        crate::packagestore::updates_close(a);
+    }
     if lib(a).settings_return_editor {
         if lib(a).modal==Modal::Settings {let changed=lib(a).settings_editor_fit!=a.settings.landscape_fit;lib(a).settings_return_editor=false;lib(a).modal=Modal::None;library_leave(a);if changed {editor_fit_changed(a,true);}crate::editor::editor_settings_background(a);app_invalidate_all(a,RefreshMode::Ui);}
         else {lib(a).modal=Modal::Settings;redraw(a,RefreshMode::Ui);}
@@ -6832,6 +6969,9 @@ fn close_modal(a: &mut App) {
 /// The X on any Settings page, or on a screen Settings opened: the whole of Settings closes, back
 /// to the Library—or to the editor it was opened over. Back still goes one step back.
 fn close_settings(a: &mut App, mode: RefreshMode) {
+    if lib(a).modal == Modal::Updates {
+        crate::packagestore::updates_close(a);
+    }
     if lib(a).settings_return_editor {
         let changed = lib(a).settings_editor_fit != a.settings.landscape_fit;
         lib(a).settings_return_editor = false;
@@ -7497,6 +7637,9 @@ fn act(a: &mut App, h: &Hit) {
         // Back (and Done) on a Settings submenu: to the Settings page it was opened from, or one step
         // back through Shortcuts / Pair, as Esc already does. It must never close Settings itself.
         H_SETTINGS_BACK => {
+            if lib(a).modal == Modal::Updates {
+                crate::packagestore::updates_close(a);
+            }
             let back = match lib(a).modal {
                 Modal::Pair => Modal::PairMenu,
                 Modal::Buttons => Modal::Shortcuts,
@@ -7633,7 +7776,10 @@ fn act(a: &mut App, h: &Hit) {
             open_modal(a, back);
         }
         H_UPDATES => {
-            // Opening the page runs the check (one already under way finishes first).
+            // Opening the page starts both checks: KPM for Grimoire (one already under way finishes
+            // first), and the Store catalog for package updates.
+            lib(a).upd_pkg_page = 0;
+            crate::packagestore::updates_open(a);
             if lib(a).upd != UPD_CHECKING {
                 lib(a).upd = UPD_IDLE;
                 if update_check(upd_preview(a)) {
@@ -7664,6 +7810,7 @@ fn act(a: &mut App, h: &Hit) {
                     return;
                 }
                 qlog!("update: leaving so KPM can install %s", &lib(a).upd_latest);
+                crate::packagestore::updates_close(a);
                 app_leave_for_update(a);
                 return;
             }
@@ -7674,6 +7821,19 @@ fn act(a: &mut App, h: &Hit) {
             }
             redraw(a, RefreshMode::Ui);
         }
+        H_UPD_PKG => {
+            let updates = crate::packagestore::package_updates(&a.store);
+            if let Some(u) = updates.get(h.arg.max(0) as usize) {
+                let id = u.package.id.clone();
+                crate::packagestore::updates_install(a, &id);
+            }
+        }
+        H_UPD_PKG_PAGE => {
+            let s = lib(a);
+            s.upd_pkg_page = (s.upd_pkg_page + h.arg).max(0);
+            redraw(a, RefreshMode::Ui);
+        }
+        H_UPD_PKG_REFRESH => crate::packagestore::updates_refresh(a),
         H_BT_TOGGLE => {
             a.settings.controller = !a.settings.controller;
             settings_save(&a.settings);
@@ -8919,6 +9079,9 @@ pub fn library_back(a: &mut App) -> bool {
         }
         Modal::Language | Modal::Koreader | Modal::Shortcuts | Modal::PairMenu | Modal::Updates | Modal::Wifi
         | Modal::SideButton | Modal::EraserMode | Modal::DarkerLines | Modal::DeviceInfo => {
+            if modal == Modal::Updates {
+                crate::packagestore::updates_close(a);
+            }
             lib(a).modal = Modal::Settings;
             redraw(a, RefreshMode::Ui);
         }
@@ -9134,6 +9297,9 @@ pub fn library_leave(a: &mut App) {
     }
     if !a.relayout && a.store.open {
         crate::packagestore::store_leave(a);
+    }
+    if !a.relayout && a.store.updates_center {
+        crate::packagestore::updates_close(a);
     }
     if !a.relayout && a.lib.as_deref().is_some_and(|s| s.files.open) {
         lib(a).files.close();
@@ -9461,6 +9627,9 @@ pub fn library_tick(a: &mut App, now: u32) {
         wifi_sheet_tick(a, now);
     }
     upd_poll(a);
+    if lib(a).modal == Modal::Updates {
+        crate::packagestore::updates_tick(a, now);
+    }
     let s = a.lib.as_deref().unwrap();
     if s.modal == Modal::PairMenu && s.shown_bt_changes != a.bt_changes {
         redraw(a, RefreshMode::Ui);
@@ -9688,6 +9857,51 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
     ];
     if a.lib.is_none() {
         return -1;
+    }
+    // Settings > Updates' package half: the catalog's updates, their versions and install state.
+    if key == "update.packages" {
+        let ids: Vec<String> = crate::packagestore::package_updates(&a.store)
+            .into_iter()
+            .map(|u| u.package.id)
+            .collect();
+        csnprintf!(out, cap, "%s", &ids.join(" "));
+        return 0;
+    }
+    if key == "update.pkg.versions" {
+        let parts: Vec<String> = crate::packagestore::package_updates(&a.store)
+            .into_iter()
+            .map(|u| format!("{}={}->{}", u.package.id, u.installed_version, u.package.version))
+            .collect();
+        csnprintf!(out, cap, "%s", &parts.join(" "));
+        return 0;
+    }
+    if key == "update.pkg.status" {
+        let s = &a.store;
+        let st = if s.update_installing {
+            "installing"
+        } else if !s.update_error.is_empty() {
+            "failed"
+        } else if s.refreshing {
+            "checking"
+        } else if !s.update_status.is_empty() {
+            "done"
+        } else {
+            "idle"
+        };
+        csnprintf!(out, cap, "%s", st);
+        return 0;
+    }
+    if key == "update.pkg.message" {
+        csnprintf!(out, cap, "%s", if a.store.update_installing || !a.store.update_status.is_empty() { &a.store.update_status } else { &a.store.update_error });
+        return 0;
+    }
+    if key == "update.pkg.icons" {
+        let n = crate::packagestore::package_updates(&a.store)
+            .iter()
+            .filter(|u| crate::packagestore::update_icon(&a.store, &u.package.id).is_some())
+            .count();
+        csnprintf!(out, cap, "%d", n);
+        return 0;
     }
     // The Package Store (Rust only): its view, catalog and fetched assets (docs/SIM.md).
     if let Some(k) = key.strip_prefix("store.") {
@@ -9985,6 +10199,9 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_SHORTCUT_DEVICE => "shortcuts.device", H_SHORTCUT_OWN => "shortcuts.own", H_SHORTCUT_RELOAD => "shortcuts.reload",
                 H_UPDATES => "updates", H_CANCEL => "done", H_GESTURES_MASTER => "gestures.master",
                 H_UPD_CHANNEL => "updates.channel", H_UPD_NOW => "updates.now",
+                H_UPD_PKG => "updates.pkg.",
+                H_UPD_PKG_PAGE => if hit.arg < 0 { "updates.pkg.prev" } else { "updates.pkg.next" },
+                H_UPD_PKG_REFRESH => "updates.pkg.refresh",
                 H_SET_DARK => "dark",
                 H_SET_ROTATE => "rotate", H_SHORTCUT_ENABLE => "shortcuts.enable", H_BT_TOGGLE => "bluetooth",
                 H_PAIR => "pair", H_BUTTONS => "buttons",
@@ -10058,6 +10275,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
             if hit.id == H_WIFI_DELETE { name.push_str(&(hit.arg + 1).to_string()); }
             if hit.id == H_MOVE_TO { name.push_str(s.folders.get(hit.arg as usize).map_or("", |f| f.as_str())); }
             if matches!(hit.id, H_CARD | H_CARD_MORE) { name.push_str(&(hit.arg + 1).to_string()); }
+            if hit.id == H_UPD_PKG { name.push_str(&hit.arg.to_string()); }
             if hit.id == H_FILTER { name.push_str(["all", "notebooks", "folders"].get(hit.arg as usize).copied().unwrap_or("")); }
             if hit.id == H_SORT_PICK { name.push_str(["name-az", "name-za", "newest", "oldest"].get(hit.arg as usize).copied().unwrap_or("")); }
             if hit.id == H_ADD_ACTION { name.push_str(["new-notebook", "new-folder", "share"].get(hit.arg as usize).copied().unwrap_or("")); }
@@ -12398,11 +12616,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    // Settings > Updates: one button that carries the version, and a switch for the branch updates come
-    // from; opening the page starts the check (with no KPM here, the button says so), and the switch
-    // flips and saves.
+    // Settings > Updates: a System Updates card with the branch switch, and the Store-backed package
+    // list below it; opening the page starts both checks (with no KPM here, the card says so), and the
+    // switch flips and saves.
     #[test]
-    fn settings_updates_has_one_button_and_the_branch_switch() {
+    fn settings_updates_has_a_system_card_and_the_package_center() {
         let root = std::env::temp_dir().join(format!("grimoire-updates-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(store_init(root.to_str().unwrap()), 0);
@@ -12419,6 +12637,7 @@ mod tests {
         draw_settings(&mut a);
         act(&mut a, &Hit { r: RECT_EMPTY, id: H_UPDATES, arg: 0 });
         assert_eq!(lib(&mut a).modal, Modal::Updates);
+        assert!(a.store.updates_center, "the package updater opened with the page");
         let hits = &a.lib.as_ref().unwrap().hits;
         assert!(hits.h.iter().any(|h| h.id == H_SETTINGS_BACK), "Updates' Back");
         assert!(hits.h.iter().any(|h| h.id == H_UPD_CHANNEL), "the branch switch");
