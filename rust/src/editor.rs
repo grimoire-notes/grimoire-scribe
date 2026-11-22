@@ -7956,7 +7956,7 @@ fn widgets_tap(a: &mut App, x: f32, y: f32) {
             close_widgets(a);
             // The package manager is Settings > Packages > Widgets, over the notebook as Settings is.
             crate::library::library_settings_from_notebook(a);
-            packages_ui_open(a);
+            packages_ui_open(a, crate::widgetpkgui::PkgKind::Widget);
         }
         _ => close_widgets(a),
     }
@@ -12599,9 +12599,19 @@ pub fn editor_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32
                 Ok(i) => match a.pkg.items.get(i) { Some(x) => x.id.as_str(), None => return -1 },
                 Err(_) => id,
             };
-            let Some(m) = crate::widgetpkg::widget_package_installed_manifest(id) else { return -1 };
+            let app = a.pkg.kind == crate::widgetpkgui::PkgKind::App;
+            let m = if app {
+                crate::apppkg::app_package_installed_manifest(id)
+            } else {
+                crate::widgetpkg::widget_package_installed_manifest(id)
+            };
+            let Some(m) = m else { return -1 };
             let Some(s) = m.settings.iter().find(|s| s.key == setting) else { return -1 };
-            let values = crate::widgetpkg::widget_settings_load(id, &m.settings);
+            let values = if app {
+                crate::apppkg::app_settings_load(id, &m.settings)
+            } else {
+                crate::widgetpkg::widget_settings_load(id, &m.settings)
+            };
             csnprintf!(out, cap, "%s", crate::widgetpkg::widget_setting_value(&values, &s.key, &s.default));
             return 0;
         }

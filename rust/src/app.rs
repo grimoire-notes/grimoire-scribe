@@ -36,8 +36,10 @@ pub struct App {
     pub dpi: f32,
     /// mirrors the panel
     pub screen: Canvas,
-    /// The Settings → Packages → Widgets page (widgetpkgui.rs), over whatever screen is behind it.
+    /// The Settings → Packages → Widgets/Apps page (widgetpkgui.rs), over whatever screen is behind it.
     pub pkg: WidgetPkgUi,
+    /// The full-screen app in front, if any (apphost.rs). Apps are launched from the Library/Apps page.
+    pub app_view: AppRun,
     pub settings: Settings,
     /// the default shortcuts: shortcuts.ini and controller.ini, which every keyboard and controller uses
     /// but one with shortcuts of its own

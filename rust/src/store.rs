@@ -183,9 +183,11 @@ pub struct Settings {
     pub whatsnew_due: bool,
     /// One-time hints already shown, a bitmask (settings.ini hints; bit numbers: docs/FORMAT.md).
     pub hints: i32,
-    /// The home app row's order, most recently used first (settings.ini `recent_apps`): app ids 0 Files,
-    /// 1 Share, 2 Settings, comma separated. An app missing from the line follows in the default order.
-    pub recent_apps: FixedStr<32>,
+    /// The home app row's order, most recently used first (settings.ini `recent_apps`): Files,
+    /// Share, Settings, and installed app packages as `pkg:<id>`, comma separated. A core app missing
+    /// from the line follows in the default order; an app package the package index no longer has is
+    /// ignored when the row is built.
+    pub recent_apps: FixedStr<512>,
     /// The eye: dotted boxes over the page where a finger tap follows a link (settings.ini link_areas).
     pub link_areas: bool,
     /// Memory only, never saved: settings.ini was an existing version 3 file without a gestures key,
@@ -222,65 +224,176 @@ pub const FILES_SORT_NAMES: [&str; 3] = ["name", "newest", "size"];
 pub const FILES_SHOW_NAMES: [&str; 2] = ["usable", "all"];
 /// files_view's: a list, or the previews in a grid (Covers, 2.2, issue #145).
 pub const FILES_VIEW_NAMES: [&str; 2] = ["list", "covers"];
-/// The home apps, by id (settings.ini recent_apps): Files, Share, Settings.
+/// The three built-in home apps, by the names settings.ini writes for them.
 pub const APP_ORDER_NAMES: [&str; 3] = ["files", "share", "settings"];
-/// recent_apps' order as this build has it: known apps once each, then any it does not name in default order.
-fn app_order_from(v: &[u8]) -> [i32; 3] {
-    let mut order = [-1; 3];
-    let mut n = 0;
+/// The prefix that marks an installed app package in recent_apps. `:` cannot occur in a package id,
+/// so old files' unknown words remain ignored as before.
+pub const APP_PACKAGE_PREFIX: &str = "pkg:";
+
+fn package_token_id(part: &[u8]) -> Option<String> {
+    let rest = part.strip_prefix(APP_PACKAGE_PREFIX.as_bytes())?;
+    if rest.is_empty() || rest.len() > 128 {
+        return None;
+    }
+    let id = std::str::from_utf8(rest).ok()?;
+    if id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
+        && !id.starts_with('.')
+        && !id.ends_with('.')
+        && !id.contains("..")
+    {
+        Some(id.to_string())
+    } else {
+        None
+    }
+}
+
+/// recent_apps' tokens split into the built-in order and the installed packages, each once in
+/// the order the file names them.
+fn app_order_tokens(v: &[u8]) -> (Vec<i32>, Vec<String>) {
+    let mut core = Vec::new();
+    let mut packages = Vec::new();
     for part in v.split(|&c| c == b',') {
         if let Some(id) = APP_ORDER_NAMES.iter().position(|name| name.as_bytes() == part) {
             let id = id as i32;
-            if !order[..n].contains(&id) {
-                order[n] = id;
-                n += 1;
+            if !core.contains(&id) {
+                core.push(id);
+            }
+        } else if let Some(id) = package_token_id(part) {
+            if !packages.contains(&id) {
+                packages.push(id);
+            }
+        }
+    }
+    (core, packages)
+}
+
+/// recent_apps' order as this build has it: known core apps once each, then any it does not name
+/// in default order.
+fn app_order_from(v: &[u8]) -> [i32; 3] {
+    let (mut order, _) = app_order_tokens(v);
+    for id in 0..3 {
+        if !order.contains(&id) {
+            order.push(id);
+        }
+    }
+    [order[0], order[1], order[2]]
+}
+
+/// The file text settings_load keeps: every valid token once, in order, then missing core apps.
+fn app_order_canonical(v: &[u8]) -> String {
+    let (mut core, _packages) = app_order_tokens(v);
+    let mut parts: Vec<String> = Vec::new();
+    for part in v.split(|&c| c == b',') {
+        if let Some(id) = APP_ORDER_NAMES.iter().position(|name| name.as_bytes() == part) {
+            let name = APP_ORDER_NAMES[id];
+            if !parts.iter().any(|x| x == name) {
+                parts.push(name.to_string());
+            }
+        } else if let Some(id) = package_token_id(part) {
+            let token = format!("{APP_PACKAGE_PREFIX}{id}");
+            if !parts.iter().any(|x| *x == token) {
+                parts.push(token);
             }
         }
     }
     for id in 0..3 {
-        if !order[..n].contains(&id) {
-            order[n] = id;
-            n += 1;
+        if !core.contains(&id) {
+            core.push(id);
+            parts.push(APP_ORDER_NAMES[id as usize].to_string());
         }
     }
-    order
+    parts.join(",")
 }
 
-fn app_order_text(order: &[i32; 3]) -> String {
-    let mut text = String::new();
-    for (i, id) in order.iter().enumerate() {
-        if i > 0 {
-            text.push(',');
-        }
-        text.push_str(APP_ORDER_NAMES[*id as usize]);
-    }
-    text
-}
-
-/// The home app row, most recently used first.
+/// The home app row's three built-in apps, most recently used first.
 pub fn settings_app_order(s: &Settings) -> [i32; 3] {
     app_order_from(s.recent_apps.as_str().as_bytes())
 }
 
-/// Move `app` to the front of the home app row. Returns false when the saved order does not change.
-pub fn settings_app_used(s: &mut Settings, app: i32) -> bool {
-    if !(0..3).contains(&app) {
-        return false;
-    }
-    let mut order = [app, -1, -1];
-    let mut n = 1;
-    for id in settings_app_order(s) {
-        if id != app {
-            order[n] = id;
-            n += 1;
+/// One entry of recent_apps in the order the file names it, for the home row's interleaved order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RecentApp {
+    Core(i32),
+    Package(String),
+}
+
+/// The recent app token order with unknown words dropped and missing core apps appended.
+pub fn settings_recent_apps(s: &Settings) -> Vec<RecentApp> {
+    let v = s.recent_apps.as_str().as_bytes();
+    let (core, _packages) = app_order_tokens(v);
+    let mut out = Vec::new();
+    for part in v.split(|&c| c == b',') {
+        if let Some(id) = APP_ORDER_NAMES.iter().position(|name| name.as_bytes() == part) {
+            let id = id as i32;
+            if core.contains(&id) && !out.iter().any(|x| matches!(x, RecentApp::Core(n) if *n == id)) {
+                out.push(RecentApp::Core(id));
+            }
+        } else if let Some(id) = package_token_id(part) {
+            if !out.iter().any(|x| matches!(x, RecentApp::Package(n) if *n == id)) {
+                out.push(RecentApp::Package(id));
+            }
         }
     }
-    let text = app_order_text(&order);
+    for id in 0..3 {
+        let id = id as i32;
+        if core.contains(&id) && !out.iter().any(|x| matches!(x, RecentApp::Core(n) if *n == id)) {
+            out.push(RecentApp::Core(id));
+        }
+    }
+    out
+}
+
+/// The installed app package ids in recent-use order. The launcher filters ids the index no longer
+/// has and appends installed apps this line has not seen in name order.
+pub fn settings_package_order(s: &Settings) -> Vec<String> {
+    app_order_tokens(s.recent_apps.as_str().as_bytes()).1
+}
+
+fn rewrite_recent(s: &mut Settings, text: String) -> bool {
     if text == s.recent_apps.as_str() {
         return false;
     }
     s.recent_apps.set(&text);
     true
+}
+
+/// Move a built-in `app` (0 Files, 1 Share, 2 Settings) to the front of the home app row.
+/// Installed packages keep their order behind it. Returns false when nothing changes.
+pub fn settings_app_used(s: &mut Settings, app: i32) -> bool {
+    if !(0..3).contains(&app) {
+        return false;
+    }
+    let (_, packages) = app_order_tokens(s.recent_apps.as_str().as_bytes());
+    let mut parts = vec![APP_ORDER_NAMES[app as usize].to_string()];
+    for id in settings_app_order(s) {
+        if id != app {
+            parts.push(APP_ORDER_NAMES[id as usize].to_string());
+        }
+    }
+    for id in packages {
+        parts.push(format!("{APP_PACKAGE_PREFIX}{id}"));
+    }
+    rewrite_recent(s, parts.join(","))
+}
+
+/// Move an installed app package to the front of the home app row. Returns false when unchanged.
+pub fn settings_package_app_used(s: &mut Settings, id: &str) -> bool {
+    if package_token_id(format!("{APP_PACKAGE_PREFIX}{id}").as_bytes()).is_none() {
+        return false;
+    }
+    let (core, packages) = app_order_tokens(s.recent_apps.as_str().as_bytes());
+    let token = format!("{APP_PACKAGE_PREFIX}{id}");
+    let mut parts = vec![token.clone()];
+    for old in packages {
+        let old = format!("{APP_PACKAGE_PREFIX}{old}");
+        if old != token {
+            parts.push(old);
+        }
+    }
+    for id in core {
+        parts.push(APP_ORDER_NAMES[id as usize].to_string());
+    }
+    rewrite_recent(s, parts.join(","))
 }
 
 // ---- state ----
@@ -5041,7 +5154,7 @@ fn settings_cb(s: &mut Settings, k: &[u8], v: &[u8]) -> bool {
         // 2.2: darker lines in imported PDFs (issue #173), read strictly: only the three known values
         b"pdf_gamma" => s.pdf_gamma = keep_named("pdf_gamma", v, &crate::pdfwork::Gamma::NAMES),
         b"recent_apps" => {
-            s.recent_apps.set(&app_order_text(&app_order_from(v)));
+            s.recent_apps.set(&app_order_canonical(v));
         }
         // 2.2: the home folder (issue #160), read strictly (home.rs). A value that names no home is not used and
         // not kept: home is Notebooks, the Library says so once, and the next save leaves the line out. (The

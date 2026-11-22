@@ -137,7 +137,9 @@ pub mod upload; // Send a PDF from the Share page: the request's rules, the name
 pub mod widgets; // the editor's widget windows and widgets.ini (2.2, issue #200)
 pub mod widgetwasm; // the generic WebAssembly widget host (2.2, issue #200)
 pub mod widgetpkg; // widget packages: manifests, platforms, installs and the packages index (2.2, #200)
-pub mod widgetpkgui; // the Packages page: installed widgets, install from a repository (2.2, #200)
+pub mod widgetpkgui; // the Packages page: installed widgets and apps, install from a repository (2.2, #200)
+pub mod apppkg; // app packages: manifests, installs, the apps index and app settings (2.3)
+pub mod apphost; // the full-screen web app host and its safe close (2.3)
 
 // ---- wave 4: the platform and the main loop ----
 pub mod display; // display.h: the types; the functions are the build's platform's
@@ -244,6 +246,8 @@ pub mod prelude {
     pub use crate::widgetwasm::*;
     pub use crate::widgetpkg::*;
     pub use crate::widgetpkgui::*;
+    pub use crate::apppkg::*;
+    pub use crate::apphost::*;
     pub use crate::util::*;
     pub use crate::{buf_printf, cformat, csnprintf, qlog};
 }

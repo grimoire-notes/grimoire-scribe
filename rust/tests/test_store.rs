@@ -539,6 +539,32 @@ fn recent_apps_roundtrip() {
     unlink(&path);
 }
 
+fn installed_package_recents() {
+    let path = format!("{}/settings.ini", store_root());
+    let mut s = Settings::default();
+    let mut t = Settings::default();
+    settings_default(&mut s);
+    check!(settings_package_app_used(&mut s, "com.example.todo"));
+    check!(settings_package_order(&s) == ["com.example.todo".to_string()]);
+    check!(settings_app_order(&s) == [0, 1, 2]);
+    check!(matches!(settings_recent_apps(&s).first(), Some(RecentApp::Package(id)) if id == "com.example.todo"));
+    check!(settings_save(&s) == 0);
+    check!(has_pins_line(&path, "recent_apps=pkg:com.example.todo,files,share,settings"));
+    check!(settings_load(&mut t) == 0);
+    check!(t.recent_apps.as_str() == "pkg:com.example.todo,files,share,settings");
+    check!(settings_app_used(&mut t, 2));
+    check!(matches!(settings_recent_apps(&t).first(), Some(RecentApp::Core(2))));
+    check!(settings_package_order(&t) == ["com.example.todo".to_string()]);
+    check!(settings_package_app_used(&mut t, "com.example.todo"));
+    check!(matches!(settings_recent_apps(&t).first(), Some(RecentApp::Package(id)) if id == "com.example.todo"));
+    // A removed package's token stays harmless: the launcher drops it; an old unknown word is
+    // still not a package and is dropped when the file is read.
+    check!(write_file_atomic(&path, b"recent_apps=pkg:gone.app,calendar,share\n") == 0);
+    check!(settings_load(&mut t) == 0);
+    check!(t.recent_apps.as_str() == "pkg:gone.app,share,files,settings");
+    unlink(&path);
+}
+
 fn settings_upgrade_keeps_tweaks() {
     // An old settings file (no settings_version): pencil size still the old default,
     // tilt widening tuned by hand.
@@ -1440,6 +1466,7 @@ fn test_store() {
     run!(custom_music_paper_roundtrip);
     run!(settings_roundtrip);
     run!(recent_apps_roundtrip);
+    run!(installed_package_recents);
     run!(settings_upgrade_keeps_tweaks);
     run!(settings_upgrade_ballpoint_smoothing);
     run!(settings_upgrade_quick_size_pairs);

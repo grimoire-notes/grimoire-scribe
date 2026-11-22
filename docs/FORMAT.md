@@ -46,6 +46,9 @@ root/packages/index.json                the installed widget packages (2.2, issu
 root/packages/widgets/<id>/package.yaml a widget package's manifest and files (2.2, issue #200; Widget packages)
 root/packages/widgets/<id>/state/settings.json  the values of a package's declared settings, written by the host (2.2; Widget packages)
 root/packages/widgets/<id>.previous/    the version an update replaced, for a rollback (2.2, issue #200; Widget packages)
+root/packages/apps-index.json           the installed full-screen app packages (2.3; App packages)
+root/packages/apps/<id>/package.yaml    an app package's manifest and WebAssembly (2.3; App packages)
+root/packages/apps/<id>/state/          an app's state and its declared settings (2.3; App packages)
 root/clipboard.qpg                      the lasso's clipboard: what Copy or Cut took (2.0.0-beta.2; The clipboard)
 root/shortcuts.ini                      keyboard and controller mappings the owner edits (2.0; settings.ini)
 root/controller.ini                     controller buttons learned in Settings (2.0; settings.ini)
@@ -1717,6 +1720,25 @@ budget and linear memory is capped at 32 MiB, so a looping or greedy widget stop
 instead of freezing the device.
 
 [WIDGETS.md](WIDGETS.md#the-wasm-abi) is the guide to writing one.
+
+## App packages (2.3)
+
+Settings → Packages → Apps installs a full-screen app from a GitHub repository (`user/repo`) or a
+HTTPS `.yaml` address. Apps use the same package manager as widgets, with their own folder and
+index: `packages/apps/<id>/` and `packages/apps-index.json`. A manifest is `type: app` and has the
+same fields as a widget manifest, except that `spec.size` is ignored (an app owns the screen) and
+`spec.status_bar` chooses whether Grimoire's shared status bar starts over the app. The app
+capabilities are `storage:app-local` and `network:http`; the artifact is still a SHA-256-checked
+WebAssembly module of at most 32 MiB. Its `state/` folder survives updates and a Remove that keeps
+state, and `state/settings.json` is the host's own settings file.
+
+A module exports `memory` and `app_draw(width, height, scale_milli, elapsed_ms)`, and may export
+`app_pointer(phase, x, y, source)`, `app_key(code, mods, down)`, `app_status_bar()` and
+`app_stop()`. It imports drawing and the global UI from the `grimoire` module, plus state,
+settings, time, battery, Wi-Fi, screen geometry, `close()`, `show_status_bar`, `toast` and the
+optional asynchronous `http_*` calls. The two-finger bottom-to-middle swipe always returns Home;
+`close()` is the app's own safe path. Both run `app_stop` and save state. [APPS.md](APPS.md) has the
+complete manifest and ABI.
 
 ## `settings.ini`
 

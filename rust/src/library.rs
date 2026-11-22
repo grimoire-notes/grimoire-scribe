@@ -244,6 +244,8 @@ const H_DARKER_PICK: i32 = 251;
 const H_DARKER_BACK: i32 = 252;
 // Settings > Packages > Widgets (2.2, issue #200): the widget package manager (widgetpkgui.rs).
 const H_SET_PACKAGES: i32 = 260;
+// Settings > Packages > Apps: the same manager for the app package kind.
+const H_SET_APP_PACKAGES: i32 = 261;
 // The home's global elements (2.3, issue #209): its filter chips (arg: 0 All, 1 Notebooks, 2 Folders),
 // the Sort select and its choices (arg: the sort), the Search button, the + button and its popup's rows
 // (arg: 0 notebook, 1 folder, 2 Share), the apps buttons and the All apps page.
@@ -256,6 +258,12 @@ const H_ADD_ACTION: i32 = 276;
 const H_APPS: i32 = 277;
 const H_APP: i32 = 278;
 const H_APPS_CLOSE: i32 = 279;
+// The All apps page's own pager when installed apps need more than one screen.
+const H_APPS_PREV: i32 = 281;
+const H_APPS_NEXT: i32 = 282;
+// Installed app tiles use an argument past the built-in app ids (0 Files, 1 Share, 2 Settings,
+// 6 What's new, 7 About): an index into the sorted installed app package list.
+const H_APP_PKG_BASE: i32 = 30_000;
 // Settings > Wi-Fi's top controls and lists: Nearby/Saved (arg: 0 or 1), Rescan, Other... (a hidden
 // network), a saved row's trash (arg: a row), and a network a scan found (arg: an index of
 // WifiSheet.near). The saved rows keep H_WIFI_NET.
@@ -359,6 +367,8 @@ pub struct LibraryState {
     cur_folder: FixedStr<STORE_NAME_LEN>,
     folder_move_page: usize,
     page: i32,
+    /// The All apps page's page of launcher tiles.
+    apps_page: i32,
     /// The home's view (2.3, issue #209): the filter chip (0 All, 1 Notebooks, 2 Folders), the sort
     /// (0 Name A-Z, 1 Name Z-A, 2 Newest first, 3 Oldest first), the search query and whether the
     /// keyboard is editing it. all_items is every folder and notebook before the view is applied;
@@ -566,17 +576,50 @@ fn card_label_h() -> i32 {
     ui_px(150.0)
 }
 
-/// The installed apps, most recently used first, on the carousel and the All apps page. Only these
-/// three are apps; Exit lives at the foot of Settings' sidebar, and What's new is a utility link on
-/// the All apps page.
-fn home_apps(s: &Settings) -> [(IconKind, &'static str, i32); 3] {
-    let all = [
-        (IconKind::Browser, "Files", 0),
-        (IconKind::Share, "Share", 1),
-        (IconKind::Gear, "Settings", 2),
+/// One launcher on the home app row or the All apps page.
+#[derive(Clone, Debug)]
+struct HomeApp {
+    icon: IconKind,
+    label: String,
+    /// 0 Files, 1 Share, 2 Settings, or H_APP_PKG_BASE + an index into app_package_list().
+    arg: i32,
+}
+
+/// The installed apps, most recently used first: the three built-ins and every installed app
+/// package, interleaved by settings.ini recent_apps. Packages the index no longer has are dropped;
+/// installed packages the line has not seen follow in name order. Exit is in Settings' sidebar and
+/// What's new/About are utility links on the All apps page.
+fn home_apps(s: &Settings) -> Vec<HomeApp> {
+    let installed = crate::apppkg::app_package_list();
+    let core = [
+        HomeApp { icon: IconKind::Browser, label: tr("Files").to_string(), arg: 0 },
+        HomeApp { icon: IconKind::Share, label: tr("Share").to_string(), arg: 1 },
+        HomeApp { icon: IconKind::Gear, label: tr("Settings").to_string(), arg: 2 },
     ];
-    let order = settings_app_order(s);
-    [all[order[0] as usize], all[order[1] as usize], all[order[2] as usize]]
+    let mut out: Vec<HomeApp> = Vec::new();
+    let mut seen_pkg: Vec<usize> = Vec::new();
+    for item in settings_recent_apps(s) {
+        match item {
+            RecentApp::Core(id) => out.push(core[id as usize].clone()),
+            RecentApp::Package(id) => {
+                if let Some(i) = installed.iter().position(|p| p.id == id) {
+                    if !seen_pkg.contains(&i) {
+                        seen_pkg.push(i);
+                        let it = &installed[i];
+                        let icon = if it.icon.trim().is_empty() { IconKind::Grid } else { widget_icon(&it.icon) };
+                        out.push(HomeApp { icon, label: it.name.clone(), arg: H_APP_PKG_BASE + i as i32 });
+                    }
+                }
+            }
+        }
+    }
+    for (i, it) in installed.iter().enumerate() {
+        if !seen_pkg.contains(&i) {
+            let icon = if it.icon.trim().is_empty() { IconKind::Grid } else { widget_icon(&it.icon) };
+            out.push(HomeApp { icon, label: it.name.clone(), arg: H_APP_PKG_BASE + i as i32 });
+        }
+    }
+    out
 }
 
 /// cols, rows, cw, ch for a screen aw x ah. The covers are portrait (4:3) and the labels sit under
@@ -1066,14 +1109,18 @@ fn draw_base(a: &mut App) {
     // margin, opening the Apps page.
     let ay = top_h() + gap;
     let (ts, tw) = (apps_h(), app_tile_w());
-    for (i, (icon, label, arg)) in apps.iter().enumerate() {
-        let r = Rect::new(m + i as i32 * (tw + gap), ay, tw, ts);
-        gui_app_tile(c, r, *icon, tr(label), false);
-        hits_add(&mut s.hits, r, H_APP, *arg);
-    }
     let show = tr("Show All");
     let show_w = font_measure(FontFace::Bold, ui_text_size(), show);
     let show_r = Rect::new(aw - m - show_w, ay, show_w, ts);
+    // The row shows as many recent apps as fit before the right-aligned Show All link; the All
+    // apps page has every one of them.
+    let room = (show_r.x - gap - m).max(tw);
+    let visible = apps.len().min(((room + gap) / (tw + gap)).max(1) as usize);
+    for (i, app) in apps.iter().take(visible).enumerate() {
+        let r = Rect::new(m + i as i32 * (tw + gap), ay, tw, ts);
+        gui_app_tile(c, r, app.icon, &app.label, false);
+        hits_add(&mut s.hits, r, H_APP, app.arg);
+    }
     ui_text(c, FontFace::Bold, ui_text_size(), ui_small_size(), show_r, show, 1, false, 0);
     hits_add(&mut s.hits, Rect::new(show_r.x - ui_px(20.0), show_r.y, show_r.w + ui_px(20.0), show_r.h), H_APPS, 0);
 
@@ -4912,6 +4959,7 @@ fn setting_hit(id: settingsmenu::SettingId) -> i32 {
         AboutDevice => H_SET_DEVICE,
         DarkerLines => H_SET_DARKER,
         WidgetPackages => H_SET_PACKAGES,
+        AppPackages => H_SET_APP_PACKAGES,
     }
 }
 
@@ -5587,6 +5635,16 @@ pub(crate) fn library_app_used(a: &mut App, app: i32) {
 /// What the home's app tiles do: Files, Share and Settings are the three installed apps. What's
 /// new and About are the All apps page's links at the foot, not app tiles.
 fn home_app(a: &mut App, app: i32) {
+    if app >= H_APP_PKG_BASE {
+        let i = (app - H_APP_PKG_BASE) as usize;
+        let Some(it) = crate::apppkg::app_package_list().get(i).cloned() else { return };
+        lib(a).modal = Modal::None;
+        if settings_package_app_used(&mut a.settings, &it.id) {
+            settings_save(&a.settings);
+        }
+        crate::apphost::apphost_launch(a, &it.id);
+        return;
+    }
     match app {
         0 => {
             lib(a).modal = Modal::None;
@@ -5619,8 +5677,9 @@ fn home_app(a: &mut App, app: i32) {
     }
 }
 
-/// The home's All apps page (2.3, issue #209): the three installed apps as small launchers, then
-/// What's new and About as the page's two foot buttons. Exit is in Settings' sidebar.
+/// The home's All apps page (2.3, issue #209): every built-in and installed app, most recently
+/// used first, over as many pages as it takes, then What's new and About as the two foot buttons.
+/// Exit is in Settings' sidebar.
 fn draw_apps(a: &mut App) {
     let (aw, ah) = (a.w, a.h);
     let apps = home_apps(&a.settings);
@@ -5632,14 +5691,22 @@ fn draw_apps(a: &mut App) {
     let m = margin();
     let gap = gui_gap();
     let (ts, tw) = (apps_h(), app_tile_w());
-    let top = head.foot + gap;
-    for (i, (icon, label, arg)) in apps.iter().enumerate() {
-        let r = Rect::new(m + i as i32 * (tw + gap), top, tw, ts);
-        gui_app_tile(c, r, *icon, tr(label), false);
-        hits_add(&mut s.hits, r, H_APP, *arg);
-    }
     let bh = ui_px(110.0);
     let by = ah - m - bh;
+    let top = head.foot + gap;
+    let cols = (((aw - 2 * m + gap) / (tw + gap)).max(1)) as usize;
+    let rows = (((by - gap - top + gap) / (ts + gap)).max(1)) as usize;
+    let per = (cols * rows).max(1);
+    let pages = ((apps.len() + per - 1) / per).max(1) as i32;
+    s.apps_page = s.apps_page.clamp(0, pages - 1);
+    let first = s.apps_page as usize * per;
+    for (i, app) in apps.iter().skip(first).take(per).enumerate() {
+        let col = (i % cols) as i32;
+        let row = (i / cols) as i32;
+        let r = Rect::new(m + col * (tw + gap), top + row * (ts + gap), tw, ts);
+        gui_app_tile(c, r, app.icon, &app.label, false);
+        hits_add(&mut s.hits, r, H_APP, app.arg);
+    }
     let bw = ui_px(380.0);
     let whats = Rect::new(m, by, bw, bh);
     ui_button(c, whats, IconKind::Castle, tr("What's new"), ButtonStyle::Plain);
@@ -5647,6 +5714,15 @@ fn draw_apps(a: &mut App) {
     let about = Rect::new(whats.x + whats.w + gap, by, bw, bh);
     ui_button(c, about, IconKind::Castle, tr("About"), ButtonStyle::Plain);
     hits_add(&mut s.hits, about, H_APP, 7);
+    if pages > 1 {
+        let side = ui_px(110.0);
+        let prev = Rect::new(aw - m - 2 * side - gap, by, side, bh);
+        let next = Rect::new(aw - m - side, by, side, bh);
+        ui_button(c, prev, IconKind::Prev, "", if s.apps_page > 0 { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        ui_button(c, next, IconKind::Next, "", if s.apps_page + 1 < pages { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        if s.apps_page > 0 { hits_add(&mut s.hits, prev, H_APPS_PREV, 0); }
+        if s.apps_page + 1 < pages { hits_add(&mut s.hits, next, H_APPS_NEXT, 0); }
+    }
 }
 
 /// Draw any of the home's small menus in the one global popup, anchored to the control that opened
@@ -6460,6 +6536,11 @@ fn toast_floor(a: &App) -> i32 {
 }
 
 fn redraw(a: &mut App, m: RefreshMode) {
+    if a.app_view.open {
+        crate::apphost::apphost_draw(a);
+        app_invalidate_all(a, m);
+        return;
+    }
     if a.pkg.open {
         crate::widgetpkgui::packages_ui_draw(a);
         app_invalidate_all(a, m);
@@ -7248,8 +7329,19 @@ fn act(a: &mut App, h: &Hit) {
                 _ => {}
             }
         }
-        H_APPS => open_modal(a, Modal::Apps),
+        H_APPS => {
+            lib(a).apps_page = 0;
+            open_modal(a, Modal::Apps);
+        }
         H_APPS_CLOSE => close_modal(a),
+        H_APPS_PREV => {
+            lib(a).apps_page = (lib(a).apps_page - 1).max(0);
+            redraw(a, RefreshMode::Ui);
+        }
+        H_APPS_NEXT => {
+            lib(a).apps_page += 1;
+            redraw(a, RefreshMode::Ui);
+        }
         H_APP => home_app(a, h.arg),
         H_SET_CAT => {
             let s = lib(a);
@@ -7671,7 +7763,8 @@ fn act(a: &mut App, h: &Hit) {
             settings_save(&a.settings);
             redraw(a, RefreshMode::Full);
         }
-        H_SET_PACKAGES => crate::widgetpkgui::packages_ui_open(a),
+        H_SET_PACKAGES => crate::widgetpkgui::packages_ui_open(a, crate::widgetpkgui::PkgKind::Widget),
+        H_SET_APP_PACKAGES => crate::widgetpkgui::packages_ui_open(a, crate::widgetpkgui::PkgKind::App),
         H_SET_DISPLAY => {
             let mut dm = std::mem::take(&mut lib(a).dm);
             dispmenu_open(&mut dm, a);
@@ -9009,6 +9102,9 @@ pub fn library_enter(a: &mut App) {
 }
 
 pub fn library_leave(a: &mut App) {
+    if !a.relayout && a.app_view.open {
+        crate::apphost::apphost_close(a);
+    }
     if !a.relayout && a.lib.as_deref().is_some_and(|s| s.files.open) {
         lib(a).files.close();
         app_notice_clear(a, NoticeKey::Loading);
@@ -9065,6 +9161,10 @@ pub fn library_event(a: &mut App, ev: &InEvent) {
 }
 
 fn library_event_in(a: &mut App, ev: &InEvent) {
+    if a.app_view.open {
+        crate::apphost::apphost_event(a, ev);
+        return;
+    }
     if a.pkg.open {
         let ph = app_pointer_phase(ev);
         if ph >= 0 {
@@ -9235,6 +9335,10 @@ fn library_event_in(a: &mut App, ev: &InEvent) {
 }
 
 pub fn library_tick(a: &mut App, now: u32) {
+    if a.app_view.open {
+        crate::apphost::apphost_tick(a, now);
+        return;
+    }
     if a.pkg.open {
         crate::widgetpkgui::packages_ui_tick(a, now);
         return;
@@ -9554,6 +9658,37 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
         csnprintf!(out, cap, "%s", &text);
         return 0;
     }
+    // The full-screen app (2.3): its id, status line, drawn text, error and status-bar choice. "apps"
+    // lists installed app package ids in launcher order.
+    if key == "apps" {
+        let ids: Vec<String> = crate::apppkg::app_package_list().into_iter().map(|p| p.id).collect();
+        csnprintf!(out, cap, "%s", &ids.join(" "));
+        return 0;
+    }
+    if key == "app.open" {
+        csnprintf!(out, cap, "%d", a.app_view.open as i32);
+        return 0;
+    }
+    if key == "app.id" {
+        csnprintf!(out, cap, "%s", &a.app_view.id);
+        return 0;
+    }
+    if key == "app.status" {
+        csnprintf!(out, cap, "%s", a.app_view.status());
+        return 0;
+    }
+    if key == "app.text" {
+        csnprintf!(out, cap, "%s", &a.app_view.text());
+        return 0;
+    }
+    if key == "app.error" {
+        csnprintf!(out, cap, "%s", a.app_view.error());
+        return 0;
+    }
+    if key == "app.status-bar" {
+        csnprintf!(out, cap, "%d", a.app_view.status_bar as i32);
+        return 0;
+    }
     // The Graph opened from the Library (2.0.0-beta.2): the editor's map.* keys (docs/SIM.md), map.picker its
     // notebooks' browser (past the caps), map.keep 1 while a notebook it opened is in front; graph.omitted the
     // Library's notebooks the Graph of all notebooks leaves out (by their own setting or a folder's).
@@ -9811,6 +9946,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_BACK => "back", H_ABOUT => "about", H_ABOUT_CLOSE => "about.close",
                 H_CARD => "card.", H_CARD_MORE => "card-menu.",
                 H_ADD => "add", H_ADD_ACTION => "add.", H_APPS => "apps", H_APPS_CLOSE => "apps.close",
+                H_APPS_PREV => "apps.prev", H_APPS_NEXT => "apps.next",
                 H_APP => "app.", H_FILTER => "filter.", H_SORT => "sort", H_SORT_PICK => "sort.",
                 H_SEARCH => "search",
                 H_PREV => "prev", H_NEXT => "next",
@@ -9840,7 +9976,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_SET_DARKER => "darker-lines", H_DARKER_PICK => "darker-lines.", H_DARKER_BACK => "darker-lines.back",
                 H_SET_PINCH => "pinch", H_SET_MIRROR => "mirror",
                 H_SET_DEVICE => "about-device", H_DEVICE_BACK => "about-device.back",
-                H_SET_PACKAGES => "settings.packages",
+                H_SET_PACKAGES => "settings.packages", H_SET_APP_PACKAGES => "settings.apps",
                 _ => "",
             });
             if hit.id == H_LANG_PICK {
@@ -9869,7 +10005,13 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
             if hit.id == H_SORT_PICK { name.push_str(["name-az", "name-za", "newest", "oldest"].get(hit.arg as usize).copied().unwrap_or("")); }
             if hit.id == H_ADD_ACTION { name.push_str(["new-notebook", "new-folder", "share"].get(hit.arg as usize).copied().unwrap_or("")); }
             if hit.id == H_APP {
-                name.push_str(["files", "share", "settings", "", "", "", "whats-new", "about"].get(hit.arg as usize).copied().unwrap_or(""));
+                if hit.arg >= H_APP_PKG_BASE {
+                    if let Some(it) = crate::apppkg::app_package_list().get((hit.arg - H_APP_PKG_BASE) as usize) {
+                        name.push_str(&it.id);
+                    }
+                } else {
+                    name.push_str(["files", "share", "settings", "", "", "", "whats-new", "about"].get(hit.arg as usize).copied().unwrap_or(""));
+                }
             }
             if matches!(hit.id, H_GESTURE_GROUP | H_BUTTON_GROUP) {
                 if let Some(group) = ACTION_GROUPS.get(hit.arg as usize) { name.push_str(group.probe); }
@@ -12569,6 +12711,9 @@ esac
 
 /// Resolve a runner tap through the same hit names used by ui_at probes.
 pub fn library_control_point(a:&mut App,name:&str)->Option<(f32,f32)> {
+    if a.app_view.open {
+        if let Some(p) = crate::apphost::apphost_control_point(a, name) { return Some(p); }
+    }
     // Settings > Packages > Widgets: packages.install, packages.row.ID, packages.back, ...
     if let Some(n)=name.strip_prefix("packages.") {
         return (a.pkg.open).then(||crate::widgetpkgui::packages_ui_control_point(&a.pkg,n)).flatten();
@@ -12661,3 +12806,32 @@ pub fn library_settings_back(a:&mut App) {close_modal(a);}
 pub(crate) fn packages_redraw(a:&mut App) {redraw(a,RefreshMode::Ui);}
 /// The Packages page's X: the whole of Settings closes, as every Settings submenu's X does.
 pub(crate) fn packages_closed(a:&mut App) {close_settings(a,RefreshMode::Ui);}
+
+/// The app was just made the whole screen: no Library sheet is in front of it.
+pub(crate) fn library_app_launched(a: &mut App) {
+    if let Some(s) = a.lib.as_deref_mut() {
+        s.modal = Modal::None;
+        s.pressed = None;
+        s.home_pending = false;
+    }
+}
+
+/// The app asked to leave, or the system swipe did: draw the Library again from scratch.
+pub(crate) fn library_app_closed(a: &mut App) {
+    if let Some(s) = a.lib.as_deref_mut() {
+        s.pressed = None;
+    }
+    redraw(a, RefreshMode::Full);
+}
+
+/// Whether the status bar's minute changed while an app was up.
+pub(crate) fn library_app_minute(a: &mut App) -> bool {
+    let min = wall_time() / 60;
+    let Some(s) = a.lib.as_deref_mut() else { return false };
+    if s.status_min == min {
+        false
+    } else {
+        s.status_min = min;
+        true
+    }
+}

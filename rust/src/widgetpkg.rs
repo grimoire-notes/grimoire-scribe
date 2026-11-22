@@ -438,6 +438,8 @@ pub struct WidgetSpec {
     pub entry: String,
     pub icon: String,
     pub minimizable: bool,
+    /// App packages only: show Grimoire's shared status bar over the app. Widget packages ignore it.
+    pub status_bar: bool,
     pub size: WidgetSize,
 }
 
@@ -664,6 +666,7 @@ pub fn widget_package_parse(text: &str) -> Result<WidgetPackage, String> {
             entry: ystr(s, "entry"),
             icon: ystr(s, "icon"),
             minimizable: ybool(s, "minimizable", true),
+            status_bar: ybool(s, "status_bar", true),
             size: ysize(s.get("size"))?,
         };
     }

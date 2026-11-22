@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "packages": [
+    {"id":"com.example.fixture","name":"Fixture App","version":"1.0.0","author":"Grimoire tests","description":"A small full-screen app fixture.","icon":"grid","path":"packages/apps/com.example.fixture/app.wasm","sha":"8d727873b810de64fd7d6fc17d17bfd762ff186981edf1041bc9c8dabeb74285","installed_at":1,"source_url":""}
+  ]
+}
