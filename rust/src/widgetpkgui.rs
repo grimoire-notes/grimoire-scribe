@@ -1324,8 +1324,9 @@ pub fn packages_ui_draw(a: &mut App) {
                     hits_add(&mut ui.hits, *rr, H_INSTALL, 0);
                 } else if let Some(it) = ui.items.get(k - 2) {
                     let label = labeled(&it.name, &it.version);
-                    let row = Row::new(install_icon(ui.kind, it), &label);
-                    ui_row(c, *rr, &row);
+                    let icon = package_icon(ui.kind, it);
+                    let row = Row::new(IconKind::None, &label);
+                    ui_row_app_icon(c, *rr, &row, &icon);
                     hits_add(&mut ui.hits, *rr, H_ROW, (k - 2) as i32);
                 }
             }

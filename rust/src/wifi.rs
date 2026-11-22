@@ -1,6 +1,7 @@
 //! Nonblocking access to the launcher's Kindle Wi-Fi helper (kindle/app/wifi.sh). Only explicit UI
-//! actions change the radio or the network; queries run only while Share's Wi-Fi card or Settings >
-//! Wi-Fi is visible. Of the saved networks only their names come here, in hex, from the helper, which
+//! actions change the radio or the network; a status read runs at startup for the status bar, and
+//! further queries run only while Share's Wi-Fi card or Settings > Wi-Fi is visible. Of the saved
+//! networks only their names come here, in hex, from the helper, which
 //! keeps their passwords out of its output; no name is logged (grimoire.log goes to public bug reports).
 //! A WPA/WPA2 add derives its PSK here (wpa.rs): the helper gets those 64 hex digits, never the passphrase.
 //! A WPA2-Enterprise add sends its username and password to the helper only on stdin; the helper feeds

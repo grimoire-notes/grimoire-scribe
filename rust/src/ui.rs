@@ -663,6 +663,16 @@ impl<'a> Row<'a> {
 /// The label takes the room left between the icon and the switch and follows its rules (ui_text):
 /// one line at the text size, a smaller size, or two lines before a translation is ever cut short.
 pub fn ui_row(c: &mut Canvas, r: Rect, row: &Row) {
+    ui_row_with(c, r, row, None);
+}
+
+/// The same row with an installed app's icon (its `.ico`, or its built-in fallback) in the icon
+/// slot instead of `row.icon`.
+pub fn ui_row_app_icon(c: &mut Canvas, r: Rect, row: &Row, icon: &AppIcon) {
+    ui_row_with(c, r, row, Some(icon));
+}
+
+fn ui_row_with(c: &mut Canvas, r: Rect, row: &Row, app_icon: Option<&AppIcon>) {
     if r.w <= 0 || r.h <= 0 {
         return;
     }
@@ -676,7 +686,10 @@ pub fn ui_row(c: &mut Canvas, r: Rect, row: &Row) {
     };
     let isz = ui_px(60.0);
     let mut lx = r.x + ui_row_pad();
-    if row.icon != IconKind::None {
+    if let Some(icon) = app_icon {
+        icon.draw(c, Rect::new(lx, r.y + (r.h - isz) / 2, isz, isz), fg);
+        lx += isz + ui_row_gap();
+    } else if row.icon != IconKind::None {
         ui_icon(c, row.icon, Rect::new(lx, r.y + (r.h - isz) / 2, isz, isz), fg);
         lx += isz + ui_row_gap();
     }

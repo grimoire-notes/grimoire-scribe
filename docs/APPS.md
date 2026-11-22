@@ -51,8 +51,8 @@ and SHA-256 before anything is written, and an update is staged before it replac
 A bundled icon is a second package file: the installer fetches it from the manifest's folder, checks
 its `spec.icon_sha256` and `spec.icon_size` (at most 256 KiB), and saves it with the artifact. The
 launcher decodes PNG entries and classic 1, 4, 8, 24 and 32-bit BMP entries to a small grayscale
-bitmap for the home app row, All Apps and the package detail page. A built-in name still works, and
-is the fallback if the icon file is missing or unreadable.
+bitmap for the home app row, All Apps, the package manager's list and its detail page. A built-in
+name still works, and is the fallback if the icon file is missing or unreadable.
 
 The index is `packages/apps-index.json`:
 

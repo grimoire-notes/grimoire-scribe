@@ -724,6 +724,9 @@ pub fn app_init(a: &mut App, w: i32, h: i32, dpi: f32) -> i32 {
     bt_init(&store_root(), getenv("GRIMOIRE_BT_SCRIPT").as_deref(), standin.as_deref(),
     );
     wifi_init(getenv("GRIMOIRE_WIFI_SCRIPT").as_deref());
+    // The status bar's Wi-Fi glyph needs the radio's state before Settings or Share asks for it
+    // (the rest of the reads stay with those screens).
+    wifi_request(WifiAction::Status);
     // Settings > Updates (update.h): the launcher says where update.sh and the request file are.
     let mut request = String::new();
     let asked = getenv("GRIMOIRE_UPDATE_REQUEST");

@@ -7,6 +7,8 @@
 # has fifteen saved networks, listed only while the radio is on, and Far away refusing a switch.
 # make l10n-check runs it in every language and style, for the fit check.
 wait 200
+# The status bar's Wi-Fi glyph is read at startup, not first when this sheet opens.
+expect wifi.state is off
 tap library settings
 wait 100
 expect library.sheet is settings
