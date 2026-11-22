@@ -15,6 +15,7 @@ expect library.store.view is list
 expect library.store.packages is 2
 expect library.store.visible is com.example.fixture com.example.timer
 expect library.store.featured is com.example.fixture
+expect library.store.list.icons is 1
 shot 00-catalog
 tap library store.filter.2
 wait 300

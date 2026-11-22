@@ -567,7 +567,7 @@ fn apps_h() -> i32 {
     ui_px(200.0)
 }
 fn app_tile_w() -> i32 {
-    ui_px(190.0)
+    ui_px(240.0)
 }
 fn filters_h() -> i32 {
     ui_px(88.0)

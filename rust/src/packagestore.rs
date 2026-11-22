@@ -102,6 +102,7 @@ enum FetchStage {
     Icon,
     Screenshot,
     InstallIcon,
+    ListIcon,
 }
 
 struct FetchJob {
@@ -161,6 +162,8 @@ pub struct PackageStoreUi {
     icon: StoreIcon,
     icon_for: String,
     icon_tried: bool,
+    list_icons: Vec<Canvas>,
+    list_tried: Vec<bool>,
     shot: Canvas,
     shot_for: String,
     shot_tried: bool,
@@ -197,6 +200,14 @@ impl PackageStoreUi {
         self.install_job = None;
         self.asset_job = None;
         self.refreshing = false;
+    }
+
+    fn reset_list_icons(&mut self) {
+        for icon in &mut self.list_icons {
+            canvas_free(icon);
+        }
+        self.list_icons = vec![Canvas::default(); self.index.packages.len()];
+        self.list_tried = vec![false; self.index.packages.len()];
     }
 }
 
@@ -512,9 +523,11 @@ pub fn store_open(a: &mut App) {
     ui.selected = None;
     ui.cancel_jobs();
     ui.clear_selection();
+    ui.reset_list_icons();
     ui.index_url = catalog_url();
     let cached = load_cached_index(ui);
     if cached {
+        ui.reset_list_icons();
         ui.status = tr("Showing the saved catalog.").to_string();
     }
     start_catalog(ui);
@@ -574,14 +587,23 @@ fn install_label(p: &StorePackage) -> (String, ButtonStyle, bool) {
     }
 }
 
-fn begin_fetch(ui: &mut PackageStoreUi, stage: FetchStage, url: &str, cap: usize, _package_id: &str, key: &str) -> Result<(), String> {
+enum FetchSlot {
+    Install,
+    Asset,
+}
+
+fn begin_fetch(ui: &mut PackageStoreUi, slot: FetchSlot, stage: FetchStage, url: &str, cap: usize, key: &str) -> Result<(), String> {
     let fetch = WidgetFetch::start(url, cap)?;
-    ui.install_job = Some(FetchJob {
+    let job = FetchJob {
         stage,
         fetch,
         url: url.to_string(),
         key: key.to_string(),
-    });
+    };
+    match slot {
+        FetchSlot::Install => ui.install_job = Some(job),
+        FetchSlot::Asset => ui.asset_job = Some(job),
+    }
     Ok(())
 }
 
@@ -602,7 +624,7 @@ fn begin_install(a: &mut App) {
     ui.install_icon_key.clear();
     ui.pending_artifact.clear();
     ui.view = StoreView::Busy;
-    if let Err(e) = begin_fetch(ui, FetchStage::Manifest, &pkg.manifest_url, WIDGET_PKG_MANIFEST_MAX, &pkg.id, "") {
+    if let Err(e) = begin_fetch(ui, FetchSlot::Install, FetchStage::Manifest, &pkg.manifest_url, WIDGET_PKG_MANIFEST_MAX, "") {
         ui.error = e;
         ui.view = StoreView::Error;
     }
@@ -622,7 +644,7 @@ fn start_artifact(a: &mut App) {
     ui.error.clear();
     ui.status = tr("Downloading the package...").to_string();
     ui.view = StoreView::Busy;
-    if let Err(e) = begin_fetch(ui, FetchStage::Artifact, &url, WIDGET_PKG_ARTIFACT_MAX as usize, "", "") {
+    if let Err(e) = begin_fetch(ui, FetchSlot::Install, FetchStage::Artifact, &url, WIDGET_PKG_ARTIFACT_MAX as usize, "") {
         ui.error = e;
         ui.view = StoreView::Error;
     }
@@ -642,7 +664,7 @@ fn start_install_icon(a: &mut App) {
     }
     a.store.status = tr("Downloading the package icon...").to_string();
     a.store.view = StoreView::Busy;
-    if let Err(e) = begin_fetch(&mut a.store, FetchStage::InstallIcon, &url, INSTALL_ICON_MAX, "", &key) {
+    if let Err(e) = begin_fetch(&mut a.store, FetchSlot::Install, FetchStage::InstallIcon, &url, INSTALL_ICON_MAX, &key) {
         a.store.error = e;
         a.store.view = StoreView::Error;
     }
@@ -717,7 +739,7 @@ fn start_selected_assets(a: &mut App) {
                 apply_icon(&mut a.store, &data);
                 a.store.icon_tried = true;
             } else {
-                start_asset_job(a, FetchStage::Icon, &asset.url, INSTALL_ICON_MAX, &pkg.id, &asset.key);
+                start_asset_job(a, FetchStage::Icon, &asset.url, INSTALL_ICON_MAX, &asset.key);
                 return;
             }
         } else {
@@ -730,7 +752,7 @@ fn start_selected_assets(a: &mut App) {
                 apply_screenshot(&mut a.store, &data);
                 a.store.shot_tried = true;
             } else {
-                start_asset_job(a, FetchStage::Screenshot, &asset.url, SCREENSHOT_MAX, &pkg.id, &asset.key);
+                start_asset_job(a, FetchStage::Screenshot, &asset.url, SCREENSHOT_MAX, &asset.key);
                 return;
             }
         } else {
@@ -739,42 +761,116 @@ fn start_selected_assets(a: &mut App) {
     }
 }
 
-fn start_asset_job(a: &mut App, stage: FetchStage, url: &str, cap: usize, pkg: &str, key: &str) {
-    if let Err(e) = begin_fetch(&mut a.store, stage, url, cap, pkg, key) {
+fn start_asset_job(a: &mut App, stage: FetchStage, url: &str, cap: usize, key: &str) {
+    if let Err(e) = begin_fetch(&mut a.store, FetchSlot::Asset, stage, url, cap, key) {
         qlog!("package store: asset fetch failed to start: %s", &e);
-        if stage == FetchStage::Icon {
-            a.store.icon_tried = true;
-        } else {
-            a.store.shot_tried = true;
+        match stage {
+            FetchStage::Icon => a.store.icon_tried = true,
+            FetchStage::Screenshot => a.store.shot_tried = true,
+            FetchStage::ListIcon => mark_list_icon_tried(&mut a.store, key),
+            _ => {}
         }
     }
 }
 
-fn apply_icon(ui: &mut PackageStoreUi, data: &[u8]) {
+/// Load the catalog cards' own icons, one cached image at a time and one download at a time.
+/// Returns whether an image was loaded without waiting on the network.
+fn start_list_icons(a: &mut App) -> bool {
+    if !a.store.open || a.store.view != StoreView::List || a.store.asset_job.is_some() {
+        return false;
+    }
+    if a.store.list_icons.len() != a.store.index.packages.len() || a.store.list_tried.len() != a.store.index.packages.len() {
+        a.store.reset_list_icons();
+    }
+    let mut loaded = false;
+    for i in 0..a.store.index.packages.len() {
+        let has_image = a.store.list_icons.get(i).is_some_and(|icon| !icon.px.is_empty());
+        if has_image || a.store.list_tried.get(i).copied().unwrap_or(false) {
+            continue;
+        }
+        let Some((url, key)) = (match &a.store.index.packages[i].icon {
+            StoreIconRef::Image(asset) => Some((asset.url.clone(), asset.key.clone())),
+            StoreIconRef::Glyph(_) => None,
+        }) else {
+            continue;
+        };
+        if let Some(data) = read_cached_asset(&key, INSTALL_ICON_MAX) {
+            if apply_list_icon_at(&mut a.store, i, &data) {
+                loaded = true;
+            } else {
+                a.store.list_tried[i] = true;
+            }
+        } else {
+            start_asset_job(a, FetchStage::ListIcon, &url, INSTALL_ICON_MAX, &key);
+            return loaded;
+        }
+    }
+    loaded
+}
+
+fn store_image(data: &[u8]) -> Option<Canvas> {
     if let Some(img) = crate::appicon::decode_ico(data) {
-        canvas_free(&mut ui.icon.image);
-        if canvas_init(&mut ui.icon.image, img.w as i32, img.h as i32) == 0 {
-            for y in 0..img.h as i32 {
-                for x in 0..img.w as i32 {
-                    let px = img.gray[(y * img.w as i32 + x) as usize];
-                    canvas_fill(&mut ui.icon.image, Rect::new(x, y, 1, 1), px);
-                }
+        let mut out = Canvas::default();
+        if canvas_init(&mut out, img.w as i32, img.h as i32) != 0 {
+            return None;
+        }
+        for y in 0..img.h as i32 {
+            for x in 0..img.w as i32 {
+                let px = img.gray[(y * img.w as i32 + x) as usize];
+                canvas_fill(&mut out, Rect::new(x, y, 1, 1), px);
             }
         }
-        return;
+        return Some(out);
     }
     let mut pic = BgPicture::default();
     let mut why = "";
-    if bgimage_decode(data, &mut pic, &mut why) == 0 {
+    if bgimage_decode(data, &mut pic, &mut why) != 0 {
+        return None;
+    }
+    let mut out = Canvas::default();
+    if bgimage_luma(&pic, &mut out) != 0 {
+        canvas_free(&mut out);
+        return None;
+    }
+    // Keep the decoded icon small enough for the detail header and the cards.
+    if out.w > 256 || out.h > 256 {
+        let mut small = Canvas::default();
+        if canvas_init(&mut small, 256, 256) == 0 {
+            canvas_blit_fit(&mut small, &out, Rect::new(0, 0, 256, 256));
+            canvas_free(&mut out);
+            return Some(small);
+        }
+        canvas_free(&mut small);
+    }
+    Some(out)
+}
+
+fn apply_icon(ui: &mut PackageStoreUi, data: &[u8]) {
+    if let Some(image) = store_image(data) {
         canvas_free(&mut ui.icon.image);
-        if bgimage_luma(&pic, &mut ui.icon.image) == 0 {
-            // Keep the decoded icon small enough for the detail header.
-            if ui.icon.image.w > 256 || ui.icon.image.h > 256 {
-                let mut small = Canvas::default();
-                if canvas_init(&mut small, 256, 256) == 0 {
-                    canvas_blit_fit(&mut small, &ui.icon.image, Rect::new(0, 0, 256, 256));
-                    canvas_free(&mut ui.icon.image);
-                    ui.icon.image = small;
+        ui.icon.image = image;
+    }
+}
+
+fn apply_list_icon_at(ui: &mut PackageStoreUi, index: usize, data: &[u8]) -> bool {
+    let Some(image) = store_image(data) else { return false };
+    let Some(slot) = ui.list_icons.get_mut(index) else { return false };
+    canvas_free(slot);
+    *slot = image;
+    true
+}
+
+fn apply_list_icon(ui: &mut PackageStoreUi, key: &str, data: &[u8]) -> bool {
+    let index = ui.index.packages.iter().position(|p| matches!(&p.icon, StoreIconRef::Image(a) if a.key == key));
+    index.is_some_and(|i| apply_list_icon_at(ui, i, data))
+}
+
+fn mark_list_icon_tried(ui: &mut PackageStoreUi, key: &str) {
+    for (i, p) in ui.index.packages.iter().enumerate() {
+        if let StoreIconRef::Image(asset) = &p.icon {
+            if asset.key == key {
+                if let Some(tried) = ui.list_tried.get_mut(i) {
+                    *tried = true;
                 }
             }
         }
@@ -849,6 +945,7 @@ fn tick_catalog(a: &mut App) -> bool {
                 write_cached_index(&data);
                 let selected = a.store.selected.clone();
                 a.store.index = index;
+                a.store.reset_list_icons();
                 a.store.selected = selected.filter(|id| a.store.index.packages.iter().any(|p| &p.id == id));
                 if a.store.selected.is_none() {
                     a.store.clear_selection();
@@ -943,20 +1040,28 @@ fn tick_asset(a: &mut App) -> bool {
                     apply_screenshot(&mut a.store, &data);
                     a.store.shot_tried = true;
                 }
+                FetchStage::ListIcon => {
+                    if !apply_list_icon(&mut a.store, &job.key, &data) {
+                        mark_list_icon_tried(&mut a.store, &job.key);
+                    }
+                }
                 _ => {}
             }
         }
         Err(e) => {
             qlog!("package store: %s", &e);
-            if job.stage == FetchStage::Icon {
-                a.store.icon_tried = true;
-            } else {
-                a.store.shot_tried = true;
+            match job.stage {
+                FetchStage::Icon => a.store.icon_tried = true,
+                FetchStage::Screenshot => a.store.shot_tried = true,
+                FetchStage::ListIcon => mark_list_icon_tried(&mut a.store, &job.key),
+                _ => {}
             }
         }
     }
     if a.store.view == StoreView::Detail {
         start_selected_assets(a);
+    } else {
+        start_list_icons(a);
     }
     true
 }
@@ -968,6 +1073,9 @@ pub fn store_tick(a: &mut App, _now: u32) {
     let mut changed = tick_catalog(a);
     changed |= tick_install(a);
     changed |= tick_asset(a);
+    if a.store.view == StoreView::List {
+        changed |= start_list_icons(a);
+    }
     if changed {
         redraw(a);
     }
@@ -977,6 +1085,10 @@ pub fn store_tick(a: &mut App, _now: u32) {
 
 fn open_detail(a: &mut App, n: usize) {
     let Some(pkg) = a.store.index.packages.get(n).cloned() else { return };
+    // A card icon still downloading must not hold up the page the tap asked for.
+    if a.store.asset_job.as_ref().is_some_and(|job| job.stage == FetchStage::ListIcon) {
+        a.store.asset_job = None;
+    }
     a.store.selected = Some(pkg.id.clone());
     a.store.view = StoreView::Detail;
     a.store.status.clear();
@@ -1186,18 +1298,22 @@ fn draw_tag(c: &mut Canvas, r: Rect, text: &str, selected: bool) {
     font_draw_centered(c, FontFace::Fixed, ui_small_size() * 0.82, r, text, if selected { 255 } else { 80 });
 }
 
-fn draw_package_card(c: &mut Canvas, r: Rect, p: &StorePackage, featured: bool) {
+fn draw_package_card(c: &mut Canvas, r: Rect, p: &StorePackage, featured: bool, icon_image: Option<&Canvas>) {
     ui_frame(c, r, gui_radius(), 255, true, 0);
     ui_frame(c, r, gui_radius(), 0, false, ui_px(3.0));
     let pad = ui_px(24.0);
     let icon_box = Rect::new(r.x + pad, r.y + pad, ui_px(120.0), ui_px(120.0));
     ui_frame(c, icon_box, gui_radius(), 255, true, 0);
     ui_frame(c, icon_box, gui_radius(), 0, false, ui_px(2.0));
-    let glyph = match &p.icon {
-        StoreIconRef::Glyph(g) => *g,
-        StoreIconRef::Image(_) => IconKind::Package,
-    };
-    ui_icon(c, glyph, rect_inflate(icon_box, -ui_px(22.0)), 0);
+    if let Some(image) = icon_image {
+        canvas_blit_fit(c, image, rect_inflate(icon_box, -ui_px(12.0)));
+    } else {
+        let glyph = match &p.icon {
+            StoreIconRef::Glyph(g) => *g,
+            StoreIconRef::Image(_) => IconKind::Package,
+        };
+        ui_icon(c, glyph, rect_inflate(icon_box, -ui_px(22.0)), 0);
+    }
     let tx = icon_box.x + icon_box.w + ui_px(18.0);
     let tw = (r.x + r.w - pad - tx).max(0);
     let title_h = ui_px(58.0);
@@ -1298,7 +1414,8 @@ fn draw_list(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
         let r = Rect::new(x0 + col * (card_w + gap), top + row * (card_h + gap), card_w, card_h);
         let p = &ui.index.packages[*n];
         let featured = p.id == ui.index.featured;
-        draw_package_card(c, r, p, featured);
+        let icon_image = ui.list_icons.get(*n).filter(|icon| !icon.px.is_empty());
+        draw_package_card(c, r, p, featured, icon_image);
         hits_add(&mut ui.hits, r, H_CARD, *n as i32);
     }
     draw_pager(c, ui, Rect::new(area.x, bottom - PAGER_H, area.w, PAGER_H), ui.page, pages);
@@ -1396,7 +1513,7 @@ fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let action_h = ui_px(100.0);
     let action_gap = ui_px(14.0);
     let action_count = if p.repository.is_empty() { 1 } else { 2 };
-    let actions_h = action_h * action_count + action_gap * (action_count - 1);
+    let actions_h = action_h;
     let meta_h = ui_px(228.0);
     let (info, shot, desc_h) = if wide {
         let info = Rect::new(area.x, area.y, area.w * 43 / 100, area.h);
@@ -1434,20 +1551,20 @@ fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     draw_description(c, Rect::new(info.x, y, info.w, desc_h), &p);
     let meta_y = y + desc_h + ui_px(8.0);
     draw_meta(c, Rect::new(info.x, meta_y, info.w, meta_h), &p);
-    let mut ay = if wide {
+    let ay = if wide {
         info.y + info.h - actions_h
     } else {
         (meta_y + meta_h + ui_px(14.0)).min(info.y + info.h - actions_h)
     };
     let (label, style, enabled) = install_label(&p);
-    let install_r = Rect::new(info.x, ay, info.w, action_h);
+    let action_w = if action_count == 2 { (info.w - action_gap) / 2 } else { info.w };
+    let install_r = Rect::new(info.x, ay, action_w, action_h);
     gui_button(c, install_r, IconKind::Download, &label, style);
     if enabled {
         hits_add(&mut ui.hits, install_r, H_INSTALL, 0);
     }
     if !p.repository.is_empty() {
-        ay += action_h + action_gap;
-        let r = Rect::new(info.x, ay, info.w, action_h);
+        let r = Rect::new(info.x + action_w + action_gap, ay, action_w, action_h);
         gui_button(c, r, IconKind::Link, tr("Repository QR"), ButtonStyle::Plain);
         hits_add(&mut ui.hits, r, H_QR, 0);
     }
@@ -1582,6 +1699,7 @@ pub fn store_probe(ui: &PackageStoreUi, key: &str) -> Option<String> {
         "shot" => ui.shot_index.to_string(),
         "shot.loaded" => (!ui.shot.px.is_empty() as i32).to_string(),
         "icon.loaded" => (!ui.icon.image.px.is_empty() as i32).to_string(),
+        "list.icons" => ui.list_icons.iter().filter(|icon| !icon.px.is_empty()).count().to_string(),
         "status" => ui.status.clone(),
         "error" => ui.error.clone(),
         "page" => ui.page.to_string(),
