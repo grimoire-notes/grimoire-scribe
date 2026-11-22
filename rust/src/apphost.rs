@@ -560,7 +560,8 @@ impl AppRuntime {
                     self.texts.push(value);
                 }
                 DrawCmd::AppTile(r, icon, label, selected) => {
-                    gui_app_tile(c, abs(body, r), widget_icon(&icon), &label, selected);
+                    let icon = AppIcon::glyph(widget_icon(&icon));
+                    gui_app_tile(c, abs(body, r), &icon, &label, selected);
                     self.texts.push(label);
                 }
                 DrawCmd::Fab(r, icon) => gui_fab(c, abs(body, r), widget_icon(&icon)),

@@ -20,5 +20,7 @@ settings:
 spec:
   runtime: wasm
   entry: _start
-  icon: grid
+  icon: icon.ico
+  icon_sha256: 751347c480468784f6640ebe4b32e0f018adf50edb311555539925dc0d980aee
+  icon_size: 99678
   status_bar: false

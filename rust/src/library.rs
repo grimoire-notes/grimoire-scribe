@@ -2,6 +2,7 @@
 //! plus the sheets: new notebook (paper picker), settings, notebook actions, move, delete.
 
 use crate::prelude::*;
+use crate::appicon::AppIcon;
 use crate::globalui::{gui_app_tile, gui_chip, gui_fab, gui_gap, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_select, gui_status_bar, gui_status_h, gui_top_button_h, GuiPopupItem};
 use crate::settingsmenu;
 use crate::ui::{ui_row, ui_row_page, ui_row_pager, Row as UiRow};
@@ -579,7 +580,7 @@ fn card_label_h() -> i32 {
 /// One launcher on the home app row or the All apps page.
 #[derive(Clone, Debug)]
 struct HomeApp {
-    icon: IconKind,
+    icon: AppIcon,
     label: String,
     /// 0 Files, 1 Share, 2 Settings, or H_APP_PKG_BASE + an index into app_package_list().
     arg: i32,
@@ -592,9 +593,9 @@ struct HomeApp {
 fn home_apps(s: &Settings) -> Vec<HomeApp> {
     let installed = crate::apppkg::app_package_list();
     let core = [
-        HomeApp { icon: IconKind::Browser, label: tr("Files").to_string(), arg: 0 },
-        HomeApp { icon: IconKind::Share, label: tr("Share").to_string(), arg: 1 },
-        HomeApp { icon: IconKind::Gear, label: tr("Settings").to_string(), arg: 2 },
+        HomeApp { icon: AppIcon::glyph(IconKind::Browser), label: tr("Files").to_string(), arg: 0 },
+        HomeApp { icon: AppIcon::glyph(IconKind::Share), label: tr("Share").to_string(), arg: 1 },
+        HomeApp { icon: AppIcon::glyph(IconKind::Gear), label: tr("Settings").to_string(), arg: 2 },
     ];
     let mut out: Vec<HomeApp> = Vec::new();
     let mut seen_pkg: Vec<usize> = Vec::new();
@@ -606,7 +607,7 @@ fn home_apps(s: &Settings) -> Vec<HomeApp> {
                     if !seen_pkg.contains(&i) {
                         seen_pkg.push(i);
                         let it = &installed[i];
-                        let icon = if it.icon.trim().is_empty() { IconKind::Grid } else { widget_icon(&it.icon) };
+                        let icon = AppIcon::for_install(it);
                         out.push(HomeApp { icon, label: it.name.clone(), arg: H_APP_PKG_BASE + i as i32 });
                     }
                 }
@@ -615,7 +616,7 @@ fn home_apps(s: &Settings) -> Vec<HomeApp> {
     }
     for (i, it) in installed.iter().enumerate() {
         if !seen_pkg.contains(&i) {
-            let icon = if it.icon.trim().is_empty() { IconKind::Grid } else { widget_icon(&it.icon) };
+            let icon = AppIcon::for_install(it);
             out.push(HomeApp { icon, label: it.name.clone(), arg: H_APP_PKG_BASE + i as i32 });
         }
     }
@@ -1118,7 +1119,7 @@ fn draw_base(a: &mut App) {
     let visible = apps.len().min(((room + gap) / (tw + gap)).max(1) as usize);
     for (i, app) in apps.iter().take(visible).enumerate() {
         let r = Rect::new(m + i as i32 * (tw + gap), ay, tw, ts);
-        gui_app_tile(c, r, app.icon, &app.label, false);
+        gui_app_tile(c, r, &app.icon, &app.label, false);
         hits_add(&mut s.hits, r, H_APP, app.arg);
     }
     ui_text(c, FontFace::Bold, ui_text_size(), ui_small_size(), show_r, show, 1, false, 0);
@@ -5704,7 +5705,7 @@ fn draw_apps(a: &mut App) {
         let col = (i % cols) as i32;
         let row = (i / cols) as i32;
         let r = Rect::new(m + col * (tw + gap), top + row * (ts + gap), tw, ts);
-        gui_app_tile(c, r, app.icon, &app.label, false);
+        gui_app_tile(c, r, &app.icon, &app.label, false);
         hits_add(&mut s.hits, r, H_APP, app.arg);
     }
     let bw = ui_px(380.0);

@@ -15,6 +15,7 @@
 //! gets the same design at its scale.
 
 use crate::prelude::*;
+use crate::appicon::AppIcon;
 use crate::status::{battery_from_sysfs, Battery, STATUS_SIZES};
 use std::cell::Cell;
 use crate::ui::{
@@ -331,15 +332,14 @@ pub fn gui_fab(c: &mut Canvas, r: Rect, icon: IconKind) {
 
 /// A small app launcher: the icon in a rounded rectangle, its name below it, as a phone's home
 /// screen lays apps out. `r` is the whole item; the name sits outside the icon's surface.
-pub fn gui_app_tile(c: &mut Canvas, r: Rect, icon: IconKind, label: &str, selected: bool) {
+pub fn gui_app_tile(c: &mut Canvas, r: Rect, icon: &AppIcon, label: &str, selected: bool) {
     let label_h = ui_px(52.0).min(r.h / 3).max(ui_px(30.0));
     let icon_r = Rect::new(r.x, r.y, r.w, (r.h - label_h - ui_px(6.0)).max(ui_px(40.0)));
     gui_surface(c, icon_r, selected, ui_px(3.0));
     let fg: u8 = if selected { 255 } else { 0 };
     let isz = (icon_r.w.min(icon_r.h) - 2 * ui_px(24.0)).max(ui_px(28.0));
-    ui_icon(
+    icon.draw(
         c,
-        icon,
         Rect::new(icon_r.x + (icon_r.w - isz) / 2, icon_r.y + (icon_r.h - isz) / 2, isz, isz),
         fg,
     );

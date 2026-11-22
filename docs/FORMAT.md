@@ -1727,7 +1727,9 @@ Settings → Packages → Apps installs a full-screen app from a GitHub reposito
 HTTPS `.yaml` address. Apps use the same package manager as widgets, with their own folder and
 index: `packages/apps/<id>/` and `packages/apps-index.json`. A manifest is `type: app` and has the
 same fields as a widget manifest, except that `spec.size` is ignored (an app owns the screen) and
-`spec.status_bar` chooses whether Grimoire's shared status bar starts over the app. The app
+`spec.status_bar` chooses whether Grimoire's shared status bar starts over the app. `spec.icon` may
+name a built-in icon or a bundled `.ico`; a `.ico` needs `spec.icon_sha256` and `spec.icon_size`, and
+the installer fetches and verifies that second file before the app is put in place. The app
 capabilities are `storage:app-local` and `network:http`; the artifact is still a SHA-256-checked
 WebAssembly module of at most 32 MiB. Its `state/` folder survives updates and a Remove that keeps
 state, and `state/settings.json` is the host's own settings file.

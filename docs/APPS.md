@@ -37,13 +37,22 @@ settings:
 spec:
   runtime: wasm
   entry: _start                # ignored by the host
-  icon: grid                   # any Grimoire icon name; unknown or omitted is the grid
+  icon: icon.ico               # a built-in icon name, or a bundled .ico
+  icon_sha256: <64 hex digits> # required with a .ico icon
+  icon_size: 12345             # required with a .ico icon
   status_bar: true             # apps only: start with the shared status bar
 ```
 
 An omitted `platforms` means every supported device. The artifact is at most 32 MiB. At most 64
 app packages are installed. A manifest is at most 256 KiB. The artifact is checked against its size
 and SHA-256 before anything is written, and an update is staged before it replaces the old version.
+
+`spec.icon` may name one of Grimoire's built-in icons, or a `.ico` bundled beside `package.yaml`.
+A bundled icon is a second package file: the installer fetches it from the manifest's folder, checks
+its `spec.icon_sha256` and `spec.icon_size` (at most 256 KiB), and saves it with the artifact. The
+launcher decodes PNG entries and classic 1, 4, 8, 24 and 32-bit BMP entries to a small grayscale
+bitmap for the home app row, All Apps and the package detail page. A built-in name still works, and
+is the fallback if the icon file is missing or unreadable.
 
 The index is `packages/apps-index.json`:
 
@@ -52,7 +61,7 @@ The index is `packages/apps-index.json`:
   "version": 1,
   "packages": [
     {"id":"com.example.app","name":"Example","version":"1.0.0","author":"Jane Doe",
-     "description":"A full-screen example.","icon":"grid","path":"packages/apps/com.example.app/app.wasm",
+     "description":"A full-screen example.","icon":"icon.ico","path":"packages/apps/com.example.app/app.wasm",
      "sha":"…","installed_at":1,"source_url":"https://example.org/app.yaml"}
   ]
 }

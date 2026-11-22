@@ -84,6 +84,8 @@ enum FetchStage {
     /// one only discovered may be absent)
     LicenseProbe,
     Artifact,
+    /// an app's bundled `.ico`, fetched after its artifact and verified before the install
+    Icon,
 }
 
 struct InstallJob {
@@ -121,6 +123,8 @@ pub struct WidgetPkgUi {
     /// the manifest is for the selected package's Check for updates, not a new install
     updating: bool,
     artifact_url: String,
+    /// an app artifact held while its `.ico` is fetched (empty for a package with a built-in icon)
+    artifact_data: Vec<u8>,
     license_url: String,
     license_text: String,
     /// the selected package's own manifest, re-read when its detail page opens (its author and
@@ -183,10 +187,10 @@ fn pkg_validate(kind: PkgKind, p: &WidgetPackage, w: i32, h: i32) -> Result<(), 
     }
 }
 
-fn pkg_install(kind: PkgKind, manifest: &str, data: &[u8], source: &str, w: i32, h: i32) -> Result<WidgetInstall, String> {
+fn pkg_install(kind: PkgKind, manifest: &str, data: &[u8], icon: Option<&[u8]>, source: &str, w: i32, h: i32) -> Result<WidgetInstall, String> {
     match kind {
         PkgKind::Widget => widget_package_install(manifest, data, source, w, h),
-        PkgKind::App => app_package_install(manifest, data, source, w, h),
+        PkgKind::App => app_package_install(manifest, data, icon, source, w, h),
     }
 }
 
@@ -245,6 +249,7 @@ pub fn packages_ui_open(a: &mut App, kind: PkgKind) {
     ui.manifest_yaml.clear();
     ui.input.clear();
     ui.updating = false;
+    ui.artifact_data.clear();
     ui.job = None;
     ui.pressed = None;
     ui.pressed_hit = None;
@@ -265,6 +270,7 @@ fn clear_update_all(ui: &mut WidgetPkgUi) {
     ui.update_ok = 0;
     ui.update_failed = 0;
     ui.update_note.clear();
+    ui.artifact_data.clear();
 }
 
 fn close(a: &mut App) {
@@ -311,6 +317,14 @@ fn install_icon(kind: PkgKind, it: &WidgetInstall) -> IconKind {
     }
 }
 
+/// The detail page can show an app's own `.ico`; a widget keeps the glyph its manifest names.
+fn package_icon(kind: PkgKind, it: &WidgetInstall) -> AppIcon {
+    match kind {
+        PkgKind::App => AppIcon::for_install(it),
+        PkgKind::Widget => AppIcon::glyph(install_icon(kind, it)),
+    }
+}
+
 fn setting_icon(s: &WidgetSetting) -> IconKind {
     if s.icon.trim().is_empty() { IconKind::Gear } else { widget_icon(&s.icon) }
 }
@@ -321,6 +335,7 @@ fn stage_status(stage: FetchStage, of: Option<(usize, usize)>) -> String {
         FetchStage::Manifest => tr("Reading package.yaml..."),
         FetchStage::LicenseProbe => tr("Reading the license..."),
         FetchStage::Artifact => tr("Downloading the package..."),
+        FetchStage::Icon => tr("Downloading the package..."),
     };
     match of {
         Some((n, all)) => format!("{what} ({n}/{all})"),
@@ -331,7 +346,11 @@ fn stage_status(stage: FetchStage, of: Option<(usize, usize)>) -> String {
 /// Starts a fetch and makes the page Busy. Err leaves the page as it was: a caller that has more to
 /// do (Update all) counts it, and one that does not shows it (start_job).
 fn new_job(ui: &mut WidgetPkgUi, stage: FetchStage, url: &str, input: &str, manifest_url: &str, of: Option<(usize, usize)>) -> Result<(), String> {
-    let cap = if stage == FetchStage::Artifact { WIDGET_PKG_ARTIFACT_MAX as usize } else { 512 * 1024 };
+    let cap = match stage {
+        FetchStage::Artifact => WIDGET_PKG_ARTIFACT_MAX as usize,
+        FetchStage::Icon => crate::apppkg::APP_ICON_MAX,
+        _ => 512 * 1024,
+    };
     let fetch = WidgetFetch::start(url, cap)?;
     ui.status = stage_status(stage, of);
     ui.view = PkgView::Busy;
@@ -436,6 +455,14 @@ fn start_artifact(ui: &mut WidgetPkgUi) {
     let input = ui.input.clone();
     let manifest_url = ui.manifest_url.clone();
     start_job(ui, FetchStage::Artifact, url, &input, &manifest_url);
+}
+
+fn start_icon(ui: &mut WidgetPkgUi) {
+    let Some(p) = ui.manifest.as_ref() else { return };
+    let Some(url) = crate::apppkg::app_package_icon_url(&ui.manifest_url, p) else { return };
+    let input = ui.input.clone();
+    let manifest_url = ui.manifest_url.clone();
+    start_job(ui, FetchStage::Icon, url, &input, &manifest_url);
 }
 
 fn begin_install(ui: &mut WidgetPkgUi, input: &str) {
@@ -687,9 +714,38 @@ fn after_artifact(ui: &mut WidgetPkgUi, data: &[u8], a: &mut App) {
         ui.view = PkgView::Error;
         return;
     }
+    if ui.kind == PkgKind::App && ui.manifest.as_ref().is_some_and(|p| crate::apppkg::app_icon_is_file(&p.spec.icon)) {
+        ui.artifact_data = data.to_vec();
+        start_icon(ui);
+        return;
+    }
     let manifest = ui.manifest_yaml.clone();
     let source = if ui.input.is_empty() { ui.manifest_url.as_str() } else { ui.input.as_str() };
-    match pkg_install(ui.kind, &manifest, data, source, a.w, a.h - status_reserved(a)) {
+    match pkg_install(ui.kind, &manifest, data, None, source, a.w, a.h - status_reserved(a)) {
+        Ok(it) => {
+            if ui.kind == PkgKind::Widget { apply_new_def(a, &it); }
+            ui.status.clear();
+            ui.view = PkgView::List;
+            ui.selected = None;
+            ui.refresh();
+        }
+        Err(e) => {
+            ui.error = e;
+            ui.view = PkgView::Error;
+        }
+    }
+}
+
+fn after_icon(ui: &mut WidgetPkgUi, data: &[u8], a: &mut App) {
+    if ui.manifest.is_none() || ui.manifest_yaml.is_empty() || ui.artifact_data.is_empty() {
+        ui.error = "The app's download was lost.".into();
+        ui.view = PkgView::Error;
+        return;
+    }
+    let manifest = ui.manifest_yaml.clone();
+    let artifact = std::mem::take(&mut ui.artifact_data);
+    let source = if ui.input.is_empty() { ui.manifest_url.as_str() } else { ui.input.as_str() };
+    match pkg_install(ui.kind, &manifest, &artifact, Some(data), source, a.w, a.h - status_reserved(a)) {
         Ok(it) => {
             if ui.kind == PkgKind::Widget { apply_new_def(a, &it); }
             ui.status.clear();
@@ -711,9 +767,38 @@ fn after_artifact_update_all(ui: &mut WidgetPkgUi, data: &[u8], a: &mut App) {
         update_all_next(ui);
         return;
     }
+    if ui.kind == PkgKind::App && ui.manifest.as_ref().is_some_and(|p| crate::apppkg::app_icon_is_file(&p.spec.icon)) {
+        ui.artifact_data = data.to_vec();
+        start_icon(ui);
+        return;
+    }
     let manifest = ui.manifest_yaml.clone();
     let source = if ui.input.is_empty() { ui.manifest_url.as_str() } else { ui.input.as_str() };
-    match pkg_install(ui.kind, &manifest, data, source, a.w, a.h - status_reserved(a)) {
+    match pkg_install(ui.kind, &manifest, data, None, source, a.w, a.h - status_reserved(a)) {
+        Ok(it) => {
+            if ui.kind == PkgKind::Widget { apply_new_def(a, &it); }
+            ui.update_ok += 1;
+            update_all_next(ui);
+        }
+        Err(e) => {
+            ui.update_failed += 1;
+            ui.update_note = e;
+            update_all_next(ui);
+        }
+    }
+}
+
+fn after_icon_update_all(ui: &mut WidgetPkgUi, data: &[u8], a: &mut App) {
+    if ui.manifest.is_none() || ui.manifest_yaml.is_empty() || ui.artifact_data.is_empty() {
+        ui.update_failed += 1;
+        ui.update_note = "The app's download was lost.".into();
+        update_all_next(ui);
+        return;
+    }
+    let manifest = ui.manifest_yaml.clone();
+    let artifact = std::mem::take(&mut ui.artifact_data);
+    let source = if ui.input.is_empty() { ui.manifest_url.as_str() } else { ui.input.as_str() };
+    match pkg_install(ui.kind, &manifest, &artifact, Some(data), source, a.w, a.h - status_reserved(a)) {
         Ok(it) => {
             if ui.kind == PkgKind::Widget { apply_new_def(a, &it); }
             ui.update_ok += 1;
@@ -812,6 +897,13 @@ pub fn packages_ui_tick(a: &mut App, now: u32) {
                                 after_artifact_update_all(&mut ui, &data, a);
                             } else {
                                 after_artifact(&mut ui, &data, a);
+                            }
+                        }
+                        FetchStage::Icon => {
+                            if ui.update_all {
+                                after_icon_update_all(&mut ui, &data, a);
+                            } else {
+                                after_icon(&mut ui, &data, a);
                             }
                         }
                     },
@@ -1258,7 +1350,7 @@ pub fn packages_ui_draw(a: &mut App) {
             };
             let title = labeled(&it.name, &it.version);
             let icon = Rect { x: content.x, y: content.y, w: ui_px(58.0), h: ui_px(58.0) };
-            ui_icon(c, install_icon(ui.kind, &it), icon, 0);
+            package_icon(ui.kind, &it).draw(c, icon, 0);
             let tx = icon.x + icon.w + ui_px(18.0);
             ui_text(c, FontFace::Bold, ui_text_size(), ui_small_size(), Rect { x: tx, y: content.y, w: content.w - (tx - content.x), h: ui_px(78.0) }, &title, 1, false, 0);
             let m = ui.detail_manifest.as_ref();

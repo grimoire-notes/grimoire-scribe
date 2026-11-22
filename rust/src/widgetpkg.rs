@@ -437,6 +437,9 @@ pub struct WidgetSpec {
     pub runtime: String,
     pub entry: String,
     pub icon: String,
+    /// App packages only: the digest and size of a bundled `.ico` icon. Empty/0 for a built-in icon.
+    pub icon_sha256: String,
+    pub icon_size: u64,
     pub minimizable: bool,
     /// App packages only: show Grimoire's shared status bar over the app. Widget packages ignore it.
     pub status_bar: bool,
@@ -665,6 +668,8 @@ pub fn widget_package_parse(text: &str) -> Result<WidgetPackage, String> {
             runtime: ystr(s, "runtime"),
             entry: ystr(s, "entry"),
             icon: ystr(s, "icon"),
+            icon_sha256: ystr(s, "icon_sha256"),
+            icon_size: ystr(s, "icon_size").parse().unwrap_or(0),
             minimizable: ybool(s, "minimizable", true),
             status_bar: ybool(s, "status_bar", true),
             size: ysize(s.get("size"))?,

@@ -15,6 +15,8 @@ use crate::sha256::sha256_of;
 pub const APP_PKG_INDEX: &str = "packages/apps-index.json";
 pub const APP_PKG_DIR: &str = "packages/apps";
 pub const APP_PKG_COUNT_MAX: usize = 64;
+/// A bundled app icon is one small `.ico`; its pixels are decoded by appicon.rs.
+pub const APP_ICON_MAX: usize = 256 * 1024;
 const APP_SETTINGS_FILE_MAX: usize = 64 * 1024;
 const APP_SETTINGS_VALUE_MAX: usize = 64;
 
@@ -81,6 +83,33 @@ fn cap_ok(c: &str) -> bool {
     matches!(c, "storage:app-local" | "network:http")
 }
 
+/// Whether `spec.icon` names a bundled file rather than one of Grimoire's built-in icon names.
+pub fn app_icon_is_file(name: &str) -> bool {
+    let name = name.trim();
+    name.len() > 4 && name.to_ascii_lowercase().ends_with(".ico")
+}
+
+/// Where a repository's bundled `.ico` lives: beside its manifest, like the artifact.
+pub fn app_package_icon_url(manifest_url: &str, p: &WidgetPackage) -> Option<String> {
+    if !app_icon_is_file(&p.spec.icon) {
+        return None;
+    }
+    let base = manifest_url.rsplit_once('/').map_or("", |(b, _)| b);
+    if base.is_empty() {
+        return None;
+    }
+    Some(format!("{base}/{}", p.spec.icon.trim()))
+}
+
+/// An installed app's `.ico`, or None when its manifest uses a built-in icon name.
+pub fn app_package_icon_path(it: &WidgetInstall) -> Option<String> {
+    let icon = it.icon.trim();
+    if !app_icon_is_file(icon) || !path_ok(icon) || icon == "package.yaml" || icon.starts_with("state/") {
+        return None;
+    }
+    Some(format!("{}/{icon}", app_package_dir(&it.id)))
+}
+
 /// Validates an app manifest for this build and device. `canvas_w`/`canvas_h` are accepted for the
 /// package manager's shared call shape; an app owns the whole screen and has no size in its spec.
 pub fn app_package_validate(p: &WidgetPackage, _canvas_w: i32, _canvas_h: i32) -> Result<(), String> {
@@ -125,6 +154,25 @@ pub fn app_package_validate(p: &WidgetPackage, _canvas_w: i32, _canvas_h: i32) -
     }
     if p.spec.runtime != "wasm" {
         return Err("`spec.runtime` must be `wasm`; Grimoire does not run native app code".into());
+    }
+    let icon = p.spec.icon.trim();
+    if app_icon_is_file(icon) {
+        if !path_ok(icon)
+            || icon == "package.yaml"
+            || icon == "state"
+            || icon.starts_with("state/")
+            || icon == p.artifact.path
+        {
+            return Err("`spec.icon` is not a safe relative path for the app's icon".into());
+        }
+        if !sha_ok(&p.spec.icon_sha256) {
+            return Err("`spec.icon_sha256` is not a SHA-256 digest".into());
+        }
+        if p.spec.icon_size == 0 || p.spec.icon_size > APP_ICON_MAX as u64 {
+            return Err("`spec.icon_size` is outside the allowed size".into());
+        }
+    } else if !p.spec.icon_sha256.trim().is_empty() || p.spec.icon_size != 0 {
+        return Err("`spec.icon_sha256` and `spec.icon_size` are only for a `.ico` icon".into());
     }
     if !path_ok(&p.artifact.path)
         || p.artifact.path == "package.yaml"
@@ -286,7 +334,7 @@ pub fn app_package_list() -> Vec<WidgetInstall> {
 
 /// Installs a validated app manifest and artifact. Existing versions are swapped in whole; the
 /// app's state is carried over and the old directory is kept as `.previous`.
-pub fn app_package_install(manifest: &str, artifact: &[u8], source_url: &str, canvas_w: i32, canvas_h: i32) -> Result<WidgetInstall, String> {
+pub fn app_package_install(manifest: &str, artifact: &[u8], icon: Option<&[u8]>, source_url: &str, canvas_w: i32, canvas_h: i32) -> Result<WidgetInstall, String> {
     let p = widget_package_parse(manifest)?;
     app_package_validate(&p, canvas_w, canvas_h)?;
     let (want_sha, want_size) = widget_package_artifact_digest(&p);
@@ -297,6 +345,18 @@ pub fn app_package_install(manifest: &str, artifact: &[u8], source_url: &str, ca
     if !got.eq_ignore_ascii_case(want_sha) {
         return Err("The artifact's SHA-256 does not match the manifest.".into());
     }
+    let icon_bytes = if app_icon_is_file(&p.spec.icon) {
+        let bytes = icon.ok_or("The app's icon was not downloaded.")?;
+        if bytes.len() as u64 != p.spec.icon_size {
+            return Err(format!("The icon is {} bytes, not {}.", bytes.len(), p.spec.icon_size));
+        }
+        if !sha256_of(bytes).eq_ignore_ascii_case(&p.spec.icon_sha256) {
+            return Err("The icon's SHA-256 does not match the manifest.".into());
+        }
+        Some(bytes)
+    } else {
+        None
+    };
     let index = app_package_index_load();
     if index.len() >= APP_PKG_COUNT_MAX && !index.iter().any(|x| x.id == p.id) {
         return Err("No more app packages can be installed.".into());
@@ -321,6 +381,19 @@ pub fn app_package_install(manifest: &str, artifact: &[u8], source_url: &str, ca
     if write_file_atomic(&dest, artifact) != 0 {
         let _ = std::fs::remove_dir_all(&stage);
         return Err("Could not write the artifact.".into());
+    }
+    if let Some(bytes) = icon_bytes {
+        let icon_dest = format!("{stage}/{}", p.spec.icon.trim());
+        if let Some(parent) = icon_dest.rsplit_once('/').map(|(d, _)| d) {
+            if std::fs::create_dir_all(parent).is_err() {
+                let _ = std::fs::remove_dir_all(&stage);
+                return Err("Could not make the icon's folder.".into());
+            }
+        }
+        if write_file_atomic(&icon_dest, bytes) != 0 {
+            let _ = std::fs::remove_dir_all(&stage);
+            return Err("Could not write the app's icon.".into());
+        }
     }
     let old = format!("{dir}.previous");
     let _ = std::fs::remove_dir_all(&old);
@@ -536,7 +609,7 @@ settings:
         let m = manifest()
             .replace("0000000000000000000000000000000000000000000000000000000000000000", &sha)
             .replace("size: 8", &format!("size: {}", artifact.len()));
-        let it = app_package_install(&m, artifact, "https://example.org/app.yaml", 1860, 2480).unwrap();
+        let it = app_package_install(&m, artifact, None, "https://example.org/app.yaml", 1860, 2480).unwrap();
         assert_eq!(it.id, "test.app");
         assert_eq!(app_package_list().len(), 1);
         assert_eq!(app_package_installed_manifest(&it.id).unwrap().name, "Test App");
@@ -546,12 +619,38 @@ settings:
         assert_eq!(app_settings_load(&it.id, &schema), changed);
 
         let m2 = m.replace("version: 1.0.0", "version: 1.1.0");
-        assert_eq!(app_package_install(&m2, artifact, "https://example.org/app.yaml", 1860, 2480).unwrap().version, "1.1.0");
+        assert_eq!(app_package_install(&m2, artifact, None, "https://example.org/app.yaml", 1860, 2480).unwrap().version, "1.1.0");
         assert_eq!(app_settings_load(&it.id, &schema), changed);
         app_package_remove(&it.id, true).unwrap();
         assert!(app_package_list().is_empty());
         assert!(std::path::Path::new(&app_settings_path(&it.id)).exists());
         app_settings_clear(&it.id);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_bundled_icon_is_checked_and_written() {
+        ui_init(300.0);
+        let root = std::env::temp_dir().join(format!("grimoire-appicon-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        let artifact = b"fixture app bytes";
+        let icon = b"fixture icon bytes";
+        let sha = sha256_of(artifact);
+        let icon_sha = sha256_of(icon);
+        let m = manifest()
+            .replace("0000000000000000000000000000000000000000000000000000000000000000", &sha)
+            .replace("size: 8", &format!("size: {}", artifact.len()))
+            .replace(
+                "  status_bar: false",
+                &format!("  icon: icon.ico\n  icon_sha256: {icon_sha}\n  icon_size: {}\n  status_bar: false", icon.len()),
+            );
+        let it = app_package_install(&m, artifact, Some(icon), "https://example.org/app.yaml", 1860, 2480).unwrap();
+        let path = app_package_icon_path(&it).expect("the icon path is kept");
+        assert_eq!(std::fs::read(path).unwrap(), icon);
+        let err = app_package_install(&m, artifact, None, "https://example.org/app.yaml", 1860, 2480).unwrap_err();
+        assert!(err.contains("icon"), "{err}");
         let _ = std::fs::remove_dir_all(&root);
     }
 }
