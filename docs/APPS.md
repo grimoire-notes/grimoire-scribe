@@ -11,6 +11,21 @@ same as Settings → Packages → Widgets. What differs is the folder (`packages
 `packages/widgets`), the index (`packages/apps-index.json`), the manifest type (`type: app`) and
 the runtime.
 
+## Package Store
+
+The home app row's fourth built-in app is **Package Store**. It is a catalog of apps and widgets
+kept outside Grimoire, in a GitHub repository whose `index.json` names each package's manifest,
+artifact, icon, screenshots and description. Opening a package shows its screenshots and metadata,
+then Install downloads the manifest and artifact and runs the same trust prompt, digest checks and
+installer as **Settings → Packages**. The store does not replace the package manager: installed
+packages are still managed there.
+
+The catalog is cached at `grimoire/package-store/index.json`, and its images at
+`grimoire/package-store/assets/`, so the last store still opens without a network. Grimoire's
+catalog is [grimoire-notes/package-store-contents](https://github.com/grimoire-notes/package-store-contents); the
+repository's README documents the format, and `tools/check.py` validates a catalog before it is
+published. A mirror can be used with `GRIMOIRE_PACKAGE_STORE_URL`.
+
 ## A manifest
 
 ```yaml

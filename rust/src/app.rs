@@ -38,6 +38,8 @@ pub struct App {
     pub screen: Canvas,
     /// The Settings → Packages → Widgets/Apps page (widgetpkgui.rs), over whatever screen is behind it.
     pub pkg: WidgetPkgUi,
+    /// The Package Store (packagestore.rs), the Library's catalog of apps and widgets.
+    pub store: PackageStoreUi,
     /// The full-screen app in front, if any (apphost.rs). Apps are launched from the Library/Apps page.
     pub app_view: AppRun,
     pub settings: Settings,

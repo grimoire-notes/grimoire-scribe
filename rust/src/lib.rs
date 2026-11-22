@@ -141,6 +141,7 @@ pub mod widgetpkgui; // the Packages page: installed widgets and apps, install f
 pub mod apppkg; // app packages: manifests, installs, the apps index and app settings (2.3)
 pub mod appicon; // built-in and bundled .ico icons for app launchers (2.3)
 pub mod apphost; // the full-screen web app host and its safe close (2.3)
+pub mod packagestore; // the Package Store: a GitHub catalog of apps and widgets, with screenshots (Rust only)
 
 // ---- wave 4: the platform and the main loop ----
 pub mod display; // display.h: the types; the functions are the build's platform's
@@ -250,6 +251,7 @@ pub mod prelude {
     pub use crate::apppkg::*;
     pub use crate::appicon::*;
     pub use crate::apphost::*;
+    pub use crate::packagestore::*;
     pub use crate::util::*;
     pub use crate::{buf_printf, cformat, csnprintf, qlog};
 }

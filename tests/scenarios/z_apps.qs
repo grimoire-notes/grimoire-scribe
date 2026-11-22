@@ -60,4 +60,17 @@ wait 300
 expect library.app.open is 0
 expect screen is library
 shot 07-app-system-home
+# The app is first on the home row. Opening Settings must move Settings ahead of it, not push the
+# app behind every built-in.
+expect library.recent-apps is pkg:com.example.fixture,settings,files,share,store
+tap library app.settings
+wait 300
+expect library.sheet is settings
+expect library.recent-apps is settings,pkg:com.example.fixture,files,share,store
+shot 08-settings-after-app
+# Settings' main page closes with its X ("done"), unlike its submenus' settings.close.
+tap library done
+wait 300
+expect library.sheet is none
+shot 09-home-order
 quit

@@ -188,6 +188,15 @@ Settings), `packages.row.ID` (or its index, `packages.row.0`), `packages.update-
 `packages.license-yes`, `packages.license-view`, `packages.license-prev`, `packages.license-next` and
 `packages.qr`; a settings row is `packages.setting.KEY` (or `packages.setting.N`); the repository
 address is typed on the regular keyboard (its Done installs, as Done answers every other keyboard).
+The Package Store is the home app row's fourth built-in app, `library app.store`. Its controls are
+`store.close`, `store.back`, `store.refresh`, `store.filter.N` (0 all, 1 apps, 2 widgets),
+`store.package.ID`, `store.prev`, `store.next`, `store.shot.prev`, `store.shot.next`,
+`store.install`, `store.trust`, `store.qr` and `store.retry`. Its state is read with
+`library.store.view` (`list`, `detail`, `trust`, `busy`, `error` or `qr`), `.open`, `.filter`,
+`.packages`, `.visible` (ids in catalog order), `.selected`, `.featured`, `.screenshots`, `.shot`,
+`.shot.loaded`, `.icon.loaded`, `.status`, `.error` and `.page`. `GRIMOIRE_PACKAGE_STORE_URL`
+points the Store at another catalog; `GRIMOIRE_PACKAGE_STORE_OFFLINE=1` reads only the saved
+catalog and its cached images (tests/scenarios/z_package_store.qs).
 A disabled button
 (Undo with nothing to undo, Clear on an empty page, Previous on page 1) has no hit and no name. A scenario
 that wants a panel button taps it by name, so that it does not break when the panel gains a button;

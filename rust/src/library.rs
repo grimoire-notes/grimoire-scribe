@@ -68,6 +68,8 @@ enum Modal {
     Add = 302,
     /// The home's Sort slide-up (2.3, issue #209): Name A-Z, Name Z-A, Newest first, Oldest first
     Sort = 303,
+    /// The Package Store (Rust only): the GitHub catalog of apps and widgets, over the Library.
+    Store = 304,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -263,7 +265,7 @@ const H_APPS_CLOSE: i32 = 279;
 const H_APPS_PREV: i32 = 281;
 const H_APPS_NEXT: i32 = 282;
 // Installed app tiles use an argument past the built-in app ids (0 Files, 1 Share, 2 Settings,
-// 6 What's new, 7 About): an index into the sorted installed app package list.
+// 3 Package Store, 6 What's new, 7 About): an index into the sorted installed app package list.
 const H_APP_PKG_BASE: i32 = 30_000;
 // Settings > Wi-Fi's top controls and lists: Nearby/Saved (arg: 0 or 1), Rescan, Other... (a hidden
 // network), a saved row's trash (arg: a row), and a network a scan found (arg: an index of
@@ -582,11 +584,12 @@ fn card_label_h() -> i32 {
 struct HomeApp {
     icon: AppIcon,
     label: String,
-    /// 0 Files, 1 Share, 2 Settings, or H_APP_PKG_BASE + an index into app_package_list().
+    /// 0 Files, 1 Share, 2 Settings, 3 Package Store, or H_APP_PKG_BASE + an index into
+    /// app_package_list().
     arg: i32,
 }
 
-/// The installed apps, most recently used first: the three built-ins and every installed app
+/// The installed apps, most recently used first: the four built-ins and every installed app
 /// package, interleaved by settings.ini recent_apps. Packages the index no longer has are dropped;
 /// installed packages the line has not seen follow in name order. Exit is in Settings' sidebar and
 /// What's new/About are utility links on the All apps page.
@@ -596,6 +599,7 @@ fn home_apps(s: &Settings) -> Vec<HomeApp> {
         HomeApp { icon: AppIcon::glyph(IconKind::Browser), label: tr("Files").to_string(), arg: 0 },
         HomeApp { icon: AppIcon::glyph(IconKind::Share), label: tr("Share").to_string(), arg: 1 },
         HomeApp { icon: AppIcon::glyph(IconKind::Gear), label: tr("Settings").to_string(), arg: 2 },
+        HomeApp { icon: AppIcon::glyph(IconKind::Package), label: tr("Package Store").to_string(), arg: 3 },
     ];
     let mut out: Vec<HomeApp> = Vec::new();
     let mut seen_pkg: Vec<usize> = Vec::new();
@@ -5633,8 +5637,8 @@ pub(crate) fn library_app_used(a: &mut App, app: i32) {
     }
 }
 
-/// What the home's app tiles do: Files, Share and Settings are the three installed apps. What's
-/// new and About are the All apps page's links at the foot, not app tiles.
+/// What the home's app tiles do: Files, Share, Settings and Package Store are the four installed
+/// apps. What's new and About are the All apps page's links at the foot, not app tiles.
 fn home_app(a: &mut App, app: i32) {
     if app >= H_APP_PKG_BASE {
         let i = (app - H_APP_PKG_BASE) as usize;
@@ -5658,6 +5662,13 @@ fn home_app(a: &mut App, app: i32) {
         2 => {
             lib(a).modal = Modal::None;
             act(a, &Hit { id: H_SETTINGS, ..Default::default() });
+        }
+        3 => {
+            // The Package Store is a Library sheet of its own: it opens without the Settings stack.
+            library_app_used(a, 3);
+            lib(a).modal = Modal::Store;
+            crate::packagestore::store_open(a);
+            crate::library::store_redraw(a);
         }
         6 => {
             lib(a).modal = Modal::None;
@@ -5784,6 +5795,7 @@ fn draw_modal(a: &mut App) {
         Modal::Apps => draw_apps(a),
         Modal::Add => draw_add(a),
         Modal::Sort => draw_sort(a),
+        Modal::Store => crate::packagestore::store_draw(a),
         Modal::Settings => draw_settings(a),
         Modal::Font => draw_font_sheet(a),
         Modal::Wifi => draw_wifi_sheet(a),
@@ -6547,6 +6559,11 @@ fn redraw(a: &mut App, m: RefreshMode) {
         app_invalidate_all(a, m);
         return;
     }
+    if a.store.open {
+        crate::packagestore::store_draw(a);
+        app_invalidate_all(a, m);
+        return;
+    }
     if files_shown(a) {
         let mut b = std::mem::take(&mut lib(a).files);
         b.draw(a);
@@ -6799,6 +6816,9 @@ fn close_modal(a: &mut App) {
         return;
     }
     let was = std::mem::replace(&mut lib(a).modal, Modal::None);
+    if was == Modal::Store {
+        crate::packagestore::store_leave(a);
+    }
     // (What's new was over the Library at a start whose home is inside Files, 2.2, issue #160: home now)
     if was == Modal::About && std::mem::take(&mut lib(a).home_deferred) {
         home_go(a);
@@ -8907,7 +8927,7 @@ pub fn library_back(a: &mut App) -> bool {
         Modal::Gestures if reset_asked => tap(a, H_GESTURES_RESET_CANCEL),
         Modal::Gestures => tap(a, H_GESTURES_DONE),
         Modal::New | Modal::Settings | Modal::More | Modal::FolderMore | Modal::Move | Modal::Delete
-        | Modal::About | Modal::Exit | Modal::Merge | Modal::FilesMore | Modal::Apps | Modal::Add | Modal::Sort => close_modal(a),
+        | Modal::About | Modal::Exit | Modal::Merge | Modal::FilesMore | Modal::Apps | Modal::Add | Modal::Sort | Modal::Store => close_modal(a),
     }
     true
 }
@@ -8945,6 +8965,12 @@ pub fn library_modal_key(a: &mut App, code: i32) -> bool {
         }
         Modal::New if code == ENTER || code == KP_ENTER => {
             act(a, &Hit { id: H_NEW_CREATE, ..Default::default() });
+            true
+        }
+        Modal::Store => {
+            if code == 1 {
+                close_modal(a);
+            }
             true
         }
         Modal::Apps | Modal::Add | Modal::Sort | Modal::About => {
@@ -9106,6 +9132,9 @@ pub fn library_leave(a: &mut App) {
     if !a.relayout && a.app_view.open {
         crate::apphost::apphost_close(a);
     }
+    if !a.relayout && a.store.open {
+        crate::packagestore::store_leave(a);
+    }
     if !a.relayout && a.lib.as_deref().is_some_and(|s| s.files.open) {
         lib(a).files.close();
         app_notice_clear(a, NoticeKey::Loading);
@@ -9164,6 +9193,13 @@ pub fn library_event(a: &mut App, ev: &InEvent) {
 fn library_event_in(a: &mut App, ev: &InEvent) {
     if a.app_view.open {
         crate::apphost::apphost_event(a, ev);
+        return;
+    }
+    if a.store.open {
+        let ph = app_pointer_phase(ev);
+        if ph >= 0 {
+            crate::packagestore::store_pointer(a, ph, ev);
+        }
         return;
     }
     if a.pkg.open {
@@ -9338,6 +9374,10 @@ fn library_event_in(a: &mut App, ev: &InEvent) {
 pub fn library_tick(a: &mut App, now: u32) {
     if a.app_view.open {
         crate::apphost::apphost_tick(a, now);
+        return;
+    }
+    if a.store.open {
+        crate::packagestore::store_tick(a, now);
         return;
     }
     if a.pkg.open {
@@ -9649,6 +9689,15 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
     if a.lib.is_none() {
         return -1;
     }
+    // The Package Store (Rust only): its view, catalog and fetched assets (docs/SIM.md).
+    if let Some(k) = key.strip_prefix("store.") {
+        if !a.store.open {
+            return -1;
+        }
+        let Some(text) = crate::packagestore::store_probe(&a.store, k) else { return -1 };
+        csnprintf!(out, cap, "%s", &text);
+        return 0;
+    }
     // The file picker (2.1.0-beta.2): the files.* keys (docs/SIM.md).
     if let Some(k) = key.strip_prefix("files.") {
         let h = a.h;
@@ -9660,10 +9709,15 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
         return 0;
     }
     // The full-screen app (2.3): its id, status line, drawn text, error and status-bar choice. "apps"
-    // lists installed app package ids in launcher order.
+    // lists installed app package ids in launcher order; "recent-apps" is the home row's token order.
     if key == "apps" {
         let ids: Vec<String> = crate::apppkg::app_package_list().into_iter().map(|p| p.id).collect();
         csnprintf!(out, cap, "%s", &ids.join(" "));
+        return 0;
+    }
+    if key == "recent-apps" {
+        // The home row's order as settings.ini recent_apps keeps it: built-in names and pkg:<id> tokens.
+        csnprintf!(out, cap, "%s", a.settings.recent_apps.as_str());
         return 0;
     }
     if key == "app.open" {
@@ -9747,6 +9801,8 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
     }
     if key == "sheet" && s.modal == Modal::Exit {
         csnprintf!(out, cap, "exit");
+    } else if key == "sheet" && s.modal == Modal::Store {
+        csnprintf!(out, cap, "store");
     } else if key == "sheet" && s.modal == Modal::PairMenu {
         csnprintf!(out, cap, "pair-menu");
     } else if key == "sheet" && s.modal == Modal::Wifi {
@@ -10011,7 +10067,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                         name.push_str(&it.id);
                     }
                 } else {
-                    name.push_str(["files", "share", "settings", "", "", "", "whats-new", "about"].get(hit.arg as usize).copied().unwrap_or(""));
+                    name.push_str(["files", "share", "settings", "store", "", "", "whats-new", "about"].get(hit.arg as usize).copied().unwrap_or(""));
                 }
             }
             if matches!(hit.id, H_GESTURE_GROUP | H_BUTTON_GROUP) {
@@ -12715,6 +12771,9 @@ pub fn library_control_point(a:&mut App,name:&str)->Option<(f32,f32)> {
     if a.app_view.open {
         if let Some(p) = crate::apphost::apphost_control_point(a, name) { return Some(p); }
     }
+    if let Some(n)=name.strip_prefix("store.") {
+        return a.store.open.then(||crate::packagestore::store_control_point(&a.store,n)).flatten();
+    }
     // Settings > Packages > Widgets: packages.install, packages.row.ID, packages.back, ...
     if let Some(n)=name.strip_prefix("packages.") {
         return (a.pkg.open).then(||crate::widgetpkgui::packages_ui_control_point(&a.pkg,n)).flatten();
@@ -12807,6 +12866,12 @@ pub fn library_settings_back(a:&mut App) {close_modal(a);}
 pub(crate) fn packages_redraw(a:&mut App) {redraw(a,RefreshMode::Ui);}
 /// The Packages page's X: the whole of Settings closes, as every Settings submenu's X does.
 pub(crate) fn packages_closed(a:&mut App) {close_settings(a,RefreshMode::Ui);}
+/// The Package Store draws itself whole, over the Library: its own redraw and close.
+pub(crate) fn store_redraw(a:&mut App) {redraw(a,RefreshMode::Ui);}
+pub(crate) fn store_closed(a:&mut App) {
+    if let Some(s)=a.lib.as_deref_mut() { s.modal=Modal::None; s.pressed=None; }
+    redraw(a,RefreshMode::Ui);
+}
 
 /// The app was just made the whole screen: no Library sheet is in front of it.
 pub(crate) fn library_app_launched(a: &mut App) {
