@@ -46,6 +46,18 @@ expect library.app.id is com.example.fixture
 expect library.app.status is fixture app
 expect library.app.status-bar is 0
 shot 05-app
+# Quick settings is a system layer even over an app that hides the status bar: a one-finger pull
+# from the top opens the same panel.
+touch down 930 30
+touch move 930 120
+wait 150
+expect quick is 1
+touch up 930 120
+wait 100
+shot 05b-app-quick-settings
+tap panel quick.close
+wait 200
+expect quick is 0
 # The app's own close() API: its app_pointer calls it on a tap's lift.
 tap 930 1300
 wait 300

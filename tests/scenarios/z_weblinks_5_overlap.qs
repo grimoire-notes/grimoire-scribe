@@ -37,15 +37,6 @@ pentap panel previous
 pentap panel previous
 wait 400
 expect editor.page is 1
-# the clock's corner: the clock's, over the web link too
-tap 70 70
-wait 400
-expect editor.link_card is 0
-expect settings.status_on is 1
-tap 70 70
-wait 400
-expect settings.status_on is 0
-expect editor.link_card is 0
 # elsewhere on the page: the web link's card
 tap 900 1200
 wait 400

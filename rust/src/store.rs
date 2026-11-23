@@ -133,7 +133,8 @@ pub struct Settings {
     /// The pen in use when the eraser was last picked on the panel, a tool id or -1 for none: where
     /// a tap on the eraser in use goes back to while that pen is still on the panel.
     pub before_eraser: i32,
-    /// The clock and battery corner is on (settings.ini status_on; status.rs)
+    /// The shared status bar is shown (settings.ini status_on; status.rs). A tap on the bar hides it,
+    /// and the state is saved; Settings > Sleep & Clock > Status bar turns it back on.
     pub status_on: bool,
     /// and how large it is: 0 small, 1 medium, 2 large (settings.ini status_size). The size scales
     /// the whole top status bar too, not just the corner clock (globalui.rs).
@@ -142,9 +143,11 @@ pub struct Settings {
     /// 3 bottom left (settings.ini status_corner; the tap zone follows it)
     pub status_corner: i32,
     /// The clock shows the time on the 12-hour clock (settings.ini clock_12h): "2:32 PM" instead of
-    /// "14:32", in the corner and in the top status bar. The Clock settings page's "Display time as
-    /// 12 hour" row.
+    /// "14:32", in the top status bar. The Status bar page's "Display time as 12 hour" row.
     pub clock_12h: bool,
+    /// A notebook shows the shared status bar over its page (settings.ini status_in_notebooks, on by
+    /// default). Its background there is transparent, so ink under it still shows.
+    pub status_in_notebooks: bool,
     /// Rotation to hold while locked (settings.ini rotation_lock): 0 follows the Kindle, 1..=4
     /// hold the current rotation plus one. The app resolves the current orientation at lock time.
     pub rotation_lock: i32,
@@ -4756,6 +4759,7 @@ pub fn settings_default(s: &mut Settings) {
     s.white = false;
     s.before_eraser = -1;
     s.status_on = true;
+    s.status_in_notebooks = true;
     s.status_size = 1;
     s.status_corner = 0;
     s.clock_12h = false;
@@ -5138,6 +5142,7 @@ fn settings_cb(s: &mut Settings, k: &[u8], v: &[u8]) -> bool {
         b"white" => s.white = keep_bool("white", v),
         b"panel_tools" => pins_kv(s, "panel_tools", v),
         b"status_on" => s.status_on = keep_bool("status_on", v),
+        b"status_in_notebooks" => s.status_in_notebooks = keep_bool("status_in_notebooks", v),
         b"status_size" => s.status_size = keep_int("status_size", v, 0, 2),
         b"gestures" => s.gestures = keep_bool("gestures", v),
         b"landscape_fit" => s.landscape_fit = keep_bool("landscape_fit", v),
@@ -5520,6 +5525,7 @@ pub fn settings_save(s: &Settings) -> i32 {
     // The newest keys come last of the known ones: a build without them keeps their lines as lines it
     // does not know. The clock and battery corner's (status.rs), then the gestures' (Index phase 1).
     put_int(&mut b, "status_on", s.status_on as i32);
+    put_int(&mut b, "status_in_notebooks", s.status_in_notebooks as i32);
     put_int(&mut b, "status_size", s.status_size);
     put_int(&mut b, "gestures", s.gestures as i32);
     put_int(&mut b, "landscape_fit", s.landscape_fit as i32);

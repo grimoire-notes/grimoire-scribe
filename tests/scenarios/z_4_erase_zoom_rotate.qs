@@ -39,7 +39,7 @@ expect editor.stroke_screen_mm is 8.00
 expect editor.stroke_look is round tip
 expect editor.stroke_settings is eraser
 expect editor.live_matches_render is 1
-tap 930 74
+tap 930 100
 expect editor.zoom not 1.00
 pinch 600 600 750 200 6
 wait 300

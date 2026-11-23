@@ -7961,7 +7961,7 @@ fn act(a: &mut App, h: &Hit) {
         }
         H_SET_CLOCK => {
             let mut dm = std::mem::take(&mut lib(a).dm);
-            dispmenu_open_clock(&mut dm, a);
+            dispmenu_open_statusbar(&mut dm, a);
             lib(a).dm = dm;
             open_modal(a, Modal::Display);
         }
@@ -10194,7 +10194,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_FMORE_HOME => "fmore.home",
                 H_MOVE_TOP=>"move.top",H_MOVE_TO=>"move.to.",H_MOVE_NEW=>"move.new",H_MOVE_PREV=>"move.prev",H_MOVE_NEXT=>"move.next",
                 H_SET_PENS => "pen-feel", H_SET_CALIB => "calibrate", H_SET_DISPLAY => "display",
-                H_SET_SLEEP => "sleep-clock", H_SET_CLOCK => "clock-settings",
+                H_SET_SLEEP => "sleep-clock", H_SET_CLOCK => "status-bar",
                 H_KOREADER => "ko", H_SHORTCUTS => "shortcuts", H_PAIR_MENU => "pair-menu", H_GESTURES => "gestures",
                 H_SHORTCUT_DEVICE => "shortcuts.device", H_SHORTCUT_OWN => "shortcuts.own", H_SHORTCUT_RELOAD => "shortcuts.reload",
                 H_UPDATES => "updates", H_CANCEL => "done", H_GESTURES_MASTER => "gestures.master",
@@ -12387,7 +12387,7 @@ mod tests {
         draw_settings(&mut a);
         let hits = &a.lib.as_ref().unwrap().hits;
         assert!(hits.h.iter().any(|h| h.id == H_SET_SLEEP), "the Sleep settings row");
-        assert!(hits.h.iter().any(|h| h.id == H_SET_CLOCK), "the Clock settings row");
+        assert!(hits.h.iter().any(|h| h.id == H_SET_CLOCK), "the Status bar row");
 
         act(&mut a, &Hit { r: RECT_EMPTY, id: H_SET_SLEEP, arg: 0 });
         {
@@ -12409,15 +12409,15 @@ mod tests {
         {
             let s = lib(&mut a);
             assert_eq!(s.modal, Modal::Display);
-            assert_eq!(s.dm.page, crate::dispmenu::DmPage::Clock);
+            assert_eq!(s.dm.page, crate::dispmenu::DmPage::StatusBar);
         }
         let mut dm = std::mem::take(&mut lib(&mut a).dm);
         dispmenu_draw(&mut dm, &mut a);
-        for name in ["size", "corner", "time12"] {
-            assert!(dispmenu_control_point(&dm, name).is_some(), "Clock settings lost {name}");
+        for name in ["size", "time12"] {
+            assert!(dispmenu_control_point(&dm, name).is_some(), "Status bar lost {name}");
         }
-        for name in ["sleep", "sleep_after", "brightness", "invert", "fit"] {
-            assert!(dispmenu_control_point(&dm, name).is_none(), "Clock settings shows {name}");
+        for name in ["corner", "sleep", "sleep_after", "brightness", "invert", "fit"] {
+            assert!(dispmenu_control_point(&dm, name).is_none(), "Status bar shows {name}");
         }
         lib(&mut a).dm = dm;
 
@@ -13046,6 +13046,25 @@ pub fn library_control_point(a:&mut App,name:&str)->Option<(f32,f32)> {
 pub fn library_settings_from_notebook(a:&mut App) {
     let fit=a.settings.landscape_fit;let s=lib(a);s.pressed=None;s.settings_return_editor=true;s.settings_editor_fit=fit;
     open_modal(a,Modal::Settings);
+}
+
+/// Opens Settings over the Library, closing a full-screen app or a package screen in front first. The
+/// quick settings panel's Settings button comes here from any screen that is not a notebook.
+pub fn library_settings_open(a: &mut App) {
+    if a.app_view.open {
+        crate::apphost::apphost_close(a);
+    }
+    if a.store.open {
+        crate::packagestore::store_leave(a);
+    }
+    a.pkg.open = false;
+    let s = lib(a);
+    s.settings_cat_page = 0;
+    s.settings_cat_shown = -1;
+    s.settings_rows_page = 0;
+    s.settings_menu_page = 0;
+    s.settings_return_editor = false;
+    open_modal(a, Modal::Settings);
 }
 
 /// The list's next or previous page (its arrows).

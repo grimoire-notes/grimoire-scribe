@@ -8,7 +8,7 @@
 //! compose(r) rebuilds a screen rect from those layers; show(page rect) is the page-side entry.
 
 use crate::browser::{Browser, BrowserResult, FilesPrefs, PickSpec};
-use crate::globalui::{gui_status_bar, gui_status_bar_connections, gui_status_h};
+use crate::globalui::gui_status_h;
 use crate::prelude::*;
 use std::cell::Cell;
 #[cfg(feature = "sim")]
@@ -1597,7 +1597,18 @@ fn panel_name(h: &Hit) -> String {
 /// editor open, or the button is not there (a disabled Undo has no hit, as a human tap finds
 /// nothing). The hits go stale after a stroke until the settle, and a human tap settles first, so
 /// this does too.
+/// A keyboard's named key at its centre: .done, .del, .cancel, .dec, .inc, .shift, or a single character.
+fn kb_key_point(kb: &Keyboard, k: &str) -> Option<(f32, f32)> {
+    if !kb.open {return None;}
+    let code = match k {"done"=>KB_KEY_DONE,"del"=>KB_KEY_BKSP,"cancel"=>KB_KEY_CANCEL,"dec"=>KB_KEY_DEC,"inc"=>KB_KEY_INC,"shift"=>KB_KEY_SHIFT,c if c.chars().count()==1=>c.chars().next()? as u32,_=>return None};
+    let mut r = RECT_EMPTY;
+    keyboard_key_rect(kb, code, &mut r).then(||((r.x+r.w/2) as f32,(r.y+r.h/2) as f32))
+}
+
 pub fn editor_panel_point(a: &mut App, name: &str) -> Option<(f32, f32)> {
+    if let Some(n) = name.strip_prefix("quick.") {
+        return crate::quick::control_point(a, &format!("quick.{n}"));
+    }
     if crate::library::library_settings_active(a){return crate::library::library_control_point(a,name);}
     let s = a.ed.as_deref()?;
     if a.scr != ScreenId::Editor || !s.open {
@@ -1606,6 +1617,10 @@ pub fn editor_panel_point(a: &mut App, name: &str) -> Option<(f32, f32)> {
     // The picture pick over the page (#146): files.* as the Library's; the sheet's From a file... tile and Back
     if let Some(n)=name.strip_prefix("files.") {return s.files.open.then(||s.files.point(n)).flatten();}
     if let Some(n)=name.strip_prefix("templates.") {return (s.ts.open && !s.files.open).then(||tplsheet_point(&s.ts,n)).flatten();}
+    // The card's keyboard while it types a name: card.key.shift, card.key.t, card.key.done.
+    if let Some(k)=name.strip_prefix("card.key.") {
+        return s.card.kb.open.then(|| kb_key_point(&s.card.kb, k)).flatten();
+    }
     // the long-press card's rows, and a web link's card's Done: card.rename ... card.close (while it is drawn)
     if let Some(n)=name.strip_prefix("card.") {return card_shows(s).then(||linkcard_point(&s.card,n)).flatten();}
     if name=="map.current" {return mapview_node_point(&s.map,&s.open_pid().to_string());}
@@ -1622,10 +1637,14 @@ pub fn editor_panel_point(a: &mut App, name: &str) -> Option<(f32, f32)> {
     if let Some(n)=name.strip_prefix("pages."){return pagesview_control_point(&s.pv,n);}
     // The toolbar's count pad's keys while it is up: addpad.key.0 to addpad.key.9, .done, .del, .cancel, .dec, .inc.
     if let Some(k)=name.strip_prefix("addpad.key.") {
-        if !s.add_kb.open {return None;}
-        let code=match k {"done"=>KB_KEY_DONE,"del"=>KB_KEY_BKSP,"cancel"=>KB_KEY_CANCEL,"dec"=>KB_KEY_DEC,"inc"=>KB_KEY_INC,c if c.chars().count()==1=>c.chars().next()? as u32,_=>return None};
-        let mut r=RECT_EMPTY;
-        return keyboard_key_rect(&s.add_kb,code,&mut r).then(||((r.x+r.w/2) as f32,(r.y+r.h/2) as f32));
+        return kb_key_point(&s.add_kb, k);
+    }
+    // New page...'s naming keyboard (naming.key.done), and Find's picking keyboard (find.key.done).
+    if let Some(k)=name.strip_prefix("naming.key.") {
+        return (s.lm.state == LmState::Naming).then(|| kb_key_point(&s.lm.kb, k)).flatten();
+    }
+    if let Some(k)=name.strip_prefix("find.key.") {
+        return s.find.open.then(|| kb_key_point(&s.find.kb, k)).flatten();
     }
     if let Some(n)=name.strip_prefix("quicksize."){return quicksize_control_point(&s.qs,n);}
     if let Some(n)=name.strip_prefix("display."){return dispmenu_control_point(&s.dm,n);}
@@ -2736,14 +2755,10 @@ fn compose(a: &mut App, r: Rect) {
     }
     draw_menus(a, r);
     sel_draw(a, r);
-    if rect_overlaps(r, Rect::new(0, 0, a.w, gui_status_h())) {
-        // The page continues beneath the bar (its top margin); the legacy corner keeps the clock
-        // and battery, so the shared bar shows just the connection icons then.
-        if a.settings.status_on {
-            gui_status_bar_connections(&mut a.screen, a.w, wall_time());
-        } else {
-            gui_status_bar(&mut a.screen, a.w, wall_time());
-        }
+    if a.settings.status_on && a.settings.status_in_notebooks && rect_overlaps(r, Rect::new(0, 0, a.w, gui_status_h())) {
+        // The page continues beneath the bar. It is drawn without a background, so the ink under it
+        // still shows; a tap hides it (status.rs).
+        crate::globalui::gui_status_bar_transparent(&mut a.screen, a.w, wall_time());
     }
 }
 
@@ -10255,6 +10270,17 @@ fn close_sheets(a: &mut App) {
     tplsheet_close(&mut s.ts);
 }
 
+/// Opens Settings over the notebook, saving the page first (the quick settings panel's Settings
+/// button). False when the page could not be saved.
+pub fn editor_settings_open(a: &mut App) -> bool {
+    if !save_page(a) {
+        return false;
+    }
+    close_sheets(a);
+    crate::library::library_settings_from_notebook(a);
+    true
+}
+
 // On a landscape full-page view the margins are useful space for the panel. Keep the writer's
 // chosen side, and move only horizontally; custom page sizes with no room retain the old placement.
 fn landscape_panel_slot(a: &App, left: bool) -> Option<i32> {
@@ -11249,10 +11275,6 @@ fn editor_event_in(a: &mut App, ev: &InEvent) {
         }
     }
 
-    let on_panel = ed_ref(a).open && panel_hit_at(ed_ref(a), ev.x, ev.y).is_some();
-    if ev.y < gui_status_h() as f32 && app_pointer_phase(ev) == 0 && !editor_busy(a) && !on_panel {
-        return;
-    }
     let s = ed(a);
     if !s.open {
         return;
@@ -12437,6 +12459,9 @@ fn cache_matches_render(s: &EditorState, key: &str, dpi: f32) -> Option<bool> {
 /// The headless runner's "editor.*" keys, asked without the prefix (app_probe's contract);
 /// "templates.*" keys reach it whole (docs/SIM.md).
 pub fn editor_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
+    if key == "quick" || key.starts_with("quick.") {
+        return crate::quick::quick_probe(a, key, out, cap);
+    }
     if a.ed.is_some() {
         if let Some(v) = sel_probe(a, key) {
             csnprintf!(out, cap, "%s", v.as_str());

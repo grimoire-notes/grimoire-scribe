@@ -351,7 +351,7 @@ static K_AMPM: [&str; 2] = [
 
 /// Just the clock part of `format_time_short` or `format_time_short_12h` (2.3): "14:32" or
 /// "2:32 PM", in the language's order. The top status bar draws its date separately, and both clock
-/// settings apply there (Settings > Sleep & Clock > Clock settings).
+/// settings apply there (Settings > Sleep & Clock > Status bar).
 pub fn format_clock_short(t: i64, twelve: bool, buf: &mut String, cap: usize) {
     let mut full = String::new();
     if twelve {

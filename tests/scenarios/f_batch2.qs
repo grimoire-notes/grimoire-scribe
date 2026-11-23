@@ -53,7 +53,7 @@ pen curve 500 900 20 60 0.6 4
 wait 300
 shot 07-zoomed-writing
 expect editor.strokes is 2
-tap 930 74
+tap 930 100
 expect editor.zoom not 1.00
 pinch 600 600 750 200 6
 wait 300

@@ -440,7 +440,7 @@ expect library.sheet is language
 tap library language.back
 wait 50
 expect library.sheet is settings
-# Display; then Sleep settings, the sleep rows' page since #115: each of the four sleep screens; then Clock settings.
+# Display; then Sleep settings, the sleep rows' page since #115: each of the four sleep screens; then Status bar.
 tap library settings.cat.1
 wait 50
 tap library display
@@ -470,10 +470,10 @@ expect settings.sleep_mode is 0
 tap library display.back
 wait 50
 expect library.sheet is settings
-tap library clock-settings
+tap library status-bar
 wait 50
 expect library.sheet is display
-shot 09-clock-settings
+shot 09-status-bar
 tap library display.back
 wait 50
 expect library.sheet is settings
@@ -989,13 +989,13 @@ shot 28-link-linkto-top
 tap panel linkto.chip.1
 expect editor.kb_dock is top
 shot 28-link-newpage-keyboard
-tap 217 1058
+tap panel naming.key.cancel
 expect editor.linkto is pick
 tap panel linkto.search
 expect editor.find is pick
 expect editor.kb_dock is top
 shot 28-link-find-pick-top
-tap 217 1058
+tap panel find.key.cancel
 expect editor.find is 0
 tap panel linkto.chip.3
 expect editor.links is 2 2
@@ -1068,7 +1068,7 @@ wait 300
 expect settings.hints is 538
 expect editor.zoom not 1.00
 shot 31-zoom-pan
-tap 930 74
+tap 930 100
 expect editor.zoom not 1.00
 pinch 900 900 700 200 6
 wait 100
@@ -1483,10 +1483,10 @@ expect settings.sleep_mode is 0
 tap library display.back
 wait 50
 expect library.sheet is settings
-tap library clock-settings
+tap library status-bar
 wait 50
 expect library.sheet is display
-shot 54-clock-settings-landscape
+shot 54-status-bar-landscape
 tap library display.back
 wait 50
 expect library.sheet is settings
@@ -1650,8 +1650,8 @@ expect editor.link_mode is 1
 pen line 300 1500 900 1600 30 0.6 0.6
 wait 150
 # Link to... opens: Choose from the pages... picks in the Pages view
-expect editor.ui_at.930.539 is linkto.pages
-tap 930 539
+expect editor.linkto is pick
+tap panel linkto.pages
 expect editor.picking is new
 expect editor.pages_tab is pages
 tap 703 340

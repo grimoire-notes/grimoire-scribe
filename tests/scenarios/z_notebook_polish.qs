@@ -66,12 +66,11 @@ wait 300
 expect editor.page is 3
 expect editor.modal is none
 expect editor.screen_composed is 1
-# The Display sheet covers the clock corner, even with the pen near; the page's corner comes back after it.
+# The Display sheet covers the page's top edge, even with the pen near; the page comes back after it.
 pentap panel display
 expect editor.modal is display
 wait 100
-expect status.shown is 0
-shot 05-clock-under-display
+shot 05-display-over-page
 pentap panel display.done
 expect editor.modal is none
 pentap panel shapes
@@ -81,8 +80,6 @@ pentap panel shapes.done
 # Swipe down still opens the default Graph.
 pen leave
 wait 1100
-expect status.shown is 1
-expect status.rect is 6 6 331 48
 swipe 2 930 900 0 400
 expect editor.modal is map
 quit

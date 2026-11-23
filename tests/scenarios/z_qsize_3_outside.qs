@@ -51,15 +51,10 @@ pen up 800 1200
 wait 300
 pen leave
 expect editor.strokes is 0
-# The clock corner keeps its tap: the clock toggles, the card stays.
 touch down 1768 466
 wait 700
 touch up 1768 466
 wait 200
-expect editor.quicksize is fineliner
-tap 70 70
-wait 200
-expect settings.status_on is 0
 expect editor.quicksize is fineliner
 # Esc closes it.
 key 1 0

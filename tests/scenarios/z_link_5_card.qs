@@ -1,5 +1,5 @@
 # rust-only
-# settings: status_on=0
+# settings: status_on=1
 # root: z_bar_0_make
 # env: GRIMOIRE_CHECK_FIT=1
 # The long-press card (PHASE2 8): a finger held on a link shows its heavy border by four DU strips, then the card
@@ -21,8 +21,8 @@ expect editor.link_card.title is Árbol
 expect editor.link_card.rows is rename retarget redraw delete
 expect editor.link_card.border is 1
 expect editor.link_card.links is 1
-expect editor.link_card.rect is 289 1235 780 666
-expect display.presents has fast 289 989 622 11, fast 289 1200 622 11, fast 289 1000 11 200, fast 900 1000 11 200, ui 289 1235 780 666
+expect editor.link_card.rect is 261 1179 780 666
+expect display.presents has fast 261 924 649 11, fast 261 1144 649 11, fast 261 935 11 209, fast 899 935 11 209, ui 261 1179 780 666
 touch up 600 1100
 expect editor.page is 1
 expect editor.link_card is 1
@@ -65,14 +65,6 @@ wait 800
 touch up 600 1100
 expect editor.link_card is 1
 expect status.front is 1
-tap 60 60
-wait 100
-expect settings.status_on is 1
-expect editor.link_card is 1
-tap 60 60
-wait 100
-expect settings.status_on is 0
-expect editor.link_card is 1
 tap 1200 1900
 expect editor.link_card is 0
 # Change where it goes...: Link to... without Choose from the pages..., Cap marked; The Index
@@ -85,14 +77,7 @@ wait 100
 expect editor.linkto is pick
 expect editor.modal is linkto
 expect editor.link_card is 0
-# and with Link to... up: the clock toggles, nothing is cancelled
-tap 60 60
-wait 100
-expect settings.status_on is 1
-expect editor.linkto is pick
-tap 60 60
-wait 100
-expect settings.status_on is 0
+# and with Link to... up, its own rows stay there
 expect editor.linkto is pick
 expect editor.link_card.border is 1
 expect editor.ui_at.930.2370 is
@@ -148,21 +133,20 @@ wait 800
 touch up 600 1450
 expect editor.link_card.title is Page 2
 expect editor.link_card.rows is rename retarget redraw delete
-expect editor.link_card.rect is 289 1535 780 666
+expect editor.link_card.rect is 261 1493 780 666
 shot 04-card-unnamed
 # low on the screen, so its keyboard docks at the top (the keys 1307 px higher): shift, t, w, o, Done
-expect editor.ui_at.679.1728 is card.rename
-tap 679 1728
+tap panel card.rename
 wait 100
 expect editor.keyboard is Page name
 expect editor.text is
 expect editor.kb_dock is top
-tap 175 898
-tap 841 578
-tap 310 578
-tap 1549 578
+tap panel card.key.shift
+tap panel card.key.t
+tap panel card.key.w
+tap panel card.key.o
 expect editor.text is Two
-tap 1643 1058
+tap panel card.key.done
 wait 100
 expect toast is
 expect editor.index_rows is 3
@@ -231,8 +215,7 @@ expect editor.links is 4 4
 key 38 0
 pen line 300 2250 900 2350 30 0.6 0.6
 expect editor.linkto.dock is top
-expect editor.linkto.rect is 20 173 1820 736
-expect editor.ui_at.1381.387 is linkto.chip.2
+expect editor.linkto.rect is 20 86 1820 736
 tap panel linkto.elsewhere
 tap panel elsewhere.current
 tap panel elsewhere.page.5
@@ -275,7 +258,7 @@ touch down 992 825
 wait 800
 touch up 992 825
 expect editor.link_card is 1
-expect editor.link_card.rect is 757 935 780 666
+expect editor.link_card.rect is 736 893 780 666
 shot 09-card-sideways
 tap 2200 1700
 expect editor.link_card is 0

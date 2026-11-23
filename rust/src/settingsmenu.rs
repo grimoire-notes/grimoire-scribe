@@ -254,9 +254,8 @@ pub static CATEGORIES: &[Category] = &[
         // TRANSLATORS: the row that opens the sleep settings' page: the sleep screen and the
         // timer.
         Item::open(IconKind::Hourglass, n_("Sleep settings"), SettingId::SleepSettings),
-        // TRANSLATORS: the row that opens the clock settings' page: the clock and battery on a
-        // notebook page.
-        Item::open(IconKind::Clock, n_("Clock settings"), SettingId::ClockSettings),
+        // TRANSLATORS: the row that opens the status bar's page: its size and its 12-hour clock.
+        Item::open(IconKind::Clock, n_("Status bar"), SettingId::ClockSettings),
     ]),
     Category::new(n_("Pen"), IconKind::Tune, &[
         // TRANSLATORS: the row that opens Tool Settings' sheet: pressure and tilt, per tool.
@@ -347,7 +346,7 @@ mod tests {
         assert_eq!(CATEGORIES.iter().map(|c| c.items.len()).sum::<usize>(), 24);
 
         assert_eq!(text(2, 0), "Sleep settings");
-        assert_eq!(text(2, 1), "Clock settings");
+        assert_eq!(text(2, 1), "Status bar");
         assert_eq!(text(0, 2), "Wi-Fi");
         assert_eq!(text(6, 0), "KOReader");
         assert_eq!(text(6, 2), "About: device and storage");

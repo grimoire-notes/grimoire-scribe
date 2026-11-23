@@ -45,19 +45,31 @@ pub fn gui_margin() -> i32 {
     ui_px(50.0)
 }
 
-/// The top status bar's scale at Clock size small, medium and large. Medium is the bar as it has
-/// always been; the Clock settings size scales all of it, not just its clock.
+/// The top status bar's scale at size small, medium and large. Medium is the bar as it has always
+/// been; the Status bar settings page's size scales all of it, not just its clock.
 const STATUS_SCALE: [f32; 3] = [0.82, 1.0, 1.18];
 
 thread_local! {
-    /// The Clock settings the top status bar draws with (size, 12-hour time).
+    /// The Status bar settings the top status bar draws with (size, 12-hour time).
     static STATUS_STYLE: Cell<(i32, bool)> = const { Cell::new((1, false)) };
+    /// Whether tapping the bar hid it (settings.ini status_on, unchanged by a restart).
+    static STATUS_SHOWN: Cell<bool> = const { Cell::new(true) };
 }
 
-/// Applies Clock settings to every top status bar (Settings > Sleep & Clock > Clock settings). The
-/// main page and the Clock page call this when either choice changes.
+/// Applies the Status bar settings to every top status bar (Settings > Sleep & Clock > Status bar).
+/// The main page and the Status bar page call this when either choice changes.
 pub fn gui_status_style(size: i32, twelve: bool) {
     STATUS_STYLE.with(|s| s.set((clampi(size, 0, STATUS_SIZES - 1), twelve)));
+}
+
+/// Shows or hides every top status bar. A tap on the bar sets it (status_toggle), and the Status bar
+/// settings page's "Show status bar" row; settings.ini status_on keeps it across restarts.
+pub fn gui_status_shown(on: bool) {
+    STATUS_SHOWN.with(|s| s.set(on));
+}
+
+pub fn gui_status_visible() -> bool {
+    STATUS_SHOWN.with(|s| s.get())
 }
 
 fn status_style() -> (i32, bool) {
@@ -68,8 +80,8 @@ fn status_scale() -> f32 {
     STATUS_SCALE[status_style().0 as usize]
 }
 
-/// The status bar's height (`gui_status_bar`): the whole bar grows and shrinks with Clock settings'
-/// size.
+/// The status bar's height (`gui_status_bar`): the whole bar grows and shrinks with the Status bar
+/// page's size.
 pub fn gui_status_h() -> i32 {
     ui_px(78.0 * status_scale())
 }
@@ -635,21 +647,31 @@ pub fn gui_battery(c: &mut Canvas, r: Rect, percent: i32) {
 /// Bluetooth and the battery percent at the right. Every screen draws it above its header; a tap in
 /// it is a tap on no control (the caller adds no hit).
 pub fn gui_status_bar(c: &mut Canvas, aw: i32, now: i64) {
-    gui_status_bar_in(c, aw, now, true);
+    gui_status_bar_in(c, aw, now, true, true);
 }
 
-/// The same bar with only the connection icons at the right: the notebook page uses it when its own
-/// clock corner is on, so the time and battery appear once, in that corner.
+/// The notebook's key status bar: the same time, connections and battery with no white background, so
+/// what is drawn under it (the page) still shows through.
+pub fn gui_status_bar_transparent(c: &mut Canvas, aw: i32, now: i64) {
+    gui_status_bar_in(c, aw, now, true, false);
+}
+
+/// The same bar with only the connection icons at the right: kept for the retired corner's callers.
 pub fn gui_status_bar_connections(c: &mut Canvas, aw: i32, now: i64) {
-    gui_status_bar_in(c, aw, now, false);
+    gui_status_bar_in(c, aw, now, false, true);
 }
 
-fn gui_status_bar_in(c: &mut Canvas, aw: i32, now: i64, clock: bool) {
+fn gui_status_bar_in(c: &mut Canvas, aw: i32, now: i64, clock: bool, fill: bool) {
+    if !gui_status_visible() {
+        return;
+    }
     let scale = status_scale();
     let u = |v: f32| ui_px(v * scale);
     let h = gui_status_h();
     let m = gui_margin();
-    canvas_fill(c, Rect::new(0, 0, aw, h), 255);
+    if fill {
+        canvas_fill(c, Rect::new(0, 0, aw, h), 255);
+    }
     if clock {
         let mut time = String::new();
         format_clock_short(now, status_style().1, &mut time, 64);

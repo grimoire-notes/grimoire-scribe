@@ -45,7 +45,7 @@ wait 300
 tap library files.card.trash
 wait 500
 expect files.card is delete
-tap 930 60
+tap 1700 300
 wait 300
 expect files.card is
 expect files.place is grimoire/photos

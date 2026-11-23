@@ -134,11 +134,6 @@ expect editor.strokes is 1
 shape Z 500 500 45 600
 expect editor.strokes is 0
 expect fshape.fired is 1
-expect settings.status_on is 0
-tap 60 60
-expect settings.status_on is 1
-tap 60 60
-expect settings.status_on is 0
 # A normal link tap/hold keeps its existing behavior while shapes are armed.
 pentap panel next
 pentap panel previous
