@@ -24,6 +24,7 @@ image papers, for example, and never calls them "Newer paper".
 root/settings.ini                       the device's settings (below)
 root/settings.ini.unread                a settings.ini that was there but could not be read, kept aside; never read (2.2.0; settings.ini)
 root/folders.ini                        "# Grimoire folders", then one folder name per line
+root/folder-looks.ini                   a folder's icon and picture, a block a folder (2.2, issue #230; Folder icons and pictures)
 root/sleep.pgm                          the pinned sleep screen (P5 PGM, full page)
 root/notebooks/<id>/notebook.ini        one notebook (below)
 root/notebooks/<id>/p<page id>.qpg      one page (below)
@@ -2140,6 +2141,29 @@ beta.4 show the page and its picture and never read `links.ini`; 2.0.0-beta.5 to
 as a target they do not know (it does nothing there). The released 2.0.0-beta.1 (2026-11-01) follows `n:`
 targets into the other notebook, as every build since 2.0.0-rc.2 does. Moving pages needs nothing of any
 version: each reads the `pages` order it finds.
+
+## Folder icons and pictures: `root/folder-looks.ini`
+
+A folder's card in the Library can show an icon of its own instead of the plain folder, and a picture from
+`root/photos/` in its place (2.2, issue #230: a folder's menu, Icon & picture...). A folder with neither has
+no block:
+
+```
+# Grimoire: folder icons and pictures
+folder=School
+icon=castle
+picture=IMG_1234.jpg
+```
+
+`folder=` starts a folder's block: its logical path as `notebook.ini`'s `folder` writes it. `icon=` is the
+icon's name, one of the app's (lowercase letters, digits and `-`), and `picture=` a file name in
+`root/photos/` (no folder part). Both are optional. A block whose folder is gone draws nothing; an icon this
+version does not know draws as the plain folder, and a picture that is not there (or whose preview is not made
+yet) leaves the icon in its place. Lines of another kind, paths that are no valid folder and names that are not
+those shapes are ignored; a file over 64 KiB names no look. Renaming or moving a folder moves its block and
+those of the folders inside it; removing an (empty) folder drops its block; with no folder left the file is
+removed. It is kept apart from `folders.ini`, whose every line older versions read as a folder's name: an
+older Grimoire keeps this file as it is.
 
 ## The trash: `root/trash/`
 
