@@ -6,13 +6,15 @@
 //! grimoire.log goes into public bug reports: the names of the owner's files and folders are never
 //! logged here, only notebook ids and counts.
 
+use crate::nbk;
 use crate::picwork::{PicOut, PicPool};
 use crate::prelude::*;
 use crate::fsview::*;
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// a template file bigger than this is not taken, and neither is a photo (so no copy of one is made into either
 /// folder: bgwork_copy.rs, "Too big (over 16 MB).")
@@ -21,6 +23,12 @@ pub const TEMPLATE_MAX_BYTES: usize = 16 << 20;
 const MAX_TEMPLATES: usize = 500;
 /// import folders queued at one start (the job queue holds 16)
 const IMPORT_QUEUE_MAX: usize = 8;
+/// the Scribe's own notebooks, and the catalog that names them (FW 5.18.6, as Ignite reads them)
+const KINDLE_NOTEBOOKS_ROOT: &str = "/mnt/us/.notebooks";
+const KINDLE_CATALOG: &str = "/var/local/ksdk.content.db";
+const KINDLE_CATALOG_MAX: usize = 32 << 20;
+/// a copied notebook's title sidecar is read up to this size
+const KINDLE_TITLE_MAX: usize = 4 << 10;
 /// in an import folder: the notebook it becomes ("done <id>" once made)
 const IMPORT_MARK: &str = ".grimoire-import";
 /// a mark (an import folder's, or one of import/.marks) is read up to this size: it is a line or two
@@ -1433,6 +1441,15 @@ fn pictures_hash(src: &str, names: &[String]) -> u64 {
         h = fnv(h, &v[0].to_ne_bytes());
         h = fnv(h, &v[1].to_ne_bytes());
     }
+    // A Kindle notebook's `nbk` is not a picture, but it is what the folder holds: a replaced one must
+    // count as a change, so a refused `nbk` is tried again like a folder of pictures that changed.
+    let mut nbk = String::new();
+    csnprintf!(&mut nbk, PATH_BUF, "%s/nbk", src);
+    if let Ok(st) = std::fs::metadata(&nbk) {
+        h = fnv(fnv(h, b"nbk"), &[0]);
+        h = fnv(h, &(st.len() as i64).to_ne_bytes());
+        h = fnv(h, &st.mtime().to_ne_bytes());
+    }
     h
 }
 
@@ -1696,10 +1713,14 @@ pub fn import_scan(dpi: f32) -> i32 {
             continue;
         }
         let np = pics.len();
+        // a Kindle Scribe notebook's folder holds its `nbk`, not page pictures (issue #196)
+        let mut nbk = String::new();
+        csnprintf!(&mut nbk, PATH_BUF, "%s/nbk", &src);
+        let has_nbk = exists(&nbk);
         let mut done = false;
         let have = read_mark(&src, &mut id, &mut done);
-        if np == 0 || done {
-            empty += (np == 0) as i32;
+        if (np == 0 && !has_nbk) || done {
+            empty += (np == 0 && !has_nbk) as i32;
             continue;
         }
         if at.is_some_and(|at| att[at].tries >= IMPORT_TRIES && att[at].pictures == folder_pictures_hash(&src)) {
@@ -2047,6 +2068,333 @@ fn build_notebook(id: &str, src: &str, final_: &str, names: &[String]) -> i32 {
     rc
 }
 
+// A Kindle notebook's `nbk`, copied from the Kindle's own .notebooks/ folder: the entry itself must be a plain
+// file (never a link), and it goes to import/<folder>/nbk for the import child. False when the destination is
+// there already or anything fails (a half copy is removed).
+fn copy_kindle_nbk(src: &Path, dst: &Path, title: &str) -> bool {
+    let Some(src) = src.to_str() else { return false };
+    let Ok((mut from, _)) = open_read_nofollow(src) else { return false };
+    if std::fs::create_dir(dst).is_err() {
+        return false; // (an import of that name is there already)
+    }
+    let mut to = match std::fs::OpenOptions::new().write(true).create_new(true).open(dst.join("nbk")) {
+        Ok(f) => f,
+        Err(_) => {
+            let _ = std::fs::remove_dir(dst);
+            return false;
+        }
+    };
+    let mut ok = std::io::copy(&mut from, &mut to).is_ok();
+    drop(to);
+    // The catalog's title travels with the copy: the import child names the notebook from it.
+    if ok && !title.trim().is_empty() && std::fs::write(dst.join("title"), title.trim().as_bytes()).is_err() {
+        ok = false;
+    }
+    if !ok {
+        let _ = std::fs::remove_dir_all(dst);
+    }
+    ok
+}
+
+/// Whether a notebook of `name` is in import/ now or was imported already (finish_source leaves its folder in
+/// import/done as `<name>-<time>`): `taken` holds both folders' entries.
+fn kindle_taken(taken: &[String], name: &str) -> bool {
+    taken.iter().any(|t| {
+        t == name || (t.starts_with(name) && t.as_bytes().get(name.len()) == Some(&b'-'))
+    })
+}
+
+/// A notebook folder name: the Kindle's own are UUIDs; folders for a book's annotations are not.
+fn is_kindle_uuid(name: &str) -> bool {
+    let parts: Vec<&str> = name.split('-').collect();
+    parts.len() == 5
+        && parts.iter().zip([8, 4, 4, 4, 12]).all(|(p, n)| p.len() == n && p.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// A title made safe to draw (the catalog is Amazon's JSON, not ours).
+fn clean_title(raw: &str) -> String {
+    raw.chars().filter(|c| !c.is_control()).collect::<String>().trim().to_string()
+}
+
+/// Count and copy one notebook once, whichever folder it was found in.
+fn take_kindle_notebook(
+    name: &str,
+    title: &str,
+    nbk: &Path,
+    import: &str,
+    taken: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+    result: &mut KindleImport,
+) {
+    if !seen.insert(name.to_string()) {
+        return;
+    }
+    result.on_disk += 1;
+    if kindle_taken(taken, name) {
+        return;
+    }
+    result.new += 1;
+    if result.copied >= IMPORT_QUEUE_MAX {
+        return;
+    }
+    if copy_kindle_nbk(nbk, &Path::new(import).join(name), title) {
+        result.copied += 1;
+        taken.push(name.to_string());
+    }
+}
+
+/// What Settings > General > Import Kindle notebooks found and did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KindleImport {
+    /// A Kindle notebook folder exists at one of the places looked at.
+    pub found_folder: bool,
+    /// Notebook folders holding an `nbk` (in all the places together, by name).
+    pub on_disk: usize,
+    /// Of those, ones neither pending in import/ nor imported before.
+    pub new: usize,
+    /// How many were copied into import/ (at most IMPORT_QUEUE_MAX).
+    pub copied: usize,
+    /// Notebooks in the Kindle's catalog with no `nbk` on disk (cloud-only until opened once).
+    pub cloud_only: usize,
+}
+
+/// The places a Kindle's own notebooks have been seen, in the order they are looked at: `.notebooks/`
+/// beside Grimoire's folder (the Scribe's own), then the names some firmware and USB tools show. The
+/// data root itself is tried too, for a `GRIMOIRE_ROOT` that is the storage root.
+fn kindle_folders(root: &str) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let root = Path::new(root);
+    let mut add = |p: PathBuf| {
+        if !out.contains(&p) {
+            out.push(p);
+        }
+    };
+    // The Scribe's own place is absolute; never depend on what the data root happens to be.
+    add(PathBuf::from(KINDLE_NOTEBOOKS_ROOT));
+    if let Some(storage) = root.parent().filter(|p| !p.as_os_str().is_empty()) {
+        for sub in [".notebooks", "notebooks", "documents/.notebooks", "documents/notebooks"] {
+            add(storage.join(sub));
+        }
+    }
+    add(root.join(".notebooks"));
+    #[cfg(feature = "kindle")]
+    for sub in [".notebooks", "notebooks", "documents/.notebooks", "documents/notebooks"] {
+        add(Path::new("/mnt/us").join(sub));
+    }
+    out
+}
+
+/// Settings > General > Import Kindle notebooks (2.3, issue #196): the notebooks in the storage's
+/// notebook folder that are neither in import/ nor in import/done/ are copied there (their `nbk` only),
+/// at most IMPORT_QUEUE_MAX at a time, and a scan queues them. The Kindle's own folders are never changed.
+pub fn import_kindle_notebooks(dpi: f32) -> KindleImport {
+    let mut result = KindleImport::default();
+    let mut import = String::new();
+    root_path("import", &mut import, 600);
+    if mkdir_p(&import) != 0 {
+        return result;
+    }
+    // (both folders' entries: a pending import and one already done, whose name ends in its time)
+    let mut taken: Vec<String> = Vec::new();
+    let done = format!("{import}/done");
+    for dir in [import.as_str(), done.as_str()] {
+        if let Ok(rd) = std::fs::read_dir(dir) {
+            for e in rd.flatten() {
+                if let Some(n) = e.file_name().to_str() {
+                    taken.push(n.to_string());
+                }
+            }
+        }
+    }
+    let folders = kindle_folders(&store_root());
+    let mut seen: HashSet<String> = HashSet::new();
+    // The catalog is the Kindle's own list: it names standalone notebooks (not a book's annotation
+    // folder) and tells cloud-only ones apart from notebooks that have an `nbk` on disk.
+    let catalog = read_source(KINDLE_CATALOG, KINDLE_CATALOG_MAX)
+        .and_then(|data| nbk::catalog_notebooks(&data))
+        .filter(|entries| !entries.is_empty());
+    let nbk_in = |id: &str| -> Option<PathBuf> {
+        folders.iter().find_map(|folder| {
+            let path = folder.join(id).join("nbk");
+            let md = std::fs::symlink_metadata(&path).ok()?;
+            md.file_type().is_file().then_some(path)
+        })
+    };
+    if let Some(entries) = catalog {
+        result.found_folder = true;
+        // A standalone notebook's UUID is its `.notebooks/<uuid>/` folder; annotation rows are not.
+        for entry in entries.into_iter().filter(|entry| is_kindle_uuid(&entry.id)) {
+            match nbk_in(&entry.id) {
+                Some(nbk) => take_kindle_notebook(&entry.id, &entry.title, &nbk, &import, &mut taken, &mut seen, &mut result),
+                None => result.cloud_only += 1,
+            }
+        }
+    } else {
+        // Without a catalog: UUID-named folders with an `nbk`. Annotation folders have other names.
+        for folder in &folders {
+            let Ok(rd) = std::fs::read_dir(folder) else { continue };
+            result.found_folder = true;
+            for e in rd.flatten() {
+                let Some(name) = e.file_name().to_str().map(str::to_string) else { continue };
+                if name.starts_with('.') || !is_kindle_uuid(&name) {
+                    continue;
+                }
+                let Ok(md) = std::fs::symlink_metadata(e.path()) else { continue };
+                if !md.file_type().is_dir() {
+                    continue;
+                }
+                let nbk = e.path().join("nbk");
+                let Ok(nb) = std::fs::symlink_metadata(&nbk) else { continue };
+                if !nb.file_type().is_file() {
+                    continue; // (a link to an nbk is not taken, as a picture that is a link is not)
+                }
+                take_kindle_notebook(&name, "", &nbk, &import, &mut taken, &mut seen, &mut result);
+            }
+        }
+    }
+    if result.copied != 0 {
+        sync_dir(&import);
+        import_scan(dpi);
+    }
+    qlog!(
+        "kindle: %d notebook(s) on disk, %d new, %d copied, %d cloud-only%s",
+        result.on_disk,
+        result.new,
+        result.copied,
+        result.cloud_only,
+        if result.found_folder { "" } else { "; no notebook folder" }
+    );
+    result
+}
+
+// A Kindle Scribe notebook: the folder's `nbk` (nbk.rs) read into one page of ink per page of the Scribe's,
+// scaled to the device's page. Built in notebooks/.import-<id>/ and renamed into place only once whole.
+fn build_nbk_notebook(id: &str, src: &str, final_: &str, nbk_path: &str) -> i32 {
+    let Some(data) = read_source(nbk_path, nbk::NBK_MAX_BYTES) else {
+        qlog!("import: %s: its Kindle notebook cannot be read; nothing imported", id);
+        return IMPORT_REFUSED;
+    };
+    let book = match nbk::nbk_notebook(&data) {
+        Ok(b) => b,
+        Err(why) => {
+            qlog!("import: %s: %s; nothing imported", id, why);
+            return IMPORT_REFUSED;
+        }
+    };
+    drop(data);
+    let n = book.pages.len();
+    if n == 0 || n > STORE_MAX_PAGES {
+        qlog!("import: %s: %s page(s) in its Kindle notebook; nothing imported", id, if n != 0 { "more than 2000" } else { "no" });
+        return IMPORT_REFUSED;
+    }
+    let mut work = String::new();
+    csnprintf!(&mut work, 700, "%s/notebooks/.import-%s", &store_root(), id);
+    remove_work(&work);
+    let (mut pw, mut ph) = (0, 0);
+    store_page_size(&mut pw, &mut ph);
+    let mut dpi = store_dpi();
+    if dpi <= 50.0 {
+        dpi = 300.0; // (a background child has the device's dpi set before the scan; this is no guess for a test)
+    }
+    let rc = 'out: {
+        if mkdir_p(&work) != 0 {
+            qlog!("import: %s: notebooks/ cannot be written (%s); nothing imported", id, &strerror(errno()));
+            break 'out IMPORT_RETRY;
+        }
+        qlog!("import: %s: %d page(s) of a Kindle notebook, for %dx%d pages", id, n, pw, ph);
+        let mut pids: Vec<u32> = Vec::with_capacity(n);
+        for (i, pg) in book.pages.iter().enumerate() {
+            let pid = i as u32 + 1;
+            let mut page = page_new(pw, ph, PAPER_BLANK);
+            page.nb.set_bytes(id.as_bytes());
+            let sx = pw as f64 / pg.canvas_w.max(1.0);
+            let sy = ph as f64 / pg.canvas_h.max(1.0);
+            for (k, st) in pg.strokes.iter().enumerate() {
+                if st.points.is_empty() {
+                    continue;
+                }
+                let (tool, params) = nbk::brush_for(st.brush, st.thickness);
+                let mut s = stroke_new(tool, &params, 0x4E42_0000 ^ k as u32);
+                stroke_mark_tip(&mut s);
+                for (j, &(x, y)) in st.points.iter().enumerate() {
+                    let pressure = st.pressure.get(j).copied().unwrap_or(0.7).clamp(0.0, 1.0);
+                    let pt = PenSample { x: (x * sx) as f32, y: (y * sy) as f32, pressure, tilt_x: 0.0, tilt_y: 0.0, t_ms: j as u32 * 4 };
+                    stroke_append(&mut s, &pt, dpi);
+                }
+                if !s.pts.is_empty() {
+                    page_add(&mut page, s);
+                }
+            }
+            if i == 0 {
+                // the Library's thumbnail: page 1 as page_render_thumb makes it
+                let mut thumb = Canvas::default();
+                let mut tp = String::new();
+                csnprintf!(&mut tp, 900, "%s/thumb.pgm", &work);
+                if canvas_init(&mut thumb, pw / 3, ph / 3) == 0 {
+                    page_render_thumb(&mut thumb, &page, dpi);
+                    store_write_pgm(&tp, &thumb);
+                }
+                canvas_free(&mut thumb);
+            }
+            let written = store_write_page_in(&work, pid, &page);
+            page_free(page);
+            if written != 0 {
+                qlog!("import: %s: page %d of %d could not be written; nothing imported", id, i + 1, n);
+                break 'out IMPORT_RETRY;
+            }
+            pids.push(pid);
+        }
+        let mut nb = NotebookInfo::default();
+        nb.id.set(id);
+        let folder_name = src.rfind('/').map_or(src, |s| &src[s + 1..]);
+        let mut title_file = String::new();
+        csnprintf!(&mut title_file, PATH_BUF, "%s/title", src);
+        let catalog_title = read_source(&title_file, KINDLE_TITLE_MAX)
+            .and_then(|b| String::from_utf8(b).ok())
+            .map(|t| clean_title(&t))
+            .unwrap_or_default();
+        let own_title = clean_title(&book.title);
+        let given = if !catalog_title.is_empty() {
+            catalog_title.as_str()
+        } else if !own_title.is_empty() {
+            own_title.as_str()
+        } else {
+            folder_name
+        };
+        let mut all = Vec::new();
+        store_list(&mut all);
+        let mut cut = FixedStr::<STORE_NAME_LEN>::new();
+        copy_name(&mut cut, given);
+        nb.name.set_cut(&crate::pdfimport::unique_import_name(cut.as_str(), &all));
+        nb.paper = PAPER_BLANK;
+        nb.created = wall_time();
+        nb.modified = nb.created;
+        nb.page_ids = pids;
+        nb.next_page_id = n as u32 + 1;
+        nb.page_w = pw;
+        nb.page_h = ph;
+        // notebook.ini last: a folder holding it is whole (import_leftovers).
+        if store_write_info_in(&work, &nb) != 0 {
+            qlog!("import: %s: its notebook files could not be written; nothing imported", id);
+            break 'out IMPORT_RETRY;
+        }
+        if let Err(e) = std::fs::rename(&work, final_) {
+            qlog!("import: %s: could not move the notebook into place (%s); nothing imported", id, &strerror(e.raw_os_error().unwrap_or(0)));
+            break 'out IMPORT_RETRY;
+        }
+        let mut notebooks = String::new();
+        root_path("notebooks", &mut notebooks, 600);
+        sync_dir(&notebooks);
+        qlog!("import: notebook %s made of %d page(s), %d stroke(s) of a Kindle notebook", id, n, book.strokes);
+        finish_source(src, id);
+        IMPORT_DONE
+    };
+    if rc != IMPORT_DONE {
+        remove_work(&work);
+    }
+    rc
+}
+
 // The import itself, under the lock. A failed one leaves no notebook, and the folder as it was.
 fn import_folder(src: &str) -> i32 {
     if !real_dir(src) {
@@ -2084,9 +2432,17 @@ fn import_folder(src: &str) -> i32 {
     }
     let pictures = pictures_hash(src, &names);
     attempts_note(src, pictures, ATTEMPT_TRY); // (counted first: a try cut off counts too)
-    let mut rc = check_pages(&id, src, &names);
-    if rc == 0 {
-        rc = build_notebook(&id, src, &final_, &names);
+    let mut nbk = String::new();
+    csnprintf!(&mut nbk, PATH_BUF, "%s/nbk", src);
+    let mut rc;
+    if exists(&nbk) {
+        // (the Scribe's own notebook: its `nbk` is the whole of it; the folder's other files are left as they are)
+        rc = build_nbk_notebook(&id, src, &final_, &nbk);
+    } else {
+        rc = check_pages(&id, src, &names);
+        if rc == 0 {
+            rc = build_notebook(&id, src, &final_, &names);
+        }
     }
     if rc == IMPORT_DONE {
         attempts_note(src, pictures, ATTEMPT_DONE);
@@ -2431,6 +2787,50 @@ mod tests {
         }
         assert!(ok);
         let _ = std::fs::remove_dir_all(&r);
+    }
+
+    #[test]
+    fn a_kindle_nbk_is_copied_but_not_a_link() {
+        let dir = scratch("kindle-copy");
+        let src = format!("{dir}/src");
+        std::fs::create_dir(&src).unwrap();
+        std::fs::create_dir(format!("{dir}/import")).unwrap();
+        std::fs::write(format!("{src}/nbk"), b"notebook").unwrap();
+        let dest = format!("{dir}/import/One");
+        assert!(copy_kindle_nbk(Path::new(&format!("{src}/nbk")), Path::new(&dest), "My notebook"));
+        assert_eq!(std::fs::read(format!("{dest}/nbk")).unwrap(), b"notebook");
+        assert_eq!(std::fs::read(format!("{dest}/title")).unwrap(), b"My notebook");
+        // a destination that is there is not written over
+        assert!(!copy_kindle_nbk(Path::new(&format!("{src}/nbk")), Path::new(&dest), "My notebook"));
+        // a link is no plain file
+        let link = format!("{dir}/link.nbk");
+        std::os::unix::fs::symlink(format!("{src}/nbk"), &link).unwrap();
+        assert!(!copy_kindle_nbk(Path::new(&link), Path::new(&format!("{dir}/import/Two")), ""));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_uuid_named_notebook_folders_are_taken_without_a_catalog() {
+        assert!(is_kindle_uuid("d088f501-48f6-7a6b-341c-726964927fff"));
+        assert!(!is_kindle_uuid("B012345678!!EBOK!!notebook"));
+        assert!(!is_kindle_uuid("thumbnails"));
+    }
+
+    #[test]
+    fn kindle_notebook_folders_are_found_beside_the_data_root() {
+        let roots = kindle_folders("/mnt/us/grimoire");
+        assert_eq!(roots[0], Path::new("/mnt/us/.notebooks"));
+        assert!(roots.contains(&PathBuf::from("/mnt/us/notebooks")));
+        assert!(roots.contains(&PathBuf::from("/mnt/us/documents/.notebooks")));
+        assert!(roots.contains(&PathBuf::from("/mnt/us/grimoire/.notebooks")));
+    }
+
+    #[test]
+    fn a_kindle_notebook_taken_before_is_not_taken_again() {
+        assert!(kindle_taken(&["Book".to_string()], "Book"));
+        assert!(kindle_taken(&["Book-20261010-143205".to_string()], "Book"));
+        assert!(!kindle_taken(&["Book 2-20261010-143205".to_string()], "Book"));
+        assert!(!kindle_taken(&["Booklet".to_string()], "Book"));
     }
 
     #[test]

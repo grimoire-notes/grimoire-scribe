@@ -254,6 +254,9 @@ const H_DARKER_BACK: i32 = 252;
 const H_SET_PACKAGES: i32 = 260;
 // Settings > Packages > Apps: the same manager for the app package kind.
 const H_SET_APP_PACKAGES: i32 = 261;
+// Settings > General's Import Kindle notebooks (2.3, issue #196): copies the Kindle's own notebooks from
+// .notebooks/ into import/ and queues them (bgwork_template.rs).
+const H_SET_KINDLE: i32 = 283;
 // The home's global elements (2.3, issue #209): its filter chips (arg: 0 All, 1 Notebooks, 2 Folders),
 // the Sort select and its choices (arg: the sort), the Search button, the + button and its popup's rows
 // (arg: 0 notebook, 1 folder, 2 Share), the apps buttons and the All apps page.
@@ -5114,6 +5117,7 @@ fn setting_hit(id: settingsmenu::SettingId) -> i32 {
         Pair => H_PAIR_MENU,
         Gestures => H_GESTURES,
         Language => H_SET_LANGUAGE,
+        KindleImport => H_SET_KINDLE,
         Mirror => H_SET_MIRROR,
         Wifi => H_WIFI_MENU,
         KOReader => H_KOREADER,
@@ -8152,6 +8156,38 @@ fn act(a: &mut App, h: &Hit) {
             redraw(a, RefreshMode::Ui);
         }
         H_SET_LANGUAGE => open_modal(a, Modal::Language),
+        H_SET_KINDLE => {
+            let r = crate::bgwork_template::import_kindle_notebooks(a.dpi);
+            if !r.found_folder {
+                // TRANSLATORS: a toast after Import Kindle notebooks: the Kindle's notebook folder was not found.
+                app_toast(a, tr("Couldn't find the Kindle's notebooks folder."), 4000);
+            } else if r.cloud_only > 0 && r.new == 0 {
+                // TRANSLATORS: a toast after Import Kindle notebooks: the Kindle's catalog lists notebooks that
+                // have no notebook file on disk yet. They stay in Amazon's cloud until opened on the device.
+                let msg = cformat!(tr("%d Kindle notebooks are in the cloud only. Open them once in the Kindle app first."), r.cloud_only as i32);
+                app_toast(a, &msg, 6000);
+            } else if r.on_disk == 0 {
+                // TRANSLATORS: a toast after Import Kindle notebooks: the folders are there but hold no notebook
+                // file. The Kindle keeps a notebook in Amazon's cloud until it is opened on the device.
+                app_toast(a, tr("No Kindle notebooks on disk. Open them once in the Kindle app first."), 5000);
+            } else if r.new == 0 {
+                app_toast(a, tr("No new Kindle notebooks found."), 3500);
+            } else if r.copied == 0 {
+                app_toast(a, tr("Couldn't copy the Kindle notebooks."), 4000);
+            } else if r.copied < r.new {
+                // TRANSLATORS: a toast after Import Kindle notebooks: the first batch of the notebooks found is
+                // being imported; tapping it again imports the rest.
+                let msg = cformat!(tr("Importing %d of %d Kindle notebooks."), r.copied as i32, r.new as i32);
+                app_toast(a, &msg, 5000);
+            } else if r.copied == 1 {
+                app_toast(a, tr("Importing 1 Kindle notebook."), 4000);
+            } else {
+                // TRANSLATORS: a toast after Import Kindle notebooks: how many are being imported.
+                let msg = cformat!(tr("Importing %d Kindle notebooks."), r.copied as i32);
+                app_toast(a, &msg, 4000);
+            }
+            redraw(a, RefreshMode::Ui);
+        }
         H_LANG_PICK => {
             // Saved and applied at once: the Settings sheet comes back in the language picked.
             let code = if h.arg >= 0 {
@@ -10325,6 +10361,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_SET_SIDE => "pen-button", H_SIDE_PICK => "pen-button.", H_SIDE_BACK => "pen-button.back",
                 H_SET_ERASER => "eraser-mode", H_ERASER_PICK => "eraser-mode.", H_ERASER_BACK => "eraser-mode.back",
                 H_SET_DARKER => "darker-lines", H_DARKER_PICK => "darker-lines.", H_DARKER_BACK => "darker-lines.back",
+                H_SET_KINDLE => "kindle-notebooks",
                 H_SET_PINCH => "pinch", H_SET_MIRROR => "mirror",
                 H_SET_DEVICE => "about-device", H_DEVICE_BACK => "about-device.back",
                 H_SET_PACKAGES => "settings.packages", H_SET_APP_PACKAGES => "settings.apps",
