@@ -2972,7 +2972,7 @@ fn compose(a: &mut App, r: Rect) {
     sel_draw(a, r);
     if a.settings.status_on && a.settings.status_in_notebooks && rect_overlaps(r, Rect::new(0, 0, a.w, gui_status_h())) {
         // The page continues beneath the bar. It is drawn without a background, so the ink under it
-        // still shows; a tap hides it (status.rs).
+        // still shows; a tap hides it, and another on the top strip brings it back (status.rs).
         crate::globalui::gui_status_bar_transparent(&mut a.screen, a.w, wall_time());
     }
 }

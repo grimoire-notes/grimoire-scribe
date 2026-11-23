@@ -1692,7 +1692,7 @@ fn live_raw_sync() {
 /// LIVE_LAYER_STATUS, and the tiles take the screen as it was under it (globalui's saved bar), so a
 /// browser that hides the bar's layer sees the page where it covered.
 pub(crate) fn live_push_under_status(a: &mut App, r: Rect) {
-    let zone = crate::status::status_zone(a);
+    let zone = crate::status::status_live_zone(a);
     let under = rect_intersect(r, zone);
     if rect_is_empty(under) {
         live_push(&a.screen, r);

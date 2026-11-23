@@ -67,14 +67,13 @@ const D_FIT: i32 = 9;
 
 pub fn dispmenu_control_point(m:&DispMenu,name:&str)->Option<(f32,f32)> {
     if !m.open{return None;}
-    let id=match name {"size"=>D_STATUS,"done"=>D_DONE,"back"=>D_BACK,"fit"=>D_FIT,"newpage"=>D_NEWPAGE,"time12"=>D_TIME12,"sleep"=>D_SLEEP_MODE,"pin"=>D_PIN,"sleep_after"=>D_SLEEP_AFTER,"brightness"=>D_BRIGHT,"warmth"=>D_WARM,"auto"=>D_AUTO,"show"=>D_SHOW,"notebooks"=>D_NOTEBOOKS,_=>return None};
+    let id=match name {"size"=>D_STATUS,"done"=>D_DONE,"back"=>D_BACK,"fit"=>D_FIT,"newpage"=>D_NEWPAGE,"time12"=>D_TIME12,"sleep"=>D_SLEEP_MODE,"pin"=>D_PIN,"sleep_after"=>D_SLEEP_AFTER,"brightness"=>D_BRIGHT,"warmth"=>D_WARM,"auto"=>D_AUTO,"notebooks"=>D_NOTEBOOKS,_=>return None};
     m.hits.h.iter().find(|h|h.id==id).map(|h|((h.r.x+h.r.w/2)as f32,(h.r.y+h.r.h/2)as f32))
 }
 const D_NEWPAGE: i32 = 11;
 const D_TIME12: i32 = 12;
 const D_BACK: i32 = 13;
 const D_AUTO: i32 = 14;
-const D_SHOW: i32 = 15;
 const D_NOTEBOOKS: i32 = 16;
 
 /// A dragged slider's row is drawn at most this often, as Pen feel's sliders are.
@@ -317,14 +316,9 @@ pub fn dispmenu_draw(m: &mut DispMenu, a: &mut App) -> Rect {
         }
         DmPage::StatusBar => {
             rows.push(DRowKind::Check {
-                id: D_SHOW,
-                label: tr("Show status bar").to_string(),
-                on: a.settings.status_on,
-            });
-            rows.push(DRowKind::Check {
                 id: D_NOTEBOOKS,
-                label: tr("Show status bar in notebooks").to_string(),
-                on: a.settings.status_in_notebooks,
+                label: tr("Hide status bar inside Notebooks").to_string(),
+                on: !(a.settings.status_on && a.settings.status_in_notebooks),
             });
             rows.push(DRowKind::Check {
                 id: D_TIME12,
@@ -500,13 +494,16 @@ pub fn dispmenu_pointer(m: &mut DispMenu, a: &mut App, phase: i32, x: f32, y: f3
             *dirty = m.rect;
             return DmResult::Changed;
         }
-        D_SHOW => {
-            a.settings.status_on = !a.settings.status_on;
-            settings_save(&a.settings);
-            crate::globalui::gui_status_shown(a.settings.status_on);
-        }
         D_NOTEBOOKS => {
-            a.settings.status_in_notebooks = !a.settings.status_in_notebooks;
+            // The row asks to hide: turning it off brings the notebook's bar back, whatever hid it
+            // before (the row or a tap).
+            if a.settings.status_on && a.settings.status_in_notebooks {
+                a.settings.status_in_notebooks = false;
+            } else {
+                a.settings.status_on = true;
+                a.settings.status_in_notebooks = true;
+                crate::globalui::gui_status_shown(true);
+            }
             settings_save(&a.settings);
         }
         D_SLEEP_MODE => {

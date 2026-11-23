@@ -3,10 +3,10 @@
 //! The old floating clock-and-battery corner is retired: a notebook page keeps the one status bar the
 //! whole app draws (globalui.rs), showing the time, date, connections and battery at the top of the
 //! page. The settings.ini fields (status_on, status_size, status_corner) are still read and written so
-//! an owner's file keeps its meaning: `status_on` is whether the bar is shown at all (a tap hides it,
-//! and the state survives a restart), `status_size` scales the bar, and the corner has no place on
-//! the page. The Display sheet's "Status bar" page changes the size, the 12-hour clock, the bar's
-//! visibility and whether a notebook shows it (its background there is transparent).
+//! an owner's file keeps its meaning: `status_on` is whether a notebook's bar is shown (a tap there
+//! hides it, another brings it back, and the state survives a restart), `status_size` scales the bar,
+//! and the corner has no place on the page. The Display sheet's "Status bar" page changes the size,
+//! the 12-hour clock, and whether a notebook hides the bar (its background there is transparent).
 //!
 //! The functions here that app.rs, editor.rs and the shortcuts still call are kept as no-ops
 //! (status_pen, status_touch, status_cover and friends) so the editor's event and flush paths do not
@@ -106,25 +106,36 @@ pub fn status_cycle_mode(a: &mut App) {
     status_toggle(a);
 }
 
-/// Turns the shared status bar on or off. `status_on` is saved, so a tap that hides the bar survives a
-/// restart; the Status bar settings page's "Show status bar" row turns it back on.
+/// Turns the shared status bar on or off inside a notebook. A shown bar hides; a hidden one comes
+/// back, whether a tap hid it or the Status bar page's "Hide status bar inside Notebooks" row did.
+/// `status_on` and `status_in_notebooks` are saved, so the state survives a restart. Taps elsewhere
+/// leave it alone: only a notebook can toggle the bar.
 pub fn status_toggle(a: &mut App) {
+    if a.scr != ScreenId::Editor {
+        return;
+    }
     a.settings.status_mode = 1;
-    a.settings.status_on = !a.settings.status_on;
+    if status_bar_visible(a) {
+        a.settings.status_on = false;
+    } else {
+        a.settings.status_on = true;
+        a.settings.status_in_notebooks = true;
+    }
     settings_save(&a.settings);
     crate::globalui::gui_status_shown(a.settings.status_on);
     app_redraw(a);
     qlog!("status: the shared bar is %s", if a.settings.status_on { "shown" } else { "hidden" });
 }
 
-/// Whether the shared bar is drawn on the screen in front: `status_on`, and in a notebook also the
-/// Status bar settings page's "Show status bar in notebooks". An app that asks for no bar gets none.
+/// Whether the shared bar is drawn on the screen in front. Only a notebook can hide it: `status_on`
+/// and the Status bar page's "Hide status bar inside Notebooks" row (its inverse, stored as
+/// status_in_notebooks). Every other screen keeps its bar. An app that asks for no bar gets none.
 pub fn status_bar_visible(a: &App) -> bool {
-    if !a.settings.status_on {
-        return false;
-    }
     match a.scr {
-        ScreenId::Editor => crate::library::library_settings_active(a) || a.settings.status_in_notebooks,
+        ScreenId::Editor => {
+            a.settings.status_on
+                && (crate::library::library_settings_active(a) || a.settings.status_in_notebooks)
+        }
         ScreenId::Library if a.app_view.open => a.app_view.status_bar,
         _ => true,
     }
@@ -151,12 +162,21 @@ pub fn status_square(_a: &App) -> Rect {
 }
 
 /// The shared bar's room, where the old corner's zone used to be: top-docked cards and keyboards
-/// keep below it while it is shown. Hidden, the page has the top to itself.
+/// keep below it while it is shown. Hidden in a notebook, the page has the top to itself.
 pub fn status_zone(a: &App) -> Rect {
     if !status_bar_visible(a) {
         return RECT_EMPTY;
     }
     Rect { x: 0, y: 0, w: a.w, h: crate::globalui::gui_status_h() }
+}
+
+/// The bar's room that Live view sends as a layer of its own: a notebook's only. The other screens'
+/// bars are part of their chrome and stay in the page tiles, so the browser's switch cannot hide them.
+pub(crate) fn status_live_zone(a: &App) -> Rect {
+    if a.scr != ScreenId::Editor {
+        return RECT_EMPTY;
+    }
+    status_zone(a)
 }
 
 /// Whether (x, y) is the corner's: never.
@@ -196,7 +216,7 @@ pub struct StatusCover;
 /// that reaches the bar, or a bar that is now hidden, tells the layer again. The bar is painted into
 /// a.screen by the screen itself, so there is nothing to cover and put back.
 pub fn status_cover(a: &mut App, dirty: &mut Rect) -> Option<StatusCover> {
-    let zone = status_zone(a);
+    let zone = status_live_zone(a);
     if rect_is_empty(zone) {
         crate::live::live_layer(crate::live::LIVE_LAYER_STATUS, &a.screen, RECT_EMPTY);
     } else if rect_overlaps(*dirty, zone) {
@@ -213,7 +233,7 @@ pub fn status_presented(_a: &App, _r: Rect) {}
 
 /// Live view starts: the shared bar's layer, where it is shown.
 pub fn status_live(a: &mut App) {
-    let zone = status_zone(a);
+    let zone = status_live_zone(a);
     crate::live::live_layer(crate::live::LIVE_LAYER_STATUS, &a.screen, zone);
 }
 
@@ -346,7 +366,7 @@ mod tests {
     #[test]
     fn the_retired_corner_reserves_nothing_and_takes_no_tap() {
         up();
-        let mut a = App { w: 1860, h: 2480, dpi: 300.0, ..Default::default() };
+        let mut a = App { w: 1860, h: 2480, dpi: 300.0, scr: ScreenId::Editor, ..Default::default() };
         a.settings.status_on = true;
         a.settings.status_in_notebooks = true;
         assert_eq!(status_reserved(&a), 0);

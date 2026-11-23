@@ -399,7 +399,9 @@ pub fn quick_event(a: &mut App, ev: &InEvent) -> bool {
                     q.tracking = false;
                     !q.press.moved && ev.y < top_strip() as f32
                 };
-                if tap && crate::status::status_bar_visible(a) {
+                // In a notebook the top strip is the status bar's: a tap hides a shown bar, and
+                // brings a hidden one back. Everywhere else a tap here does nothing.
+                if tap && a.scr == ScreenId::Editor {
                     crate::status::status_toggle(a);
                 }
                 return true;

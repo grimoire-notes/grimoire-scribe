@@ -133,8 +133,9 @@ pub struct Settings {
     /// The pen in use when the eraser was last picked on the panel, a tool id or -1 for none: where
     /// a tap on the eraser in use goes back to while that pen is still on the panel.
     pub before_eraser: i32,
-    /// The shared status bar is shown (settings.ini status_on; status.rs). A tap on the bar hides it,
-    /// and the state is saved; Settings > Sleep & Clock > Status bar turns it back on.
+    /// A notebook shows the shared status bar (settings.ini status_on; status.rs). A tap on the bar
+    /// hides it there, and another tap on the top strip brings it back; the state is saved. Settings
+    /// > Sleep & Clock > Status bar can also turn it back on. The other screens' bars are always shown.
     pub status_on: bool,
     /// and how large it is: 0 small, 1 medium, 2 large (settings.ini status_size). The size scales
     /// the whole top status bar too, not just the corner clock (globalui.rs).

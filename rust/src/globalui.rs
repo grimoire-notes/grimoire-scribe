@@ -71,8 +71,10 @@ pub fn gui_status_style(size: i32, twelve: bool) {
     STATUS_STYLE.with(|s| s.set((clampi(size, 0, STATUS_SIZES - 1), twelve)));
 }
 
-/// Shows or hides every top status bar. A tap on the bar sets it (status_toggle), and the Status bar
-/// settings page's "Show status bar" row; settings.ini status_on keeps it across restarts.
+/// Shows or hides the notebook's top status bar. A tap on a notebook's bar sets it (status_toggle): a
+/// shown bar hides, a hidden one comes back; the Status bar page's "Hide status bar inside Notebooks"
+/// row changes it too, and settings.ini status_on keeps it across restarts. The other screens' bars are
+/// always drawn: only a notebook can hide it.
 pub fn gui_status_shown(on: bool) {
     STATUS_SHOWN.with(|s| s.set(on));
 }
@@ -420,19 +422,19 @@ pub fn gui_popup(
     title: &str,
     items: &[GuiPopupItem<'_>],
 ) -> Vec<Rect> {
-    let pad = ui_px(26.0);
-    let row_h = ui_px(108.0);
-    let row_gap = ui_px(8.0);
-    let title_h = if title.is_empty() { ui_px(24.0) } else { ui_px(88.0) };
-    let icon_w = ui_px(52.0) + ui_px(22.0);
+    let pad = ui_px(16.0);
+    let row_h = ui_px(84.0);
+    let row_gap = ui_px(4.0);
+    let title_h = if title.is_empty() { ui_px(8.0) } else { ui_px(62.0) };
+    let icon_w = ui_px(46.0) + ui_px(14.0);
     let label_w = items
         .iter()
         .map(|it| font_measure(FontFace::Bold, ui_text_size(), it.label))
         .max()
         .unwrap_or(0);
     let w = (label_w + icon_w + 2 * pad)
-        .max(ui_px(560.0))
-        .min(screen.w - 2 * ui_px(24.0));
+        .max(ui_px(440.0))
+        .min(screen.w - 2 * ui_px(18.0));
     let n = items.len() as i32;
     let h = 2 * pad + title_h + n * row_h + (n - 1).max(0) * row_gap;
     let card = popup_place(screen, anchor, w, h);
@@ -442,7 +444,7 @@ pub fn gui_popup(
             c,
             FontFace::Bold,
             ui_text_size(),
-            Rect::new(card.x + pad, card.y + ui_px(12.0), (card.w - 2 * pad).max(0), title_h),
+            Rect::new(card.x + pad, card.y + ui_px(8.0), (card.w - 2 * pad).max(0), title_h),
             title,
             0,
         );
@@ -473,12 +475,12 @@ fn gui_popup_row(c: &mut Canvas, r: Rect, icon: IconKind, label: &str, selected:
     } else {
         0
     };
-    let pad = ui_px(22.0);
-    let isz = (r.h - ui_px(28.0)).min(ui_px(56.0));
+    let pad = ui_px(16.0);
+    let isz = (r.h - ui_px(20.0)).min(ui_px(46.0));
     let mut tx = r.x + pad;
     if icon != IconKind::None {
         ui_icon(c, icon, Rect::new(tx, r.y + (r.h - isz) / 2, isz, isz), fg);
-        tx += isz + ui_px(22.0);
+        tx += isz + ui_px(14.0);
     }
     ui_text(
         c,
@@ -662,7 +664,9 @@ pub fn gui_status_bar(c: &mut Canvas, aw: i32, now: i64) {
 /// The notebook's key status bar: the same time, connections and battery with no white background, so
 /// what is drawn under it (the page) still shows through.
 pub fn gui_status_bar_transparent(c: &mut Canvas, aw: i32, now: i64) {
-    gui_status_bar_in(c, aw, now, true, false);
+    if gui_status_visible() {
+        gui_status_bar_in(c, aw, now, true, false);
+    }
 }
 
 /// The same bar with only the connection icons at the right: kept for the retired corner's callers.
@@ -720,9 +724,6 @@ pub fn gui_status_under_put(c: &mut Canvas, r: Rect) -> bool {
 }
 
 fn gui_status_bar_in(c: &mut Canvas, aw: i32, now: i64, clock: bool, fill: bool) {
-    if !gui_status_visible() {
-        return;
-    }
     let scale = status_scale();
     let u = |v: f32| ui_px(v * scale);
     let h = gui_status_h();
