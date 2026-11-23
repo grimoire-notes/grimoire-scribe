@@ -7,6 +7,7 @@
 #   make kindle    static armhf binary (cargo zigbuild) -> build/kindle/grimoire
 #   make package   Kindle zip (scriptlet + app)      -> build/dist/Grimoire.zip
 #   make dev       build a separate "Grimoire (dev)" and copy it over MTP (tools/kindle-dev)
+#   make prod      build and update the installed release over MTP, in place (tools/kindle-dev --prod)
 #   make dev-ssh   build, patch and start a separate "Grimoire (dev)" over SSH (tools/kindle-dev-ssh;
 #                  --release replaces the release launcher instead)
 #   make wifieap   local WPA2/WPA3-Enterprise test AP on this computer (tools/wifieap)
@@ -62,7 +63,7 @@ HDRS := $(wildcard src/*.h) third_party/qrcodegen/qrcodegen.h VERSION Makefile
 SDL_CFLAGS := $(shell pkg-config --cflags sdl3 2>/dev/null)
 SDL_LIBS   := $(shell pkg-config --libs sdl3 2>/dev/null)
 
-.PHONY: all sim headless test tools tablet kindle package dev dev-ssh dev-check wifieap scenarios check clean icon logo l10n l10n-check
+.PHONY: all sim headless test tools tablet kindle package dev prod dev-ssh dev-check wifieap scenarios check clean icon logo l10n l10n-check
 .PHONY: c-headless c-test c-tools c-kindle c-check c-package c-icon c-logo
 all: sim headless test tools kindle dist
 
@@ -358,6 +359,13 @@ $(BUILD)/host/scribe-tablet: tools/scribe-tablet.c
 # Library afterwards (MTP cannot start it). tools/kindle-dev --mount/--name/--root/--no-build/--zip.
 dev:
 	tools/kindle-dev
+
+# MTP, the release itself: build and copy the zip's own documents/Grimoire.sh over the installed
+# documents/Grimoire.sh, in place (no (dev) copy, no patch: /mnt/us/grimoire and its notebooks stay,
+# and updates stay on). The zip is this branch's build, and its version (README.txt) must be this
+# branch's VERSION: a downloaded release of another version is refused rather than installed.
+prod:
+	tools/kindle-dev --prod
 
 # SSH: build, patch and start a separate "Grimoire (dev)" on a Kindle over SSH (tools/kindle-dev-ssh:
 # GRIMOIRE_HOST, default "kindle"; --release replaces the release launcher, keeping a backup;

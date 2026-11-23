@@ -12,6 +12,12 @@
 # turns Settings > Updates off in it (kindle/app/grimoire.sh): an update from the dev copy would
 # run KPM over the release.
 #
+# --prod (make prod) is the release itself, updated in place: the zip's own documents/Grimoire.sh
+# (make package built it from this branch) is copied over the installed documents/Grimoire.sh, so
+# /mnt/us/grimoire and its notebooks stay and updates stay on. A zip whose README.txt names another
+# version than this branch's VERSION is refused: a downloaded release of a different version never
+# lands on the release launcher by mistake.
+#
 # MTP cannot start the app: close Grimoire (dev) if it is open, then tap it in the Library.
 #
 # On Linux the mount goes through GVFS: the volume's own activation root (a bare
@@ -158,17 +164,24 @@ NAME=$KINDLE_DEV_NAME
 DEV_ROOT=$KINDLE_DEV_ROOT
 BUILD_IT=1
 ZIP=
+PROD=0
+NAME_GIVEN=0
+ROOT_GIVEN=0
 
 usage() {
     cat <<'EOF'
 kindle-dev: build a separate Grimoire (dev) and copy it to a Kindle over MTP.
 
   make dev                 build and copy with the defaults
+  make prod                build and update the installed release launcher (--prod)
 
 Options:
   --mount PATH   the mounted Kindle folder that holds documents
   --name NAME    the Library entry and launcher name (default: "Grimoire (dev)")
   --root PATH    the dev data root on the Kindle (default: /mnt/us/grimoire-dev)
+  --prod         install the zip's own launcher over documents/Grimoire.sh, in place: the
+                 release itself, keeping /mnt/us/grimoire and updates. A zip whose version
+                 is not this branch's VERSION is refused. No --name or --root with it.
   --no-build     use the existing build/dist/Grimoire.zip
   --zip PATH     use another installer zip (make dist, or a release download)
   --no-install   do not install anything, even what the copy needs
@@ -179,8 +192,9 @@ On Linux the script uses a mounted MTP volume if there is one, and asks GVFS to 
 not; pass --mount or set GRIMOIRE_MTP_MOUNT to point at the folder holding documents yourself.
 If another desktop daemon (KDE's kmtpd5) holds the Kindle's MTP interface, the script stops it
 for the session and mounts through GVFS. macOS does not mount MTP devices itself: use a
-third-party MTP mount and --mount, or make dev-ssh. The release's documents/Grimoire.sh and
-/mnt/us/grimoire are never touched.
+third-party MTP mount and --mount, or make dev-ssh. Without --prod the release's
+documents/Grimoire.sh and /mnt/us/grimoire are never touched; with it the launcher is replaced in
+place, which is the update the README describes.
 
 What the machine is missing is installed on the way, with its own package manager: GVFS and its
 MTP backend on Linux (dnf, apt-get, pacman, zypper or apk), Zig and cargo-zigbuild for the build,
@@ -188,15 +202,17 @@ and python3 (brew on macOS). --no-install leaves the machine as it is.
 
 MTP cannot launch an app: close Grimoire (dev) if it is open, then tap "Grimoire (dev)" in the
 Library. Its first launch unpacks into the dev data root; notebooks and settings there are
-separate from the release's, and updates are off in it.
+separate from the release's, and updates are off in it. With --prod, close Grimoire, tap
+"Grimoire" in the Library, and the new build unpacks over the installed one.
 EOF
 }
 
 while [ $# -gt 0 ]; do
     case "$1" in
     --mount) MOUNT=${2:?--mount needs a path}; shift ;;
-    --name) NAME=${2:?--name needs a name}; shift ;;
-    --root) DEV_ROOT=${2:?--root needs a path}; shift ;;
+    --name) NAME=${2:?--name needs a name}; NAME_GIVEN=1; shift ;;
+    --root) DEV_ROOT=${2:?--root needs a path}; ROOT_GIVEN=1; shift ;;
+    --prod) PROD=1 ;;
     --no-build) BUILD_IT=0 ;;
     --zip) ZIP=${2:?--zip needs a path}; BUILD_IT=0; shift ;;
     --no-install) NO_INSTALL=1 ;;
@@ -212,9 +228,17 @@ ensure_python || {
 }
 command -v make >/dev/null 2>&1 || { echo "kindle-dev: needs make" >&2; exit 1; }
 
-# Values that end up in a shell line or a path in the launcher, checked before anything is
-# mounted or built (tools/kindle-dev-lib.sh: the release's own launchers are off limits).
-kindle_dev_validate kindle-dev "$NAME" "$DEV_ROOT" || exit 2
+# --prod is the release launcher itself, and the release's data root; a --name or --root would
+# make it another copy, which is make dev's job.
+if [ "$PROD" = 1 ]; then
+    [ "$NAME_GIVEN" = 0 ] || { echo "kindle-dev: --prod installs the release \"Grimoire\"; it takes no --name." >&2; exit 2; }
+    [ "$ROOT_GIVEN" = 0 ] || { echo "kindle-dev: --prod keeps the release's /mnt/us/grimoire; it takes no --root." >&2; exit 2; }
+    NAME=Grimoire
+else
+    # Values that end up in a shell line or a path in the launcher, checked before anything is
+    # mounted or built (tools/kindle-dev-lib.sh: the release's own launchers are off limits).
+    kindle_dev_validate kindle-dev "$NAME" "$DEV_ROOT" || exit 2
+fi
 
 mount_docs() {
     for cand in "$1" "$1"/* "$1"/*/*; do
@@ -405,8 +429,46 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
+# prod_launcher ZIP OUT: write the zip's own documents/Grimoire.sh to OUT, unchanged, and print
+# its version. Refuses a zip of another version than this branch's VERSION: the launcher installed
+# over the release must be the branch's build, not some release download's.
+prod_launcher() {
+    python3 -I - "$1" "$2" "$(cat "$ROOT/VERSION" 2>/dev/null || echo 0.1.0)" <<'PY'
+import re
+import sys
+import zipfile
+
+zip_path, out_path, branch = sys.argv[1:4]
+with zipfile.ZipFile(zip_path) as archive:
+    names = set(archive.namelist())
+    if "documents/Grimoire.sh" not in names or "README.txt" not in names:
+        raise SystemExit("not a Grimoire installer zip (documents/Grimoire.sh and README.txt)")
+    launcher = archive.read("documents/Grimoire.sh")
+    readme = archive.read("README.txt").decode("utf-8", "replace")
+match = re.match(r"Grimoire (\S+):", readme)
+if not match:
+    raise SystemExit("README.txt does not name a version")
+version = match.group(1)
+if version != branch:
+    raise SystemExit(
+        f"the zip is Grimoire {version}, but this branch is {branch}: \"make package\" builds this branch's"
+    )
+if not launcher.startswith(b"#!/bin/sh\n# Name: Grimoire\n") or b"\n__GRIMOIRE_APP_ARCHIVE__\n" not in launcher:
+    raise SystemExit("documents/Grimoire.sh is not a self-contained Grimoire launcher")
+with open(out_path, "wb") as out:
+    out.write(launcher)
+print(version)
+PY
+}
+
 LAUNCHER=$TMP/$NAME.sh
-if ! kindle_dev_patch "$ZIP" "$LAUNCHER" "$NAME" "$DEV_ROOT"; then
+VERSION_INSTALLED=
+if [ "$PROD" = 1 ]; then
+    if ! VERSION_INSTALLED=$(prod_launcher "$ZIP" "$LAUNCHER"); then
+        echo "kindle-dev: could not take the release launcher from $ZIP (nothing was copied)." >&2
+        exit 1
+    fi
+elif ! kindle_dev_patch "$ZIP" "$LAUNCHER" "$NAME" "$DEV_ROOT"; then
     echo "kindle-dev: could not make a dev launcher from $ZIP." >&2
     exit 1
 fi
@@ -478,6 +540,12 @@ else
 fi
 TMP_FILE=
 
-echo "kindle-dev: installed \"$NAME\" ($(cat "$ROOT/VERSION" 2>/dev/null || echo dev))."
-echo "kindle-dev: close Grimoire (dev) if it is open, then tap \"$NAME\" in the Library."
-echo "kindle-dev: its notebooks and settings go to $DEV_ROOT/grimoire; the release is untouched."
+if [ "$PROD" = 1 ]; then
+    echo "kindle-dev: updated the release \"$NAME\" ($VERSION_INSTALLED) at $DEST/documents."
+    echo "kindle-dev: close Grimoire if it is open, then tap \"$NAME\" in the Library; the new build unpacks then."
+    echo "kindle-dev: its notebooks and settings stay in /mnt/us/grimoire, and updates stay on."
+else
+    echo "kindle-dev: installed \"$NAME\" ($(cat "$ROOT/VERSION" 2>/dev/null || echo dev))."
+    echo "kindle-dev: close Grimoire (dev) if it is open, then tap \"$NAME\" in the Library."
+    echo "kindle-dev: its notebooks and settings go to $DEV_ROOT/grimoire; the release is untouched."
+fi

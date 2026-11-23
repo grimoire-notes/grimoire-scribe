@@ -1486,6 +1486,12 @@ release's `documents/Grimoire.sh` and `/mnt/us/grimoire` are never touched;
 `tools/kindle-dev-ssh --release` is the explicit way to put a build on the release launcher: it
 warns and keeps the launcher it replaces as `documents/Grimoire.sh.bak`.
 
+`make prod` is the release itself, updated over MTP with no copy and no patch: it builds this
+branch's zip and copies its own `documents/Grimoire.sh` over the installed one, so
+`/mnt/us/grimoire`, its notebooks and Settings > Updates stay as they are. The build is the
+branch's: a zip whose `README.txt` names another version than this branch's `VERSION` (a
+downloaded release, or a stale `build/dist`) is refused instead of installed.
+
 Limits of the dev copy:
 
 - It starts uncalibrated: pen and touch calibration live in its own settings, so calibrate it
