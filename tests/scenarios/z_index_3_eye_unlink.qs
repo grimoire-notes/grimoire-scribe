@@ -46,7 +46,6 @@ shot 02-eye-link-removed
 pentap panel links
 pen line 300 1400 900 1500 30 0.6 0.6
 expect editor.linkto.dock is top
-expect editor.ui_at.930.679 is linkto.pages
 tap panel linkto.pages
 tap panel pages.page.3
 expect editor.eye_drawn is 1

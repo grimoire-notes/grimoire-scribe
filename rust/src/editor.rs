@@ -2964,7 +2964,7 @@ pub fn editor_live_chip(a: &App, size: i32) -> Rect {
 pub fn editor_live_under_panel(a: &mut App, r: Rect, push: Rect) {
     let mut keep = Canvas::default();
     if canvas_init(&mut keep, r.w, r.h) != 0 {
-        live_push(&a.screen, push); // (the panel in the page's tiles, rather than none of push)
+        crate::app::live_push_under_status(a, push); // (the panel in the page's tiles, rather than none of push)
         return;
     }
     canvas_blit(&mut keep, &a.screen, r, 0, 0);
@@ -2973,7 +2973,7 @@ pub fn editor_live_under_panel(a: &mut App, r: Rect, push: Rect) {
     compose(a, r);
     ed(a).live_no_panel = false;
     a.toast_floor = floor;
-    live_push(&a.screen, push);
+    crate::app::live_push_under_status(a, push);
     canvas_blit(&mut a.screen, &keep, Rect { x: 0, y: 0, w: r.w, h: r.h ,
         }, r.x, r.y,
     );
@@ -8125,7 +8125,7 @@ fn widget_preview_paint(a: &mut App, old: Option<Rect>, new: Rect, now: u32) {
     if live_on() {
         let all = v.iter().fold(RECT_EMPTY, |u, &r| rect_union(u, r));
         if !rect_is_empty(all) {
-            live_push(&a.screen, all);
+            crate::app::live_push_under_status(a, all);
         }
     }
     if !rect_is_empty(a.dirty) {
@@ -12130,6 +12130,13 @@ fn migrate_step(a: &mut App) {
 
 pub fn editor_tick(a: &mut App, now: u32) {
     if crate::library::library_settings_active(a) {crate::library::library_tick(a,now);touch_context(a);return;}
+    // The notebook's status bar keeps the clock too: one top-bar refresh when the minute changes, as
+    // the Library's does (library_tick). Without it the bar keeps the minute it was last drawn with.
+    if !a.asleep && crate::status::status_bar_visible(a) && crate::library::library_app_minute(a) {
+        let r=Rect::new(0,0,a.w,crate::globalui::gui_status_h());
+        compose(a,r);
+        app_invalidate(a,r,RefreshMode::Ui);
+    }
     // (the picture pick over the page: its listing, rows and hold, and the page's idle save as over any sheet; the
     // page's other work waits until it closes)
     if ed_ref(a).files.open {

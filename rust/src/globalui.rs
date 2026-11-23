@@ -17,7 +17,7 @@
 use crate::prelude::*;
 use crate::appicon::AppIcon;
 use crate::status::{battery_from_sysfs, Battery, STATUS_SIZES};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use crate::ui::{
     ui_button, ui_card, ui_frame, ui_icon, ui_slider_draw, ui_small_size, ui_text,
     ui_text_size, ui_title_size, ButtonStyle, IconKind, Slider,
@@ -49,11 +49,20 @@ pub fn gui_margin() -> i32 {
 /// been; the Status bar settings page's size scales all of it, not just its clock.
 const STATUS_SCALE: [f32; 3] = [0.82, 1.0, 1.18];
 
+struct StatusUnder {
+    w: i32,
+    h: i32,
+    px: Vec<u8>,
+}
+
 thread_local! {
     /// The Status bar settings the top status bar draws with (size, 12-hour time).
     static STATUS_STYLE: Cell<(i32, bool)> = const { Cell::new((1, false)) };
     /// Whether tapping the bar hid it (settings.ini status_on, unchanged by a restart).
     static STATUS_SHOWN: Cell<bool> = const { Cell::new(true) };
+    /// The screen as it was under the bar when it was last drawn (Live view's tiles show this while
+    /// the bar itself is its own layer: LIVE_LAYER_STATUS).
+    static STATUS_UNDER: RefCell<StatusUnder> = const { RefCell::new(StatusUnder { w: 0, h: 0, px: Vec::new() }) };
 }
 
 /// Applies the Status bar settings to every top status bar (Settings > Sleep & Clock > Status bar).
@@ -661,6 +670,55 @@ pub fn gui_status_bar_connections(c: &mut Canvas, aw: i32, now: i64) {
     gui_status_bar_in(c, aw, now, false, true);
 }
 
+/// The screen under the bar, saved before the bar is drawn: Live view's page tiles take these pixels
+/// where the bar covers them, so hiding the bar's layer (LIVE_LAYER_STATUS) shows the page, not the bar.
+fn status_under_save(c: &Canvas, w: i32, h: i32) {
+    if w <= 0 || h <= 0 || c.stride < w {
+        return;
+    }
+    let stride = c.stride as usize;
+    if c.px.len() < (h as usize).saturating_mul(stride) {
+        return;
+    }
+    STATUS_UNDER.with(|u| {
+        let mut u = u.borrow_mut();
+        let n = (w as usize) * (h as usize);
+        if u.px.len() != n {
+            u.px.resize(n, 255);
+        }
+        for y in 0..h as usize {
+            let from = y * stride;
+            u.px[y * w as usize..(y + 1) * w as usize].copy_from_slice(&c.px[from..from + w as usize]);
+        }
+        u.w = w;
+        u.h = h;
+    });
+}
+
+/// Puts the saved screen under the bar into c at r (the part of the bar r covers). False when there
+/// is no matching saved bar: the caller leaves the screen as it is.
+pub fn gui_status_under_put(c: &mut Canvas, r: Rect) -> bool {
+    if r.w <= 0 || r.h <= 0 || r.x < 0 || r.y < 0 || r.x + r.w > c.w || r.y + r.h > c.h || c.stride < c.w {
+        return false;
+    }
+    let stride = c.stride as usize;
+    if c.px.len() < (c.h as usize).saturating_mul(stride) {
+        return false;
+    }
+    STATUS_UNDER.with(|u| {
+        let u = u.borrow();
+        if r.x + r.w > u.w || r.y + r.h > u.h || u.px.len() < (u.w as usize).saturating_mul(u.h as usize) {
+            return false;
+        }
+        for y in 0..r.h as usize {
+            let src = (r.y as usize + y) * u.w as usize + r.x as usize;
+            let dst = (r.y as usize + y) * stride + r.x as usize;
+            c.px[dst..dst + r.w as usize].copy_from_slice(&u.px[src..src + r.w as usize]);
+        }
+        true
+    })
+}
+
 fn gui_status_bar_in(c: &mut Canvas, aw: i32, now: i64, clock: bool, fill: bool) {
     if !gui_status_visible() {
         return;
@@ -669,6 +727,7 @@ fn gui_status_bar_in(c: &mut Canvas, aw: i32, now: i64, clock: bool, fill: bool)
     let u = |v: f32| ui_px(v * scale);
     let h = gui_status_h();
     let m = gui_margin();
+    status_under_save(c, aw, h);
     if fill {
         canvas_fill(c, Rect::new(0, 0, aw, h), 255);
     }

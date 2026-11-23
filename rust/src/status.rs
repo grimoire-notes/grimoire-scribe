@@ -188,11 +188,20 @@ pub fn status_save_now(_a: &App) {}
 /// The retired corner's minute and battery tick: nothing to draw or ask for.
 pub fn status_tick(_a: &mut App, _now: u32) {}
 
-/// The pixels a painted corner covered, for app_flush to put back: the corner is never painted.
+/// The pixels a painted corner covered, for app_flush to put back: the shared bar is already in the
+/// screen, so there is nothing to put back.
 pub struct StatusCover;
 
-/// Paints the retired corner into a.screen: never.
-pub fn status_cover(_a: &mut App, _dirty: &mut Rect) -> Option<StatusCover> {
+/// Keeps Live view's status layer (the shared bar, when it is shown) in step with the screen: a refresh
+/// that reaches the bar, or a bar that is now hidden, tells the layer again. The bar is painted into
+/// a.screen by the screen itself, so there is nothing to cover and put back.
+pub fn status_cover(a: &mut App, dirty: &mut Rect) -> Option<StatusCover> {
+    let zone = status_zone(a);
+    if rect_is_empty(zone) {
+        crate::live::live_layer(crate::live::LIVE_LAYER_STATUS, &a.screen, RECT_EMPTY);
+    } else if rect_overlaps(*dirty, zone) {
+        crate::live::live_layer(crate::live::LIVE_LAYER_STATUS, &a.screen, zone);
+    }
     None
 }
 
@@ -202,8 +211,11 @@ pub fn status_uncover(_a: &mut App, _c: StatusCover) {}
 /// A refresh was sent: the retired corner was not in it.
 pub fn status_presented(_a: &App, _r: Rect) {}
 
-/// Live view starts: the retired corner has no layer.
-pub fn status_live(_a: &mut App) {}
+/// Live view starts: the shared bar's layer, where it is shown.
+pub fn status_live(a: &mut App) {
+    let zone = status_zone(a);
+    crate::live::live_layer(crate::live::LIVE_LAYER_STATUS, &a.screen, zone);
+}
 
 /// A refresh of the retired corner: nothing.
 pub fn status_flush(_a: &mut App) {}

@@ -63,7 +63,7 @@ fn gesture_keys_follow_the_older_ones() {
     check!(settings_save(&s) == 0);
     let got = read_file(&format!("{}/settings.ini", store_root())).unwrap_or_default();
     // Keep the historic ordering fixture frozen; apply only the deliberate later default changes.
-    let head = include_str!("fixtures/settings_default_head.ini").replace("status_on=0", "status_on=1").replace("status_size=0", "status_size=1")
+    let head = include_str!("fixtures/settings_default_head.ini").replace("status_on=0", "status_on=1\nstatus_in_notebooks=1").replace("status_size=0", "status_size=1")
         .replace("highlighter.size_min_mm=3.0000", "highlighter.size_min_mm=5.6000")
         .replace("highlighter.size_max_mm=3.0000", "highlighter.size_max_mm=5.6000")
         // 2.1's quick sizes: settings_version 4, the pens' widths on the pen-width series

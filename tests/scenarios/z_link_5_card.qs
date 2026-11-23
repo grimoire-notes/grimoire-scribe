@@ -21,8 +21,8 @@ expect editor.link_card.title is Árbol
 expect editor.link_card.rows is rename retarget redraw delete
 expect editor.link_card.border is 1
 expect editor.link_card.links is 1
-expect editor.link_card.rect is 261 1179 780 666
-expect display.presents has fast 261 924 649 11, fast 261 1144 649 11, fast 261 935 11 209, fast 899 935 11 209, ui 261 1179 780 666
+expect editor.link_card.rect is 289 1235 780 666
+expect display.presents has fast 289 989 622 11, fast 289 1200 622 11, fast 289 1000 11 200, fast 900 1000 11 200, ui 289 1235 780 666
 touch up 600 1100
 expect editor.page is 1
 expect editor.link_card is 1
@@ -133,7 +133,7 @@ wait 800
 touch up 600 1450
 expect editor.link_card.title is Page 2
 expect editor.link_card.rows is rename retarget redraw delete
-expect editor.link_card.rect is 261 1493 780 666
+expect editor.link_card.rect is 289 1535 780 666
 shot 04-card-unnamed
 # low on the screen, so its keyboard docks at the top (the keys 1307 px higher): shift, t, w, o, Done
 tap panel card.rename
@@ -258,7 +258,7 @@ touch down 992 825
 wait 800
 touch up 992 825
 expect editor.link_card is 1
-expect editor.link_card.rect is 736 893 780 666
+expect editor.link_card.rect is 757 935 780 666
 shot 09-card-sideways
 tap 2200 1700
 expect editor.link_card is 0

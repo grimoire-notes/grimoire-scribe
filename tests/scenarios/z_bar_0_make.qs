@@ -40,16 +40,16 @@ expect settings.hints is 2
 key 38 0
 pen line 300 1400 900 1500 30 0.6 0.6
 # Link to... opens: Choose from the pages... picks in the Pages view
-expect editor.ui_at.930.679 is linkto.pages
-tap 930 679
+expect editor.linkto.dock is top
+tap panel linkto.pages
 expect editor.picking is new
 tap 703 340
 expect editor.links is 2 2
 key 38 0
 pen line 300 1800 900 1900 30 0.6 0.6
 # Link to... opens: Choose from the pages... picks in the Pages view
-expect editor.ui_at.930.679 is linkto.pages
-tap 930 679
+expect editor.linkto.dock is top
+tap panel linkto.pages
 expect editor.picking is new
 tap 1155 340
 expect editor.links is 3 3

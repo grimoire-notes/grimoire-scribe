@@ -76,9 +76,8 @@ tap 430 1643
 wait 100
 expect editor.bar is 0
 expect editor.linkto is pick
-expect editor.linkto.rect is 20 173 1820 596
+expect editor.linkto.rect is 20 86 1820 596
 expect editor.linkto.3 is p3 current
-expect editor.ui_at.1381.387 is linkto.chip.2
 tap panel linkto.elsewhere
 tap panel elsewhere.current
 tap panel elsewhere.page.5

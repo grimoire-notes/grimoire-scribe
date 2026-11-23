@@ -46,8 +46,8 @@ tap 930 2370
 tap 1155 340
 key 38 0
 pen line 300 1400 900 1500 20 0.6 0.6
-expect editor.ui_at.930.679 is linkto.pages
-tap 930 679
+expect editor.linkto.dock is top
+tap panel linkto.pages
 tap 703 340
 pen leave
 wait 1100

@@ -100,48 +100,42 @@ expect editor.links is 7 7
 key 38 0
 pen line 300 1350 900 1390 30 0.6 0.6
 # Link to... opens: Choose from the pages... picks in the Pages view
-expect editor.ui_at.930.819 is linkto.pages
-tap 930 819
+tap panel linkto.pages
 expect editor.picking is new
 tap 251 1020
 expect editor.links is 8 8
 key 38 0
 pen line 300 1500 900 1540 30 0.6 0.6
 # Link to... opens: Choose from the pages... picks in the Pages view
-expect editor.ui_at.930.819 is linkto.pages
-tap 930 819
+tap panel linkto.pages
 expect editor.picking is new
 tap 703 1020
 expect editor.links is 9 9
 key 38 0
 pen line 300 1650 900 1690 30 0.6 0.6
 # Link to... opens: Choose from the pages... picks in the Pages view
-expect editor.ui_at.930.819 is linkto.pages
-tap 930 819
+tap panel linkto.pages
 expect editor.picking is new
 tap 1155 1020
 expect editor.links is 10 10
 key 38 0
 pen line 300 1800 900 1840 30 0.6 0.6
 # Link to... opens: Choose from the pages... picks in the Pages view
-expect editor.ui_at.930.819 is linkto.pages
-tap 930 819
+tap panel linkto.pages
 expect editor.picking is new
 tap 1607 1020
 expect editor.links is 11 11
 key 38 0
 pen line 300 1950 900 1990 30 0.6 0.6
 # Link to... opens: Choose from the pages... picks in the Pages view
-expect editor.ui_at.930.819 is linkto.pages
-tap 930 819
+tap panel linkto.pages
 expect editor.picking is new
 tap 251 1360
 expect editor.links is 12 12
 key 38 0
 pen line 300 2100 900 2140 30 0.6 0.6
 # Link to... opens: Choose from the pages... picks in the Pages view
-expect editor.ui_at.930.819 is linkto.pages
-tap 930 819
+tap panel linkto.pages
 expect editor.picking is new
 tap 703 1360
 expect editor.links is 13 13

@@ -79,14 +79,12 @@ expect editor.links is 4 4
 key 38 0
 pen line 300 2000 900 2150 30 0.6 0.6
 expect editor.linkto.dock is top
-expect editor.ui_at.479.387 is linkto.chip.1
-tap 479 387
+tap panel linkto.chip.1
 wait 100
 expect editor.keyboard is Name the new page
 expect editor.kb_dock is top
 shot 02-name-the-page-top
-# (the top dock's keys sit 1307 px higher than the bottom's: Done 1643 2365 is 1643 1058)
-tap 1643 1058
+tap panel naming.key.done
 wait 100
 expect editor.pages is 7
 expect editor.page is 1

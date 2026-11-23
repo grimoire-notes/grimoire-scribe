@@ -1688,6 +1688,35 @@ fn live_raw_sync() {
     live_set_raw_map(if ok { Some(&m) } else { None });
 }
 
+/// A rect of a.screen presented, with the shared status bar left out of its page tiles: the bar is
+/// LIVE_LAYER_STATUS, and the tiles take the screen as it was under it (globalui's saved bar), so a
+/// browser that hides the bar's layer sees the page where it covered.
+pub(crate) fn live_push_under_status(a: &mut App, r: Rect) {
+    let zone = crate::status::status_zone(a);
+    let under = rect_intersect(r, zone);
+    if rect_is_empty(under) {
+        live_push(&a.screen, r);
+        return;
+    }
+    // The layer is the bar as the screen holds it, sent before the tiles take the saved page under it.
+    crate::live::live_layer(crate::live::LIVE_LAYER_STATUS, &a.screen, zone);
+    let stride = a.screen.stride as usize;
+    let mut bar = Vec::with_capacity((under.w as usize) * (under.h as usize));
+    for y in under.y..under.y + under.h {
+        let at = (y as usize) * stride + under.x as usize;
+        bar.extend_from_slice(&a.screen.px[at..at + under.w as usize]);
+    }
+    let put = crate::globalui::gui_status_under_put(&mut a.screen, under);
+    live_push(&a.screen, r);
+    if put {
+        let w = under.w as usize;
+        for (i, y) in (under.y..under.y + under.h).enumerate() {
+            let at = (y as usize) * stride + under.x as usize;
+            a.screen.px[at..at + w].copy_from_slice(&bar[i * w..][..w]);
+        }
+    }
+}
+
 // A rect of a.screen presented, into Live view's frame (live_push): in the editor, the page under its
 // panel instead of the panel (composed again without it, editor_live_under_panel), and the panel as
 // its own layer (live_layer), for the browser to show or not.
@@ -1706,7 +1735,7 @@ fn live_push_screen(a: &mut App, r: Rect) {
         with(|s| s.live_panel = panel);
     }
     if rect_is_empty(under) {
-        live_push(&a.screen, r);
+        live_push_under_status(a, r);
     } else {
         editor_live_under_panel(a, under, r);
     }
