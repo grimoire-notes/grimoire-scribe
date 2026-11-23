@@ -46,6 +46,9 @@ root/packages/index.json                the installed widget packages (2.2, issu
 root/packages/widgets/<id>/package.yaml a widget package's manifest and files (2.2, issue #200; Widget packages)
 root/packages/widgets/<id>/state/settings.json  the values of a package's declared settings, written by the host (2.2; Widget packages)
 root/packages/widgets/<id>.previous/    the version an update replaced, for a rollback (2.2, issue #200; Widget packages)
+root/packages/apps-index.json           the installed full-screen app packages (2.3; App packages)
+root/packages/apps/<id>/package.yaml    an app package's manifest and WebAssembly (2.3; App packages)
+root/packages/apps/<id>/state/          an app's state and its declared settings (2.3; App packages)
 root/clipboard.qpg                      the lasso's clipboard: what Copy or Cut took (2.0.0-beta.2; The clipboard)
 root/shortcuts.ini                      keyboard and controller mappings the owner edits (2.0; settings.ini)
 root/controller.ini                     controller buttons learned in Settings (2.0; settings.ini)
@@ -1719,6 +1722,27 @@ instead of freezing the device.
 
 [WIDGETS.md](WIDGETS.md#the-wasm-abi) is the guide to writing one.
 
+## App packages (2.3)
+
+Settings → Packages → Apps installs a full-screen app from a GitHub repository (`user/repo`) or a
+HTTPS `.yaml` address. Apps use the same package manager as widgets, with their own folder and
+index: `packages/apps/<id>/` and `packages/apps-index.json`. A manifest is `type: app` and has the
+same fields as a widget manifest, except that `spec.size` is ignored (an app owns the screen) and
+`spec.status_bar` chooses whether Grimoire's shared status bar starts over the app. `spec.icon` may
+name a built-in icon or a bundled `.ico`; a `.ico` needs `spec.icon_sha256` and `spec.icon_size`, and
+the installer fetches and verifies that second file before the app is put in place. The app
+capabilities are `storage:app-local` and `network:http`; the artifact is still a SHA-256-checked
+WebAssembly module of at most 32 MiB. Its `state/` folder survives updates and a Remove that keeps
+state, and `state/settings.json` is the host's own settings file.
+
+A module exports `memory` and `app_draw(width, height, scale_milli, elapsed_ms)`, and may export
+`app_pointer(phase, x, y, source)`, `app_key(code, mods, down)`, `app_status_bar()` and
+`app_stop()`. It imports drawing and the global UI from the `grimoire` module, plus state,
+settings, time, battery, Wi-Fi, screen geometry, `close()`, `show_status_bar`, `toast` and the
+optional asynchronous `http_*` calls. The two-finger bottom-to-middle swipe always returns Home;
+`close()` is the app's own safe path. Both run `app_stop` and save state. [APPS.md](APPS.md) has the
+complete manifest and ABI.
+
 ## `settings.ini`
 
 `key=value` lines; `#` starts a comment line. Readers strip one carriage return at the end of a
@@ -1774,6 +1798,7 @@ owner's to copy back or delete. Older versions ignore it.
 | `files_view` | how Files lists: `covers`, a grid of previews (Files' previews, below); absent, or `list`, rows (the default, not written). Any other value: as for `files_sort`. Written after `files_show`. Since 2.2, as `files_card` |
 | `home` | the home folder, where the main menu opens at each start (2.2, issue #160): `notebooks/<folder>`, a Library folder by its path (`notebooks/School/2026`), or `files/<path>`, a folder of the Kindle's storage by its path from the storage root (`files/documents/Planners`); absent, empty or `notebooks`, the Library's top (the default, not written). Read strictly: UTF-8, under 608 bytes, no control character, no absolute path, no empty, `.` or `..` part, never the storage root; a Library folder is looked up by name in the Library's list, a storage folder reached only by Files' walk (no link followed, no refused place, not the trash). A value that is not one of these, or names a folder that is gone or refused, is not used: the Library's top with the toast "Home folder not found.", and the line is taken out at once (unlike `files_sort`'s, it is not written back; a folder that could not be read for another reason keeps it). Written after `files_view`. Since 2.2, as `files_card` |
 | `pdf_gamma` | darker lines in imported PDFs (2.2, issue #173; Settings > System's Darker lines in imported PDFs row): `1.5` (Medium) or `2.0` (Strong), the gamma a PDF queued from then on draws its gray pages at (Imports: PDFs); absent, or `1.0`, Off (the default, not written). Read exactly as written: any other value is Off and is written back as it was until the setting changes. Written after `home`. Since 2.2; older versions keep the line as one they do not know |
+| `recent_apps` | the Library's app row and the Apps page, most recently used first (2.3): `files`, `share` and `settings`, comma-separated. Opening an app from its tile or another of its entrances moves it to the front; the file is saved only when that order changes. A name this build does not have, or a repeat, is left out, and an app the line does not name follows in the default order (`files,share,settings`). Written after `pdf_gamma`. Since 2.3; older versions keep the line as one they do not know |
 | `status_mode` | Retired status-strip preference. New saves write 1 (corner). Legacy 0 becomes the small enabled top-left corner, 2 becomes an off corner. There is no reserved strip or mode selector. `status-mode` is a compatibility alias for the corner toggle. |
 | `shortcuts_enabled` | 0 or 1: keyboard and controller shortcuts, off by default (`shortcuts.ini`, below). Since 2.0.0-beta.1; 1.1.0-beta.1 and 1.1.0-beta.2 keep the line and have no shortcuts, 1.0.0-beta drops it on its next save |
 | `controller` | 0 or 1: start the Bluetooth helper with Grimoire (Settings > Pair > Bluetooth controller, Settings > Controller before 2.0.0-beta.2; docs/SHORTCUTS.md), off by default; it only starts while shortcuts are on too. Since 2.0.0-beta.5; versions before keep the line (from 1.0.0-beta.2 on) or drop it (1.0.0-beta), and start nothing |

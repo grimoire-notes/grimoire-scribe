@@ -227,7 +227,7 @@ scenario-times: scenarios
 # v_gestures_4e_single checks what one click of the pen's side button has NOT done yet, 200 ms after it:
 # by the script's clock (GRIMOIRE_SIM_CLOCK=script), which a late wait does not move, where by the real
 # clock a wait that ended late ended after the click had acted (issue #86).
-LATE_SCENARIOS := y_status_press s_shape_4_guards z_pages_drag_hold u_keyboard_hold_delete y_status_corner z_rc8_pages_refresh \
+LATE_SCENARIOS := s_shape_4_guards z_pages_drag_hold u_keyboard_hold_delete z_rc8_pages_refresh \
   z_links_3_bar_learns v_gestures_4e_single
 .PHONY: scenarios-late
 scenarios-late: $(BUILD)/host/grimoire-headless

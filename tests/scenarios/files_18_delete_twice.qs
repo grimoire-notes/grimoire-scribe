@@ -34,7 +34,7 @@ shot 01-folder-asked
 # a tenth of a second after it was shown: no answer yet, on its Delete, on Keep it or outside the sheet
 tap library files.card.delete
 tap library files.card.cancel
-tap 930 60
+tap 1700 300
 wait 100
 expect files.card is delete
 expect toast is

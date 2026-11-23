@@ -8,6 +8,7 @@
 //! compose(r) rebuilds a screen rect from those layers; show(page rect) is the page-side entry.
 
 use crate::browser::{Browser, BrowserResult, FilesPrefs, PickSpec};
+use crate::globalui::gui_status_h;
 use crate::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -1602,7 +1603,18 @@ fn panel_name(h: &Hit) -> String {
 /// editor open, or the button is not there (a disabled Undo has no hit, as a human tap finds
 /// nothing). The hits go stale after a stroke until the settle, and a human tap settles first, so
 /// this does too.
+/// A keyboard's named key at its centre: .done, .del, .cancel, .dec, .inc, .shift, or a single character.
+fn kb_key_point(kb: &Keyboard, k: &str) -> Option<(f32, f32)> {
+    if !kb.open {return None;}
+    let code = match k {"done"=>KB_KEY_DONE,"del"=>KB_KEY_BKSP,"cancel"=>KB_KEY_CANCEL,"dec"=>KB_KEY_DEC,"inc"=>KB_KEY_INC,"shift"=>KB_KEY_SHIFT,c if c.chars().count()==1=>c.chars().next()? as u32,_=>return None};
+    let mut r = RECT_EMPTY;
+    keyboard_key_rect(kb, code, &mut r).then(||((r.x+r.w/2) as f32,(r.y+r.h/2) as f32))
+}
+
 pub fn editor_panel_point(a: &mut App, name: &str) -> Option<(f32, f32)> {
+    if let Some(n) = name.strip_prefix("quick.") {
+        return crate::quick::control_point(a, &format!("quick.{n}"));
+    }
     if crate::library::library_settings_active(a){return crate::library::library_control_point(a,name);}
     let s = a.ed.as_deref()?;
     if a.scr != ScreenId::Editor || !s.open {
@@ -1611,6 +1623,10 @@ pub fn editor_panel_point(a: &mut App, name: &str) -> Option<(f32, f32)> {
     // The picture pick over the page (#146): files.* as the Library's; the sheet's From a file... tile and Back
     if let Some(n)=name.strip_prefix("files.") {return s.files.open.then(||s.files.point(n)).flatten();}
     if let Some(n)=name.strip_prefix("templates.") {return (s.ts.open && !s.files.open).then(||tplsheet_point(&s.ts,n)).flatten();}
+    // The card's keyboard while it types a name: card.key.shift, card.key.t, card.key.done.
+    if let Some(k)=name.strip_prefix("card.key.") {
+        return s.card.kb.open.then(|| kb_key_point(&s.card.kb, k)).flatten();
+    }
     // the long-press card's rows, and a web link's card's Done: card.rename ... card.close (while it is drawn)
     if let Some(n)=name.strip_prefix("card.") {return card_shows(s).then(||linkcard_point(&s.card,n)).flatten();}
     if name=="map.current" {return mapview_node_point(&s.map,&s.open_pid().to_string());}
@@ -1627,10 +1643,14 @@ pub fn editor_panel_point(a: &mut App, name: &str) -> Option<(f32, f32)> {
     if let Some(n)=name.strip_prefix("pages."){return pagesview_control_point(&s.pv,n);}
     // The toolbar's count pad's keys while it is up: addpad.key.0 to addpad.key.9, .done, .del, .cancel, .dec, .inc.
     if let Some(k)=name.strip_prefix("addpad.key.") {
-        if !s.add_kb.open {return None;}
-        let code=match k {"done"=>KB_KEY_DONE,"del"=>KB_KEY_BKSP,"cancel"=>KB_KEY_CANCEL,"dec"=>KB_KEY_DEC,"inc"=>KB_KEY_INC,c if c.chars().count()==1=>c.chars().next()? as u32,_=>return None};
-        let mut r=RECT_EMPTY;
-        return keyboard_key_rect(&s.add_kb,code,&mut r).then(||((r.x+r.w/2) as f32,(r.y+r.h/2) as f32));
+        return kb_key_point(&s.add_kb, k);
+    }
+    // New page...'s naming keyboard (naming.key.done), and Find's picking keyboard (find.key.done).
+    if let Some(k)=name.strip_prefix("naming.key.") {
+        return (s.lm.state == LmState::Naming).then(|| kb_key_point(&s.lm.kb, k)).flatten();
+    }
+    if let Some(k)=name.strip_prefix("find.key.") {
+        return s.find.open.then(|| kb_key_point(&s.find.kb, k)).flatten();
     }
     if let Some(n)=name.strip_prefix("quicksize."){return quicksize_control_point(&s.qs,n);}
     if let Some(n)=name.strip_prefix("display."){return dispmenu_control_point(&s.dm,n);}
@@ -2501,9 +2521,9 @@ fn draw_tools(a: &mut App) {
     }
 }
 
-/// The canvas widgets sit on: the whole screen under the status corner.
+/// The canvas widgets sit on: the whole screen under the shared status bar.
 fn widget_area(a: &App) -> Rect {
-    let top = status_reserved(a);
+    let top = gui_status_h();
     Rect { x: 0, y: top, w: a.w, h: a.h - top }
 }
 
@@ -2950,6 +2970,11 @@ fn compose(a: &mut App, r: Rect) {
     }
     draw_menus(a, r);
     sel_draw(a, r);
+    if a.settings.status_on && a.settings.status_in_notebooks && rect_overlaps(r, Rect::new(0, 0, a.w, gui_status_h())) {
+        // The page continues beneath the bar. It is drawn without a background, so the ink under it
+        // still shows; a tap hides it (status.rs).
+        crate::globalui::gui_status_bar_transparent(&mut a.screen, a.w, wall_time());
+    }
 }
 
 /// Every menu, sheet and bar that is up, over the page and the panel, in the order they stack: Paper, Templates,
@@ -3154,7 +3179,7 @@ pub fn editor_live_chip(a: &App, size: i32) -> Rect {
 pub fn editor_live_under_panel(a: &mut App, r: Rect, push: Rect) {
     let mut keep = Canvas::default();
     if canvas_init(&mut keep, r.w, r.h) != 0 {
-        live_push(&a.screen, push); // (the panel in the page's tiles, rather than none of push)
+        crate::app::live_push_under_status(a, push); // (the panel in the page's tiles, rather than none of push)
         return;
     }
     canvas_blit(&mut keep, &a.screen, r, 0, 0);
@@ -3163,7 +3188,7 @@ pub fn editor_live_under_panel(a: &mut App, r: Rect, push: Rect) {
     compose(a, r);
     ed(a).live_no_panel = false;
     a.toast_floor = floor;
-    live_push(&a.screen, push);
+    crate::app::live_push_under_status(a, push);
     canvas_blit(&mut a.screen, &keep, Rect { x: 0, y: 0, w: r.w, h: r.h ,
         }, r.x, r.y,
     );
@@ -8225,7 +8250,7 @@ fn widgets_tap(a: &mut App, x: f32, y: f32) {
             close_widgets(a);
             // The package manager is Settings > Packages > Widgets, over the notebook as Settings is.
             crate::library::library_settings_from_notebook(a);
-            packages_ui_open(a);
+            packages_ui_open(a, crate::widgetpkgui::PkgKind::Widget);
         }
         _ => close_widgets(a),
     }
@@ -8379,7 +8404,7 @@ fn widget_preview_paint(a: &mut App, old: Option<Rect>, new: Rect, now: u32) {
     if live_on() {
         let all = v.iter().fold(RECT_EMPTY, |u, &r| rect_union(u, r));
         if !rect_is_empty(all) {
-            live_push(&a.screen, all);
+            crate::app::live_push_under_status(a, all);
         }
     }
     if !rect_is_empty(a.dirty) {
@@ -10608,6 +10633,17 @@ fn close_sheets(a: &mut App) {
     tplsheet_close(&mut s.ts);
 }
 
+/// Opens Settings over the notebook, saving the page first (the quick settings panel's Settings
+/// button). False when the page could not be saved.
+pub fn editor_settings_open(a: &mut App) -> bool {
+    if !save_page(a) {
+        return false;
+    }
+    close_sheets(a);
+    crate::library::library_settings_from_notebook(a);
+    true
+}
+
 // On a landscape full-page view the margins are useful space for the panel. Keep the writer's
 // chosen side, and move only horizontally; custom page sizes with no room retain the old placement.
 fn landscape_panel_slot(a: &App, left: bool) -> Option<i32> {
@@ -10661,7 +10697,7 @@ pub fn editor_enter(a: &mut App) {
     s.panel = p;
     s.tools_y = s.panel.y;
     s.widgets_y = s.panel.y;
-    let area = Rect { x: 0, y: top, w: aw, h: ah - top };
+    let area = Rect { x: 0, y: top.max(gui_status_h()), w: aw, h: ah - top.max(gui_status_h()) };
     if s.open && !s.widgets.loaded {
         // (a package whose files were removed by hand leaves the index before its frames are restored)
         crate::widgetpkg::widget_package_repair();
@@ -11647,14 +11683,6 @@ fn editor_event_in(a: &mut App, ev: &InEvent) {
         }
     }
 
-    if status_reserved(a) > 0
-        && ev.y < status_reserved(a) as f32
-        && a.ed.as_deref().is_some_and(|s| s.open && !sheet_open(s))
-        && app_pointer_phase(ev) == 0
-        && !editor_busy(a)
-    {
-        return;
-    }
     let s = ed(a);
     if !s.open {
         return;
@@ -12512,6 +12540,13 @@ fn migrate_step(a: &mut App) {
 
 pub fn editor_tick(a: &mut App, now: u32) {
     if crate::library::library_settings_active(a) {crate::library::library_tick(a,now);touch_context(a);return;}
+    // The notebook's status bar keeps the clock too: one top-bar refresh when the minute changes, as
+    // the Library's does (library_tick). Without it the bar keeps the minute it was last drawn with.
+    if !a.asleep && crate::status::status_bar_visible(a) && crate::library::library_app_minute(a) {
+        let r=Rect::new(0,0,a.w,crate::globalui::gui_status_h());
+        compose(a,r);
+        app_invalidate(a,r,RefreshMode::Ui);
+    }
     // (the picture pick over the page: its listing, rows and hold, and the page's idle save as over any sheet; the
     // page's other work waits until it closes)
     if ed_ref(a).files.open {
@@ -12843,6 +12878,9 @@ fn cache_matches_render(s: &EditorState, key: &str, dpi: f32) -> Option<bool> {
 /// The headless runner's "editor.*" keys, asked without the prefix (app_probe's contract);
 /// "templates.*" keys reach it whole (docs/SIM.md).
 pub fn editor_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
+    if key == "quick" || key.starts_with("quick.") {
+        return crate::quick::quick_probe(a, key, out, cap);
+    }
     if a.ed.is_some() {
         if let Some(v) = sel_probe(a, key) {
             csnprintf!(out, cap, "%s", v.as_str());
@@ -13005,9 +13043,19 @@ pub fn editor_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32
                 Ok(i) => match a.pkg.items.get(i) { Some(x) => x.id.as_str(), None => return -1 },
                 Err(_) => id,
             };
-            let Some(m) = crate::widgetpkg::widget_package_installed_manifest(id) else { return -1 };
+            let app = a.pkg.kind == crate::widgetpkgui::PkgKind::App;
+            let m = if app {
+                crate::apppkg::app_package_installed_manifest(id)
+            } else {
+                crate::widgetpkg::widget_package_installed_manifest(id)
+            };
+            let Some(m) = m else { return -1 };
             let Some(s) = m.settings.iter().find(|s| s.key == setting) else { return -1 };
-            let values = crate::widgetpkg::widget_settings_load(id, &m.settings);
+            let values = if app {
+                crate::apppkg::app_settings_load(id, &m.settings)
+            } else {
+                crate::widgetpkg::widget_settings_load(id, &m.settings)
+            };
             csnprintf!(out, cap, "%s", crate::widgetpkg::widget_setting_value(&values, &s.key, &s.default));
             return 0;
         }
@@ -13051,6 +13099,8 @@ pub fn editor_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32
         // that differs, "X Y" (a panel drawn over a sheet, the Find sheet's keyboard or the Links bar shows here).
         // A pixel that differs by 64 at most is not one: a frame's slanted edge drawn again over itself is blended
         // with its own pixels (never by more than a quarter of the range), and a layer redrawn in place does that.
+        // The status bar's rows are left out: its Wi-Fi and battery are hardware state that refreshes on its own,
+        // so a first draw before the battery is known is not a layer out of place.
         // The screen is the fresh one after it, so a check says what was wrong once.
         if a.ed.is_none() || !(ed_ref(a).open && a.scr == ScreenId::Editor) {
             return -1;
@@ -13059,12 +13109,16 @@ pub fn editor_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32
         compose(a, Rect { x: 0, y: 0, w: a.w, h: a.h ,
             },
         );
-        match keep.iter().zip(a.screen.px.iter()).position(|(x, y)| x.abs_diff(*y) > 64) {
+        let stride = a.screen.stride.max(1) as usize;
+        let bar = gui_status_h().max(0) as usize;
+        match keep
+            .iter()
+            .zip(a.screen.px.iter())
+            .enumerate()
+            .find(|(i, (x, y))| i / stride >= bar && x.abs_diff(**y) > 64)
+        {
             None => csnprintf!(out, cap, "%s", "ok"),
-            Some(i) => {
-                let stride = a.screen.stride.max(1) as usize;
-                csnprintf!(out, cap, "%d %d", (i % stride) as i32, (i / stride) as i32)
-            }
+            Some((i, _)) => csnprintf!(out, cap, "%d %d", (i % stride) as i32, (i / stride) as i32),
         };
         return 0;
     }
@@ -14757,6 +14811,7 @@ mod tests {
         assert_eq!(gesturemap_set(&mut a.gestures, pb_key(PenBtn::Button, PenKind::Drag), SHORTCUT_ZOOM_IN), 0);
         app_gestures_sync(&mut a);
         let ink = ed_ref(&a).page_canvas.px.clone();
+        let zoom = ed_ref(&a).zoom;
         let ev = InEvent { type_: InType::PenDown, side_button: true, x: 500.0, y: 700.0, ..Default::default() };
         let mut style = LiveStyle::default();
         editor_live_style(&a, &ev, &mut style);
@@ -14766,9 +14821,9 @@ mod tests {
         pen_event(&mut a, InType::PenDown, true, 500.0, 700.0, 1020);
         assert_eq!(ed_ref(&a).owner, Owner::PenDrag);
         assert!(editor_pen_not_ink(&a));
-        assert_eq!(ed_ref(&a).zoom, 1.25);
+        assert!((ed_ref(&a).zoom - zoom * 1.25).abs() < 1e-6);
         pen_event(&mut a, InType::PenMove, true, 600.0, 800.0, 1220);
-        assert_eq!(ed_ref(&a).zoom, 1.25);
+        assert!((ed_ref(&a).zoom - zoom * 1.25).abs() < 1e-6);
         // Letting the button go swallows the rest of this contact too.
         pen_event(&mut a, InType::PenButton, false, 600.0, 800.0, 1230);
         assert_eq!(ed_ref(&a).owner, Owner::PenDrag);
@@ -15075,6 +15130,7 @@ mod tests {
     fn fshape_swipe_releases_owner_and_cleans_only_the_screen() {
         let mut a = fshape_app();
         let ink = ed_ref(&a).page_canvas.px.clone();
+        let zoom = ed_ref(&a).zoom;
         fshape_event(&mut a, InType::TouchDown, 200.0, 500.0, 1000);
         assert_eq!(ed_ref(&a).fs.state, FsState::Pending);
         for i in 1..=10 {
@@ -15085,7 +15141,7 @@ mod tests {
         assert_eq!(ed_ref(&a).owner, Owner::None);
         assert_eq!(ed_ref(&a).fs.state, FsState::Idle);
         assert!(rect_is_empty(ed_ref(&a).fs_trail));
-        assert_eq!(ed_ref(&a).zoom, 1.25);
+        assert!((ed_ref(&a).zoom - zoom * 1.25).abs() < 1e-6);
         assert_eq!(ed_ref(&a).page_canvas.px, ink);
         let mut out = String::new();
         assert_eq!(editor_probe(&mut a, "fshape.last", &mut out, 128), 0);
@@ -15152,7 +15208,9 @@ mod tests {
         assert!((s.oy + 700.0 / s.zoom - 450.0).abs() < 0.001);
         ed(&mut a).oy = 800.0;
         assert!(editor_shortcut(&mut a, SHORTCUT_SCROLL_DOWN));
-        assert_eq!((ed_ref(&a).index, ed_ref(&a).zoom, ed_ref(&a).oy), (1, 2.5, 0.0));
+        let floor = -status_reserved(&a) as f32 / 2.5;
+        assert_eq!((ed_ref(&a).index, ed_ref(&a).zoom), (1, 2.5));
+        assert!((ed_ref(&a).oy - floor).abs() < 0.001);
         // This in-memory notebook has no on-disk info file to persist between turns.
         ed(&mut a).info_dirty = false;
         assert!(editor_shortcut(&mut a, SHORTCUT_SCROLL_UP));
@@ -15204,9 +15262,10 @@ mod tests {
             }
             fshape_event(a, InType::TouchUp, 250.0, 400.0, base + 450);
         };
+        let zoom = ed_ref(&a).zoom;
         draw(&mut a, 1000);
         assert_eq!(ed_ref(&a).fs_last_kind, FS_OUT_FIRED);
-        assert_eq!(ed_ref(&a).zoom, 1.25);
+        assert!((ed_ref(&a).zoom - zoom * 1.25).abs() < 1e-6);
         bar_open(&mut a);
         draw(&mut a, 2000);
         assert!(ed_ref(&a).lb.open);
@@ -15336,7 +15395,7 @@ mod tests {
     }
 
     #[test]
-    fn clock_corner_reserves_no_page_strip_at_any_zoom() {
+    fn status_bar_overlays_the_page_top_margin_at_every_zoom() {
         for (w, h) in [(1860, 2480), (2480, 1860)] {
             let mut a = app(w, h, 1860, 2480);
             a.scr = ScreenId::Editor;
@@ -15762,14 +15821,17 @@ mod tests {
         // next pen down is a lasso of its own, from where it lands, and never ink under the strip.
         ed(&mut a).owner=Owner::None;
         editor_event_in(&mut a,&down(500.0,900.0));
+        let (mut ex, mut ey)=(0.0,0.0);to_page(ed_ref(&a),500.0,900.0,&mut ex,&mut ey);
         let s=ed_ref(&a);
         assert_eq!((s.owner,s.owner_is_pen,s.lm.state),(Owner::Lasso,true,LmState::Lasso));
-        assert_eq!((s.lm.pts.len(),s.lm.bx0,s.lm.by0),(1,500.0,900.0));
+        assert_eq!((s.lm.pts.len(),s.lm.bx0,s.lm.by0),(1,ex,ey));
         assert_eq!(s.open_page().unwrap().strokes.len(),0);
         // Its lift lost: the next down cancels it back to the strip and draws its own.
         editor_event_in(&mut a,&down(200.0,1000.0));
+        let (mut ex, mut ey)=(0.0,0.0);to_page(ed_ref(&a),200.0,1000.0,&mut ex,&mut ey);
         let s=ed_ref(&a);
-        assert_eq!((s.owner,s.lm.state,s.lm.pts.len(),s.lm.bx0),(Owner::Lasso,LmState::Lasso,1,200.0));
+        assert_eq!((s.owner,s.lm.state,s.lm.pts.len(),s.lm.bx0),(Owner::Lasso,LmState::Lasso,1,ex));
+        assert_eq!(s.lm.by0,ey);
         assert_eq!(s.open_page().unwrap().strokes.len(),0);
         let _=std::fs::remove_dir_all(&root);
     }
@@ -16040,6 +16102,12 @@ mod tests {
         fshape_event(a, type_, x, y, now_ms());
     }
 
+    // A page point at (x, y) as the screen draws it now (below the status strip).
+    fn on_screen(a: &App, x: f32, y: f32) -> (f32, f32) {
+        let s = ed_ref(a);
+        ((x - s.ox) * s.zoom, (y - s.oy) * s.zoom)
+    }
+
     // A finger down at (x, y), still for the hold time: editor_tick's hold fires.
     fn finger_hold(a: &mut App, x: f32, y: f32) {
         finger(a, InType::TouchDown, x, y);
@@ -16074,7 +16142,8 @@ mod tests {
         let mut a = fshape_app();
         sel_word(&mut a, 400.0, 600.0);
         let depth = undo_depth(&mut a);
-        finger_hold(&mut a, 280.0, 495.0);
+        let (hx, hy) = on_screen(&a, 280.0, 495.0);
+        finger_hold(&mut a, hx, hy);
         let s = ed_ref(&a);
         assert_eq!(s.sel.state, SelState::Lasso);
         assert_eq!(s.owner, Owner::Select);
@@ -16084,7 +16153,8 @@ mod tests {
         // the pen's timed paste is not the finger's: held on, nothing happens
         editor_tick(&mut a, now_ms().wrapping_add(3 * HOLD_MS));
         assert_eq!(ed_ref(&a).sel.state, SelState::Lasso);
-        finger_ring(&mut a, 400.0, 615.0, 120.0);
+        let (rx, ry) = on_screen(&a, 400.0, 615.0);
+        finger_ring(&mut a, rx, ry, 120.0);
         let s = ed_ref(&a);
         assert_eq!(s.sel.state, SelState::Selected);
         assert_eq!(s.sel.ids.len(), 2);
@@ -16094,21 +16164,23 @@ mod tests {
         assert!(bar_drawn(&a), "the pen lasso's bar, drawn");
         assert_eq!(undo_depth(&mut a), depth, "selecting alone is no undo step");
         // a finger inside the box drags it, as before
-        let b = ed_ref(&a).sel.box_;
+        let b = box_screen(ed_ref(&a), ed_ref(&a).sel.box_);
         finger(&mut a, InType::TouchDown, (b.x + b.w / 2) as f32, (b.y + b.h / 2) as f32);
         assert_eq!(ed_ref(&a).sel.state, SelState::Dragging);
         finger(&mut a, InType::TouchUp, (b.x + b.w / 2) as f32, (b.y + b.h / 2) as f32);
         assert_eq!(ed_ref(&a).sel.state, SelState::Selected);
         // a tap outside: the selection ends, and with it the Select mode the hold entered; nothing else
-        finger(&mut a, InType::TouchDown, 700.0, 1100.0);
+        let (ox, oy) = on_screen(&a, 700.0, 1100.0);
+        finger(&mut a, InType::TouchDown, ox, oy);
         assert_eq!(ed_ref(&a).sel.state, SelState::Off);
-        finger(&mut a, InType::TouchUp, 700.0, 1100.0);
+        finger(&mut a, InType::TouchUp, ox, oy);
         assert_eq!(ed_ref(&a).owner, Owner::None);
         assert_eq!(ed_ref(&a).open_page().unwrap().strokes.len(), 2);
         // a lasso around nothing ends Select mode at once
-        finger_hold(&mut a, 580.0, 980.0);
+        let (gx, gy) = on_screen(&a, 580.0, 980.0);
+        finger_hold(&mut a, gx, gy);
         assert_eq!(ed_ref(&a).sel.state, SelState::Lasso);
-        finger_ring(&mut a, 700.0, 1100.0, 120.0);
+        finger_ring(&mut a, ox, oy, 120.0);
         assert_eq!(ed_ref(&a).sel.state, SelState::Off);
         assert_eq!(ed_ref(&a).owner, Owner::None);
         std::fs::remove_dir_all(root).unwrap();
@@ -16366,9 +16438,10 @@ mod tests {
         sel_word(&mut a, 400.0, 600.0);
         let depth = undo_depth(&mut a);
         // no clipboard: nothing (Select mode left as quietly as it came)
-        finger_hold(&mut a, 600.0, 1000.0);
+        let (nx, ny) = on_screen(&a, 600.0, 1000.0);
+        finger_hold(&mut a, nx, ny);
         assert_eq!(ed_ref(&a).sel.state, SelState::Lasso);
-        finger(&mut a, InType::TouchUp, 602.0, 1001.0);
+        finger(&mut a, InType::TouchUp, nx + 2.0, ny + 1.0);
         let s = ed_ref(&a);
         assert_eq!(s.sel.state, SelState::Off);
         assert_eq!(s.owner, Owner::None);
@@ -16376,17 +16449,20 @@ mod tests {
         assert_eq!(undo_depth(&mut a), depth);
         assert!(!a.toast_visible);
         // a clipboard: the word lassoed with a finger and copied from the bar
-        finger_hold(&mut a, 280.0, 495.0);
-        finger_ring(&mut a, 400.0, 615.0, 120.0);
+        let (wx, wy) = on_screen(&a, 280.0, 495.0);
+        let (rx, ry) = on_screen(&a, 400.0, 615.0);
+        finger_hold(&mut a, wx, wy);
+        finger_ring(&mut a, rx, ry, 120.0);
         assert_eq!(ed_ref(&a).sel.state, SelState::Selected);
         let (cx, cy) = sel_control_point(ed_ref(&a), "copy").unwrap();
         finger(&mut a, InType::TouchDown, cx, cy);
         finger(&mut a, InType::TouchUp, cx, cy);
         assert!(clipboard_has());
         // held and lifted outside the selection: the old one goes, the paste lands centred there, selected
-        finger_hold(&mut a, 500.0, 1000.0);
+        let (px, py) = on_screen(&a, 500.0, 1000.0);
+        finger_hold(&mut a, px, py);
         assert_eq!(ed_ref(&a).sel.state, SelState::Lasso);
-        finger(&mut a, InType::TouchUp, 500.0, 1000.0);
+        finger(&mut a, InType::TouchUp, px, py);
         let s = ed_ref(&a);
         assert_eq!(s.sel.state, SelState::Selected);
         assert_eq!(s.open_page().unwrap().strokes.len(), 4);
@@ -16402,16 +16478,16 @@ mod tests {
         sel_off(&mut a);
         ed(&mut a).open_page_mut().unwrap().readonly = true;
         assert_eq!(clipboard_restore(None), 0); // (so the Copy below is what fills it)
-        finger_hold(&mut a, 280.0, 495.0);
-        finger_ring(&mut a, 400.0, 615.0, 120.0);
+        finger_hold(&mut a, wx, wy);
+        finger_ring(&mut a, rx, ry, 120.0);
         assert_eq!(ed_ref(&a).sel.state, SelState::Selected);
         let (cx, cy) = sel_control_point(ed_ref(&a), "copy").unwrap();
         finger(&mut a, InType::TouchDown, cx, cy);
         finger(&mut a, InType::TouchUp, cx, cy);
         assert!(clipboard_read().is_some_and(|g| g.ink == 2), "Copy on a read-only page fills the clipboard (the word's two strokes)");
         assert!(!a.toast_visible, "and says nothing");
-        finger_hold(&mut a, 500.0, 1000.0);
-        finger(&mut a, InType::TouchUp, 500.0, 1000.0);
+        finger_hold(&mut a, px, py);
+        finger(&mut a, InType::TouchUp, px, py);
         assert_eq!(a.toast.as_str(), tr(K_READONLY_MSG));
         let s = ed_ref(&a);
         assert_eq!(s.open_page().unwrap().strokes.len(), 2);

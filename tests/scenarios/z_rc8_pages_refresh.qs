@@ -26,18 +26,18 @@ expect display.presents not -1
 waitbg
 wait 1200
 expect editor.pages.cached is 9
-expect display.presents is ui 24 214 1812 2070
+expect display.presents is ui 24 292 1812 1992
 wait 1200
 expect display.presents is
 shot 01-previews
 # The first tick lights Copy page and Delete: the tile, then the bottom row, each on its own.
 tap panel pages.page.2
 expect editor.ticked is 1
-expect display.presents is ui 636 214 588 674, ui 0 2310 1860 170
+expect display.presents is ui 636 292 588 648, ui 0 2310 1860 170
 # Another tile: the two tiles alone.
 tap panel pages.page.3
 expect editor.ticked is 1
-expect display.presents is ui 636 214 1200 674
+expect display.presents is ui 636 292 1200 648
 shot 02-one-tile
 tap panel pages.page.3
 expect editor.modal is none

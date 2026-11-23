@@ -30,6 +30,7 @@
 use crate::bgwork_copy::{copy_refusal, copy_request, CopyFail, CopyTo};
 use crate::bgwork_previews::{CoverTiles, TileShow, PREVIEW_H, PREVIEW_W};
 use crate::fsview::*;
+use crate::globalui::{gui_header, gui_margin};
 use crate::home::{home_folder_ok, Home};
 use crate::prelude::*;
 
@@ -2461,25 +2462,17 @@ impl Browser {
         self.screen = self.screen.min(self.rows.len().saturating_sub(1) / per);
         let c = &mut a.screen;
         canvas_fill(c, Rect::new(0, 0, aw, ah), 255);
-        let th = u(190.0);
-        let m = u(50.0);
-        let bh = u(150.0);
-        let by = (th - bh) / 2;
-        let back = Rect::new(m, by, bh, bh);
+        let m = gui_margin();
         // (no Back at the folder that is home, 2.2, issue #160: nothing is further up for it, as at the Library's
         // top, and the title stands where the Library's does; the path bar's parts still open the folders above)
         let home = self.at_home();
+        let (head, _) = gui_header(c, aw, self.title, !home, &[]);
         if !home {
-            ui_button(c, back, IconKind::Back, "", ButtonStyle::Plain);
-            hits_add(&mut self.hits, back, B_BACK, 0);
+            hits_add(&mut self.hits, head.back, B_BACK, 0);
         }
-        let title = self.title;
-        let tx = if home { m } else { back.x + back.w + u(40.0) };
-        ui_text(c, FontFace::Title, ui_title_size() * 1.2, ui_small_size(), Rect::new(tx, 0, aw - tx - m, th), title, 2, false, 0);
-        ui_rule(c, 0, aw, th, u(4.0), 0);
-        ui_frieze(c, 0, aw, th + u(9.0), u(28.0), 0);
+        let th = head.foot;
         // the band: Files and the free space at the root, else the path (in Files the path bar)
-        let band = Rect::new(m, th + u(40.0), aw - 2 * m, self.band_h());
+        let band = Rect::new(m, th + u(24.0), aw - 2 * m, self.band_h());
         self.path_bar = band;
         if self.at.is_some() && self.mode == BrowseMode::Place {
             self.draw_path_bar(c, band);
@@ -5249,7 +5242,6 @@ mod tests {
             (1860, "grimoire/fonts", 0),
             (1860, "grimoire/fonts", 1),
             (1860, "grimoire/templates", 0),
-            (2480, "grimoire/fonts", 0),
             (2480, "grimoire/photos/Birds", 4),
         ];
         assert_eq!(moved, today);

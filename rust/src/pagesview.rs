@@ -25,6 +25,7 @@
 //! the Pages view's history (one step, `move_undo` or `add_undo`, and `redo`) stays apart from a page's own.
 //! The `select-all` action ticks every page (pagesview_select_all).
 
+use crate::globalui::{gui_status_bar, gui_status_h};
 use crate::prelude::*;
 
 const PG_BACK: i32 = 1;
@@ -275,7 +276,7 @@ fn geom_at((w, h): (i32, i32), v: &PagesView) -> (i32, i32, i32, i32, i32) {
     if v.unified && !v.picking {
         let gap=ui_px(24.0);
         let cw=(w-gap*4)/3;
-        let ch=(h-ui_px(190.0)-ui_px(170.0)-gap*4)/3;
+        let ch=(h-gui_status_h()-ui_px(190.0)-ui_px(170.0)-gap*4)/3;
         return (3,3,cw,ch,ch-ui_px(58.0));
     }
     let cols = if w > h { 6 } else { 4 };
@@ -283,7 +284,7 @@ fn geom_at((w, h): (i32, i32), v: &PagesView) -> (i32, i32, i32, i32, i32) {
     let cw = (w - m * (cols + 1)) / cols;
     let th = ui_px(200.0);
     let ch = th + ui_px(90.0);
-    let mut rows = (h - ui_px(190.0) - ui_px(170.0) - m) / (ch + m);
+    let mut rows = (h - gui_status_h() - ui_px(190.0) - ui_px(170.0) - m) / (ch + m);
     if rows < 1 {
         rows = 1;
     }
@@ -535,7 +536,7 @@ fn last_ticked(v: &PagesView, nb: &NotebookInfo) -> i32 {
 }
 
 fn index_rows(a: &App) -> i32 {
-    let rows = (a.h - ui_px(410.0)) / ui_px(140.0);
+    let rows = (a.h - gui_status_h() - ui_px(410.0)) / ui_px(140.0);
     if rows > 0 {
         rows
     } else {
@@ -546,7 +547,7 @@ fn index_rows(a: &App) -> i32 {
 fn draw_index(v: &mut PagesView, a: &mut App, nb: &NotebookInfo, nav: &Nav, total: i32) {
     if total == 0 {
         // TRANSLATORS: empty Index tab, body text with nearly the screen's width.
-        let r = Rect { x: ui_px(80.0), y: ui_px(350.0), w: a.w - ui_px(160.0), h: ui_px(200.0) };
+        let r = Rect { x: ui_px(80.0), y: gui_status_h() + ui_px(350.0), w: a.w - ui_px(160.0), h: ui_px(200.0) };
         ui_text(
             &mut a.screen,
             FontFace::Regular,
@@ -583,7 +584,7 @@ fn draw_index(v: &mut PagesView, a: &mut App, nb: &NotebookInfo, nav: &Nav, tota
     let mut row = 0;
     while row < per && v.index_screen * per + row < total {
         let i = indices[(v.index_screen * per + row) as usize];
-        let r = Rect { x: ui_px(50.0), y: ui_px(240.0) + row * ui_px(140.0), w: a.w - ui_px(100.0), h: ui_px(128.0) };
+        let r = Rect { x: ui_px(50.0), y: gui_status_h() + ui_px(240.0) + row * ui_px(140.0), w: a.w - ui_px(100.0), h: ui_px(128.0) };
         let c = &mut a.screen;
         if i == section {
             canvas_fill(c, Rect { x: r.x, y: r.y + ui_px(12.0), w: ui_px(10.0), h: r.h - ui_px(24.0) }, 0);
@@ -628,9 +629,9 @@ pub fn pagesview_draw(v: &mut PagesView, a: &mut App, nb: &NotebookInfo, nav: &N
     let c = &mut a.screen;
     canvas_fill(c, Rect { x: 0, y: 0, w: aw, h: ah }, 255);
     let m = ui_px(50.0);
-    let th0 = ui_px(190.0);
+    let th0 = gui_status_h() + ui_px(190.0);
     let bh = ui_px(150.0);
-    let by = (th0 - bh) / 2;
+    let by = gui_status_h() + (ui_px(190.0) - bh) / 2;
     let back = Rect { x: m, y: by, w: bh, h: bh };
     ui_button(c, back, IconKind::Back, "", ButtonStyle::Plain);
     hits_add(&mut v.hits, back, PG_BACK, 0);
@@ -700,6 +701,7 @@ pub fn pagesview_draw(v: &mut PagesView, a: &mut App, nb: &NotebookInfo, nav: &N
             for (i,id) in [PG_BACK,PG_GRAPH,PG_LIST,PG_TAB].into_iter().enumerate(){hits_add(&mut v.hits,tabs[i],id,0);}
         }
     }
+    gui_status_bar(c, aw, wall_time());
 
     let (cols, rows, cw, ch, th) = geom(a,v);
     let per = cols * rows;
@@ -1066,7 +1068,7 @@ fn tile_rects(v:&PagesView,a:&App,nb:&NotebookInfo,slot:i32)->(Rect,Rect,i32) {
     let (mut pw,mut ph)=(0,0);store_notebook_page_size(nb,&mut pw,&mut ph);
     let scale=(cw as f32/pw.max(1) as f32).min(th as f32/ph.max(1) as f32);
     let (w,h)=((pw as f32*scale)as i32,(ph as f32*scale)as i32);
-    let cell=Rect::new(gap+(slot%cols)*(cw+gap),ui_px(190.0)+gap+(slot/cols)*(ch+gap),cw,ch);
+    let cell=Rect::new(gap+(slot%cols)*(cw+gap),gui_status_h()+ui_px(190.0)+gap+(slot/cols)*(ch+gap),cw,ch);
     (cell,Rect::new(cell.x+(cw-w)/2,cell.y,w,h),h)
 }
 
@@ -1294,6 +1296,10 @@ fn strtol10(s: &[u8]) -> (i64, usize) {
 /// number pad) it refreshes itself; for the rest, see PvResult. While its keyboard is up a key draws
 /// and refreshes only the keyboard, as the Library's does (app_keyboard_pointer).
 pub fn pagesview_pointer(v: &mut PagesView, a: &mut App, nb: &NotebookInfo, nav: &Nav, phase: i32, ev: &InEvent) -> PvResult {
+    // The status bar is chrome, never a control: a contact that starts in it does nothing.
+    if phase == 0 && ev.y < gui_status_h() as f32 {
+        return PvResult::None;
+    }
     // A contact made while a batch was being written (quiet_until): let go, down to its lift.
     if phase == 0 {
         v.quiet_contact = v.quiet_until.is_some_and(|until| until.wrapping_sub(ev.t_ms) as i32 >= 0);
@@ -1549,7 +1555,7 @@ const DRAG_TURN_MS: u32 = 700;
 
 // The grid's band: between the top bar and the bottom row. The gap's bar stays inside it.
 fn grid_band(a: &App) -> Rect {
-    let top = ui_px(190.0);
+    let top = gui_status_h() + ui_px(190.0);
     Rect::new(0, top, a.w, a.h - top - ui_px(170.0))
 }
 

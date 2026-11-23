@@ -1,6 +1,6 @@
-//! dispmenu.h: Settings' Display, Sleep and Clock sheets (front light and appearance; sleep screen
-//! and timer; clock and battery). A modal hosted by the editor and the library; it draws itself and
-//! handles pointer input.
+//! dispmenu.h: Settings' Display, Sleep and Status bar sheets (front light and appearance; sleep screen
+//! and timer; the shared status bar's size and clock). A modal hosted by the editor and the library; it
+//! draws itself and handles pointer input.
 
 // dispmenu.c: the Display sheet: front light, invert, and sleep (screen + timeout).
 
@@ -21,13 +21,13 @@ pub enum DmResult {
 }
 
 /// Which of Settings' sheets it is: Display's front light and appearance, Sleep's screen and timer,
-/// or Clock's clock and battery. The editor hosts the Display one alone.
+/// or the Status bar's size and clock. The editor hosts the Display one alone.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DmPage {
     #[default]
     Display,
     Sleep,
-    Clock,
+    StatusBar,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -64,17 +64,18 @@ const D_SLEEP_AFTER: i32 = 6;
 const D_DONE: i32 = 7;
 const D_STATUS: i32 = 8;
 const D_FIT: i32 = 9;
-const D_CORNER: i32 = 10;
 
 pub fn dispmenu_control_point(m:&DispMenu,name:&str)->Option<(f32,f32)> {
     if !m.open{return None;}
-    let id=match name {"size"=>D_STATUS,"corner"=>D_CORNER,"done"=>D_DONE,"back"=>D_BACK,"fit"=>D_FIT,"newpage"=>D_NEWPAGE,"time12"=>D_TIME12,"sleep"=>D_SLEEP_MODE,"pin"=>D_PIN,"sleep_after"=>D_SLEEP_AFTER,"brightness"=>D_BRIGHT,"warmth"=>D_WARM,"auto"=>D_AUTO,_=>return None};
+    let id=match name {"size"=>D_STATUS,"done"=>D_DONE,"back"=>D_BACK,"fit"=>D_FIT,"newpage"=>D_NEWPAGE,"time12"=>D_TIME12,"sleep"=>D_SLEEP_MODE,"pin"=>D_PIN,"sleep_after"=>D_SLEEP_AFTER,"brightness"=>D_BRIGHT,"warmth"=>D_WARM,"auto"=>D_AUTO,"show"=>D_SHOW,"notebooks"=>D_NOTEBOOKS,_=>return None};
     m.hits.h.iter().find(|h|h.id==id).map(|h|((h.r.x+h.r.w/2)as f32,(h.r.y+h.r.h/2)as f32))
 }
 const D_NEWPAGE: i32 = 11;
 const D_TIME12: i32 = 12;
 const D_BACK: i32 = 13;
 const D_AUTO: i32 = 14;
+const D_SHOW: i32 = 15;
+const D_NOTEBOOKS: i32 = 16;
 
 /// A dragged slider's row is drawn at most this often, as Pen feel's sliders are.
 const DRAG_DRAW_MS: u32 = 80;
@@ -93,41 +94,16 @@ static K_MODE_ROWS: [&str; 4] = [
     n_("Sleep screen: KOReader wallpaper (tap to change)"),
 ];
 
-/// The clock and battery's size (settings.ini status_size 0, 1, 2) and corner (status_corner 0, 1, 2, 3):
-/// two rows on the Clock settings page, each a tap that moves to the next choice, one sentence for each
-/// choice so a language can put its words in order. Each has room for an icon and two lines of text at
-/// 34 px.
+/// The shared status bar's size (settings.ini status_size 0, 1, 2): one row on the Status bar page, a
+/// tap that moves to the next choice, one sentence for each choice so a language can put its words in
+/// order. It has room for an icon and two lines of text at 34 px.
 static K_STATUS_ROWS: [&str; 3] = [
-    // TRANSLATORS: the Clock settings page's row for how large the clock and battery on a notebook page
-    // are, which a tap moves to the next size. Two lines of about 365 px at 34 px.
-    n_("Clock size: small"),
-    n_("Clock size: medium"),
-    n_("Clock size: large"),
+    // TRANSLATORS: the Status bar settings page's row for how large the shared status bar is, which a
+    // tap moves to the next size. Two lines of about 365 px at 34 px.
+    n_("Size: small"),
+    n_("Size: medium"),
+    n_("Size: large"),
 ];
-static K_CORNER_ROWS: [&str; 4] = [
-    // TRANSLATORS: the Clock settings page's row under the clock's size: which corner of a notebook page
-    // the clock and battery sit in, which a tap moves to the next (clockwise). Two lines of about 365 px
-    // at 34 px.
-    n_("Clock corner: top left"),
-    n_("Clock corner: top right"),
-    n_("Clock corner: bottom right"),
-    n_("Clock corner: bottom left"),
-];
-
-/// The corner's pictogram in r: the page as an outline, a little taller than wide, with a solid square in the
-/// corner the clock sits in.
-fn draw_corner_icon(c: &mut Canvas, r: Rect, corner: i32) {
-    let (w, h) = (r.w * 3 / 4, r.h);
-    let page = Rect { x: r.x + (r.w - w) / 2, y: r.y, w, h };
-    let t = ui_px(4.0);
-    canvas_rect_outline(c, page, t, 0);
-    let d = w * 2 / 5;
-    let pad = t + ui_px(5.0);
-    let right = corner == 1 || corner == 2;
-    let bottom = corner == 2 || corner == 3;
-    let dot = Rect { x: if right { page.x + w - pad - d } else { page.x + pad }, y: if bottom { page.y + h - pad - d } else { page.y + pad }, w: d, h: d * 2 / 3 };
-    canvas_fill(c, dot, 0);
-}
 
 fn step_of(minutes: i32) -> i32 {
     let mut best = 0usize;
@@ -152,11 +128,10 @@ pub fn dispmenu_open_sleep(m: &mut DispMenu, a: &mut App) {
     m.page = DmPage::Sleep;
 }
 
-/// Settings > Sleep & Clock > Clock settings: the same sheet, on its clock page.
-pub fn dispmenu_open_clock(m: &mut DispMenu, a: &mut App) {
+/// Settings > Sleep & Clock > Status bar: the same sheet, on its status bar page.
+pub fn dispmenu_open_statusbar(m: &mut DispMenu, a: &mut App) {
     dispmenu_open(m, a);
-    m.page = DmPage::Clock;
-    crate::status::status_preview_prepare();
+    m.page = DmPage::StatusBar;
 }
 
 fn slider_for(m: &DispMenu, a: &App, which: i32, row: Rect, s: &mut Slider) {
@@ -205,7 +180,7 @@ enum DRowKind {
     Note(String),
     SleepMode { label: String, can_tap: bool },
     Pin,
-    Status { id: i32, label: String, corner: i32 },
+    Status { id: i32, label: String },
 }
 
 fn draw_drow(m: &mut DispMenu, a: &mut App, kind: &DRowKind, outer: Rect) {
@@ -259,33 +234,14 @@ fn draw_drow(m: &mut DispMenu, a: &mut App, kind: &DRowKind, outer: Rect) {
             );
             hits_add(&mut m.hits, inner, D_PIN, 0);
         }
-        DRowKind::Status { id, label, corner } => {
+        DRowKind::Status { id, label } => {
             let isz = inner.h * 3 / 4;
             let icon = Rect::new(inner.x, inner.y + (inner.h - isz) / 2, isz, isz);
-            if *id == D_CORNER {
-                draw_corner_icon(&mut a.screen, icon, *corner);
-            } else {
-                ui_icon(&mut a.screen, IconKind::Clock, icon, 0);
-            }
+            ui_icon(&mut a.screen, IconKind::Clock, icon, 0);
             ui_text(&mut a.screen, FontFace::Regular, ui_small_size(), ui_small_size(), Rect::new(inner.x + isz + ui_px(20.0), inner.y, inner.w - isz - ui_px(20.0), inner.h), label, 2, false, 0);
             hits_add(&mut m.hits, inner, *id, 0);
         }
     }
-}
-
-/// The Clock page's live sample: a notebook page in a card, with the clock and battery at the size
-/// and in the corner the rows below choose, so a tap on either shows its choice at once.
-fn draw_clock_preview(a: &mut App, r: Rect) {
-    crate::library::settings_card(&mut a.screen, r, ButtonStyle::Plain);
-    let pad = crate::library::settings_pad();
-    let page = Rect::new(r.x + pad, r.y + pad, r.w - 2 * pad, r.h - 2 * pad);
-    if page.w <= 0 || page.h <= 0 {
-        return;
-    }
-    // The page itself is square, unlike the card around it.
-    ui_frame(&mut a.screen, page, 0, 255, true, 0);
-    ui_frame(&mut a.screen, page, 0, 0, false, ui_px(2.0));
-    crate::status::status_preview(&mut a.screen, page, a.settings.status_size, a.settings.status_corner, a.settings.clock_12h);
 }
 
 /// Draws into a->screen; returns the rect covered. Either page is a full screen, as Settings'
@@ -296,17 +252,18 @@ pub fn dispmenu_draw(m: &mut DispMenu, a: &mut App) -> Rect {
     m.pressed = None;
     let (aw, ah) = (a.w, a.h);
     m.rect = Rect::new(0, 0, aw, ah);
-    // TRANSLATORS: the titles of Settings' Sleep and Clock pages: the sleep screen and timer; the clock
-    // and battery on the page.
+    crate::globalui::gui_status_style(a.settings.status_size, a.settings.clock_12h);
+    // TRANSLATORS: the titles of Settings' Sleep and Status bar pages: the sleep screen and timer; the
+    // shared status bar's size and clock.
     let title = match m.page {
         DmPage::Display => tr("Display"),
         DmPage::Sleep => tr("Sleep settings"),
-        DmPage::Clock => tr("Clock settings"),
+        DmPage::StatusBar => tr("Status bar"),
     };
     let page = crate::library::settings_page(&mut a.screen, aw, ah, title, true, false);
     hits_add(&mut m.hits, page.back, D_BACK, 0);
     hits_add(&mut m.hits, page.close, D_DONE, 0);
-    let mut in_ = page.content;
+    let in_ = page.content;
     let gap = ui_px(16.0);
     let mut rows: Vec<DRowKind> = Vec::new();
     match m.page {
@@ -358,11 +315,17 @@ pub fn dispmenu_draw(m: &mut DispMenu, a: &mut App) -> Rect {
             }
             rows.push(DRowKind::Slider(D_SLEEP_AFTER));
         }
-        DmPage::Clock => {
-            // A page's own corner: the sample above the rows, with the room for three rows kept below.
-            let ph = (in_.h * 55 / 100).clamp(ui_px(200.0), ui_px(900.0));
-            draw_clock_preview(a, Rect::new(in_.x, in_.y, in_.w, ph));
-            in_ = Rect::new(in_.x, in_.y + ph + gap, in_.w, (in_.h - ph - gap).max(0));
+        DmPage::StatusBar => {
+            rows.push(DRowKind::Check {
+                id: D_SHOW,
+                label: tr("Show status bar").to_string(),
+                on: a.settings.status_on,
+            });
+            rows.push(DRowKind::Check {
+                id: D_NOTEBOOKS,
+                label: tr("Show status bar in notebooks").to_string(),
+                on: a.settings.status_in_notebooks,
+            });
             rows.push(DRowKind::Check {
                 id: D_TIME12,
                 label: tr("Display time as 12 hour").to_string(),
@@ -371,12 +334,6 @@ pub fn dispmenu_draw(m: &mut DispMenu, a: &mut App) -> Rect {
             rows.push(DRowKind::Status {
                 id: D_STATUS,
                 label: tr(K_STATUS_ROWS[clampi(a.settings.status_size, 0, STATUS_SIZES - 1) as usize]).to_string(),
-                corner: 0,
-            });
-            rows.push(DRowKind::Status {
-                id: D_CORNER,
-                label: tr(K_CORNER_ROWS[clampi(a.settings.status_corner, 0, STATUS_CORNERS - 1) as usize]).to_string(),
-                corner: a.settings.status_corner,
             });
         }
     }
@@ -536,18 +493,27 @@ pub fn dispmenu_pointer(m: &mut DispMenu, a: &mut App, phase: i32, x: f32, y: f3
         }
         D_TIME12 => {
             a.settings.clock_12h = !a.settings.clock_12h;
+            crate::globalui::gui_status_style(a.settings.status_size, a.settings.clock_12h);
             settings_save(&a.settings);
             crate::status::ask_change(a);
             dispmenu_draw(m, a);
             *dirty = m.rect;
             return DmResult::Changed;
         }
+        D_SHOW => {
+            a.settings.status_on = !a.settings.status_on;
+            settings_save(&a.settings);
+            crate::globalui::gui_status_shown(a.settings.status_on);
+        }
+        D_NOTEBOOKS => {
+            a.settings.status_in_notebooks = !a.settings.status_in_notebooks;
+            settings_save(&a.settings);
+        }
         D_SLEEP_MODE => {
             a.settings.sleep_mode = (a.settings.sleep_mode + 1) % 4;
             settings_save(&a.settings);
         }
         D_STATUS => status_cycle_size(a),
-        D_CORNER => status_cycle_corner(a),
         D_AUTO => {
             let on = m.auto == 0;
             if !on {

@@ -117,6 +117,7 @@ pub enum SettingId {
     AboutDevice,
     DarkerLines,
     WidgetPackages,
+    AppPackages,
 }
 
 /// The state a check row shows, or None for a row drawn as text.
@@ -229,8 +230,8 @@ pub const DISPLAY_NO_LIGHT: &str = n_("Display");
 // (language, updates, Wi-Fi), Display's (front light, theme, dark mode, font, rotation, zoom), Sleep &
 // Clock's (sleep screen, timer, clock), the Pen's (tool settings, its button, the eraser, calibration),
 // Controls'
-// (shortcuts, pairing, gestures), Packages' (Widgets), and System's (KOReader, USB PDF mirroring, about
-// the device, darker lines in imported PDFs).
+// (shortcuts, pairing, gestures), Packages' (Widgets and Apps), and System's (KOReader, USB PDF
+// mirroring, about the device, darker lines in imported PDFs).
 pub static CATEGORIES: &[Category] = &[
     Category::new(n_("General"), IconKind::Gear, &[
         Item::value(IconKind::Language, Label::Language, SettingId::Language),
@@ -253,9 +254,8 @@ pub static CATEGORIES: &[Category] = &[
         // TRANSLATORS: the row that opens the sleep settings' page: the sleep screen and the
         // timer.
         Item::open(IconKind::Hourglass, n_("Sleep settings"), SettingId::SleepSettings),
-        // TRANSLATORS: the row that opens the clock settings' page: the clock and battery on a
-        // notebook page.
-        Item::open(IconKind::Clock, n_("Clock settings"), SettingId::ClockSettings),
+        // TRANSLATORS: the row that opens the status bar's page: its size and its 12-hour clock.
+        Item::open(IconKind::Clock, n_("Status bar"), SettingId::ClockSettings),
     ]),
     Category::new(n_("Pen"), IconKind::Tune, &[
         // TRANSLATORS: the row that opens Tool Settings' sheet: pressure and tilt, per tool.
@@ -273,6 +273,8 @@ pub static CATEGORIES: &[Category] = &[
     Category::new(n_("Packages"), IconKind::Package, &[
         // TRANSLATORS: Settings' Packages category row: the widget package manager.
         Item::open(IconKind::Download, n_("Widgets"), SettingId::WidgetPackages),
+        // TRANSLATORS: Settings' Packages category row: the full-screen app package manager.
+        Item::open(IconKind::Grid, n_("Apps"), SettingId::AppPackages),
     ]),
     Category::new(n_("System"), IconKind::Grid, &[
         Item::open(IconKind::Notebook, n_("KOReader"), SettingId::KOReader).when(Show::KOReader),
@@ -339,15 +341,16 @@ mod tests {
         assert_eq!(ids(2), vec![SettingId::SleepSettings, SettingId::ClockSettings]);
         assert_eq!(ids(3), vec![SettingId::PenFeel, SettingId::SideButton, SettingId::EraserMode, SettingId::Calibration]);
         assert_eq!(ids(4), vec![SettingId::Shortcuts, SettingId::Pair, SettingId::Gestures]);
-        assert_eq!(ids(5), vec![SettingId::WidgetPackages]);
+        assert_eq!(ids(5), vec![SettingId::WidgetPackages, SettingId::AppPackages]);
         assert_eq!(ids(6), vec![SettingId::KOReader, SettingId::Mirror, SettingId::AboutDevice, SettingId::DarkerLines]);
-        assert_eq!(CATEGORIES.iter().map(|c| c.items.len()).sum::<usize>(), 23);
+        assert_eq!(CATEGORIES.iter().map(|c| c.items.len()).sum::<usize>(), 24);
 
         assert_eq!(text(2, 0), "Sleep settings");
-        assert_eq!(text(2, 1), "Clock settings");
+        assert_eq!(text(2, 1), "Status bar");
         assert_eq!(text(0, 2), "Wi-Fi");
         assert_eq!(text(6, 0), "KOReader");
         assert_eq!(text(6, 2), "About: device and storage");
+        assert_eq!(text(5, 1), "Apps");
         assert!(matches!(CATEGORIES[1].items[0].label, Label::Display));
         assert!(matches!(CATEGORIES[0].items[1].show, Show::Updates));
         assert!(matches!(CATEGORIES[0].items[2].show, Show::Wifi));

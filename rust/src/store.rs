@@ -133,16 +133,21 @@ pub struct Settings {
     /// The pen in use when the eraser was last picked on the panel, a tool id or -1 for none: where
     /// a tap on the eraser in use goes back to while that pen is still on the panel.
     pub before_eraser: i32,
-    /// The clock and battery corner is on (settings.ini status_on; status.rs)
+    /// The shared status bar is shown (settings.ini status_on; status.rs). A tap on the bar hides it,
+    /// and the state is saved; Settings > Sleep & Clock > Status bar turns it back on.
     pub status_on: bool,
-    /// and how large it is: 0 small, 1 medium, 2 large (settings.ini status_size)
+    /// and how large it is: 0 small, 1 medium, 2 large (settings.ini status_size). The size scales
+    /// the whole top status bar too, not just the corner clock (globalui.rs).
     pub status_size: i32,
     /// and in which corner of the page it sits: 0 top left (the default), 1 top right, 2 bottom right,
     /// 3 bottom left (settings.ini status_corner; the tap zone follows it)
     pub status_corner: i32,
     /// The clock shows the time on the 12-hour clock (settings.ini clock_12h): "2:32 PM" instead of
-    /// "14:32". The Display sheet's "Display time as 12 hour" row.
+    /// "14:32", in the top status bar. The Status bar page's "Display time as 12 hour" row.
     pub clock_12h: bool,
+    /// A notebook shows the shared status bar over its page (settings.ini status_in_notebooks, on by
+    /// default). Its background there is transparent, so ink under it still shows.
+    pub status_in_notebooks: bool,
     /// Rotation to hold while locked (settings.ini rotation_lock): 0 follows the Kindle, 1..=4
     /// hold the current rotation plus one. The app resolves the current orientation at lock time.
     pub rotation_lock: i32,
@@ -181,6 +186,11 @@ pub struct Settings {
     pub whatsnew_due: bool,
     /// One-time hints already shown, a bitmask (settings.ini hints; bit numbers: docs/FORMAT.md).
     pub hints: i32,
+    /// The home app row's order, most recently used first (settings.ini `recent_apps`): Files,
+    /// Share, Settings, and installed app packages as `pkg:<id>`, comma separated. A core app missing
+    /// from the line follows in the default order; an app package the package index no longer has is
+    /// ignored when the row is built.
+    pub recent_apps: FixedStr<512>,
     /// The eye: dotted boxes over the page where a finger tap follows a link (settings.ini link_areas).
     pub link_areas: bool,
     /// Memory only, never saved: settings.ini was an existing version 3 file without a gestures key,
@@ -217,6 +227,174 @@ pub const FILES_SORT_NAMES: [&str; 3] = ["name", "newest", "size"];
 pub const FILES_SHOW_NAMES: [&str; 2] = ["usable", "all"];
 /// files_view's: a list, or the previews in a grid (Covers, 2.2, issue #145).
 pub const FILES_VIEW_NAMES: [&str; 2] = ["list", "covers"];
+/// The four built-in home apps, by the names settings.ini writes for them.
+pub const APP_ORDER_NAMES: [&str; 4] = ["files", "share", "settings", "store"];
+/// The prefix that marks an installed app package in recent_apps. `:` cannot occur in a package id,
+/// so old files' unknown words remain ignored as before.
+pub const APP_PACKAGE_PREFIX: &str = "pkg:";
+
+fn package_token_id(part: &[u8]) -> Option<String> {
+    let rest = part.strip_prefix(APP_PACKAGE_PREFIX.as_bytes())?;
+    if rest.is_empty() || rest.len() > 128 {
+        return None;
+    }
+    let id = std::str::from_utf8(rest).ok()?;
+    if id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
+        && !id.starts_with('.')
+        && !id.ends_with('.')
+        && !id.contains("..")
+    {
+        Some(id.to_string())
+    } else {
+        None
+    }
+}
+
+/// recent_apps' tokens split into the built-in order and the installed packages, each once in
+/// the order the file names them.
+fn app_order_tokens(v: &[u8]) -> (Vec<i32>, Vec<String>) {
+    let mut core = Vec::new();
+    let mut packages = Vec::new();
+    for part in v.split(|&c| c == b',') {
+        if let Some(id) = APP_ORDER_NAMES.iter().position(|name| name.as_bytes() == part) {
+            let id = id as i32;
+            if !core.contains(&id) {
+                core.push(id);
+            }
+        } else if let Some(id) = package_token_id(part) {
+            if !packages.contains(&id) {
+                packages.push(id);
+            }
+        }
+    }
+    (core, packages)
+}
+
+/// recent_apps' order as this build has it: known core apps once each, then any it does not name
+/// in default order.
+fn app_order_from(v: &[u8]) -> [i32; 4] {
+    let (mut order, _) = app_order_tokens(v);
+    for id in 0..4 {
+        if !order.contains(&id) {
+            order.push(id);
+        }
+    }
+    [order[0], order[1], order[2], order[3]]
+}
+
+/// The file text settings_load keeps: every valid token once, in order, then missing core apps.
+fn app_order_canonical(v: &[u8]) -> String {
+    let (mut core, _packages) = app_order_tokens(v);
+    let mut parts: Vec<String> = Vec::new();
+    for part in v.split(|&c| c == b',') {
+        if let Some(id) = APP_ORDER_NAMES.iter().position(|name| name.as_bytes() == part) {
+            let name = APP_ORDER_NAMES[id];
+            if !parts.iter().any(|x| x == name) {
+                parts.push(name.to_string());
+            }
+        } else if let Some(id) = package_token_id(part) {
+            let token = format!("{APP_PACKAGE_PREFIX}{id}");
+            if !parts.iter().any(|x| *x == token) {
+                parts.push(token);
+            }
+        }
+    }
+    for id in 0..4 {
+        if !core.contains(&id) {
+            core.push(id);
+            parts.push(APP_ORDER_NAMES[id as usize].to_string());
+        }
+    }
+    parts.join(",")
+}
+
+/// The home app row's four built-in apps, most recently used first.
+pub fn settings_app_order(s: &Settings) -> [i32; 4] {
+    app_order_from(s.recent_apps.as_str().as_bytes())
+}
+
+/// One entry of recent_apps in the order the file names it, for the home row's interleaved order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RecentApp {
+    Core(i32),
+    Package(String),
+}
+
+/// The recent app token order with unknown words dropped and missing core apps appended.
+pub fn settings_recent_apps(s: &Settings) -> Vec<RecentApp> {
+    let v = s.recent_apps.as_str().as_bytes();
+    let (core, _packages) = app_order_tokens(v);
+    let mut out = Vec::new();
+    for part in v.split(|&c| c == b',') {
+        if let Some(id) = APP_ORDER_NAMES.iter().position(|name| name.as_bytes() == part) {
+            let id = id as i32;
+            if core.contains(&id) && !out.iter().any(|x| matches!(x, RecentApp::Core(n) if *n == id)) {
+                out.push(RecentApp::Core(id));
+            }
+        } else if let Some(id) = package_token_id(part) {
+            if !out.iter().any(|x| matches!(x, RecentApp::Package(n) if *n == id)) {
+                out.push(RecentApp::Package(id));
+            }
+        }
+    }
+    for id in 0..4 {
+        let id = id as i32;
+        if core.contains(&id) && !out.iter().any(|x| matches!(x, RecentApp::Core(n) if *n == id)) {
+            out.push(RecentApp::Core(id));
+        }
+    }
+    out
+}
+
+/// The installed app package ids in recent-use order. The launcher filters ids the index no longer
+/// has and appends installed apps this line has not seen in name order.
+pub fn settings_package_order(s: &Settings) -> Vec<String> {
+    app_order_tokens(s.recent_apps.as_str().as_bytes()).1
+}
+
+fn rewrite_recent(s: &mut Settings, text: String) -> bool {
+    if text == s.recent_apps.as_str() {
+        return false;
+    }
+    s.recent_apps.set(&text);
+    true
+}
+
+/// Move a built-in `app` (0 Files, 1 Share, 2 Settings, 3 Package Store) to the front of the
+/// home app row. Every other app keeps its place, including installed packages. Returns false
+/// when nothing changes.
+pub fn settings_app_used(s: &mut Settings, app: i32) -> bool {
+    if !(0..4).contains(&app) {
+        return false;
+    }
+    let mut parts = vec![APP_ORDER_NAMES[app as usize].to_string()];
+    for item in settings_recent_apps(s) {
+        match item {
+            RecentApp::Core(id) if id == app => {}
+            RecentApp::Core(id) => parts.push(APP_ORDER_NAMES[id as usize].to_string()),
+            RecentApp::Package(id) => parts.push(format!("{APP_PACKAGE_PREFIX}{id}")),
+        }
+    }
+    rewrite_recent(s, parts.join(","))
+}
+
+/// Move an installed app package to the front of the home app row. Every other app keeps its
+/// place, including the built-in apps. Returns false when unchanged.
+pub fn settings_package_app_used(s: &mut Settings, id: &str) -> bool {
+    if package_token_id(format!("{APP_PACKAGE_PREFIX}{id}").as_bytes()).is_none() {
+        return false;
+    }
+    let token = format!("{APP_PACKAGE_PREFIX}{id}");
+    let mut parts = vec![token.clone()];
+    for item in settings_recent_apps(s) {
+        match item {
+            RecentApp::Core(id) => parts.push(APP_ORDER_NAMES[id as usize].to_string()),
+            RecentApp::Package(old) if old != id => parts.push(format!("{APP_PACKAGE_PREFIX}{old}")),
+            RecentApp::Package(_) => {}
+        }
+    }
+    rewrite_recent(s, parts.join(","))
+}
 
 // ---- state ----
 
@@ -4594,6 +4772,7 @@ pub fn settings_default(s: &mut Settings) {
     s.white = false;
     s.before_eraser = -1;
     s.status_on = true;
+    s.status_in_notebooks = true;
     s.status_size = 1;
     s.status_corner = 0;
     s.clock_12h = false;
@@ -4613,6 +4792,7 @@ pub fn settings_default(s: &mut Settings) {
     s.shape_corner = 0;
     s.whatsnew_due = false;
     s.hints = 0;
+    s.recent_apps.set("files,share,settings,store");
     s.link_areas = false;
 }
 
@@ -4975,6 +5155,7 @@ fn settings_cb(s: &mut Settings, k: &[u8], v: &[u8]) -> bool {
         b"white" => s.white = keep_bool("white", v),
         b"panel_tools" => pins_kv(s, "panel_tools", v),
         b"status_on" => s.status_on = keep_bool("status_on", v),
+        b"status_in_notebooks" => s.status_in_notebooks = keep_bool("status_in_notebooks", v),
         b"status_size" => s.status_size = keep_int("status_size", v, 0, 2),
         b"gestures" => s.gestures = keep_bool("gestures", v),
         b"landscape_fit" => s.landscape_fit = keep_bool("landscape_fit", v),
@@ -4987,6 +5168,9 @@ fn settings_cb(s: &mut Settings, k: &[u8], v: &[u8]) -> bool {
         b"files_view" => s.files_view = keep_named("files_view", v, &FILES_VIEW_NAMES),
         // 2.2: darker lines in imported PDFs (issue #173), read strictly: only the three known values
         b"pdf_gamma" => s.pdf_gamma = keep_named("pdf_gamma", v, &crate::pdfwork::Gamma::NAMES),
+        b"recent_apps" => {
+            s.recent_apps.set(&app_order_canonical(v));
+        }
         // 2.2: the home folder (issue #160), read strictly (home.rs). A value that names no home is not used and
         // not kept: home is Notebooks, the Library says so once, and the next save leaves the line out. (The
         // value is never logged: it may hold a name.)
@@ -5354,6 +5538,7 @@ pub fn settings_save(s: &Settings) -> i32 {
     // The newest keys come last of the known ones: a build without them keeps their lines as lines it
     // does not know. The clock and battery corner's (status.rs), then the gestures' (Index phase 1).
     put_int(&mut b, "status_on", s.status_on as i32);
+    put_int(&mut b, "status_in_notebooks", s.status_in_notebooks as i32);
     put_int(&mut b, "status_size", s.status_size);
     put_int(&mut b, "gestures", s.gestures as i32);
     put_int(&mut b, "landscape_fit", s.landscape_fit as i32);
@@ -5402,6 +5587,12 @@ pub fn settings_save(s: &Settings) -> i32 {
     // have, written back as it was).
     let g = crate::pdfwork::Gamma::from_index(s.pdf_gamma);
     put_unless_default(&mut b, "pdf_gamma", g.name(), crate::pdfwork::Gamma::Off.name());
+    // The home apps' order, most recently used first (2.3).
+    if s.recent_apps.is_empty() {
+        put(&mut b, "recent_apps", "files,share,settings,store");
+    } else {
+        put(&mut b, "recent_apps", s.recent_apps.as_str());
+    }
     // Lines this build does not know, as they were; but a pen.panel or touch.panel this build could
     // not read goes once the calibration's panel is recorded (written above in its place).
     let unknown = with(|st| st.g_set_unknown.clone());
@@ -5511,6 +5702,27 @@ mod tests {
         }
         assert!(collided);
         let _ = std::fs::remove_dir_all(&r);
+    }
+
+    // The app row is most recently used first, but using one app only moves that app: the others keep
+    // the order they had (a package does not go behind every built-in, or the other way around).
+    #[test]
+    fn using_an_app_moves_only_it_to_the_front() {
+        let mut s = Settings::default();
+        s.recent_apps.set("files,share,settings,store");
+        assert!(settings_package_app_used(&mut s, "com.example.wordle"));
+        assert_eq!(s.recent_apps.as_str(), "pkg:com.example.wordle,files,share,settings,store");
+        assert!(settings_app_used(&mut s, 2));
+        assert_eq!(s.recent_apps.as_str(), "settings,pkg:com.example.wordle,files,share,store");
+        assert!(!settings_app_used(&mut s, 2));
+        assert!(settings_app_used(&mut s, 0));
+        assert_eq!(s.recent_apps.as_str(), "files,settings,pkg:com.example.wordle,share,store");
+        assert!(settings_package_app_used(&mut s, "com.example.wordle"));
+        assert_eq!(s.recent_apps.as_str(), "pkg:com.example.wordle,files,settings,share,store");
+        assert!(!settings_package_app_used(&mut s, "com.example.wordle"));
+        assert!(settings_app_used(&mut s, 3));
+        assert_eq!(s.recent_apps.as_str(), "store,pkg:com.example.wordle,files,settings,share");
+        assert!(!settings_app_used(&mut s, 4));
     }
 
     #[test]

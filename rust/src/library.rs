@@ -2,7 +2,8 @@
 //! plus the sheets: new notebook (paper picker), settings, notebook actions, move, delete.
 
 use crate::prelude::*;
-use crate::about::AboutView;
+use crate::appicon::AppIcon;
+use crate::globalui::{gui_app_tile, gui_button, gui_chip, gui_fab, gui_gap, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_select, gui_status_bar, gui_status_h, gui_top_button_h, GuiPopupItem};
 use crate::settingsmenu;
 use crate::ui::{ui_row, ui_row_page, ui_row_pager, Row as UiRow};
 use crate::browser::{BrowseMode, Browser, BrowserResult, FilesPrefs, PickSpec};
@@ -61,6 +62,14 @@ enum Modal {
     /// Settings > System > Darker lines in imported PDFs (2.2, issue #173, Rust only; a number of its own, beside the
     /// eraser's): Off, Medium, Strong, as the eraser's list
     DarkerLines = 385,
+    /// The home's All apps page (2.3, issue #209, Rust only; numbered past the C's sheets as Exit's)
+    Apps = 301,
+    /// The home's + slide-up (2.3, issue #209): New notebook, New folder, Import over Wi-Fi
+    Add = 302,
+    /// The home's Sort slide-up (2.3, issue #209): Name A-Z, Name Z-A, Newest first, Oldest first
+    Sort = 303,
+    /// The Package Store (Rust only): the GitHub catalog of apps and widgets, over the Library.
+    Store = 304,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -85,6 +94,8 @@ enum KbPurpose {
     WifiName = 6,      // the Wi-Fi sheet's hidden network name entry
     WifiEapUser = 7,   // the Wi-Fi sheet's enterprise username entry
     WifiEapPassword = 8, // the Wi-Fi sheet's masked enterprise password entry
+    /// The home's global search (2.3, issue #209): filters as the text is typed
+    Search = 9,
 }
 
 const H_NONE: i32 = 0;
@@ -154,6 +165,11 @@ const H_PAIR_AGAIN: i32 = 53;
 const H_UPDATES: i32 = 54;
 const H_UPD_CHANNEL: i32 = 55;
 const H_UPD_NOW: i32 = 57;
+// Settings > Updates' package list: the Update button on a row (arg: its place in
+// packagestore::package_updates), its page arrows, and a catalog retry.
+const H_UPD_PKG: i32 = 262;
+const H_UPD_PKG_PAGE: i32 = 263;
+const H_UPD_PKG_REFRESH: i32 = 264;
 const H_MOVE_PREV: i32 = 69;
 const H_MOVE_NEXT: i32 = 70;
 const H_GESTURES: i32 = 58;
@@ -174,11 +190,9 @@ const H_ABOUT_CLOSE: i32 = 72;
 // (73 was Don't show this again, gone in 2.0.0: the owner's rule of 2026-11-05)
 const H_ABOUT_PREV: i32 = 74;
 const H_ABOUT_NEXT: i32 = 75;
-const H_ABOUT_MORE: i32 = 76;
-// 2.1.0: Read all's list of every version's notes, its rows (arg: the entry in about::notes()), and Back
-// from a version's notes to it.
+// What's new's versions sidebar: its rows (arg: the entry in about::notes()) and its page arrows.
 const H_ABOUT_ROW: i32 = 87;
-const H_ABOUT_BACK: i32 = 88;
+const H_ABOUT_SIDEBAR: i32 = 99;
 const H_FMORE_MOVE: i32 = 77;
 // 2.0.0-beta.2: a notebook's or a folder's Leave out of the Graph / Show in the Graph.
 const H_MORE_GRAPH: i32 = 78;
@@ -238,6 +252,26 @@ const H_DARKER_PICK: i32 = 251;
 const H_DARKER_BACK: i32 = 252;
 // Settings > Packages > Widgets (2.2, issue #200): the widget package manager (widgetpkgui.rs).
 const H_SET_PACKAGES: i32 = 260;
+// Settings > Packages > Apps: the same manager for the app package kind.
+const H_SET_APP_PACKAGES: i32 = 261;
+// The home's global elements (2.3, issue #209): its filter chips (arg: 0 All, 1 Notebooks, 2 Folders),
+// the Sort select and its choices (arg: the sort), the Search button, the + button and its popup's rows
+// (arg: 0 notebook, 1 folder, 2 Share), the apps buttons and the All apps page.
+const H_FILTER: i32 = 270;
+const H_SORT: i32 = 271;
+const H_SORT_PICK: i32 = 272;
+const H_SEARCH: i32 = 273;
+const H_ADD: i32 = 275;
+const H_ADD_ACTION: i32 = 276;
+const H_APPS: i32 = 277;
+const H_APP: i32 = 278;
+const H_APPS_CLOSE: i32 = 279;
+// The All apps page's own pager when installed apps need more than one screen.
+const H_APPS_PREV: i32 = 281;
+const H_APPS_NEXT: i32 = 282;
+// Installed app tiles use an argument past the built-in app ids (0 Files, 1 Share, 2 Settings,
+// 3 Package Store, 6 What's new, 7 About): an index into the sorted installed app package list.
+const H_APP_PKG_BASE: i32 = 30_000;
 // Settings > Wi-Fi's top controls and lists: Nearby/Saved (arg: 0 or 1), Rescan, Other... (a hidden
 // network), a saved row's trash (arg: a row), and a network a scan found (arg: an index of
 // WifiSheet.near). The saved rows keep H_WIFI_NET.
@@ -259,6 +293,8 @@ const H_SET_CAT: i32 = 100;
 const H_SETTINGS_BACK: i32 = 101;
 /// Every Settings page's X: the whole of Settings closes (a submenu's Back stays one step back).
 const H_SETTINGS_CLOSE: i32 = 102;
+/// The Exit row at the foot of Settings' sidebar: Grimoire leaves, as the old All apps page's Exit did.
+const H_SETTINGS_EXIT: i32 = 103;
 
 #[derive(Clone, Copy, Default)]
 struct Item {
@@ -339,6 +375,19 @@ pub struct LibraryState {
     cur_folder: FixedStr<STORE_NAME_LEN>,
     folder_move_page: usize,
     page: i32,
+    /// The All apps page's page of launcher tiles.
+    apps_page: i32,
+    /// The home's view (2.3, issue #209): the filter chip (0 All, 1 Notebooks, 2 Folders), the sort
+    /// (0 Name A-Z, 1 Name Z-A, 2 Newest first, 3 Oldest first), the search query and whether the
+    /// keyboard is editing it. all_items is every folder and notebook before the view is applied;
+    /// items is the grid's page, which the view builds.
+    filter: i32,
+    sort: i32,
+    query: String,
+    search_active: bool,
+    all_items: Vec<Item>,
+    /// the minute the status bar last showed (library_tick redraws when it changes)
+    status_min: i64,
     /// per notebook, lazily loaded (px empty until then)
     thumbs: Vec<Canvas>,
     thumb_tried: Vec<bool>,
@@ -394,23 +443,17 @@ pub struct LibraryState {
     gestures_file_readable: bool,
     gestures_refused: i32,
     gestures_reset_confirm: bool,
-    /// The About sheet (What's new): its view (the card, Read all's list, a version's notes), the
-    /// version's notes shown (their entry in about::notes()), the list's page and the notes' page, and
-    /// where the bat is (the card hangs from it). As it last drew: the view's pages, the list's
-    /// entries on its page and the row marked as this version's, whether the signature shows, the
-    /// card's notes (the blocks shown, of how many, the last one cut), a version's notes' body size (0
-    /// elsewhere), and where the card or sheet is (a step on the sheet refreshes there alone:
-    /// about_step).
-    about_view: AboutView,
+    /// What's new, the full-screen browser: the version shown (its entry in about::notes()), the
+    /// versions sidebar's page and the reader's page. As it last drew: the sidebar's rows and selected
+    /// row, the reader's pages, whether its page has the signature, its body size and leading, and the
+    /// screen (a step on it redraws what changed).
     about_note: usize,
     about_list_page: i32,
     about_page: i32,
     about_pages: i32,
-    about_bat: Rect,
     about_rows: Vec<usize>,
     about_marked: i32,
     about_signed: bool,
-    about_card: (i32, i32, bool),
     about_body_px: f32,
     about_lead: f32,
     about_area: Rect,
@@ -462,12 +505,14 @@ pub struct LibraryState {
     wifi: WifiSheet,
     /// The Wi-Fi submenu was opened from Share's bottom button: Back or X returns to Share.
     share_wifi_return: bool,
-    // The Updates sheet: its check (UPD_*), the newest version it found, why it failed.
+    // The Updates sheet: its check (UPD_*), the newest version it found, why it failed, and the
+    // page of package updates it shows.
     upd: i32,
     /// at most UPDATE_VERSION_LEN - 1 bytes
     upd_latest: String,
     /// at most 15 bytes
     upd_why: String,
+    upd_pkg_page: i32,
     modal: Modal,
     kbp: KbPurpose,
     kb: Keyboard,
@@ -515,47 +560,128 @@ fn lib(a: &mut App) -> &mut LibraryState {
 const LABEL_CAP: usize = STORE_NAME_LEN + 32;
 
 // ---- layout ----
+/// The status bar and the header (draw_base).
 fn top_h() -> i32 {
+    gui_status_h() + head_h()
+}
+/// The header's height under the status bar: the Library's name and the Search and settings buttons.
+fn head_h() -> i32 {
+    gui_head_h()
+}
+/// The pager and + button's bar at the foot (its rule above it); about.rs keeps a version's notes off it.
+pub(crate) fn bottom_h() -> i32 {
     ui_px(190.0)
 }
-/// The top bar's buttons' height, centred in the bar (draw_base).
-fn top_btn_h() -> i32 {
-    ui_px(150.0)
-}
-/// Where the top bar's buttons end; about.rs starts a sheet that would cut across them at the margin.
-pub(crate) fn top_buttons_foot() -> i32 {
-    (top_h() - top_btn_h()) / 2 + top_btn_h()
-}
-/// The pager's bar at the foot (its rule 10 px above it); about.rs keeps a version's notes off it.
-pub(crate) fn bottom_h() -> i32 {
-    ui_px(170.0)
-}
 fn margin() -> i32 {
-    ui_px(50.0)
+    gui_margin()
+}
+/// The app row's height, and the width of one small app launcher in it.
+fn apps_h() -> i32 {
+    ui_px(200.0)
+}
+fn app_tile_w() -> i32 {
+    ui_px(240.0)
+}
+fn filters_h() -> i32 {
+    ui_px(88.0)
 }
 fn grid_top() -> i32 {
-    // The Gothic frieze hangs below the header rule; leave air under its drops.
-    top_h()
-        + margin()
-        + if ui_theme() == UiTheme::Gothic {
-            ui_px(24.0)
-        } else {
-            0
-        }
+    top_h() + 3 * gui_gap() + apps_h() + filters_h()
+}
+fn card_label_h() -> i32 {
+    ui_px(150.0)
 }
 
-/// cols, rows, cw, ch for a screen aw x ah.
+/// One launcher on the home app row or the All apps page.
+#[derive(Clone, Debug)]
+struct HomeApp {
+    icon: AppIcon,
+    label: String,
+    /// 0 Files, 1 Share, 2 Settings, 3 Package Store, or H_APP_PKG_BASE + an index into
+    /// app_package_list().
+    arg: i32,
+}
+
+/// The installed apps, most recently used first: the four built-ins and every installed app
+/// package, interleaved by settings.ini recent_apps. Packages the index no longer has are dropped;
+/// installed packages the line has not seen follow in name order. Exit is in Settings' sidebar and
+/// What's new/About are utility links on the All apps page.
+fn home_apps(s: &Settings) -> Vec<HomeApp> {
+    let installed = crate::apppkg::app_package_list();
+    let core = [
+        HomeApp { icon: AppIcon::glyph(IconKind::Browser), label: tr("Files").to_string(), arg: 0 },
+        HomeApp { icon: AppIcon::glyph(IconKind::Share), label: tr("Share").to_string(), arg: 1 },
+        HomeApp { icon: AppIcon::glyph(IconKind::Gear), label: tr("Settings").to_string(), arg: 2 },
+        HomeApp { icon: AppIcon::glyph(IconKind::Package), label: tr("Package Store").to_string(), arg: 3 },
+    ];
+    let mut out: Vec<HomeApp> = Vec::new();
+    let mut seen_pkg: Vec<usize> = Vec::new();
+    for item in settings_recent_apps(s) {
+        match item {
+            RecentApp::Core(id) => out.push(core[id as usize].clone()),
+            RecentApp::Package(id) => {
+                if let Some(i) = installed.iter().position(|p| p.id == id) {
+                    if !seen_pkg.contains(&i) {
+                        seen_pkg.push(i);
+                        let it = &installed[i];
+                        let icon = AppIcon::for_install(it);
+                        out.push(HomeApp { icon, label: it.name.clone(), arg: H_APP_PKG_BASE + i as i32 });
+                    }
+                }
+            }
+        }
+    }
+    for (i, it) in installed.iter().enumerate() {
+        if !seen_pkg.contains(&i) {
+            let icon = AppIcon::for_install(it);
+            out.push(HomeApp { icon, label: it.name.clone(), arg: H_APP_PKG_BASE + i as i32 });
+        }
+    }
+    out
+}
+
+/// cols, rows, cw, ch for a screen aw x ah. The covers are portrait (4:3) and the labels sit under
+/// them, so a page shows fewer, taller cards than the old square grid.
 fn grid_geom(aw: i32, ah: i32) -> (i32, i32, i32, i32) {
-    let cols = if aw > ah { 5 } else { 3 }; // more, smaller cards when the Kindle is sideways
+    let cols = if aw > ah { 5 } else { 4 };
     let cw = (aw - margin() * (cols + 1)) / cols;
-    let th = cw * 4 / 3;
-    let ch = th + ui_px(150.0);
     let avail = ah - grid_top() - bottom_h();
+    let max_cover = (avail - margin() - card_label_h()).max(ui_px(200.0));
+    let th = (cw * 4 / 3).min(max_cover);
+    let ch = th + card_label_h();
     let mut rows = avail / (ch + margin());
     if rows < 1 {
         rows = 1;
     }
     (cols, rows, cw, ch)
+}
+
+fn fab_rect(aw: i32, ah: i32) -> Rect {
+    let fs = ui_px(144.0);
+    Rect::new(aw - margin() - fs, ah - margin() - fs, fs, fs)
+}
+
+fn sort_rect(aw: i32) -> Rect {
+    let sort_w = ui_px(400.0).min(aw / 3);
+    let fy = top_h() + 2 * gui_gap() + apps_h();
+    Rect::new(aw - margin() - sort_w, fy, sort_w, filters_h())
+}
+
+/// The `...` of the card at `target` on `page`: the popup menus hang from the control that opened them.
+fn card_more_rect(aw: i32, ah: i32, target: i32, page: i32) -> Rect {
+    let (cols, _, cw, ch) = grid_geom(aw, ah);
+    let pp = cols * grid_geom(aw, ah).1;
+    let local = (target - page * pp).max(0);
+    let col = local % cols;
+    let row = local / cols;
+    let th = (ch - card_label_h()).max(ui_px(120.0));
+    let more = ui_px(110.0);
+    Rect::new(
+        margin() + col * (cw + margin()) + cw - more,
+        grid_top() + row * (ch + margin()) + th + ui_px(20.0),
+        more,
+        more,
+    )
 }
 
 fn per_page(a: &App) -> i32 {
@@ -572,6 +698,7 @@ fn empty_hint_shown(s: &LibraryState) -> bool {
 // ---- data ----
 
 fn free_lists(s: &mut LibraryState) {
+    s.all_items = Vec::new();
     for t in s.thumbs.iter_mut() {
         canvas_free(t);
     }
@@ -582,6 +709,107 @@ fn free_lists(s: &mut LibraryState) {
     s.books = Vec::new();
     s.folders = Vec::new();
     s.items = Vec::new();
+}
+
+/// The home's search matches a name without caring about case (issue #209: the search is global,
+/// across every folder, while a query is typed).
+fn name_matches(name: &str, query: &str) -> bool {
+    query.is_empty() || name.to_lowercase().contains(query)
+}
+
+/// Folders first, then notebooks, then the Files card: the modern home keeps the list's groups.
+fn item_group(it: &Item) -> i32 {
+    if it.is_folder {
+        0
+    } else if it.is_files {
+        2
+    } else {
+        1
+    }
+}
+
+fn item_name<'a>(s: &'a LibraryState, it: &'a Item) -> &'a str {
+    if it.is_files {
+        tr("Files")
+    } else if it.is_folder {
+        store_folder_leaf(it.folder.as_str())
+    } else {
+        s.books[it.nb].name.as_str()
+    }
+}
+
+/// Build the grid's page from every item and the home's view: the filter chips, the sort, and the
+/// search (a non-empty query searches every folder, not just the one shown). Cheap enough to run at
+/// each key of the search keyboard: it reads the lists already loaded, never the storage.
+fn apply_view(s: &mut LibraryState, pp: i32) {
+    let query = s.query.trim().to_lowercase();
+    let searching = !query.is_empty();
+    let filter = clampi(s.filter, 0, 2);
+    let mut items: Vec<Item> = Vec::with_capacity(s.all_items.len());
+    for it in s.all_items.iter().copied() {
+        if it.is_files {
+            if filter != 0 || (!searching && !s.cur_folder.is_empty()) {
+                continue;
+            }
+            if searching && !name_matches(tr("Files"), &query) && !"files".contains(&query) {
+                continue;
+            }
+            items.push(it);
+        } else if it.is_folder {
+            if filter == 1 {
+                continue;
+            }
+            if !searching && store_folder_parent(it.folder.as_str()) != s.cur_folder.as_str() {
+                continue;
+            }
+            if searching && !name_matches(store_folder_leaf(it.folder.as_str()), &query) {
+                continue;
+            }
+            items.push(it);
+        } else {
+            if filter == 2 {
+                continue;
+            }
+            let nb = &s.books[it.nb];
+            if !searching && nb.folder != s.cur_folder {
+                continue;
+            }
+            if searching && !name_matches(nb.name.as_str(), &query) {
+                continue;
+            }
+            items.push(it);
+        }
+    }
+    let sort = clampi(s.sort, 0, 3);
+    items.sort_by(|a, b| {
+        let ga = item_group(a);
+        let gb = item_group(b);
+        if ga != gb {
+            return ga.cmp(&gb);
+        }
+        if (sort == 2 || sort == 3) && ga == 1 {
+            let ma = s.books[a.nb].modified;
+            let mb = s.books[b.nb].modified;
+            let ord = if sort == 2 { mb.cmp(&ma) } else { ma.cmp(&mb) };
+            if ord != std::cmp::Ordering::Equal {
+                return ord;
+            }
+        }
+        let na = item_name(s, a).to_lowercase();
+        let nb = item_name(s, b).to_lowercase();
+        let ord = na.cmp(&nb);
+        if sort == 1 { ord.reverse() } else { ord }
+    });
+    s.items = items;
+    let pages = (s.items.len() as i32 + pp - 1) / pp;
+    s.page = clampi(s.page, 0, if pages > 0 { pages - 1 } else { 0 });
+}
+
+/// Re-lay out what the home already knows (a filter, a sort, a typed search), without reading the
+/// storage again.
+fn refresh_view(a: &mut App) {
+    let pp = per_page(a);
+    apply_view(lib(a), pp);
 }
 
 fn reload(a: &mut App) {
@@ -597,38 +825,38 @@ fn reload(a: &mut App) {
     s.thumb_tried = vec![false; nbooks];
     s.thumb_picture = vec![false; nbooks];
     s.card_stamp = vec![0; nbooks];
-    s.items = Vec::with_capacity(nbooks + s.folders.len() + 1);
-    {
-        for f in 0..s.folders.len() {
-            if store_folder_parent(&s.folders[f]) != s.cur_folder.as_str() {
-                continue;
-            }
-            let mut it = Item { is_folder: true, ..Default::default() };
-            it.folder.set(&s.folders[f]);
-            for i in 0..nbooks {
-                it.count += store_folder_contains(&s.folders[f], s.books[i].folder.as_str()) as i32;
-            }
-            it.has_children = s.folders.iter().any(|child| child != &s.folders[f] && store_folder_contains(it.folder.as_str(), child));
-            s.items.push(it);
+    s.all_items = Vec::with_capacity(nbooks + s.folders.len() + 1);
+    // Every folder, not just this one: the search is global, and apply_view picks what shows.
+    for f in 0..s.folders.len() {
+        let mut it = Item { is_folder: true, ..Default::default() };
+        it.folder.set(&s.folders[f]);
+        for i in 0..nbooks {
+            it.count += store_folder_contains(s.folders[f].as_str(), s.books[i].folder.as_str()) as i32;
         }
+        it.has_children = s.folders.iter().any(|child| child != &s.folders[f] && store_folder_contains(it.folder.as_str(), child));
+        s.all_items.push(it);
     }
     for i in 0..nbooks {
-        if s.books[i].folder == s.cur_folder {
-            s.items.push(Item {
-                nb: i,
-                ..Default::default()
-            });
-        }
+        s.all_items.push(Item { nb: i, ..Default::default() });
     }
     // Where the Files card goes (2.2), decided here and nowhere else: after every folder and notebook of the top
     // level, so it is the Library's last card (on its last screen), and no notebook's place changes for it. (The
     // last card of the first screen instead would be an insert at the screen's last place here.)
     if files_card && s.cur_folder.is_empty() {
-        s.items.push(Item { is_files: true, ..Default::default() });
+        s.all_items.push(Item { is_files: true, ..Default::default() });
         s.files_free = crate::browser::files_free_line();
     }
-    let pages = (s.items.len() as i32 + pp - 1) / pp;
-    s.page = clampi(s.page, 0, if pages > 0 { pages - 1 } else { 0 });
+    apply_view(s, pp);
+}
+
+/// The Sort select's value (and the Sort sheet's rows): the modern home's order.
+fn sort_name(sort: i32) -> &'static str {
+    match clampi(sort, 0, 3) {
+        0 => tr("Name (A-Z)"),
+        1 => tr("Name (Z-A)"),
+        2 => tr("Newest first"),
+        _ => tr("Oldest first"),
+    }
 }
 
 fn unique_name(
@@ -747,9 +975,9 @@ fn draw_card(c: &mut Canvas, s: &mut LibraryState, dpi: f32, r: Rect, idx: usize
         draw_files_card(c, s, r, idx);
         return;
     }
-    let th = r.w * 4 / 3;
+    let th = (r.h - card_label_h()).max(ui_px(120.0));
     let tb = Rect::new(r.x, r.y, r.w, th);
-    ui_frame(c, tb, ui_px(16.0), 255, true, 0);
+    ui_frame(c, tb, gui_radius(), 255, true, 0);
     if it.is_folder {
         ui_icon(c, IconKind::Folder, rect_inflate(tb, -r.w / 5), 0);
     } else {
@@ -761,7 +989,7 @@ fn draw_card(c: &mut Canvas, s: &mut LibraryState, dpi: f32, r: Rect, idx: usize
         }
         c.clip = saved;
     }
-    ui_frame(c, tb, ui_px(16.0), 0, false, ui_px(4.0));
+    ui_frame(c, tb, gui_radius(), 0, false, ui_px(4.0));
     let mut line2 = String::new();
     let mut label = String::new();
     let title: &str;
@@ -836,11 +1064,11 @@ fn draw_card(c: &mut Canvas, s: &mut LibraryState, dpi: f32, r: Rect, idx: usize
 /// The Files card (2.2): Files' icon where a notebook's page is, its name, the storage's free space as Files' root
 /// says it (left out when it does not fit), and its `...` (Open, Hide from Library).
 fn draw_files_card(c: &mut Canvas, s: &mut LibraryState, r: Rect, idx: usize) {
-    let th = r.w * 4 / 3;
+    let th = (r.h - card_label_h()).max(ui_px(120.0));
     let tb = Rect::new(r.x, r.y, r.w, th);
-    ui_frame(c, tb, ui_px(16.0), 255, true, 0);
+    ui_frame(c, tb, gui_radius(), 255, true, 0);
     ui_icon(c, IconKind::Files, rect_inflate(tb, -r.w / 5), 0);
-    ui_frame(c, tb, ui_px(16.0), 0, false, ui_px(4.0));
+    ui_frame(c, tb, gui_radius(), 0, false, ui_px(4.0));
     let more = ui_px(110.0);
     let tr_ = Rect::new(r.x, r.y + th + ui_px(14.0), r.w - more - ui_px(10.0), ui_px(96.0));
     let face = if ui_theme() == UiTheme::Gothic { FontFace::Regular } else { FontFace::Bold };
@@ -861,171 +1089,110 @@ fn draw_files_card(c: &mut Canvas, s: &mut LibraryState, r: Rect, idx: usize) {
 
 fn draw_base(a: &mut App) {
     let (aw, ah, dpi) = (a.w, a.h, a.dpi);
+    let apps = home_apps(&a.settings);
     let App { screen: c, lib, .. } = a;
     let s = lib.as_deref_mut().unwrap();
     hits_clear(&mut s.hits);
     canvas_fill(c, Rect::new(0, 0, aw, ah), 255);
-    let th = top_h();
+
+    // The status bar (2.3, issue #209): time and date, Wi-Fi and Bluetooth, the battery.
+    gui_status_bar(c, aw, wall_time());
+
     let m = margin();
-    let mut bw = ui_px(170.0);
-    let bh = top_btn_h();
-    let by = (th - bh) / 2;
-    let mut x = m;
-    if !s.cur_folder.is_empty() {
-        let br = Rect::new(x, by, bh, bh);
-        ui_button(c, br, IconKind::Back, "", ButtonStyle::Plain);
-        hits_add(&mut s.hits, br, H_BACK, 0);
-        x += bh + ui_px(30.0);
-    }
-    struct Btn {
-        icon: IconKind,
-        label: &'static str,
-        id: i32,
-        show: bool,
-    }
-    let mut btns = [
-        // TRANSLATORS: the Library's top bar, a word under each icon, at 34 px: 132 px in Gothic
-        // (138 for all but New) and 154 px in Classic. A longer word widens all five buttons, up to
-        // 182 px in Gothic (188 for all but New) and 204 px in Classic. Exit leaves Grimoire.
-        Btn {
-            icon: IconKind::Exit,
-            label: tr("Exit"),
-            id: H_EXIT,
-            show: true,
-        },
-        // TRANSLATORS: the Library's top bar (see Exit).
-        Btn {
-            icon: IconKind::Gear,
-            label: tr("Settings"),
-            id: H_SETTINGS,
-            show: true,
-        },
-        // TRANSLATORS: the Library's top bar (see Exit): to the Share screen (over Wi-Fi).
-        Btn {
-            icon: IconKind::Share,
-            label: tr("Share"),
-            id: H_SHARE,
-            show: true,
-        },
-        // TRANSLATORS: the Library's top bar (see Exit): makes a new folder.
-        Btn { icon: IconKind::FolderPlus, label: tr("Folder"), id: H_NEWFOLDER, show: true },
-        // TRANSLATORS: the Library's top bar (see Exit): makes a new notebook.
-        Btn {
-            icon: IconKind::Plus,
-            label: tr("New"),
-            id: H_NEW,
-            show: true,
-        },
-    ];
-    // Started from KOReader's Grimoire plugin (kindle/app/grimoire.sh --hosted koreader), Exit goes
-    // back to KOReader.
-    let hosted = std::env::var_os("GRIMOIRE_HOST").is_some_and(|h| h == "koreader");
-    if hosted {
-        // The Library's top bar when Grimoire was opened from KOReader: in place of Exit, it opens
-        // KOReader (a name, not translated), using the same button width as its neighbors.
-        btns[0].label = "KOReader";
-    }
-    const NBTNS: usize = 6;
-    // A word too long for its button (a translation) widens all five alike, as far as leaves the
-    // app's name room in the bar (beyond that a word is cut, and the fit check hears of it).
-    for b in btns.iter() {
-        let need = ui_button_need_w(
-            bh,
-            b.icon,
-            b.label,
-            if b.id == H_NEW {
-                ButtonStyle::Primary
-            } else {
-                ButtonStyle::Plain
-            },
-        );
-        if b.show {
-            bw = clampi(need, bw, ui_px(220.0));
-        }
-    }
-    let mut rx = aw - m;
-    for b in btns.iter().take(NBTNS) {
-        if !b.show {
-            continue;
-        }
-        let w = bw;
-        rx -= w;
-        let r = Rect::new(rx, by, w, bh);
-        ui_button(
-            c,
-            r,
-            b.icon,
-            b.label,
-            if b.id == H_NEW {
-                ButtonStyle::Primary
-            } else {
-                ButtonStyle::Plain
-            },
-        );
-        hits_add(&mut s.hits, r, b.id, 0);
-        rx -= ui_px(20.0);
-    }
-    if !s.cur_folder.is_empty() {
-        ui_icon(
-            c,
-            IconKind::Folder,
-            Rect::new(x, by + ui_px(25.0), ui_px(100.0), ui_px(100.0)),
-            0,
-        );
-        x += ui_px(115.0);
-    } else {
-        // The bat, Grimoire's mark: a tap on it (or on the name beside it) opens What's new.
-        let k = ui_px(3.0);
-        let bat = Rect::new(x, (th - BAT_H * k) / 2, BAT_W * k, BAT_H * k);
-        draw_bat(c, bat.x, bat.y, k);
-        s.about_bat = bat;
-        x += bat.w + ui_px(34.0);
-    }
-    // (A folder's name, cut short if it must be; else the app's.)
-    let mut label = String::new();
-    let title_px = ui_title_size()
-        * if ui_theme() == UiTheme::Gothic {
-            1.8
-        } else {
-            1.25
-        };
+    let gap = gui_gap();
+    let mut title_buf = String::new();
     let title = if !s.cur_folder.is_empty() {
-        ui_name_label(s.cur_folder.as_str(), &mut label, LABEL_CAP)
+        ui_name_label(s.cur_folder.as_str(), &mut title_buf, LABEL_CAP)
     } else {
-        APP_NAME
+        tr("Library")
     };
-    let title_rect=Rect::new(x,0,rx-x-ui_px(20.0),th);
-    if !s.cur_folder.is_empty() {
-        ui_text_name(c,FontFace::Title,ui_title_size()*1.2,ui_small_size(),title_rect,title,2,0);
-    } else {
-        font_draw_left_name(c,FontFace::Title,title_px,title_rect,title,0);
-        let name_w = font_measure(FontFace::Title, title_px, title).min(title_rect.w);
-        hits_add(&mut s.hits, Rect::new(0, 0, x + name_w + ui_px(20.0), th), H_ABOUT, 0);
+    // The one header: title at the left, its round actions right to left. Search opens the keyboard
+    // over the Library, and the filtered grid follows each key typed.
+    let (head, actions) = gui_header(
+        c,
+        aw,
+        title,
+        !s.cur_folder.is_empty(),
+        &[(IconKind::Gear, H_SETTINGS), (IconKind::Search, H_SEARCH)],
+    );
+    if !rect_is_empty(head.back) {
+        hits_add(&mut s.hits, head.back, H_BACK, 0);
     }
-    ui_rule(c, 0, aw, th, ui_px(4.0), 0);
-    ui_frieze(c, 0, aw, th + ui_px(9.0), ui_px(28.0), 0);
+    for (r, id) in actions {
+        hits_add(&mut s.hits, r, id, 0);
+    }
+
+    // The app row: small launchers with the icon in a rectangle and its name below, as a phone
+    // lays them out, most recently used first. Show All is a plain text link at the row's right
+    // margin, opening the Apps page.
+    let ay = top_h() + gap;
+    let (ts, tw) = (apps_h(), app_tile_w());
+    let show = tr("Show All");
+    let show_w = font_measure(FontFace::Bold, ui_text_size(), show);
+    let show_r = Rect::new(aw - m - show_w, ay, show_w, ts);
+    // The row shows as many recent apps as fit before the right-aligned Show All link; the All
+    // apps page has every one of them.
+    let room = (show_r.x - gap - m).max(tw);
+    let visible = apps.len().min(((room + gap) / (tw + gap)).max(1) as usize);
+    for (i, app) in apps.iter().take(visible).enumerate() {
+        let r = Rect::new(m + i as i32 * (tw + gap), ay, tw, ts);
+        gui_app_tile(c, r, &app.icon, &app.label, false);
+        hits_add(&mut s.hits, r, H_APP, app.arg);
+    }
+    ui_text(c, FontFace::Bold, ui_text_size(), ui_small_size(), show_r, show, 1, false, 0);
+    hits_add(&mut s.hits, Rect::new(show_r.x - ui_px(20.0), show_r.y, show_r.w + ui_px(20.0), show_r.h), H_APPS, 0);
+
+    // The filter chips and the Sort select: the global elements' chip and select.
+    let fy = ay + apps_h() + gap;
+    let chip_h = filters_h();
+    let sort_r = sort_rect(aw);
+    let labels = [tr("All"), tr("Notebooks"), tr("Folders")];
+    let gap_c = ui_px(14.0);
+    let mut chip_w: Vec<i32> = labels
+        .iter()
+        .map(|label| font_measure(FontFace::Bold, ui_text_size(), label) + ui_px(76.0))
+        .collect();
+    let total: i32 = chip_w.iter().sum::<i32>() + gap_c * (labels.len() as i32 - 1);
+    let available = (sort_r.x - gap - m).max(ui_px(240.0));
+    if total > available {
+        let each = ((available - gap_c * (labels.len() as i32 - 1)) / labels.len() as i32).max(ui_px(80.0));
+        for w in chip_w.iter_mut() {
+            *w = each;
+        }
+    }
+    let mut cx = m;
+    for (i, label) in labels.iter().enumerate() {
+        let r = Rect::new(cx, fy, chip_w[i], chip_h);
+        gui_chip(c, r, label, s.filter == i as i32);
+        hits_add(&mut s.hits, r, H_FILTER, i as i32);
+        cx += chip_w[i] + gap_c;
+    }
+    gui_select(c, sort_r, tr("Sort"), sort_name(s.sort));
+    hits_add(&mut s.hits, sort_r, H_SORT, 0);
 
     let (cols, rows, cw, ch) = grid_geom(aw, ah);
     let pp = cols * rows;
     if empty_hint_shown(s) {
-        let mut er = Rect::new(m, th + ui_px(300.0), aw - 2 * m, ui_px(100.0));
-        // TRANSLATORS: the Library with nothing in it (1760 px at 64 px), and what to do (at 44 px).
-        let empty = if !s.cur_folder.is_empty() {
+        let mut er = Rect::new(m, grid_top() + ui_px(150.0), aw - 2 * m, ui_px(100.0));
+        let searching = !s.query.trim().is_empty();
+        let empty = if searching {
+            // TRANSLATORS: the home's search found nothing, above the hint under it.
+            tr("No matches")
+        } else if !s.cur_folder.is_empty() {
             tr("This folder is empty")
         } else {
             tr("No notebooks yet")
         };
         font_draw_centered(c, FontFace::Bold, ui_title_size(), er, empty, 0);
         er.y += ui_px(110.0);
-        // TRANSLATORS: New is the top bar's button (as translated there).
-        font_draw_centered(
-            c,
-            FontFace::Regular,
-            ui_text_size(),
-            er,
-            tr("Tap New to start one."),
-            60,
-        );
+        let hint = if searching {
+            // TRANSLATORS: under "No matches": what to do (change the search).
+            tr("Try another search.")
+        } else {
+            // TRANSLATORS: under the empty Library (or folder): the + button makes one.
+            tr("Tap + to start one.")
+        };
+        font_draw_centered(c, FontFace::Regular, ui_text_size(), er, hint, 60);
     }
     for i in 0..pp {
         let idx = s.page * pp + i;
@@ -1042,37 +1209,22 @@ fn draw_base(a: &mut App) {
             idx as usize,
         );
     }
-    // Pager.
+
+    // The pager and the + button (the issue's small add button at the bottom right).
     let mut pages = (s.items.len() as i32 + pp - 1) / pp;
     if pages < 1 {
         pages = 1;
     }
     let y = ah - bottom_h();
-    ui_rule(c, 0, aw, y - ui_px(10.0), ui_px(3.0), 0);
-    let pr = Rect::new(m, y + ui_px(15.0), ui_px(220.0), bottom_h() - ui_px(30.0));
-    let nr = Rect::new(aw - m - ui_px(220.0), pr.y, ui_px(220.0), pr.h);
-    ui_button(
-        c,
-        pr,
-        IconKind::Prev,
-        "",
-        if s.page > 0 {
-            ButtonStyle::Plain
-        } else {
-            ButtonStyle::Disabled
-        },
-    );
-    ui_button(
-        c,
-        nr,
-        IconKind::Next,
-        "",
-        if s.page < pages - 1 {
-            ButtonStyle::Plain
-        } else {
-            ButtonStyle::Disabled
-        },
-    );
+    let fab = fab_rect(aw, ah);
+    gui_fab(c, fab, IconKind::Plus);
+    hits_add(&mut s.hits, fab, H_ADD, 0);
+    let nav_y = y + (bottom_h() - ui_px(104.0)) / 2;
+    let bw = ui_px(104.0);
+    let pr = Rect::new(m, nav_y, bw, bw);
+    let nr = Rect::new(pr.x + bw + ui_px(10.0), nav_y, bw, bw);
+    gui_icon_button(c, pr, IconKind::Prev, if s.page > 0 { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+    gui_icon_button(c, nr, IconKind::Next, if s.page < pages - 1 { ButtonStyle::Plain } else { ButtonStyle::Disabled });
     if s.page > 0 {
         hits_add(&mut s.hits, pr, H_PREV, 0);
     }
@@ -1080,13 +1232,13 @@ fn draw_base(a: &mut App) {
         hits_add(&mut s.hits, nr, H_NEXT, 0);
     }
     let mut pl = String::new();
-    // TRANSLATORS: between the Library's page buttons (1320 px at 44 px).
+    // TRANSLATORS: between the home's page buttons, as before (1320 px at 44 px).
     csnprintf!(&mut pl, 96, tr("Page %d of %d"), s.page + 1, pages);
     font_draw_centered(
         c,
         FontFace::Bold,
         ui_text_size(),
-        Rect::new(pr.x + pr.w, pr.y, nr.x - pr.x - pr.w, pr.h),
+        Rect::new(nr.x + nr.w, nav_y, (fab.x - gap - nr.x - nr.w).max(0), bw),
         &pl,
         0,
     );
@@ -2936,65 +3088,192 @@ pub(crate) fn settings_strip(c: &mut Canvas, r: Rect, n: i32, on: i32) -> Vec<Re
 
 pub(crate) use crate::ui::ui_switch as settings_switch;
 
-/// Settings > Updates: one Update button that carries the version, and a switch for the branch the
-/// updates come from (Preview: betas and releases; Stable: releases only). The check runs as the
-/// page opens, so the version it shows is the feed's, not the last visit's.
+/// Draw one package update: its Store icon, name, old-to-new version, kind, and Update button.
+/// Returns the button's rect (the caller adds its hit when nothing else is installing).
+fn draw_package_update_row(c: &mut Canvas, store: &PackageStoreUi, r: Rect, u: &PackageUpdate, busy: bool, active: bool) -> Rect {
+    ui_card(c, r, ButtonStyle::Plain);
+    let pad = ui_px(22.0);
+    let isz = ui_px(96.0);
+    let icon_r = Rect::new(r.x + pad, r.y + (r.h - isz) / 2, isz, isz);
+    ui_frame(c, icon_r, gui_radius(), 255, true, 0);
+    ui_frame(c, icon_r, gui_radius(), 0, false, ui_px(2.0));
+    if let Some(image) = crate::packagestore::update_icon(store, &u.package.id) {
+        canvas_blit_fit(c, image, rect_inflate(icon_r, -ui_px(10.0)));
+    } else {
+        ui_icon(c, IconKind::Package, rect_inflate(icon_r, -ui_px(20.0)), 0);
+    }
+    let bw = ui_px(220.0).min(r.w / 3).max(ui_px(150.0));
+    let bh = ui_px(76.0);
+    let br = Rect::new(r.x + r.w - pad - bw, r.y + (r.h - bh) / 2, bw, bh);
+    let tx = icon_r.x + icon_r.w + ui_px(20.0);
+    let tw = (br.x - ui_px(18.0) - tx).max(0);
+    ui_text(c, FontFace::Bold, ui_text_size(), ui_small_size(), Rect::new(tx, r.y + ui_px(18.0), tw, ui_px(50.0)), &u.package.name, 1, false, 0);
+    let mut ver = String::new();
+    csnprintf!(&mut ver, 220, "%s → %s", &u.installed_version, &u.package.version);
+    font_draw_left(c, FontFace::Bold, ui_small_size(), Rect::new(tx, r.y + ui_px(68.0), tw, ui_px(32.0)), &ver, 0);
+    let kind = if u.package.kind == "app" { tr("App update") } else { tr("Widget update") };
+    font_draw_left(c, FontFace::Regular, ui_small_size(), Rect::new(tx, r.y + ui_px(102.0), tw, ui_px(30.0)), kind, 90);
+    let label = if active { tr("Updating...") } else { tr("Update") };
+    gui_button(c, br, IconKind::Download, label, if busy { ButtonStyle::Disabled } else { ButtonStyle::Plain });
+    br
+}
+
+/// Settings > Updates, in the shape of a system updater: Grimoire under System Updates (with the
+/// Update branch below it), then one row per package the Store has a newer version of. Both checks
+/// start as the page opens; the Store catalog is cached, so the package list survives offline.
 fn draw_updates(a: &mut App) {
     let (aw, ah) = (a.w, a.h);
     let preview = upd_preview(a);
-    let App { screen: c, lib, .. } = a;
+    let App { screen: c, lib, store, .. } = a;
     let s = lib.as_deref_mut().unwrap();
     let page = settings_page(c, aw, ah, tr("Updates"), true, false);
     hits_add(&mut s.hits, page.back, H_SETTINGS_BACK, 0);
     hits_add(&mut s.hits, page.close, H_SETTINGS_CLOSE, 0);
     let in_ = page.content;
+    let gap = ui_px(16.0);
+    let section_h = ui_px(54.0);
+    let branch_h = ui_px(116.0);
+    let pkg_head_h = ui_px(54.0);
+    let status_h = ui_px(72.0);
+    let pad = ui_px(24.0);
     let avail = update_available();
-    let (upd, newer, latest, why) = (s.upd, upd_newer(s), s.upd_latest.clone(), s.upd_why.clone());
-    // The button says what the check found, and the version is on it either way; a failed check's
-    // button is the way to ask again.
-    let mut label = String::new();
-    let st = if upd == UPD_CHECKING {
-        csnprintf!(&mut label, 200, "%s", tr("Checking for updates..."));
-        ButtonStyle::Disabled
-    } else if !avail || (upd == UPD_FAILED && why == "no-kpm") {
-        csnprintf!(&mut label, 200, "%s", tr("Updates come through KPM, which is not here."));
-        ButtonStyle::Disabled
+    let newer = upd_newer(s);
+    let (upd, latest, why) = (s.upd, s.upd_latest.clone(), s.upd_why.clone());
+
+    // ---- System Updates ----
+    let mut y = in_.y;
+    font_draw_left(c, FontFace::Bold, ui_text_size(), Rect::new(in_.x, y, in_.w, section_h), tr("System Updates"), 0);
+    y += section_h;
+    let sys_h = ui_px(154.0);
+    let sys_r = Rect::new(in_.x, y, in_.w, sys_h);
+    ui_card(c, sys_r, ButtonStyle::Plain);
+    let isz = ui_px(96.0);
+    let icon_r = Rect::new(sys_r.x + pad, sys_r.y + (sys_h - isz) / 2, isz, isz);
+    ui_frame(c, icon_r, gui_radius(), 255, true, 0);
+    ui_frame(c, icon_r, gui_radius(), 0, false, ui_px(2.0));
+    ui_icon(c, IconKind::Castle, rect_inflate(icon_r, -ui_px(16.0)), 0);
+    let bw = ui_px(250.0);
+    let bh = ui_px(76.0);
+    let br = Rect::new(sys_r.x + sys_r.w - pad - bw, sys_r.y + (sys_h - bh) / 2, bw, bh);
+    let mut detail = String::new();
+    let mut action = "";
+    let mut action_icon = IconKind::Update;
+    let mut action_style = ButtonStyle::Plain;
+    if !avail || (upd == UPD_FAILED && why == "no-kpm") {
+        detail = tr("System updates use KPM, which isn't installed.").to_string();
+    } else if upd == UPD_CHECKING {
+        detail = tr("Checking for system updates...").to_string();
+        action = tr("Checking...");
+        action_style = ButtonStyle::Disabled;
     } else if upd == UPD_DONE && newer {
-        // TRANSLATORS: Settings > Updates' button when the check found a newer Grimoire (%s): a tap
-        // closes Grimoire, KPM installs it, and Grimoire starts again.
-        csnprintf!(&mut label, 200, tr("Update to %s"), &latest);
-        ButtonStyle::Primary
+        // TRANSLATORS: Settings > Updates, the system update's version change (%s is the version
+        // installed, %s the one the update branch offers).
+        csnprintf!(&mut detail, 300, tr("Version %s → %s"), GRIMOIRE_VERSION, &latest);
+        action = tr("Update");
+        action_icon = IconKind::Download;
+        action_style = ButtonStyle::Primary;
     } else if upd == UPD_DONE {
-        csnprintf!(&mut label, 200, tr("Grimoire %s is the newest."), GRIMOIRE_VERSION);
-        ButtonStyle::Disabled
+        // TRANSLATORS: Settings > Updates, when the system update branch has nothing newer (%s is
+        // the Grimoire version in use).
+        csnprintf!(&mut detail, 300, tr("Grimoire %s is up to date."), GRIMOIRE_VERSION);
     } else if upd == UPD_FAILED && why == "network" {
-        csnprintf!(&mut label, 200, "%s", tr("Could not check. Is Wi-Fi on?"));
-        ButtonStyle::Plain
+        detail = tr("Couldn't check for system updates. Is Wi-Fi on?").to_string();
+        action = tr("Retry");
     } else if upd == UPD_FAILED {
-        csnprintf!(&mut label, 200, "%s", tr("Could not check for updates."));
-        ButtonStyle::Plain
+        detail = tr("Couldn't check for system updates.").to_string();
+        action = tr("Retry");
     } else {
-        csnprintf!(&mut label, 200, "%s", tr("Check for updates"));
-        ButtonStyle::Plain
-    };
-    let br = Rect::new(in_.x, in_.y, in_.w, ui_px(150.0));
-    ui_button(c, br, if newer { IconKind::Download } else { IconKind::Update }, &label, st);
-    if st != ButtonStyle::Disabled {
-        hits_add(&mut s.hits, br, H_UPD_NOW, 0);
+        detail = tr("System update not checked yet.").to_string();
+        action = tr("Check");
     }
-    // The branch, as a switch: on (Preview) for betas and releases, off (Stable) for releases only.
-    let row = Rect::new(in_.x, br.y + br.h + ui_px(24.0), in_.w, ui_px(140.0));
-    ui_frame(c, row, ui_px(16.0), 0, false, ui_px(3.0));
+    let tx = icon_r.x + icon_r.w + ui_px(20.0);
+    let tw = (br.x - ui_px(18.0) - tx).max(0);
+    font_draw_left(c, FontFace::Bold, ui_text_size(), Rect::new(tx, sys_r.y + ui_px(20.0), tw, ui_px(42.0)), tr("Grimoire"), 0);
+    ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), Rect::new(tx, sys_r.y + ui_px(66.0), tw, sys_h - ui_px(80.0)), &detail, 2, false, 90);
+    if !action.is_empty() {
+        gui_button(c, br, action_icon, action, action_style);
+        if action_style != ButtonStyle::Disabled {
+            hits_add(&mut s.hits, br, H_UPD_NOW, 0);
+        }
+    }
+    y = sys_r.y + sys_h + gap;
+
+    // ---- Update branch ----
+    let row = Rect::new(in_.x, y, in_.w, branch_h);
+    ui_card(c, row, ButtonStyle::Plain);
     // TRANSLATORS: Settings > Updates, the row whose switch picks the branch updates come from.
-    font_draw_left(c, FontFace::Regular, ui_text_size(), rect_inflate(row, -ui_px(30.0)), tr("Update branch"), 0);
+    font_draw_left(c, FontFace::Regular, ui_text_size(), Rect::new(row.x + ui_px(28.0), row.y, row.w - ui_px(56.0), row.h), tr("Update branch"), 0);
     settings_switch(c, row, preview);
     // TRANSLATORS: Settings > Updates, the branch the switch is on: Preview gets betas and releases,
     // Stable only releases.
     let branch = if preview { tr("Preview") } else { tr("Stable") };
-    let bw = font_measure(FontFace::Bold, ui_text_size(), branch);
-    let sx = row.x + row.w - ui_px(30.0) - ui_px(120.0);
-    font_draw_left(c, FontFace::Bold, ui_text_size(), Rect::new(sx - ui_px(24.0) - bw, row.y, bw, row.h), branch, 0);
+    let label_w = font_measure(FontFace::Bold, ui_text_size(), branch);
+    let sx = row.x + row.w - ui_px(30.0) - ui_px(120.0) - ui_px(24.0) - label_w;
+    font_draw_left(c, FontFace::Bold, ui_text_size(), Rect::new(sx, row.y, label_w, row.h), branch, 0);
     hits_add(&mut s.hits, row, H_UPD_CHANNEL, 0);
+    y = row.y + row.h + ui_px(32.0);
+
+    // ---- Package Updates ----
+    let updates = crate::packagestore::package_updates(store);
+    font_draw_left(c, FontFace::Bold, ui_text_size(), Rect::new(in_.x, y, in_.w, pkg_head_h), tr("Package Updates"), 0);
+    if !updates.is_empty() {
+        let label = updates.len().to_string();
+        let badge_w = (font_measure(FontFace::Bold, ui_small_size(), &label) + ui_px(34.0)).max(ui_px(48.0));
+        let badge = Rect::new(in_.x + in_.w - badge_w, y + ui_px(8.0), badge_w, ui_px(38.0));
+        ui_frame(c, badge, badge.h / 2, 255, true, 0);
+        ui_frame(c, badge, badge.h / 2, 0, false, ui_px(2.0));
+        font_draw_centered(c, FontFace::Bold, ui_small_size() * 0.85, badge, &label, 0);
+    }
+    y += pkg_head_h;
+    let mut status = String::new();
+    if store.update_installing {
+        status = store.update_status.clone();
+    } else if !store.update_error.is_empty() {
+        status = store.update_error.clone();
+    } else if store.refreshing {
+        status = tr("Checking the Package Store...").to_string();
+    } else if !store.update_status.is_empty() {
+        status = store.update_status.clone();
+    } else if !store.error.is_empty() {
+        status = store.error.clone();
+    }
+    let retry = !store.refreshing && store.index.packages.is_empty() && !store.error.is_empty();
+    if !status.is_empty() {
+        let sr = Rect::new(in_.x, y, in_.w, status_h);
+        let text_w = if retry { (sr.w - ui_px(220.0)).max(0) } else { sr.w };
+        ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), Rect::new(sr.x, sr.y, text_w, sr.h), &status, 2, false, if store.update_error.is_empty() { 100 } else { 0 });
+        if retry {
+            let rb = Rect::new(sr.x + sr.w - ui_px(190.0), sr.y + (sr.h - ui_px(62.0)) / 2, ui_px(190.0), ui_px(62.0));
+            gui_button(c, rb, IconKind::Update, tr("Retry"), ButtonStyle::Plain);
+            hits_add(&mut s.hits, rb, H_UPD_PKG_REFRESH, 0);
+        }
+        y += status_h;
+    }
+    let area = Rect::new(in_.x, y, in_.w, (in_.y + in_.h - y).max(0));
+    if updates.is_empty() {
+        if status.is_empty() {
+            let msg = if store.refreshing { tr("Looking for package updates...") } else { tr("All your packages are up to date.") };
+            font_draw_centered(c, FontFace::Bold, ui_text_size(), Rect::new(area.x, area.y + ui_px(36.0), area.w, ui_px(70.0)), msg, 0);
+        }
+        return;
+    }
+    let list = ui_row_page(area, updates.len(), s.upd_pkg_page, ui_px(146.0), ui_px(104.0));
+    s.upd_pkg_page = list.page;
+    let busy = store.update_installing;
+    for (i, u) in updates.iter().enumerate().skip(list.first).take(list.rows.len()) {
+        let active = busy && store.update_target == u.package.id;
+        let btn = draw_package_update_row(c, store, list.rows[i - list.first], u, busy, active);
+        if !busy {
+            hits_add(&mut s.hits, btn, H_UPD_PKG, i as i32);
+        }
+    }
+    ui_row_pager(c, &list);
+    if list.page > 0 {
+        hits_add(&mut s.hits, list.prev, H_UPD_PKG_PAGE, -1);
+    }
+    if list.page + 1 < list.pages {
+        hits_add(&mut s.hits, list.next, H_UPD_PKG_PAGE, 1);
+    }
 }
 
 /// A Settings submenu's full screen: Back and the title above a rule, the list's rows below (its own
@@ -4790,31 +5069,22 @@ pub(crate) fn settings_page(
     footer: bool,
 ) -> SettingsPage {
     canvas_fill(c, Rect::new(0, 0, aw, ah), 255);
-    let pad = ui_px(50.0);
-    let th = ui_px(190.0);
-    let bh = ui_px(150.0);
-    let mut back_r = RECT_EMPTY;
-    let mut tx = pad;
-    if back {
-        back_r = Rect::new(pad, (th - bh) / 2, bh, bh);
-        ui_button(c, back_r, IconKind::Back, "", ButtonStyle::Plain);
-        tx = back_r.x + bh + ui_px(30.0);
-    }
+    // Every page carries the app's chrome: the one status bar and header the home uses.
+    let pad = gui_margin();
+    let (head, actions) = gui_header(c, aw, title, back, &[(IconKind::Close, 0)]);
+    // The controls draw compact; their touch targets keep the 10 mm the old header gave them.
+    let touch = gui_top_button_h().max(ui_px(120.0));
+    let touch_rect = |r: Rect| {
+        Rect::new(r.x - (touch - r.w) / 2, r.y - (touch - r.h) / 2, touch, touch)
+    };
+    let back_r = if back { touch_rect(head.back) } else { RECT_EMPTY };
     // Every Settings page closes with this X alone at the top right (never a Done at the foot).
-    let close_r = Rect::new(aw - pad - bh, (th - bh) / 2, bh, bh);
-    ui_button(c, close_r, IconKind::Close, "", ButtonStyle::Plain);
-    // (the same title face and size on the main page and on every submenu)
-    font_draw_left(
-        c,
-        FontFace::Title,
-        ui_title_size(),
-        Rect::new(tx, 0, (close_r.x - tx - ui_px(30.0)).max(0), th),
-        title,
-        0,
-    );
-    ui_rule(c, 0, aw, th, ui_px(4.0), 0);
+    let close_r = touch_rect(actions[0].0);
+    // The header is the page's chrome: its content starts directly under it, as Settings' old
+    // title band did, so the extra status bar does not take room away from the page.
+    let header_foot = head.foot;
     let footer_h = if footer { ui_px(170.0) } else { ui_px(36.0) };
-    let content = Rect::new(pad, th + ui_px(36.0), aw - 2 * pad, ah - th - ui_px(36.0) - footer_h);
+    let content = Rect::new(pad, header_foot, aw - 2 * pad, ah - header_foot - footer_h);
     let footer_r = if footer {
         Rect::new(pad, ah - ui_px(30.0) - ui_px(120.0), aw - 2 * pad, ui_px(120.0))
     } else {
@@ -4851,6 +5121,7 @@ fn setting_hit(id: settingsmenu::SettingId) -> i32 {
         AboutDevice => H_SET_DEVICE,
         DarkerLines => H_SET_DARKER,
         WidgetPackages => H_SET_PACKAGES,
+        AppPackages => H_SET_APP_PACKAGES,
     }
 }
 
@@ -4876,7 +5147,9 @@ fn draw_settings(a: &mut App) {
     let side_w = (aw * 30 / 100).clamp(ui_px(320.0), ui_px(560.0));
     let ncat = cats.len() as i32;
     let content_bottom = page.content.y + page.content.h;
-    let cat_area = Rect::new(pad, top, side_w, content_bottom - top);
+    // Exit is the last row in the sidebar, below the categories.
+    let exit_h = ui_px(120.0);
+    let cat_area = Rect::new(pad, top, side_w, (content_bottom - top - exit_h - ui_px(24.0)).max(0));
     // A list is a page of ui_row's (ui_row_page): the same card, icon, label and spacing whether
     // there are six categories or sixty, and its own page arrows when they no longer fit.
     let active = clampi(s.settings_cat, 0, ncat - 1);
@@ -4910,6 +5183,9 @@ fn draw_settings(a: &mut App) {
     if cat_page.page + 1 < cat_page.pages {
         hits_add(&mut s.hits, cat_page.next, H_SET_CAT_PAGE, 1);
     }
+    let exit = Rect::new(pad, content_bottom - exit_h, side_w, exit_h);
+    ui_row(c, exit, &UiRow::new(IconKind::Exit, tr("Exit")));
+    hits_add(&mut s.hits, exit, H_SETTINGS_EXIT, 0);
     let cat = &cats[active as usize];
     let content_x = pad + side_w + ui_px(48.0);
     let content_w = aw - content_x - pad;
@@ -5510,11 +5786,173 @@ fn name_label(name: &str) -> String {
     ui_name_label(name, &mut label, LABEL_CAP).to_string()
 }
 
+/// Record that one of the home's apps was opened, so it leads the row next time. The file is written
+/// only when the order changes.
+pub(crate) fn library_app_used(a: &mut App, app: i32) {
+    if settings_app_used(&mut a.settings, app) {
+        settings_save(&a.settings);
+    }
+}
+
+/// What the home's app tiles do: Files, Share, Settings and Package Store are the four installed
+/// apps. What's new and About are the All apps page's links at the foot, not app tiles.
+fn home_app(a: &mut App, app: i32) {
+    if app >= H_APP_PKG_BASE {
+        let i = (app - H_APP_PKG_BASE) as usize;
+        let Some(it) = crate::apppkg::app_package_list().get(i).cloned() else { return };
+        lib(a).modal = Modal::None;
+        if settings_package_app_used(&mut a.settings, &it.id) {
+            settings_save(&a.settings);
+        }
+        crate::apphost::apphost_launch(a, &it.id);
+        return;
+    }
+    match app {
+        0 => {
+            lib(a).modal = Modal::None;
+            files_open_place(a);
+        }
+        1 => {
+            lib(a).modal = Modal::None;
+            share_open(a);
+        }
+        2 => {
+            lib(a).modal = Modal::None;
+            act(a, &Hit { id: H_SETTINGS, ..Default::default() });
+        }
+        3 => {
+            // The Package Store is a Library sheet of its own: it opens without the Settings stack.
+            library_app_used(a, 3);
+            lib(a).modal = Modal::Store;
+            crate::packagestore::store_open(a);
+            crate::library::store_redraw(a);
+        }
+        6 => {
+            lib(a).modal = Modal::None;
+            about_open(lib(a));
+            open_modal(a, Modal::About);
+        }
+        7 => {
+            // The About page of Settings' System category, directly; its Back returns there.
+            let s = lib(a);
+            s.modal = Modal::None;
+            s.settings_cat = 6;
+            s.settings_cat_shown = -1;
+            s.settings_rows_page = 0;
+            s.device_links_page = 0;
+            open_modal(a, Modal::DeviceInfo);
+        }
+        _ => {}
+    }
+}
+
+/// The home's All apps page (2.3, issue #209): every built-in and installed app, most recently
+/// used first, over as many pages as it takes, then What's new and About as the two foot buttons.
+/// Exit is in Settings' sidebar.
+fn draw_apps(a: &mut App) {
+    let (aw, ah) = (a.w, a.h);
+    let apps = home_apps(&a.settings);
+    let App { screen: c, lib, .. } = a;
+    let s = lib.as_deref_mut().unwrap();
+    canvas_fill(c, Rect::new(0, 0, aw, ah), 255);
+    let (head, actions) = gui_header(c, aw, tr("Apps"), false, &[(IconKind::Close, H_APPS_CLOSE)]);
+    hits_add(&mut s.hits, actions[0].0, H_APPS_CLOSE, 0);
+    let m = margin();
+    let gap = gui_gap();
+    let (ts, tw) = (apps_h(), app_tile_w());
+    let bh = ui_px(110.0);
+    let by = ah - m - bh;
+    let top = head.foot + gap;
+    let cols = (((aw - 2 * m + gap) / (tw + gap)).max(1)) as usize;
+    let rows = (((by - gap - top + gap) / (ts + gap)).max(1)) as usize;
+    let per = (cols * rows).max(1);
+    let pages = ((apps.len() + per - 1) / per).max(1) as i32;
+    s.apps_page = s.apps_page.clamp(0, pages - 1);
+    let first = s.apps_page as usize * per;
+    for (i, app) in apps.iter().skip(first).take(per).enumerate() {
+        let col = (i % cols) as i32;
+        let row = (i / cols) as i32;
+        let r = Rect::new(m + col * (tw + gap), top + row * (ts + gap), tw, ts);
+        gui_app_tile(c, r, &app.icon, &app.label, false);
+        hits_add(&mut s.hits, r, H_APP, app.arg);
+    }
+    let bw = ui_px(380.0);
+    let whats = Rect::new(m, by, bw, bh);
+    ui_button(c, whats, IconKind::Castle, tr("What's new"), ButtonStyle::Plain);
+    hits_add(&mut s.hits, whats, H_APP, 6);
+    let about = Rect::new(whats.x + whats.w + gap, by, bw, bh);
+    ui_button(c, about, IconKind::Castle, tr("About"), ButtonStyle::Plain);
+    hits_add(&mut s.hits, about, H_APP, 7);
+    if pages > 1 {
+        let side = ui_px(110.0);
+        let prev = Rect::new(aw - m - 2 * side - gap, by, side, bh);
+        let next = Rect::new(aw - m - side, by, side, bh);
+        ui_button(c, prev, IconKind::Prev, "", if s.apps_page > 0 { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        ui_button(c, next, IconKind::Next, "", if s.apps_page + 1 < pages { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        if s.apps_page > 0 { hits_add(&mut s.hits, prev, H_APPS_PREV, 0); }
+        if s.apps_page + 1 < pages { hits_add(&mut s.hits, next, H_APPS_NEXT, 0); }
+    }
+}
+
+/// Draw any of the home's small menus in the one global popup, anchored to the control that opened
+/// it, and add its rows' hits.
+fn draw_popup_menu(a: &mut App, title: &str, anchor: Rect, rows: &[MenuRow]) -> Vec<Rect> {
+    let (aw, ah) = (a.w, a.h);
+    let App { screen: c, lib, .. } = a;
+    let s = lib.as_deref_mut().unwrap();
+    let items: Vec<GuiPopupItem> = rows
+        .iter()
+        .map(|row| GuiPopupItem {
+            icon: row.icon,
+            label: &row.label,
+            selected: row.st == ButtonStyle::Selected,
+            disabled: row.st == ButtonStyle::Disabled,
+        })
+        .collect();
+    let rects = gui_popup(c, Rect::new(0, 0, aw, ah), anchor, title, &items);
+    for (r, row) in rects.iter().zip(rows.iter()) {
+        if row.st != ButtonStyle::Disabled {
+            hits_add(&mut s.hits, *r, row.id, row.arg);
+        }
+    }
+    rects
+}
+
+/// The + button's popup: the three things a new notebook, a new folder and Share start.
+fn draw_add(a: &mut App) {
+    let (aw, ah) = (a.w, a.h);
+    let rows = [
+        menu_row(IconKind::Plus, tr("New notebook"), H_ADD_ACTION, 0, ButtonStyle::Plain),
+        menu_row(IconKind::FolderPlus, tr("New folder"), H_ADD_ACTION, 1, ButtonStyle::Plain),
+        menu_row(IconKind::Share, tr("Import over Wi-Fi"), H_ADD_ACTION, 2, ButtonStyle::Plain),
+        menu_row(IconKind::Close, tr("Cancel"), H_CANCEL, 0, ButtonStyle::Plain),
+    ];
+    draw_popup_menu(a, tr("Create"), fab_rect(aw, ah), &rows);
+}
+
+/// The Sort popup: the four orders, the current one filled.
+fn draw_sort(a: &mut App) {
+    let aw = a.w;
+    let sort = clampi(lib(a).sort, 0, 3);
+    let rows = [
+        menu_row(IconKind::Sort, sort_name(0), H_SORT_PICK, 0, if sort == 0 { ButtonStyle::Selected } else { ButtonStyle::Plain }),
+        menu_row(IconKind::Sort, sort_name(1), H_SORT_PICK, 1, if sort == 1 { ButtonStyle::Selected } else { ButtonStyle::Plain }),
+        menu_row(IconKind::Update, sort_name(2), H_SORT_PICK, 2, if sort == 2 { ButtonStyle::Selected } else { ButtonStyle::Plain }),
+        menu_row(IconKind::Update, sort_name(3), H_SORT_PICK, 3, if sort == 3 { ButtonStyle::Selected } else { ButtonStyle::Plain }),
+        menu_row(IconKind::Close, tr("Cancel"), H_CANCEL, 0, ButtonStyle::Plain),
+    ];
+    draw_popup_menu(a, tr("Sort"), sort_rect(aw), &rows);
+}
+
 fn draw_modal(a: &mut App) {
     let it = target_item(lib(a));
     let modal = lib(a).modal;
     match modal {
         Modal::New => draw_new(a),
+        Modal::Apps => draw_apps(a),
+        Modal::Add => draw_add(a),
+        Modal::Sort => draw_sort(a),
+        Modal::Store => crate::packagestore::store_draw(a),
         Modal::Settings => draw_settings(a),
         Modal::Font => draw_font_sheet(a),
         Modal::Wifi => draw_wifi_sheet(a),
@@ -5522,25 +5960,25 @@ fn draw_modal(a: &mut App) {
             let (aw, ah) = (a.w, a.h);
             let App { screen: c, lib, .. } = a;
             let s = lib.as_deref_mut().unwrap();
-            let list = s.about_view == AboutView::List;
-            let page = if list { s.about_list_page } else { s.about_page };
-            let h = crate::about::about_draw(c, aw, ah, s.about_bat, s.about_view, s.about_note, page);
-            if list {
-                s.about_list_page = h.page;
-            } else {
-                s.about_page = h.page;
-            }
+            let h = crate::about::about_draw(c, aw, ah, s.about_note, s.about_page, s.about_list_page);
+            s.about_list_page = h.sidebar_page;
+            s.about_page = h.page;
             s.about_pages = h.pages;
             s.about_rows = h.rows.iter().map(|r| r.1).collect();
             s.about_marked = h.marked;
             s.about_signed = h.signed;
-            s.about_card = (h.card_blocks, h.card_notes, h.card_cut);
             s.about_body_px = h.body_px;
             s.about_lead = h.lead;
             s.about_area = h.area;
-            for (r, id) in [(h.close, H_ABOUT_CLOSE), (h.prev, H_ABOUT_PREV), (h.next, H_ABOUT_NEXT), (h.more, H_ABOUT_MORE), (h.back, H_ABOUT_BACK)] {
+            for (r, id, arg) in [
+                (h.close, H_ABOUT_CLOSE, 0),
+                (h.prev, H_ABOUT_PREV, 0),
+                (h.next, H_ABOUT_NEXT, 0),
+                (h.sidebar_prev, H_ABOUT_SIDEBAR, -1),
+                (h.sidebar_next, H_ABOUT_SIDEBAR, 1),
+            ] {
                 if !rect_is_empty(r) {
-                    hits_add(&mut s.hits, r, id, 0);
+                    hits_add(&mut s.hits, r, id, arg);
                 }
             }
             for (r, i) in &h.rows {
@@ -5976,7 +6414,8 @@ fn draw_modal(a: &mut App) {
                 ),
             ];
             let title = name_label(lib(a).books[it.nb].name.as_str());
-            draw_menu(a, &title, &rows);
+            let anchor = card_more_rect(a.w, a.h, lib(a).target, lib(a).page);
+            draw_popup_menu(a, &title, anchor, &rows);
         }
         Modal::FilesMore => {
             let rows = [
@@ -5986,7 +6425,8 @@ fn draw_modal(a: &mut App) {
                 menu_row(IconKind::Ban, tr("Hide from Library"), H_FILES_HIDE, 0, ButtonStyle::Plain),
                 menu_row(IconKind::Close, tr("Cancel"), H_CANCEL, 0, ButtonStyle::Plain),
             ];
-            draw_menu(a, tr("Files"), &rows);
+            let anchor = card_more_rect(a.w, a.h, lib(a).target, lib(a).page);
+            draw_popup_menu(a, tr("Files"), anchor, &rows);
         }
         Modal::FolderMore => {
             let Some(it) = it else { return };
@@ -6026,7 +6466,8 @@ fn draw_modal(a: &mut App) {
             let keeps = Home::parse(home.value().as_bytes()) == Some(home);
             let rows: Vec<MenuRow> = rows.into_iter().filter(|r| keeps || r.id != H_FMORE_HOME || r.arg != 0).collect();
             let title = name_label(it.folder.as_str());
-            draw_menu(a, &title, &rows);
+            let anchor = card_more_rect(a.w, a.h, lib(a).target, lib(a).page);
+            draw_popup_menu(a, &title, anchor, &rows);
         }
         Modal::Move => {
             let Some(it) = it else { return };
@@ -6257,7 +6698,9 @@ fn toast_floor(a: &App) -> i32 {
         moved = false;
         for h in &l.h {
             let r = h.r;
-            if r.y < y + t.h && r.y + r.h > y {
+            // The toast is centred: a control beside it (Settings' Exit at the foot of its sidebar)
+            // does not stand in its way.
+            if r.x < t.x + t.w && r.x + r.w > t.x && r.y < y + t.h && r.y + r.h > y {
                 y = r.y - t.h - gap; // above this control, then look again from there
                 below = r.y;
                 moved = true;
@@ -6268,8 +6711,18 @@ fn toast_floor(a: &App) -> i32 {
 }
 
 fn redraw(a: &mut App, m: RefreshMode) {
+    if a.app_view.open {
+        crate::apphost::apphost_draw(a);
+        app_invalidate_all(a, m);
+        return;
+    }
     if a.pkg.open {
         crate::widgetpkgui::packages_ui_draw(a);
+        app_invalidate_all(a, m);
+        return;
+    }
+    if a.store.open {
+        crate::packagestore::store_draw(a);
         app_invalidate_all(a, m);
         return;
     }
@@ -6494,39 +6947,43 @@ fn open_modal(a: &mut App, m: Modal) {
     redraw(a, RefreshMode::Ui);
 }
 
-/// What's new as the bat and the first start after an update open it: the card.
+/// What's new as the bat and the first start after an update open it: this version's notes in the
+/// full-screen browser.
 fn about_open(s: &mut LibraryState) {
-    s.about_view = AboutView::Card;
+    let all = crate::about::notes();
+    s.about_note = crate::about::current(all, GRIMOIRE_VERSION);
     s.about_page = 0;
     s.about_list_page = 0;
     s.about_area = RECT_EMPTY;
 }
 
-/// What's new after a step on it (Read all, a version's notes, Back, a page, Esc back to the list or the
-/// card): the screen drawn again, and the panel refreshed only where the card or sheet was and where it
-/// is now, as the sheet refreshes (Ui): the Library around it has not changed. Opening and Dismiss
-/// refresh the whole screen, as every sheet's do.
+/// What's new after a step on it (another version, a page, Esc): the screen drawn again. The sidebar
+/// and reader together fill it, so there is no smaller place to refresh.
 fn about_step(a: &mut App) {
-    let was = lib(a).about_area;
-    if rect_is_empty(was) || graph_shown(a) || lib(a).settings_return_editor {
-        redraw(a, RefreshMode::Ui);
-        return;
-    }
-    draw_base(a);
-    hits_clear(&mut lib(a).hits);
-    draw_modal(a);
-    a.toast_floor = toast_floor(a);
-    let now = lib(a).about_area;
-    app_invalidate(a, rect_union(was, now), RefreshMode::Ui);
+    redraw(a, RefreshMode::Ui);
+}
+
+/// The anchored menus drawn by `gui_popup` rather than as a full dialog or sheet.
+fn is_popup_modal(m: Modal) -> bool {
+    matches!(
+        m,
+        Modal::Add | Modal::Sort | Modal::More | Modal::FolderMore | Modal::FilesMore
+    )
 }
 
 fn close_modal(a: &mut App) {
+    if lib(a).modal == Modal::Updates {
+        crate::packagestore::updates_close(a);
+    }
     if lib(a).settings_return_editor {
         if lib(a).modal==Modal::Settings {let changed=lib(a).settings_editor_fit!=a.settings.landscape_fit;lib(a).settings_return_editor=false;lib(a).modal=Modal::None;library_leave(a);if changed {editor_fit_changed(a,true);}crate::editor::editor_settings_background(a);app_invalidate_all(a,RefreshMode::Ui);}
         else {lib(a).modal=Modal::Settings;redraw(a,RefreshMode::Ui);}
         return;
     }
     let was = std::mem::replace(&mut lib(a).modal, Modal::None);
+    if was == Modal::Store {
+        crate::packagestore::store_leave(a);
+    }
     // (What's new was over the Library at a start whose home is inside Files, 2.2, issue #160: home now)
     if was == Modal::About && std::mem::take(&mut lib(a).home_deferred) {
         home_go(a);
@@ -6540,6 +6997,9 @@ fn close_modal(a: &mut App) {
 /// The X on any Settings page, or on a screen Settings opened: the whole of Settings closes, back
 /// to the Library—or to the editor it was opened over. Back still goes one step back.
 fn close_settings(a: &mut App, mode: RefreshMode) {
+    if lib(a).modal == Modal::Updates {
+        crate::packagestore::updates_close(a);
+    }
     if lib(a).settings_return_editor {
         let changed = lib(a).settings_editor_fit != a.settings.landscape_fit;
         lib(a).settings_return_editor = false;
@@ -6711,6 +7171,21 @@ fn create_notebook(a: &mut App) {
 }
 
 fn kb_finished(a: &mut App, ok: bool) {
+    // The home's search: the text stays in the field after the keyboard goes, and the grid already
+    // followed each typed key (the Keyboard arm of library_event_in).
+    if lib(a).kbp == KbPurpose::Search {
+        let txt = lib(a).kb.text.as_str().to_string();
+        if ok {
+            lib(a).query = txt;
+        }
+        lib(a).search_active = false;
+        lib(a).page = 0;
+        lib(a).modal = Modal::None;
+        refresh_view(a);
+        redraw(a, RefreshMode::Ui);
+        input_touch_context(library_touch_view(a));
+        return;
+    }
     let s = lib(a);
     let txt = s.kb.text.as_str().to_string();
     let it = target_item(s);
@@ -6847,7 +7322,7 @@ fn kb_finished(a: &mut App, ok: bool) {
                     }
                 }
             }
-            KbPurpose::WifiPassword | KbPurpose::WifiName | KbPurpose::WifiEapUser | KbPurpose::WifiEapPassword => {}
+            KbPurpose::WifiPassword | KbPurpose::WifiName | KbPurpose::WifiEapUser | KbPurpose::WifiEapPassword | KbPurpose::Search => {}
             KbPurpose::RenameFolder => {
                 if let Some(it) = it.filter(|it| it.is_folder) {
                     let mut dest = FixedStr::new();
@@ -7012,6 +7487,7 @@ fn act(a: &mut App, h: &Hit) {
         H_NEWFOLDER => open_kb(a, KbPurpose::NewFolder, c_("keyboard", "Folder"), b""),
         H_SHARE => share_open(a),
         H_SETTINGS => {
+            library_app_used(a, 2);
             let s = lib(a);
             s.settings_cat_page = 0;
             s.settings_cat_shown = -1;
@@ -7019,6 +7495,49 @@ fn act(a: &mut App, h: &Hit) {
             s.settings_menu_page = 0;
             open_modal(a, Modal::Settings);
         }
+        H_FILTER => {
+            lib(a).filter = clampi(h.arg, 0, 2);
+            lib(a).page = 0;
+            refresh_view(a);
+            redraw(a, RefreshMode::Ui);
+        }
+        H_SORT => open_modal(a, Modal::Sort),
+        H_SORT_PICK => {
+            lib(a).sort = clampi(h.arg, 0, 3);
+            lib(a).page = 0;
+            lib(a).modal = Modal::None;
+            refresh_view(a);
+            redraw(a, RefreshMode::Ui);
+        }
+        H_SEARCH => {
+            let initial = lib(a).query.as_bytes().to_vec();
+            lib(a).search_active = true;
+            open_kb_sel(a, KbPurpose::Search, tr("Search"), &initial, !initial.is_empty());
+        }
+        H_ADD => open_modal(a, Modal::Add),
+        H_ADD_ACTION => {
+            lib(a).modal = Modal::None;
+            match h.arg {
+                0 => act(a, &Hit { id: H_NEW, ..Default::default() }),
+                1 => act(a, &Hit { id: H_NEWFOLDER, ..Default::default() }),
+                2 => share_open(a),
+                _ => {}
+            }
+        }
+        H_APPS => {
+            lib(a).apps_page = 0;
+            open_modal(a, Modal::Apps);
+        }
+        H_APPS_CLOSE => close_modal(a),
+        H_APPS_PREV => {
+            lib(a).apps_page = (lib(a).apps_page - 1).max(0);
+            redraw(a, RefreshMode::Ui);
+        }
+        H_APPS_NEXT => {
+            lib(a).apps_page += 1;
+            redraw(a, RefreshMode::Ui);
+        }
+        H_APP => home_app(a, h.arg),
         H_SET_CAT => {
             let s = lib(a);
             s.settings_cat = clampi(h.arg, 0, settingsmenu::CATEGORIES.len() as i32 - 1);
@@ -7037,7 +7556,7 @@ fn act(a: &mut App, h: &Hit) {
             *page += h.arg;
             redraw(a, RefreshMode::Ui);
         }
-        H_EXIT => a.running = false,
+        H_EXIT | H_SETTINGS_EXIT => a.running = false,
         H_EXIT_YES => {
             lib(a).modal = Modal::None;
             a.running = false;
@@ -7049,33 +7568,24 @@ fn act(a: &mut App, h: &Hit) {
         }
         H_ABOUT_CLOSE => close_modal(a),
         H_ABOUT_PREV | H_ABOUT_NEXT => {
-            // (the page shown's neighbour, when there is one: a greyed arrow does nothing)
+            // (the reader's neighbour, when there is one: a greyed arrow does nothing)
             let s = lib(a);
-            let page = if s.about_view == AboutView::List { &mut s.about_list_page } else { &mut s.about_page };
-            let to = *page + if h.id == H_ABOUT_NEXT { 1 } else { -1 };
+            let to = s.about_page + if h.id == H_ABOUT_NEXT { 1 } else { -1 };
             if to >= 0 && to < s.about_pages {
-                *page = to;
+                s.about_page = to;
                 about_step(a);
             }
         }
-        // Read all: the list of every version's notes, from its first page.
-        H_ABOUT_MORE => {
+        H_ABOUT_SIDEBAR => {
             let s = lib(a);
-            s.about_view = AboutView::List;
-            s.about_list_page = 0;
+            s.about_list_page = (s.about_list_page + h.arg).max(0);
             about_step(a);
         }
-        // A row of the list: that version's notes, from their first page.
+        // A version in the sidebar: its notes in the reader, from their first page.
         H_ABOUT_ROW => {
             let s = lib(a);
-            s.about_view = AboutView::Note;
             s.about_note = h.arg.max(0) as usize;
             s.about_page = 0;
-            about_step(a);
-        }
-        // Back from a version's notes: the list, at the page it was left at.
-        H_ABOUT_BACK => {
-            lib(a).about_view = AboutView::List;
             about_step(a);
         }
         H_PREV | H_NEXT => turn(a, h.id == H_NEXT),
@@ -7090,6 +7600,10 @@ fn act(a: &mut App, h: &Hit) {
             } else if item.is_folder {
                 s.cur_folder.set_bytes(item.folder.as_bytes());
                 s.page = 0;
+                // A folder found by the global search: entering it leaves the search, as a folder does
+                // from the plain grid.
+                s.query.clear();
+                s.search_active = false;
                 reload(a);
                 redraw(a, RefreshMode::Full);
             } else {
@@ -7158,6 +7672,9 @@ fn act(a: &mut App, h: &Hit) {
         // Back (and Done) on a Settings submenu: to the Settings page it was opened from, or one step
         // back through Shortcuts / Pair, as Esc already does. It must never close Settings itself.
         H_SETTINGS_BACK => {
+            if lib(a).modal == Modal::Updates {
+                crate::packagestore::updates_close(a);
+            }
             let back = match lib(a).modal {
                 Modal::Pair => Modal::PairMenu,
                 Modal::Buttons => Modal::Shortcuts,
@@ -7294,7 +7811,10 @@ fn act(a: &mut App, h: &Hit) {
             open_modal(a, back);
         }
         H_UPDATES => {
-            // Opening the page runs the check (one already under way finishes first).
+            // Opening the page starts both checks: KPM for Grimoire (one already under way finishes
+            // first), and the Store catalog for package updates.
+            lib(a).upd_pkg_page = 0;
+            crate::packagestore::updates_open(a);
             if lib(a).upd != UPD_CHECKING {
                 lib(a).upd = UPD_IDLE;
                 if update_check(upd_preview(a)) {
@@ -7325,6 +7845,7 @@ fn act(a: &mut App, h: &Hit) {
                     return;
                 }
                 qlog!("update: leaving so KPM can install %s", &lib(a).upd_latest);
+                crate::packagestore::updates_close(a);
                 app_leave_for_update(a);
                 return;
             }
@@ -7335,6 +7856,19 @@ fn act(a: &mut App, h: &Hit) {
             }
             redraw(a, RefreshMode::Ui);
         }
+        H_UPD_PKG => {
+            let updates = crate::packagestore::package_updates(&a.store);
+            if let Some(u) = updates.get(h.arg.max(0) as usize) {
+                let id = u.package.id.clone();
+                crate::packagestore::updates_install(a, &id);
+            }
+        }
+        H_UPD_PKG_PAGE => {
+            let s = lib(a);
+            s.upd_pkg_page = (s.upd_pkg_page + h.arg).max(0);
+            redraw(a, RefreshMode::Ui);
+        }
+        H_UPD_PKG_REFRESH => crate::packagestore::updates_refresh(a),
         H_BT_TOGGLE => {
             a.settings.controller = !a.settings.controller;
             settings_save(&a.settings);
@@ -7445,7 +7979,8 @@ fn act(a: &mut App, h: &Hit) {
             settings_save(&a.settings);
             redraw(a, RefreshMode::Full);
         }
-        H_SET_PACKAGES => crate::widgetpkgui::packages_ui_open(a),
+        H_SET_PACKAGES => crate::widgetpkgui::packages_ui_open(a, crate::widgetpkgui::PkgKind::Widget),
+        H_SET_APP_PACKAGES => crate::widgetpkgui::packages_ui_open(a, crate::widgetpkgui::PkgKind::App),
         H_SET_DISPLAY => {
             let mut dm = std::mem::take(&mut lib(a).dm);
             dispmenu_open(&mut dm, a);
@@ -7461,7 +7996,7 @@ fn act(a: &mut App, h: &Hit) {
         }
         H_SET_CLOCK => {
             let mut dm = std::mem::take(&mut lib(a).dm);
-            dispmenu_open_clock(&mut dm, a);
+            dispmenu_open_statusbar(&mut dm, a);
             lib(a).dm = dm;
             open_modal(a, Modal::Display);
         }
@@ -8030,6 +8565,7 @@ fn files_open_font(a: &mut App) {
 /// Files, the place (2.2): from the Files card, its menu's Open, and the `files` action (whether or not the card is
 /// in the Library), over the Library as it is.
 fn files_open_place(a: &mut App) {
+    library_app_used(a, 0);
     let ok = files_place(a);
     files_opened(a, ok);
 }
@@ -8532,9 +9068,9 @@ pub fn library_back(a: &mut App) -> bool {
         tap(a, H_RECORD_CANCEL);
         return true;
     }
-    let (modal, in_folder, reset_asked) = {
+    let (modal, in_folder, reset_asked, searching) = {
         let s = lib(a);
-        (s.modal, !s.cur_folder.is_empty(), s.gestures_reset_confirm)
+        (s.modal, !s.cur_folder.is_empty(), s.gestures_reset_confirm, !s.query.trim().is_empty() || s.search_active)
     };
     match modal {
         Modal::Kb => {
@@ -8542,6 +9078,14 @@ pub fn library_back(a: &mut App) -> bool {
                 keyboard_close(&mut lib(a).kb);
                 kb_finished(a, false);
             }
+        }
+        Modal::None if searching => {
+            let s = lib(a);
+            s.query.clear();
+            s.search_active = false;
+            s.page = 0;
+            refresh_view(a);
+            redraw(a, RefreshMode::Ui);
         }
         Modal::None if a.scr != ScreenId::Library => return false,
         Modal::None if in_folder => tap(a, H_BACK),
@@ -8570,22 +9114,18 @@ pub fn library_back(a: &mut App) -> bool {
         }
         Modal::Language | Modal::Koreader | Modal::Shortcuts | Modal::PairMenu | Modal::Updates | Modal::Wifi
         | Modal::SideButton | Modal::EraserMode | Modal::DarkerLines | Modal::DeviceInfo => {
+            if modal == Modal::Updates {
+                crate::packagestore::updates_close(a);
+            }
             lib(a).modal = Modal::Settings;
             redraw(a, RefreshMode::Ui);
         }
         Modal::Pair | Modal::Buttons => tap(a, H_BUTTONS_DONE),
         Modal::Font => tap(a, H_FONT_CANCEL),
-        // (What's new, one layer a press: a version's notes back to the list, the list back to the card
-        // that opened it, as the Templates sheet goes back to New notebook; the card closes)
-        Modal::About if lib(a).about_view == AboutView::Note => tap(a, H_ABOUT_BACK),
-        Modal::About if lib(a).about_view == AboutView::List => {
-            lib(a).about_view = AboutView::Card;
-            about_step(a);
-        }
         Modal::Gestures if reset_asked => tap(a, H_GESTURES_RESET_CANCEL),
         Modal::Gestures => tap(a, H_GESTURES_DONE),
         Modal::New | Modal::Settings | Modal::More | Modal::FolderMore | Modal::Move | Modal::Delete
-        | Modal::About | Modal::Exit | Modal::Merge | Modal::FilesMore => close_modal(a),
+        | Modal::About | Modal::Exit | Modal::Merge | Modal::FilesMore | Modal::Apps | Modal::Add | Modal::Sort | Modal::Store => close_modal(a),
     }
     true
 }
@@ -8625,16 +9165,16 @@ pub fn library_modal_key(a: &mut App, code: i32) -> bool {
             act(a, &Hit { id: H_NEW_CREATE, ..Default::default() });
             true
         }
-        // What's new's Enter opens: the card's Read all (the list), and on the list the notes of the row
-        // marked as this version's (the card's notes; the newest when no row is this version's).
-        Modal::About if (code == ENTER || code == KP_ENTER) && s.about_view != AboutView::Note => {
-            let hit = if s.about_view == AboutView::Card {
-                Hit { id: H_ABOUT_MORE, ..Default::default() }
-            } else {
-                let all = crate::about::notes();
-                Hit { id: H_ABOUT_ROW, arg: crate::about::current(all, GRIMOIRE_VERSION) as i32, ..Default::default() }
-            };
-            act(a, &hit);
+        Modal::Store => {
+            if code == 1 {
+                close_modal(a);
+            }
+            true
+        }
+        Modal::Apps | Modal::Add | Modal::Sort | Modal::About => {
+            if code == 1 {
+                close_modal(a);
+            }
             true
         }
         _ => false,
@@ -8787,6 +9327,15 @@ pub fn library_enter(a: &mut App) {
 }
 
 pub fn library_leave(a: &mut App) {
+    if !a.relayout && a.app_view.open {
+        crate::apphost::apphost_close(a);
+    }
+    if !a.relayout && a.store.open {
+        crate::packagestore::store_leave(a);
+    }
+    if !a.relayout && a.store.updates_center {
+        crate::packagestore::updates_close(a);
+    }
     if !a.relayout && a.lib.as_deref().is_some_and(|s| s.files.open) {
         lib(a).files.close();
         app_notice_clear(a, NoticeKey::Loading);
@@ -8843,6 +9392,17 @@ pub fn library_event(a: &mut App, ev: &InEvent) {
 }
 
 fn library_event_in(a: &mut App, ev: &InEvent) {
+    if a.app_view.open {
+        crate::apphost::apphost_event(a, ev);
+        return;
+    }
+    if a.store.open {
+        let ph = app_pointer_phase(ev);
+        if ph >= 0 {
+            crate::packagestore::store_pointer(a, ph, ev);
+        }
+        return;
+    }
     if a.pkg.open {
         let ph = app_pointer_phase(ev);
         if ph >= 0 {
@@ -8992,13 +9552,30 @@ fn library_event_in(a: &mut App, ev: &InEvent) {
     if modal == Modal::Kb {
         let mut kb = std::mem::take(&mut lib(a).kb);
         let r = app_keyboard_pointer(a, &mut kb, ph, ev); // (what a key changed, drawn and refreshed)
+        let live = r == KbResult::Changed && lib(a).kbp == KbPurpose::Search;
         lib(a).kb = kb;
+        if live {
+            // The search filters as the text is typed: the grid under the keyboard follows each key
+            // (the same view apply_view builds for a filter or a sort, with no storage read).
+            let txt = lib(a).kb.text.as_str().to_string();
+            lib(a).query = txt;
+            lib(a).page = 0;
+            refresh_view(a);
+            redraw(a, RefreshMode::Ui);
+            return;
+        }
         if r == KbResult::Done || r == KbResult::Cancel {
             kb_finished(a, r == KbResult::Done);
         }
         return;
     }
     if modal == Modal::Wifi && wifi_sheet_scroll(a, ph, ev) {
+        return;
+    }
+    // A popup's rows are its only targets: a tap anywhere else (on the page behind it included)
+    // dismisses the menu instead of reaching a control under it.
+    if ph == 0 && is_popup_modal(modal) && hits_find(&lib(a).hits, ev.x, ev.y).is_none() {
+        close_modal(a);
         return;
     }
     if ph == 0 {
@@ -9030,11 +9607,29 @@ fn library_event_in(a: &mut App, ev: &InEvent) {
 }
 
 pub fn library_tick(a: &mut App, now: u32) {
+    if a.app_view.open {
+        crate::apphost::apphost_tick(a, now);
+        return;
+    }
+    if a.store.open {
+        crate::packagestore::store_tick(a, now);
+        return;
+    }
     if a.pkg.open {
         crate::widgetpkgui::packages_ui_tick(a, now);
         return;
     }
     crate::userfonts::userfonts_tick(a, now); // (a font check that ended with no verdict is queued again after its wait)
+    // The home's status bar keeps the clock: one redraw when the minute changes (nothing behind a
+    // sheet or the keyboard is laying itself out again).
+    if !files_shown(a) && !graph_shown(a) && lib(a).modal == Modal::None {
+        let min = wall_time() / 60;
+        if lib(a).status_min != min {
+            lib(a).status_min = min;
+            redraw(a, RefreshMode::Ui);
+            return;
+        }
+    }
     if files_shown(a) {
         // (not under Exit Grimoire?, asked at a home inside Files: a draw of Files' own would paint over it)
         if files_in_front(a) {
@@ -9101,6 +9696,9 @@ pub fn library_tick(a: &mut App, now: u32) {
         wifi_sheet_tick(a, now);
     }
     upd_poll(a);
+    if lib(a).modal == Modal::Updates {
+        crate::packagestore::updates_tick(a, now);
+    }
     let s = a.lib.as_deref().unwrap();
     if s.modal == Modal::PairMenu && s.shown_bt_changes != a.bt_changes {
         redraw(a, RefreshMode::Ui);
@@ -9337,6 +9935,60 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
     if a.lib.is_none() {
         return -1;
     }
+    // Settings > Updates' package half: the catalog's updates, their versions and install state.
+    if key == "update.packages" {
+        let ids: Vec<String> = crate::packagestore::package_updates(&a.store)
+            .into_iter()
+            .map(|u| u.package.id)
+            .collect();
+        csnprintf!(out, cap, "%s", &ids.join(" "));
+        return 0;
+    }
+    if key == "update.pkg.versions" {
+        let parts: Vec<String> = crate::packagestore::package_updates(&a.store)
+            .into_iter()
+            .map(|u| format!("{}={}->{}", u.package.id, u.installed_version, u.package.version))
+            .collect();
+        csnprintf!(out, cap, "%s", &parts.join(" "));
+        return 0;
+    }
+    if key == "update.pkg.status" {
+        let s = &a.store;
+        let st = if s.update_installing {
+            "installing"
+        } else if !s.update_error.is_empty() {
+            "failed"
+        } else if s.refreshing {
+            "checking"
+        } else if !s.update_status.is_empty() {
+            "done"
+        } else {
+            "idle"
+        };
+        csnprintf!(out, cap, "%s", st);
+        return 0;
+    }
+    if key == "update.pkg.message" {
+        csnprintf!(out, cap, "%s", if a.store.update_installing || !a.store.update_status.is_empty() { &a.store.update_status } else { &a.store.update_error });
+        return 0;
+    }
+    if key == "update.pkg.icons" {
+        let n = crate::packagestore::package_updates(&a.store)
+            .iter()
+            .filter(|u| crate::packagestore::update_icon(&a.store, &u.package.id).is_some())
+            .count();
+        csnprintf!(out, cap, "%d", n);
+        return 0;
+    }
+    // The Package Store (Rust only): its view, catalog and fetched assets (docs/SIM.md).
+    if let Some(k) = key.strip_prefix("store.") {
+        if !a.store.open {
+            return -1;
+        }
+        let Some(text) = crate::packagestore::store_probe(&a.store, k) else { return -1 };
+        csnprintf!(out, cap, "%s", &text);
+        return 0;
+    }
     // The file picker (2.1.0-beta.2): the files.* keys (docs/SIM.md).
     if let Some(k) = key.strip_prefix("files.") {
         let h = a.h;
@@ -9345,6 +9997,42 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
             return -1;
         }
         csnprintf!(out, cap, "%s", &text);
+        return 0;
+    }
+    // The full-screen app (2.3): its id, status line, drawn text, error and status-bar choice. "apps"
+    // lists installed app package ids in launcher order; "recent-apps" is the home row's token order.
+    if key == "apps" {
+        let ids: Vec<String> = crate::apppkg::app_package_list().into_iter().map(|p| p.id).collect();
+        csnprintf!(out, cap, "%s", &ids.join(" "));
+        return 0;
+    }
+    if key == "recent-apps" {
+        // The home row's order as settings.ini recent_apps keeps it: built-in names and pkg:<id> tokens.
+        csnprintf!(out, cap, "%s", a.settings.recent_apps.as_str());
+        return 0;
+    }
+    if key == "app.open" {
+        csnprintf!(out, cap, "%d", a.app_view.open as i32);
+        return 0;
+    }
+    if key == "app.id" {
+        csnprintf!(out, cap, "%s", &a.app_view.id);
+        return 0;
+    }
+    if key == "app.status" {
+        csnprintf!(out, cap, "%s", a.app_view.status());
+        return 0;
+    }
+    if key == "app.text" {
+        csnprintf!(out, cap, "%s", &a.app_view.text());
+        return 0;
+    }
+    if key == "app.error" {
+        csnprintf!(out, cap, "%s", a.app_view.error());
+        return 0;
+    }
+    if key == "app.status-bar" {
+        csnprintf!(out, cap, "%d", a.app_view.status_bar as i32);
         return 0;
     }
     // The Graph opened from the Library (2.0.0-beta.2): the editor's map.* keys (docs/SIM.md), map.picker its
@@ -9404,6 +10092,8 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
     }
     if key == "sheet" && s.modal == Modal::Exit {
         csnprintf!(out, cap, "exit");
+    } else if key == "sheet" && s.modal == Modal::Store {
+        csnprintf!(out, cap, "store");
     } else if key == "sheet" && s.modal == Modal::PairMenu {
         csnprintf!(out, cap, "pair-menu");
     } else if key == "sheet" && s.modal == Modal::Wifi {
@@ -9475,33 +10165,21 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
             None => csnprintf!(out, cap, "%d", s.modal as i32),
         };
     } else if let Some(k) = key.strip_prefix("about.") {
-        // What's new (docs/SIM.md): its view; its page (from 1) and pages; 1 on Read all's sheet (the list
-        // or a version's notes); the list's rows on its page, the row marked as this version's, each
-        // row's versions and date; the notes shown, their body size, their leading and whether the page
-        // shown has the signature; the card's notes: the blocks it shows, of how many, and 1 when the
-        // last shown is cut.
+        // What's new (docs/SIM.md): the full-screen browser's selected version; the reader's page
+        // (from 1) and pages; the versions sidebar's rows on its page, the selected row, each row's
+        // versions and date; the notes' body size and leading, and whether the page shown has the
+        // signature. The old card's keys remain 0: there is no card now.
         let open = s.modal == Modal::About;
-        let view = if open { Some(s.about_view) } else { None };
         let all = crate::about::notes();
         let row = |n: &str| -> Option<&crate::about::Entry> {
             let n = n.parse::<usize>().ok()?.checked_sub(1)?;
-            all.get(*s.about_rows.get(n).filter(|_| view == Some(AboutView::List))?)
+            all.get(*s.about_rows.get(n).filter(|_| open)?)
         };
         if k == "view" {
-            let v = match view {
-                Some(AboutView::Card) => "card",
-                Some(AboutView::List) => "list",
-                Some(AboutView::Note) => "note",
-                None => "",
-            };
-            csnprintf!(out, cap, "%s", v);
+            csnprintf!(out, cap, "%s", if open { "browser" } else { "" });
             return 0;
         } else if k == "note" {
-            let e = match view {
-                Some(AboutView::Card) => all.get(crate::about::current(all, GRIMOIRE_VERSION)),
-                Some(AboutView::Note) => all.get(s.about_note),
-                _ => None,
-            };
+            let e = if open { all.get(s.about_note) } else { None };
             csnprintf!(out, cap, "%s", &e.map_or(String::new(), |e| e.label()));
             return 0;
         } else if let Some(n) = k.strip_prefix("row.") {
@@ -9511,34 +10189,29 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
             csnprintf!(out, cap, "%s", row(n).map_or("", |e| crate::about::date_label(e.date)));
             return 0;
         } else if k == "body_px" {
-            // (in px to a tenth, "44" or "38.5"; 0 but on a version's notes)
-            let px = if view == Some(AboutView::Note) { s.about_body_px } else { 0.0 };
+            // (in px to a tenth, "44" or "38.5"; 0 while What's new is not open)
+            let px = if open { s.about_body_px } else { 0.0 };
             let t = format!("{px:.1}");
             csnprintf!(out, cap, "%s", t.strip_suffix(".0").unwrap_or(&t));
             return 0;
         } else if k == "lead" {
-            // (to a hundredth, "1.3" or "1.22"; 0 but on a version's notes)
-            let lead = if view == Some(AboutView::Note) { s.about_lead } else { 0.0 };
+            // (to a hundredth, "1.3" or "1.22"; 0 while What's new is not open)
+            let lead = if open { s.about_lead } else { 0.0 };
             let t = format!("{lead:.2}");
             let t = t.trim_end_matches('0').trim_end_matches('.');
             csnprintf!(out, cap, "%s", if t.is_empty() { "0" } else { t });
             return 0;
         }
-        let card = view == Some(AboutView::Card);
-        let list = view == Some(AboutView::List);
         let v = match k {
-            "page" if open => if list { s.about_list_page + 1 } else { s.about_page + 1 },
+            "page" if open => s.about_page + 1,
             "pages" if open => s.about_pages,
-            "full" if open => !card as i32,
+            "full" if open => 1,
             "entries" if open => all.len() as i32,
-            "rows" if list => s.about_rows.len() as i32,
-            "marked" if list => s.about_marked,
-            "signature" if open && !list => s.about_signed as i32,
-            "card_blocks" if card => s.about_card.0,
-            "card_notes" if card => s.about_card.1,
-            "card_cut" if card => s.about_card.2 as i32,
-            "page" | "pages" | "full" | "entries" | "rows" | "marked" | "signature" | "card_blocks" | "card_notes"
-            | "card_cut" => 0,
+            "rows" if open => s.about_rows.len() as i32,
+            "marked" if open => s.about_marked,
+            "signature" if open => s.about_signed as i32,
+            "page" | "pages" | "full" | "entries" | "rows" | "marked" | "signature" | "card_blocks"
+            | "card_notes" | "card_cut" => 0,
             _ => return -1,
         };
         csnprintf!(out, cap, "%d", v);
@@ -9598,11 +10271,14 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_FMORE_HOME => "fmore.home",
                 H_MOVE_TOP=>"move.top",H_MOVE_TO=>"move.to.",H_MOVE_NEW=>"move.new",H_MOVE_PREV=>"move.prev",H_MOVE_NEXT=>"move.next",
                 H_SET_PENS => "pen-feel", H_SET_CALIB => "calibrate", H_SET_DISPLAY => "display",
-                H_SET_SLEEP => "sleep-clock", H_SET_CLOCK => "clock-settings",
+                H_SET_SLEEP => "sleep-clock", H_SET_CLOCK => "status-bar",
                 H_KOREADER => "ko", H_SHORTCUTS => "shortcuts", H_PAIR_MENU => "pair-menu", H_GESTURES => "gestures",
                 H_SHORTCUT_DEVICE => "shortcuts.device", H_SHORTCUT_OWN => "shortcuts.own", H_SHORTCUT_RELOAD => "shortcuts.reload",
                 H_UPDATES => "updates", H_CANCEL => "done", H_GESTURES_MASTER => "gestures.master",
                 H_UPD_CHANNEL => "updates.channel", H_UPD_NOW => "updates.now",
+                H_UPD_PKG => "updates.pkg.",
+                H_UPD_PKG_PAGE => if hit.arg < 0 { "updates.pkg.prev" } else { "updates.pkg.next" },
+                H_UPD_PKG_REFRESH => "updates.pkg.refresh",
                 H_SET_DARK => "dark",
                 H_SET_ROTATE => "rotate", H_SHORTCUT_ENABLE => "shortcuts.enable", H_BT_TOGGLE => "bluetooth",
                 H_PAIR => "pair", H_BUTTONS => "buttons",
@@ -9619,8 +10295,15 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_MERGE_INTO => "merge.into", H_MERGE_BOTH => "merge.both",
                 H_FILES_OPEN => "files-card.open", H_FILES_HIDE => "files-card.hide",
                 H_BACK => "back", H_ABOUT => "about", H_ABOUT_CLOSE => "about.close",
-                H_ABOUT_PREV => "about.prev", H_ABOUT_NEXT => "about.next", H_ABOUT_MORE => "about.more",
-                H_ABOUT_ROW => "about.row.", H_ABOUT_BACK => "about.back",
+                H_CARD => "card.", H_CARD_MORE => "card-menu.",
+                H_ADD => "add", H_ADD_ACTION => "add.", H_APPS => "apps", H_APPS_CLOSE => "apps.close",
+                H_APPS_PREV => "apps.prev", H_APPS_NEXT => "apps.next",
+                H_APP => "app.", H_FILTER => "filter.", H_SORT => "sort", H_SORT_PICK => "sort.",
+                H_SEARCH => "search",
+                H_PREV => "prev", H_NEXT => "next",
+                H_ABOUT_PREV => "about.prev", H_ABOUT_NEXT => "about.next",
+                H_ABOUT_ROW => "about.row.",
+                H_ABOUT_SIDEBAR => if hit.arg < 0 { "about.versions.prev" } else { "about.versions.next" },
                 H_LINK => "about.link.", H_LINK_PAGE => if hit.arg < 0 { "about.link.prev" } else { "about.link.next" },
                 H_SET_FONT => "font", H_FONT_PICK => "font.", H_FONT_DONE => "font.done", H_FONT_CANCEL => "font.cancel",
                 H_FONT_OWN => "font.file:", H_FONT_PAGE => if hit.arg < 0 { "font.prev" } else { "font.next" },
@@ -9637,14 +10320,14 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_WIFI_OTHER_CANCEL => "wifi.other.cancel",
                 // (the new Settings page's rows and submenus that had no name: its Back and X, and the
                 // choice lists that open from a row)
-                H_SETTINGS_BACK => "settings.back", H_SETTINGS_CLOSE => "settings.close",
+                H_SETTINGS_BACK => "settings.back", H_SETTINGS_CLOSE => "settings.close", H_SETTINGS_EXIT => "settings.exit",
                 H_SET_LANGUAGE => "language", H_LANG_PICK => "language.", H_LANG_BACK => "language.back",
                 H_SET_SIDE => "pen-button", H_SIDE_PICK => "pen-button.", H_SIDE_BACK => "pen-button.back",
                 H_SET_ERASER => "eraser-mode", H_ERASER_PICK => "eraser-mode.", H_ERASER_BACK => "eraser-mode.back",
                 H_SET_DARKER => "darker-lines", H_DARKER_PICK => "darker-lines.", H_DARKER_BACK => "darker-lines.back",
                 H_SET_PINCH => "pinch", H_SET_MIRROR => "mirror",
                 H_SET_DEVICE => "about-device", H_DEVICE_BACK => "about-device.back",
-                H_SET_PACKAGES => "settings.packages",
+                H_SET_PACKAGES => "settings.packages", H_SET_APP_PACKAGES => "settings.apps",
                 _ => "",
             });
             if hit.id == H_LANG_PICK {
@@ -9668,6 +10351,20 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
             if hit.id == H_WIFI_TAB { name.push_str(if hit.arg == 0 { ".near" } else { ".saved" }); }
             if hit.id == H_WIFI_DELETE { name.push_str(&(hit.arg + 1).to_string()); }
             if hit.id == H_MOVE_TO { name.push_str(s.folders.get(hit.arg as usize).map_or("", |f| f.as_str())); }
+            if matches!(hit.id, H_CARD | H_CARD_MORE) { name.push_str(&(hit.arg + 1).to_string()); }
+            if hit.id == H_UPD_PKG { name.push_str(&hit.arg.to_string()); }
+            if hit.id == H_FILTER { name.push_str(["all", "notebooks", "folders"].get(hit.arg as usize).copied().unwrap_or("")); }
+            if hit.id == H_SORT_PICK { name.push_str(["name-az", "name-za", "newest", "oldest"].get(hit.arg as usize).copied().unwrap_or("")); }
+            if hit.id == H_ADD_ACTION { name.push_str(["new-notebook", "new-folder", "share"].get(hit.arg as usize).copied().unwrap_or("")); }
+            if hit.id == H_APP {
+                if hit.arg >= H_APP_PKG_BASE {
+                    if let Some(it) = crate::apppkg::app_package_list().get((hit.arg - H_APP_PKG_BASE) as usize) {
+                        name.push_str(&it.id);
+                    }
+                } else {
+                    name.push_str(["files", "share", "settings", "store", "", "", "whats-new", "about"].get(hit.arg as usize).copied().unwrap_or(""));
+                }
+            }
             if matches!(hit.id, H_GESTURE_GROUP | H_BUTTON_GROUP) {
                 if let Some(group) = ACTION_GROUPS.get(hit.arg as usize) { name.push_str(group.probe); }
             } else if matches!(hit.id, H_GESTURE_ROW | H_BUTTON_ROW) {
@@ -9893,10 +10590,83 @@ mod tests {
         assert!(seen.len() >= 20 && seen.contains(&300));
     }
 
+    // The home's view applies the filter chips, the sort and the global search from the lists it
+    // already has: every folder and notebook, no storage read (2.3, issue #209).
+    #[test]
+    fn the_home_view_filters_sorts_and_searches() {
+        let mut s = LibraryState::default();
+        s.books = vec![
+            NotebookInfo { name: FixedStr::from_str("Zebra"), modified: 10, ..Default::default() },
+            NotebookInfo { name: FixedStr::from_str("apple"), modified: 20, ..Default::default() },
+            NotebookInfo { name: FixedStr::from_str("Mango"), modified: 30, folder: FixedStr::from_str("School"), ..Default::default() },
+        ];
+        s.folders = vec!["School".to_string()];
+        s.all_items = vec![
+            Item { is_folder: true, folder: FixedStr::from_str("School"), count: 1, ..Default::default() },
+            Item { nb: 0, ..Default::default() },
+            Item { nb: 1, ..Default::default() },
+            Item { nb: 2, ..Default::default() },
+        ];
+        let names = |s: &LibraryState| s.items.iter().map(|it| item_name(s, it).to_string()).collect::<Vec<_>>();
+        apply_view(&mut s, 6);
+        assert_eq!(names(&s), ["School", "apple", "Zebra"], "folders first, then this folder's notebooks, without case");
+        s.sort = 1;
+        apply_view(&mut s, 6);
+        assert_eq!(names(&s), ["School", "Zebra", "apple"], "Name (Z-A)");
+        s.sort = 2;
+        apply_view(&mut s, 6);
+        assert_eq!(names(&s), ["School", "apple", "Zebra"], "Newest first");
+        s.sort = 3;
+        apply_view(&mut s, 6);
+        assert_eq!(names(&s), ["School", "Zebra", "apple"], "Oldest first");
+        s.sort = 0;
+        s.query = "ma".into();
+        apply_view(&mut s, 6);
+        assert_eq!(names(&s), ["Mango"], "the search is across every folder and ignores case");
+        s.query.clear();
+        s.filter = 2;
+        apply_view(&mut s, 6);
+        assert_eq!(names(&s), ["School"], "the Folders chip");
+        s.filter = 1;
+        s.query = "man".into();
+        apply_view(&mut s, 6);
+        assert_eq!(names(&s), ["Mango"], "Notebooks only, and the query still applies");
+        s.filter = 0;
+        s.query = "nothing here".into();
+        apply_view(&mut s, 6);
+        assert!(s.items.is_empty(), "a query nothing matches leaves no card");
+    }
+
     fn probe(a: &mut App, key: &str) -> String {
         let mut out = String::new();
         assert_eq!(library_probe(a, key, &mut out, 512), 0, "{key}");
         out
+    }
+
+    // The global popup menus close on a tap outside their rows; the page under them does not act.
+    #[test]
+    fn a_tap_outside_a_popup_closes_it() {
+        let mut a = pen_record_app();
+        a.scr = ScreenId::Library;
+        lib(&mut a).modal = Modal::None;
+        lib(&mut a).items.clear();
+        redraw(&mut a, RefreshMode::Ui);
+        act(&mut a, &Hit { id: H_ADD, ..Default::default() });
+        assert_eq!(lib(&mut a).modal, Modal::Add);
+        assert!(a.lib.as_ref().unwrap().hits.h.iter().any(|h| h.id == H_ADD_ACTION));
+        library_event(&mut a, &InEvent { type_: InType::TouchDown, x: 8.0, y: 8.0, t_ms: 100, ..Default::default() });
+        assert_eq!(lib(&mut a).modal, Modal::None, "tapping outside the + popup closes it");
+        assert!(lib(&mut a).pressed.is_none(), "the page behind did not take the tap");
+
+        act(&mut a, &Hit { id: H_SORT, ..Default::default() });
+        assert_eq!(lib(&mut a).modal, Modal::Sort);
+        assert!(a.lib.as_ref().unwrap().hits.h.iter().any(|h| h.id == H_SORT_PICK));
+        library_event(&mut a, &InEvent { type_: InType::TouchDown, x: 8.0, y: 8.0, t_ms: 200, ..Default::default() });
+        assert_eq!(lib(&mut a).modal, Modal::None, "tapping outside the Sort popup closes it");
+        assert!(!is_popup_modal(Modal::Apps) && is_popup_modal(Modal::FilesMore));
+
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
     }
 
     fn pen_record_app() -> App {
@@ -11698,7 +12468,7 @@ mod tests {
         draw_settings(&mut a);
         let hits = &a.lib.as_ref().unwrap().hits;
         assert!(hits.h.iter().any(|h| h.id == H_SET_SLEEP), "the Sleep settings row");
-        assert!(hits.h.iter().any(|h| h.id == H_SET_CLOCK), "the Clock settings row");
+        assert!(hits.h.iter().any(|h| h.id == H_SET_CLOCK), "the Status bar row");
 
         act(&mut a, &Hit { r: RECT_EMPTY, id: H_SET_SLEEP, arg: 0 });
         {
@@ -11720,15 +12490,15 @@ mod tests {
         {
             let s = lib(&mut a);
             assert_eq!(s.modal, Modal::Display);
-            assert_eq!(s.dm.page, crate::dispmenu::DmPage::Clock);
+            assert_eq!(s.dm.page, crate::dispmenu::DmPage::StatusBar);
         }
         let mut dm = std::mem::take(&mut lib(&mut a).dm);
         dispmenu_draw(&mut dm, &mut a);
-        for name in ["size", "corner", "time12"] {
-            assert!(dispmenu_control_point(&dm, name).is_some(), "Clock settings lost {name}");
+        for name in ["size", "time12"] {
+            assert!(dispmenu_control_point(&dm, name).is_some(), "Status bar lost {name}");
         }
-        for name in ["sleep", "sleep_after", "brightness", "invert", "fit"] {
-            assert!(dispmenu_control_point(&dm, name).is_none(), "Clock settings shows {name}");
+        for name in ["corner", "sleep", "sleep_after", "brightness", "invert", "fit"] {
+            assert!(dispmenu_control_point(&dm, name).is_none(), "Status bar shows {name}");
         }
         lib(&mut a).dm = dm;
 
@@ -11927,11 +12697,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    // Settings > Updates: one button that carries the version, and a switch for the branch updates come
-    // from; opening the page starts the check (with no KPM here, the button says so), and the switch
-    // flips and saves.
+    // Settings > Updates: a System Updates card with the branch switch, and the Store-backed package
+    // list below it; opening the page starts both checks (with no KPM here, the card says so), and the
+    // switch flips and saves.
     #[test]
-    fn settings_updates_has_one_button_and_the_branch_switch() {
+    fn settings_updates_has_a_system_card_and_the_package_center() {
         let root = std::env::temp_dir().join(format!("grimoire-updates-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(store_init(root.to_str().unwrap()), 0);
@@ -11948,6 +12718,7 @@ mod tests {
         draw_settings(&mut a);
         act(&mut a, &Hit { r: RECT_EMPTY, id: H_UPDATES, arg: 0 });
         assert_eq!(lib(&mut a).modal, Modal::Updates);
+        assert!(a.store.updates_center, "the package updater opened with the page");
         let hits = &a.lib.as_ref().unwrap().hits;
         assert!(hits.h.iter().any(|h| h.id == H_SETTINGS_BACK), "Updates' Back");
         assert!(hits.h.iter().any(|h| h.id == H_UPD_CHANNEL), "the branch switch");
@@ -12297,6 +13068,12 @@ esac
 
 /// Resolve a runner tap through the same hit names used by ui_at probes.
 pub fn library_control_point(a:&mut App,name:&str)->Option<(f32,f32)> {
+    if a.app_view.open {
+        if let Some(p) = crate::apphost::apphost_control_point(a, name) { return Some(p); }
+    }
+    if let Some(n)=name.strip_prefix("store.") {
+        return a.store.open.then(||crate::packagestore::store_control_point(&a.store,n)).flatten();
+    }
     // Settings > Packages > Widgets: packages.install, packages.row.ID, packages.back, ...
     if let Some(n)=name.strip_prefix("packages.") {
         return (a.pkg.open).then(||crate::widgetpkgui::packages_ui_control_point(&a.pkg,n)).flatten();
@@ -12361,6 +13138,25 @@ pub fn library_settings_from_notebook(a:&mut App) {
     open_modal(a,Modal::Settings);
 }
 
+/// Opens Settings over the Library, closing a full-screen app or a package screen in front first. The
+/// quick settings panel's Settings button comes here from any screen that is not a notebook.
+pub fn library_settings_open(a: &mut App) {
+    if a.app_view.open {
+        crate::apphost::apphost_close(a);
+    }
+    if a.store.open {
+        crate::packagestore::store_leave(a);
+    }
+    a.pkg.open = false;
+    let s = lib(a);
+    s.settings_cat_page = 0;
+    s.settings_cat_shown = -1;
+    s.settings_rows_page = 0;
+    s.settings_menu_page = 0;
+    s.settings_return_editor = false;
+    open_modal(a, Modal::Settings);
+}
+
 /// The list's next or previous page (its arrows).
 fn turn(a: &mut App, next: bool) {
     let s = lib(a);
@@ -12398,3 +13194,38 @@ pub fn library_settings_back(a:&mut App) {close_modal(a);}
 pub(crate) fn packages_redraw(a:&mut App) {redraw(a,RefreshMode::Ui);}
 /// The Packages page's X: the whole of Settings closes, as every Settings submenu's X does.
 pub(crate) fn packages_closed(a:&mut App) {close_settings(a,RefreshMode::Ui);}
+/// The Package Store draws itself whole, over the Library: its own redraw and close.
+pub(crate) fn store_redraw(a:&mut App) {redraw(a,RefreshMode::Ui);}
+pub(crate) fn store_closed(a:&mut App) {
+    if let Some(s)=a.lib.as_deref_mut() { s.modal=Modal::None; s.pressed=None; }
+    redraw(a,RefreshMode::Ui);
+}
+
+/// The app was just made the whole screen: no Library sheet is in front of it.
+pub(crate) fn library_app_launched(a: &mut App) {
+    if let Some(s) = a.lib.as_deref_mut() {
+        s.modal = Modal::None;
+        s.pressed = None;
+        s.home_pending = false;
+    }
+}
+
+/// The app asked to leave, or the system swipe did: draw the Library again from scratch.
+pub(crate) fn library_app_closed(a: &mut App) {
+    if let Some(s) = a.lib.as_deref_mut() {
+        s.pressed = None;
+    }
+    redraw(a, RefreshMode::Full);
+}
+
+/// Whether the status bar's minute changed while an app was up.
+pub(crate) fn library_app_minute(a: &mut App) -> bool {
+    let min = wall_time() / 60;
+    let Some(s) = a.lib.as_deref_mut() else { return false };
+    if s.status_min == min {
+        false
+    } else {
+        s.status_min = min;
+        true
+    }
+}

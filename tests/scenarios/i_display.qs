@@ -2,7 +2,8 @@
 # Toolbar clear (no confirmation), Display sheet: brightness/warmth sliders; Dark mode is Settings' row
 # rust-only
 wait 200
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 510 460
 tap 1564 2254
@@ -32,7 +33,7 @@ expect light.intensity is 12
 touch down 1000 296
 wait 100
 touch move 1100 296
-expect display.last_fast_rect is 80 236 1700 120
+expect display.last_fast_rect is 80 238 1700 120
 touch up 1100 296
 wait 300
 drag touch 1000 296 1500 296 5

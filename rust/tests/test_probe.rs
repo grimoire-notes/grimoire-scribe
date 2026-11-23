@@ -63,7 +63,7 @@ fn gesture_keys_follow_the_older_ones() {
     check!(settings_save(&s) == 0);
     let got = read_file(&format!("{}/settings.ini", store_root())).unwrap_or_default();
     // Keep the historic ordering fixture frozen; apply only the deliberate later default changes.
-    let head = include_str!("fixtures/settings_default_head.ini").replace("status_on=0", "status_on=1").replace("status_size=0", "status_size=1")
+    let head = include_str!("fixtures/settings_default_head.ini").replace("status_on=0", "status_on=1\nstatus_in_notebooks=1").replace("status_size=0", "status_size=1")
         .replace("highlighter.size_min_mm=3.0000", "highlighter.size_min_mm=5.6000")
         .replace("highlighter.size_max_mm=3.0000", "highlighter.size_max_mm=5.6000")
         // 2.1's quick sizes: settings_version 4, the pens' widths on the pen-width series
@@ -87,7 +87,7 @@ fn gesture_keys_follow_the_older_ones() {
     let want = head.as_bytes();
     check!(got.len() > want.len() && &got[..want.len()] == want);
     let tail = String::from_utf8_lossy(&got[want.len().min(got.len())..]).to_string();
-    check!(tail == "gestures=1\nlandscape_fit=1\nhints=0\nlink_areas=0\nstatus_corner=0\nclock_12h=0\nrotation_lock=0\ngesture_new_page=1\nstatus_mode=1\nshapes=1\nshape_hold_ms=550\nshape_quads=1\nshape_round=1\nshape_links=1\nshape_min_mm=10\nwhatsnew_seen=\nwhatsnew_hide=0\nshape_corner=0\nfont=terminess\n");
+    check!(tail == "gestures=1\nlandscape_fit=1\nhints=0\nlink_areas=0\nstatus_corner=0\nclock_12h=0\nrotation_lock=0\ngesture_new_page=1\nstatus_mode=1\nshapes=1\nshape_hold_ms=550\nshape_quads=1\nshape_round=1\nshape_links=1\nshape_min_mm=10\nwhatsnew_seen=\nwhatsnew_hide=0\nshape_corner=0\nfont=terminess\nrecent_apps=files,share,settings,store\n");
     // (undotted: no key before its "=" has a dot)
     for line in tail.lines() {
         let key = line.split('=').next().unwrap_or("");

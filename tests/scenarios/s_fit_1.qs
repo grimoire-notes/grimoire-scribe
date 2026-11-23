@@ -9,7 +9,8 @@
 # (the clock corner held still: its minute's refresh would land among the counted ones)
 clock 1700000000
 wait 300
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 1564 2254
 wait 200
@@ -102,9 +103,9 @@ tap panel display.fit
 wait 300
 expect settings.landscape_fit is 1
 expect toast is
-expect display.presents is fast 80 548 1700 120, ui 0 0 1860 2480
+expect display.presents is fast 80 550 1700 120, ui 0 0 1860 2480
 tap panel display.fit
 wait 300
 expect settings.landscape_fit is 0
 expect toast is
-expect display.presents is fast 80 548 1700 120, ui 0 0 1860 2480
+expect display.presents is fast 80 550 1700 120, ui 0 0 1860 2480

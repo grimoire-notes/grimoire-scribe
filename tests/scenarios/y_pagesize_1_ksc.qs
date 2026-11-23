@@ -16,10 +16,10 @@ expect settings.pen.valid is 1
 expect settings.pen.panel is 1986x2648
 expect settings.touch.panel is 1986x2648
 # The School folder with the pen, its notebook (sheet music, two strokes) with a finger
-pentap 347 636
+pentap library card.1
 wait 300
 expect library.folder is School
-tap 347 636
+tap library card.1
 wait 500
 shot 02-fitted
 expect screen is editor
@@ -80,7 +80,7 @@ pentap panel pages
 wait 400
 shot 06-pages
 expect editor.modal is pages
-tap 125 95
+tap 125 170
 wait 400
 expect editor.modal is none
 expect editor.page is 2
@@ -139,11 +139,12 @@ expect editor.zoomed is 0
 pentap panel library
 wait 500
 expect screen is library
-tap 125 95
+tap library back
 wait 300
 expect library.folder is
 # A notebook made here: this screen's size, shown at 100%
-tap 1091 95
+tap library add
+tap library add.new-notebook
 wait 300
 expect library.sheet is new
 tap 1663 2306

@@ -51,6 +51,7 @@ class BluetoothScript(unittest.TestCase):
         # run's helpers (a gate in another worktree runs these tests too) are never seen.
         write(os.path.join(self.bin, 'pgrep'),
               '#!/bin/sh\nfound=1\nfor p in $(/usr/bin/pgrep "$@"); do\n'
+              '  [ "$p" = "$$" ] && continue\n'
               '  if ps -o command= -p "$p" 2>/dev/null | grep -qF "%s"; then echo "$p"; found=0; fi\n'
               'done\nexit $found\n' % self.tmp)
         self.env = dict(os.environ, PATH=self.bin + ':/usr/bin:/bin', GRIMOIRE_ROOT=self.root,

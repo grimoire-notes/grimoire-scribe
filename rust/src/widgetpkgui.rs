@@ -1,9 +1,9 @@
-//! The Settings → Packages → Widgets page (issue #200): the widget package manager.
+//! The Settings → Packages → Widgets and Apps pages: one package manager, two package kinds.
 //!
 //! Installed packages are rows, as every Settings submenu's are. Install from a repository,
-//! trust and license are asked before anything is written, and Remove and Check for updates are
-//! here too. The page draws with the Settings page's header, Back and X, and pages long lists
-//! with `ui_row_page`; it is not a separate editor overlay.
+//! trust and license are asked before anything is written, and Remove, Check for updates and a
+//! package's settings are here for both kinds. The page draws with the Settings page's header,
+//! Back and X, and pages long lists with `ui_row_page`; it is not a separate editor overlay.
 //!
 //! The state lives on `App` (`pkg`) because Settings can be opened over the Library or over a
 //! notebook. Its fetch runs in a child and is polled from the library tick, so no contact waits
@@ -34,6 +34,34 @@ const H_SETTINGS_PREV: i32 = 119;
 const H_SETTINGS_NEXT: i32 = 120;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PkgKind {
+    #[default]
+    Widget,
+    App,
+}
+
+impl PkgKind {
+    fn plural_plural(self) -> &'static str {
+        match self { PkgKind::Widget => "widgets", PkgKind::App => "apps" }
+    }
+    fn package_title(self) -> &'static str {
+        match self { PkgKind::Widget => "Widget package", PkgKind::App => "App package" }
+    }
+    fn install_title(self) -> &'static str {
+        match self { PkgKind::Widget => "Install a widget", PkgKind::App => "Install an app" }
+    }
+    fn settings_title(self) -> &'static str {
+        match self { PkgKind::Widget => "Widget settings", PkgKind::App => "App settings" }
+    }
+    fn repository_title(self) -> &'static str {
+        match self { PkgKind::Widget => "Widget repository", PkgKind::App => "App repository" }
+    }
+    fn kind_sentence(self) -> &'static str {
+        match self { PkgKind::Widget => "widget", PkgKind::App => "app" }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PkgView {
     #[default]
     List,
@@ -56,6 +84,8 @@ enum FetchStage {
     /// one only discovered may be absent)
     LicenseProbe,
     Artifact,
+    /// an app's bundled `.ico`, fetched after its artifact and verified before the install
+    Icon,
 }
 
 struct InstallJob {
@@ -69,6 +99,7 @@ struct InstallJob {
 #[derive(Default)]
 pub struct WidgetPkgUi {
     pub open: bool,
+    pub kind: PkgKind,
     pub view: PkgView,
     pub kb: Keyboard,
     pub items: Vec<WidgetInstall>,
@@ -92,6 +123,8 @@ pub struct WidgetPkgUi {
     /// the manifest is for the selected package's Check for updates, not a new install
     updating: bool,
     artifact_url: String,
+    /// an app artifact held while its `.ico` is fetched (empty for a package with a built-in icon)
+    artifact_data: Vec<u8>,
     license_url: String,
     license_text: String,
     /// the selected package's own manifest, re-read when its detail page opens (its author and
@@ -129,15 +162,72 @@ pub struct WidgetPkgUi {
 
 impl WidgetPkgUi {
     fn refresh(&mut self) {
-        self.items = widget_package_list();
+        self.items = pkg_list(self.kind);
     }
 }
 
-/// Opens Settings → Packages → Widgets. The caller has Settings open (library.rs): closing this
-/// page comes back to it, not out of Settings.
-pub fn packages_ui_open(a: &mut App) {
+fn pkg_list(kind: PkgKind) -> Vec<WidgetInstall> {
+    match kind {
+        PkgKind::Widget => widget_package_list(),
+        PkgKind::App => app_package_list(),
+    }
+}
+
+fn pkg_manifest(kind: PkgKind, id: &str) -> Option<WidgetPackage> {
+    match kind {
+        PkgKind::Widget => widget_package_installed_manifest(id),
+        PkgKind::App => app_package_installed_manifest(id),
+    }
+}
+
+fn pkg_validate(kind: PkgKind, p: &WidgetPackage, w: i32, h: i32) -> Result<(), String> {
+    match kind {
+        PkgKind::Widget => widget_package_validate(p, w, h),
+        PkgKind::App => app_package_validate(p, w, h),
+    }
+}
+
+fn pkg_install(kind: PkgKind, manifest: &str, data: &[u8], icon: Option<&[u8]>, source: &str, w: i32, h: i32) -> Result<WidgetInstall, String> {
+    match kind {
+        PkgKind::Widget => widget_package_install(manifest, data, source, w, h),
+        PkgKind::App => app_package_install(manifest, data, icon, source, w, h),
+    }
+}
+
+fn pkg_remove(kind: PkgKind, id: &str, keep_state: bool) -> Result<(), String> {
+    match kind {
+        PkgKind::Widget => widget_package_remove(id, keep_state),
+        PkgKind::App => app_package_remove(id, keep_state),
+    }
+}
+
+fn pkg_settings_load(kind: PkgKind, id: &str, schema: &[WidgetSetting]) -> Vec<(String, String)> {
+    match kind {
+        PkgKind::Widget => widget_settings_load(id, schema),
+        PkgKind::App => app_settings_load(id, schema),
+    }
+}
+
+fn pkg_settings_save(kind: PkgKind, id: &str, values: &[(String, String)]) -> i32 {
+    match kind {
+        PkgKind::Widget => widget_settings_save(id, values),
+        PkgKind::App => app_settings_save(id, values),
+    }
+}
+
+fn pkg_settings_clear(kind: PkgKind, id: &str) -> i32 {
+    match kind {
+        PkgKind::Widget => widget_settings_clear(id),
+        PkgKind::App => app_settings_clear(id),
+    }
+}
+
+/// Opens Settings → Packages → Widgets or Apps. The caller has Settings open (library.rs): closing
+/// this page comes back to it, not out of Settings.
+pub fn packages_ui_open(a: &mut App, kind: PkgKind) {
     let ui = &mut a.pkg;
     ui.open = true;
+    ui.kind = kind;
     ui.view = PkgView::List;
     ui.status.clear();
     ui.error.clear();
@@ -159,6 +249,7 @@ pub fn packages_ui_open(a: &mut App) {
     ui.manifest_yaml.clear();
     ui.input.clear();
     ui.updating = false;
+    ui.artifact_data.clear();
     ui.job = None;
     ui.pressed = None;
     ui.pressed_hit = None;
@@ -179,6 +270,7 @@ fn clear_update_all(ui: &mut WidgetPkgUi) {
     ui.update_ok = 0;
     ui.update_failed = 0;
     ui.update_note.clear();
+    ui.artifact_data.clear();
 }
 
 fn close(a: &mut App) {
@@ -215,11 +307,22 @@ fn labeled(name: &str, version: &str) -> String {
 
 /// A package's own icon: the manifest's name, else its widget definition's (an installed package
 /// whose index entry was written before icons still shows the definition's icon), else the grid.
-fn install_icon(it: &WidgetInstall) -> IconKind {
+fn install_icon(kind: PkgKind, it: &WidgetInstall) -> IconKind {
     if !it.icon.trim().is_empty() {
         return widget_icon(&it.icon);
     }
-    widget_def(&it.id).map_or(IconKind::Grid, |d| d.icon)
+    match kind {
+        PkgKind::Widget => widget_def(&it.id).map_or(IconKind::Grid, |d| d.icon),
+        PkgKind::App => IconKind::Grid,
+    }
+}
+
+/// The detail page can show an app's own `.ico`; a widget keeps the glyph its manifest names.
+fn package_icon(kind: PkgKind, it: &WidgetInstall) -> AppIcon {
+    match kind {
+        PkgKind::App => AppIcon::for_install(it),
+        PkgKind::Widget => AppIcon::glyph(install_icon(kind, it)),
+    }
 }
 
 fn setting_icon(s: &WidgetSetting) -> IconKind {
@@ -231,7 +334,8 @@ fn stage_status(stage: FetchStage, of: Option<(usize, usize)>) -> String {
         FetchStage::Branch => tr("Looking up the repository..."),
         FetchStage::Manifest => tr("Reading package.yaml..."),
         FetchStage::LicenseProbe => tr("Reading the license..."),
-        FetchStage::Artifact => tr("Downloading the widget..."),
+        FetchStage::Artifact => tr("Downloading the package..."),
+        FetchStage::Icon => tr("Downloading the package..."),
     };
     match of {
         Some((n, all)) => format!("{what} ({n}/{all})"),
@@ -242,7 +346,11 @@ fn stage_status(stage: FetchStage, of: Option<(usize, usize)>) -> String {
 /// Starts a fetch and makes the page Busy. Err leaves the page as it was: a caller that has more to
 /// do (Update all) counts it, and one that does not shows it (start_job).
 fn new_job(ui: &mut WidgetPkgUi, stage: FetchStage, url: &str, input: &str, manifest_url: &str, of: Option<(usize, usize)>) -> Result<(), String> {
-    let cap = if stage == FetchStage::Artifact { WIDGET_PKG_ARTIFACT_MAX as usize } else { 512 * 1024 };
+    let cap = match stage {
+        FetchStage::Artifact => WIDGET_PKG_ARTIFACT_MAX as usize,
+        FetchStage::Icon => crate::apppkg::APP_ICON_MAX,
+        _ => 512 * 1024,
+    };
     let fetch = WidgetFetch::start(url, cap)?;
     ui.status = stage_status(stage, of);
     ui.view = PkgView::Busy;
@@ -349,6 +457,14 @@ fn start_artifact(ui: &mut WidgetPkgUi) {
     start_job(ui, FetchStage::Artifact, url, &input, &manifest_url);
 }
 
+fn start_icon(ui: &mut WidgetPkgUi) {
+    let Some(p) = ui.manifest.as_ref() else { return };
+    let Some(url) = crate::apppkg::app_package_icon_url(&ui.manifest_url, p) else { return };
+    let input = ui.input.clone();
+    let manifest_url = ui.manifest_url.clone();
+    start_job(ui, FetchStage::Icon, url, &input, &manifest_url);
+}
+
 fn begin_install(ui: &mut WidgetPkgUi, input: &str) {
     let input = input.trim().to_string();
     ui.input = input.clone();
@@ -430,7 +546,7 @@ fn begin_update_all(ui: &mut WidgetPkgUi) {
     ui.refresh();
     ui.update_queue = ui.items.iter().filter(|it| !it.source_url.is_empty()).cloned().collect();
     if ui.update_queue.is_empty() {
-        ui.status = "No widget packages have a repository to update from.".into();
+        ui.status = format!("No {} packages have a repository to update from.", ui.kind.plural_plural());
         ui.view = PkgView::List;
         return;
     }
@@ -476,20 +592,20 @@ fn update_all_done(ui: &mut WidgetPkgUi) {
     ui.selected = None;
     ui.refresh();
     ui.status = if ok == 0 && failed == 0 {
-        "All widget packages are up to date.".into()
+        format!("All {} packages are up to date.", ui.kind.plural_plural())
     } else if failed == 0 {
-        format!("Updated {ok} widget package{}.", if ok == 1 { "" } else { "s" })
+        format!("Updated {ok} {} package{}.", ui.kind.plural_plural(), if ok == 1 { "" } else { "s" })
     } else if ok == 0 && !note.is_empty() {
         format!("Could not update: {note}")
     } else {
-        format!("Updated {ok} widget package{}; {failed} failed.", if ok == 1 { "" } else { "s" })
+        format!("Updated {ok} {} package{}; {failed} failed.", ui.kind.plural_plural(), if ok == 1 { "" } else { "s" })
     };
 }
 
 fn after_manifest(ui: &mut WidgetPkgUi, data: &[u8], a: &App, manifest_url: &str) {
     let text = String::from_utf8_lossy(data);
     let p = match widget_package_parse(&text).and_then(|p| {
-        widget_package_validate(&p, a.w, a.h - status_reserved(a)).map(|_| p)
+        pkg_validate(ui.kind, &p, a.w, a.h - status_reserved(a)).map(|_| p)
     }) {
         Ok(p) => p,
         Err(e) => {
@@ -545,7 +661,7 @@ fn after_manifest(ui: &mut WidgetPkgUi, data: &[u8], a: &App, manifest_url: &str
         return;
     }
     if ui.updating {
-        if let Some(old) = widget_package_list().into_iter().find(|x| x.id == p.id) {
+        if let Some(old) = pkg_list(ui.kind).into_iter().find(|x| x.id == p.id) {
             if update_version_cmp(&p.version, &old.version) <= 0 {
                 ui.status = format!("{} is up to date ({}).", old.name, old.version);
                 ui.view = PkgView::Detail;
@@ -579,17 +695,59 @@ fn apply_new_def(a: &mut App, it: &WidgetInstall) {
     }
 }
 
+fn reload_package_settings(a: &mut App, kind: PkgKind, id: &str) {
+    match kind {
+        PkgKind::Widget => {
+            if let Some(s) = a.ed.as_mut() { s.widgets.reload_settings(id); }
+        }
+        PkgKind::App => {
+            if a.app_view.open && a.app_view.id == id {
+                a.app_view.reload_settings();
+            }
+        }
+    }
+}
+
 fn after_artifact(ui: &mut WidgetPkgUi, data: &[u8], a: &mut App) {
     if ui.manifest.is_none() || ui.manifest_yaml.is_empty() {
         ui.error = "The package's manifest was lost.".into();
         ui.view = PkgView::Error;
         return;
     }
+    if ui.kind == PkgKind::App && ui.manifest.as_ref().is_some_and(|p| crate::apppkg::app_icon_is_file(&p.spec.icon)) {
+        ui.artifact_data = data.to_vec();
+        start_icon(ui);
+        return;
+    }
     let manifest = ui.manifest_yaml.clone();
     let source = if ui.input.is_empty() { ui.manifest_url.as_str() } else { ui.input.as_str() };
-    match widget_package_install(&manifest, data, source, a.w, a.h - status_reserved(a)) {
+    match pkg_install(ui.kind, &manifest, data, None, source, a.w, a.h - status_reserved(a)) {
         Ok(it) => {
-            apply_new_def(a, &it);
+            if ui.kind == PkgKind::Widget { apply_new_def(a, &it); }
+            ui.status.clear();
+            ui.view = PkgView::List;
+            ui.selected = None;
+            ui.refresh();
+        }
+        Err(e) => {
+            ui.error = e;
+            ui.view = PkgView::Error;
+        }
+    }
+}
+
+fn after_icon(ui: &mut WidgetPkgUi, data: &[u8], a: &mut App) {
+    if ui.manifest.is_none() || ui.manifest_yaml.is_empty() || ui.artifact_data.is_empty() {
+        ui.error = "The app's download was lost.".into();
+        ui.view = PkgView::Error;
+        return;
+    }
+    let manifest = ui.manifest_yaml.clone();
+    let artifact = std::mem::take(&mut ui.artifact_data);
+    let source = if ui.input.is_empty() { ui.manifest_url.as_str() } else { ui.input.as_str() };
+    match pkg_install(ui.kind, &manifest, &artifact, Some(data), source, a.w, a.h - status_reserved(a)) {
+        Ok(it) => {
+            if ui.kind == PkgKind::Widget { apply_new_def(a, &it); }
             ui.status.clear();
             ui.view = PkgView::List;
             ui.selected = None;
@@ -609,11 +767,40 @@ fn after_artifact_update_all(ui: &mut WidgetPkgUi, data: &[u8], a: &mut App) {
         update_all_next(ui);
         return;
     }
+    if ui.kind == PkgKind::App && ui.manifest.as_ref().is_some_and(|p| crate::apppkg::app_icon_is_file(&p.spec.icon)) {
+        ui.artifact_data = data.to_vec();
+        start_icon(ui);
+        return;
+    }
     let manifest = ui.manifest_yaml.clone();
     let source = if ui.input.is_empty() { ui.manifest_url.as_str() } else { ui.input.as_str() };
-    match widget_package_install(&manifest, data, source, a.w, a.h - status_reserved(a)) {
+    match pkg_install(ui.kind, &manifest, data, None, source, a.w, a.h - status_reserved(a)) {
         Ok(it) => {
-            apply_new_def(a, &it);
+            if ui.kind == PkgKind::Widget { apply_new_def(a, &it); }
+            ui.update_ok += 1;
+            update_all_next(ui);
+        }
+        Err(e) => {
+            ui.update_failed += 1;
+            ui.update_note = e;
+            update_all_next(ui);
+        }
+    }
+}
+
+fn after_icon_update_all(ui: &mut WidgetPkgUi, data: &[u8], a: &mut App) {
+    if ui.manifest.is_none() || ui.manifest_yaml.is_empty() || ui.artifact_data.is_empty() {
+        ui.update_failed += 1;
+        ui.update_note = "The app's download was lost.".into();
+        update_all_next(ui);
+        return;
+    }
+    let manifest = ui.manifest_yaml.clone();
+    let artifact = std::mem::take(&mut ui.artifact_data);
+    let source = if ui.input.is_empty() { ui.manifest_url.as_str() } else { ui.input.as_str() };
+    match pkg_install(ui.kind, &manifest, &artifact, Some(data), source, a.w, a.h - status_reserved(a)) {
+        Ok(it) => {
+            if ui.kind == PkgKind::Widget { apply_new_def(a, &it); }
             ui.update_ok += 1;
             update_all_next(ui);
         }
@@ -712,6 +899,13 @@ pub fn packages_ui_tick(a: &mut App, now: u32) {
                                 after_artifact(&mut ui, &data, a);
                             }
                         }
+                        FetchStage::Icon => {
+                            if ui.update_all {
+                                after_icon_update_all(&mut ui, &data, a);
+                            } else {
+                                after_icon(&mut ui, &data, a);
+                            }
+                        }
                     },
                 }
             }
@@ -781,7 +975,7 @@ fn do_tap(a: &mut App, h: Hit) {
         H_ROW => {
             if let Some(it) = ui.items.get(h.arg as usize).cloned() {
                 ui.selected = Some(it.id.clone());
-                ui.detail_manifest = widget_package_installed_manifest(&it.id);
+                ui.detail_manifest = pkg_manifest(ui.kind, &it.id);
                 ui.manifest = None;
                 ui.license_text.clear();
                 ui.license_for.clear();
@@ -801,7 +995,7 @@ fn do_tap(a: &mut App, h: Hit) {
         H_INSTALL => {
             ui.view = PkgView::Install;
             ui.error.clear();
-            keyboard_open(&mut ui.kb, tr("Widget repository"), b"");
+            keyboard_open(&mut ui.kb, tr(ui.kind.repository_title()), b"");
         }
         H_TRUST => {
             if !start_next_license(&mut ui) {
@@ -827,7 +1021,7 @@ fn do_tap(a: &mut App, h: Hit) {
                     ui.license_for = it.id.clone();
                     ui.status.clear();
                     ui.error.clear();
-                    ui.license_candidates = widget_package_installed_manifest(&it.id)
+                    ui.license_candidates = pkg_manifest(ui.kind, &it.id)
                         .map(|m| installed_license_candidates(&it.source_url, &m))
                         .unwrap_or_default();
                     ui.license_try = 0;
@@ -855,10 +1049,10 @@ fn do_tap(a: &mut App, h: Hit) {
         }
         H_SETTINGS => {
             if let Some(id) = ui.selected.clone() {
-                if let Some(m) = widget_package_installed_manifest(&id) {
+                if let Some(m) = pkg_manifest(ui.kind, &id) {
                     if !m.settings.is_empty() {
                         ui.setting_schema = m.settings;
-                        ui.setting_values = widget_settings_load(&id, &ui.setting_schema);
+                        ui.setting_values = pkg_settings_load(ui.kind, &id, &ui.setting_schema);
                         ui.setting_page = 0;
                         ui.status.clear();
                         ui.view = PkgView::Settings;
@@ -878,36 +1072,40 @@ fn do_tap(a: &mut App, h: Hit) {
                 v.1 = next;
             }
             if let Some(id) = ui.selected.clone() {
-                if widget_settings_save(&id, &ui.setting_values) == 0 {
+                if pkg_settings_save(ui.kind, &id, &ui.setting_values) == 0 {
                     ui.status.clear();
-                    if let Some(s) = a.ed.as_mut() { s.widgets.reload_settings(&id); }
+                    reload_package_settings(a, ui.kind, &id);
                 } else {
-                    ui.status = tr("Could not save the widget's settings.").to_string();
+                    ui.status = format!("Could not save the {}'s settings.", ui.kind.kind_sentence());
                 }
             }
         }
         H_SETTINGS_RESET => {
             ui.setting_values = widget_settings_defaults(&ui.setting_schema);
             if let Some(id) = ui.selected.clone() {
-                if widget_settings_clear(&id) == 0 {
+                if pkg_settings_clear(ui.kind, &id) == 0 {
                     ui.status = tr("Settings reset to defaults.").to_string();
-                    if let Some(s) = a.ed.as_mut() { s.widgets.reload_settings(&id); }
+                    reload_package_settings(a, ui.kind, &id);
                 } else {
-                    ui.status = tr("Could not save the widget's settings.").to_string();
+                    ui.status = format!("Could not save the {}'s settings.", ui.kind.kind_sentence());
                 }
             }
         }
         H_REMOVE => ui.view = PkgView::Remove,
         H_REMOVE_YES => {
             if let Some(id) = ui.selected.clone() {
-                match widget_package_remove(&id, true) {
+                match pkg_remove(ui.kind, &id, true) {
                     Ok(()) => {
-                        // An open frame goes with its package.
-                        if let Some(ed) = a.ed.as_deref_mut() {
-                            while let Some(i) = ed.widgets.index_of(&id) {
-                                ed.widgets.close(i);
+                        // An open frame or app goes with its package.
+                        if ui.kind == PkgKind::Widget {
+                            if let Some(ed) = a.ed.as_deref_mut() {
+                                while let Some(i) = ed.widgets.index_of(&id) {
+                                    ed.widgets.close(i);
+                                }
+                                ed.widgets.save();
                             }
-                            ed.widgets.save();
+                        } else if a.app_view.open && a.app_view.id == id {
+                            crate::apphost::apphost_close(a);
                         }
                         ui.status.clear();
                         ui.view = PkgView::List;
@@ -1084,17 +1282,19 @@ pub fn packages_ui_draw(a: &mut App) {
     }
     let screen = Rect { x: 0, y: 0, w: a.w, h: a.h };
     let title = match a.pkg.view {
+        PkgView::List | PkgView::Error if a.pkg.kind == PkgKind::App => tr("Apps"),
         PkgView::List | PkgView::Error => tr("Widgets"),
-        PkgView::Detail => tr("Widget package"),
-        PkgView::Install => tr("Install a widget"),
+        PkgView::Detail => tr(a.pkg.kind.package_title()),
+        PkgView::Install => tr(a.pkg.kind.install_title()),
         PkgView::Busy if a.pkg.license_viewer => tr("License"),
         PkgView::Busy => tr("Installing"),
+        PkgView::Trust if a.pkg.kind == PkgKind::App => tr("Install this app?"),
         PkgView::Trust => tr("Install this widget?"),
         PkgView::License if a.pkg.license_viewer => tr("License"),
         PkgView::License => tr("License agreement"),
         PkgView::Qr => tr("Repository"),
         PkgView::Remove => tr("Remove this package?"),
-        PkgView::Settings => tr("Widget settings"),
+        PkgView::Settings => tr(a.pkg.kind.settings_title()),
     };
     let App { screen: c, pkg: ui, .. } = a;
     ui.hits.h.clear();
@@ -1124,8 +1324,9 @@ pub fn packages_ui_draw(a: &mut App) {
                     hits_add(&mut ui.hits, *rr, H_INSTALL, 0);
                 } else if let Some(it) = ui.items.get(k - 2) {
                     let label = labeled(&it.name, &it.version);
-                    let row = Row::new(install_icon(it), &label);
-                    ui_row(c, *rr, &row);
+                    let icon = package_icon(ui.kind, it);
+                    let row = Row::new(IconKind::None, &label);
+                    ui_row_app_icon(c, *rr, &row, &icon);
                     hits_add(&mut ui.hits, *rr, H_ROW, (k - 2) as i32);
                 }
             }
@@ -1139,7 +1340,8 @@ pub fn packages_ui_draw(a: &mut App) {
             if ui.items.is_empty() {
                 // Below both actions: the message used to start inside Install from repository.
                 let y = list.rows.last().map(|r| r.y + r.h + ui_px(24.0)).unwrap_or(content.y);
-                ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), Rect { x: content.x, y, w: content.w, h: ui_px(100.0) }, tr("No widget packages are installed."), 2, false, 120);
+                let empty = format!("No {} packages are installed.", ui.kind.plural_plural());
+                ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), Rect { x: content.x, y, w: content.w, h: ui_px(100.0) }, &empty, 2, false, 120);
             }
         }
         PkgView::Detail => {
@@ -1149,7 +1351,7 @@ pub fn packages_ui_draw(a: &mut App) {
             };
             let title = labeled(&it.name, &it.version);
             let icon = Rect { x: content.x, y: content.y, w: ui_px(58.0), h: ui_px(58.0) };
-            ui_icon(c, install_icon(&it), icon, 0);
+            package_icon(ui.kind, &it).draw(c, icon, 0);
             let tx = icon.x + icon.w + ui_px(18.0);
             ui_text(c, FontFace::Bold, ui_text_size(), ui_small_size(), Rect { x: tx, y: content.y, w: content.w - (tx - content.x), h: ui_px(78.0) }, &title, 1, false, 0);
             let m = ui.detail_manifest.as_ref();
@@ -1210,7 +1412,7 @@ pub fn packages_ui_draw(a: &mut App) {
         PkgView::Trust => {
             let m = ui.manifest.clone().unwrap_or_default();
             let mut text = String::new();
-            csnprintf!(&mut text, 1000, "%s by %s, version %s.\n\nYou MUST trust the author of this package. Grimoire does not review, vet, or verify widget code and is not responsible for any damage, data loss, or malfunction caused by installing or running it.", &m.name, &m.author, &m.version);
+            csnprintf!(&mut text, 1000, "%s by %s, version %s.\n\nYou MUST trust the author of this package. Grimoire does not review, vet, or verify %s code and is not responsible for any damage, data loss, or malfunction caused by installing or running it.", &m.name, &m.author, &m.version, if ui.kind == PkgKind::App { "app" } else { "widget" });
             body_text(c, Rect { x: content.x, y: content.y, w: content.w, h: ui_px(520.0) }, &text);
             draw_actions(c, ui, Rect { x: content.x, y: content.y, w: content.w, h: bottom - content.y }, content.y + ui_px(560.0), &[
                 (tr("I trust this author, continue"), IconKind::Download, H_TRUST),
@@ -1322,7 +1524,8 @@ pub fn packages_ui_draw(a: &mut App) {
         }
         PkgView::Remove => {
             let name = ui.items.iter().find(|x| Some(&x.id) == ui.selected.as_ref()).map(|x| x.name.clone()).unwrap_or_default();
-            let text = format!("Remove {name}? Its widget is closed and its files are deleted. Your layout is kept.");
+            let what = if ui.kind == PkgKind::App { "app" } else { "widget" };
+            let text = format!("Remove {name}? Its {what} is closed and its files are deleted. Your layout is kept.");
             body_text(c, Rect { x: content.x, y: content.y, w: content.w, h: ui_px(200.0) }, &text);
             draw_actions(c, ui, Rect { x: content.x, y: content.y, w: content.w, h: bottom - content.y }, content.y + ui_px(230.0), &[
                 (tr("Remove"), IconKind::Close, H_REMOVE_YES),

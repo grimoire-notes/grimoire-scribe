@@ -4,7 +4,7 @@
 # page: no page change, nothing on the back list. Cancel comes back to Link to...; for an area low on the page the
 # keyboard docks at the top, below the clock corner, with the rows under it.
 wait 300
-tap 200 400
+tap library card.1
 wait 300
 expect editor.links is 3 3
 key 38 0
@@ -78,20 +78,18 @@ expect editor.links is 5 5
 key 38 0
 pen line 300 2000 900 2150 30 0.6 0.6
 expect editor.linkto.dock is top
-expect editor.linkto.rect is 20 173 1820 736
-expect editor.ui_at.330.819 is linkto.search
-tap 330 819
+expect editor.linkto.rect is 20 86 1820 736
+tap panel linkto.search
 wait 100
 expect editor.find is pick
 expect editor.kb_dock is top
-# (the top dock's keys sit 1307 px higher: a 221 738, r 664 578, e 487 578)
-tap 221 738
-tap 664 578
-tap 487 578
+tap panel find.key.a
+tap panel find.key.r
+tap panel find.key.e
 expect editor.find.1 is Arena
 expect editor.layers is ok
 shot 02-find-pick-top
-tap 930 1247
+tap 930 1195
 wait 100
 expect toast is Linked to Arena.
 expect editor.links is 6 6

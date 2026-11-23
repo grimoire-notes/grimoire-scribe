@@ -3,7 +3,7 @@
 # env: GRIMOIRE_CHECK_FIT=1
 wait 300
 expect library.items is 1
-tap 326 608
+tap library card.1
 expect editor.pages is 40
 expect editor.page is 3
 tap panel pages
@@ -20,7 +20,7 @@ shot 01-forty-pages
 tap map-node 7
 expect editor.map.selected is 7
 shot 02-selected
-tap 100 95
+tap 100 170
 expect editor.map is 0
 pentap panel library
 waitbg

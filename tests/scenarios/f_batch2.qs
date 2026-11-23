@@ -5,7 +5,8 @@
 # settings: highlighter.size_max_mm=5.5000
 # rust-only
 wait 300
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap library paper.6
 wait 50
@@ -52,7 +53,7 @@ pen curve 500 900 20 60 0.6 4
 wait 300
 shot 07-zoomed-writing
 expect editor.strokes is 2
-tap 930 74
+tap 930 100
 expect editor.zoom not 1.00
 pinch 600 600 750 200 6
 wait 300

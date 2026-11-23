@@ -14,7 +14,8 @@
 # copy: tests/fixtures/link-keys .
 # copy: tests/fixtures/penbutton/pan .
 wait 300
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 1564 2254
 wait 200
@@ -97,8 +98,7 @@ wait 100
 pen leave
 wait 200
 expect editor.linkto.3 is recent p2
-expect editor.ui_at.479.527 is linkto.chip.3
-tap 479 527
+tap panel linkto.chip.3
 wait 200
 expect editor.links is 2 2
 expect editor.owner is none

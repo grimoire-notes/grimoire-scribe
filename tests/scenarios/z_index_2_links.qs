@@ -133,13 +133,12 @@ expect editor.page is 1
 pentap panel links
 pen line 300 1400 900 1500 30 0.6 0.6
 # Link to... opens: Choose from the pages... picks in the Pages view
-expect editor.ui_at.930.679 is linkto.pages
+expect editor.linkto.dock is top
 tap panel linkto.pages
 expect editor.picking is new
 expect editor.strokes is 1
 tap panel pages.back
 expect editor.linkto is pick
-expect editor.ui_at.1530.679 is linkto.cancel
 tap panel linkto.cancel
 expect toast is
 expect editor.linkto is 0
@@ -150,7 +149,7 @@ expect editor.live_matches_render is 1
 pentap panel links
 pen line 300 1400 900 1500 30 0.6 0.6
 # Link to... opens: Choose from the pages... picks in the Pages view
-expect editor.ui_at.930.679 is linkto.pages
+expect editor.linkto.dock is top
 tap panel linkto.pages
 expect editor.modal is pages
 expect editor.pages_tab is pages
@@ -176,7 +175,7 @@ expect editor.page is 1
 # It stays through closing and opening the notebook
 pentap panel library
 waitbg
-tap 200 400
+tap library card.1
 expect editor.page is 1
 expect editor.links is 1 1
 tap 600 1450

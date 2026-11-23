@@ -251,9 +251,8 @@ stop_app
 X=$B/markup-root
 rm -rf "$X" "$B/markup-l10n" && cp -R "$ROOT" "$X" && mkdir -p "$B/markup-l10n"
 python3 -I tests/l10n_markup.py make po/es.mo "$B/markup-l10n/es.mo"
-# (Every word is long here, so the Library's top bar has its buttons as wide as they grow: the
-# middle of Share is at 1220.)
-printf 'wait 300\ntap 1220 95\nwait 400\nexpect screen is share\nwait 30000\nquit\n' > "$B/markup.qs"
+# (Every word is long here: the Add menu still opens by name, and Share is its third row.)
+printf 'wait 300\ntap library add\nwait 400\ntap library add.share\nwait 600\nexpect screen is share\nwait 30000\nquit\n' > "$B/markup.qs"
 GRIMOIRE_LANG=es GRIMOIRE_L10N_DIR="$B/markup-l10n" GRIMOIRE_ROOT="$X" GRIMOIRE_SCRIPT="$B/markup.qs" \
     GRIMOIRE_SHOTS="$B/markup-shots" "$HEADLESS" 2>"$B/app-markup.log" &
 APP=$!
@@ -346,7 +345,8 @@ fi
 # the port only: only the simulator's own "(simulator)" lines may hold an address.
 L=$BUILD/shots/share_layouts
 rm -rf "$L" && mkdir -p "$L"
-printf 'wait 300\ntap 1345 95\nwait 400\nshot portrait\nrotate 1\nwait 400\nshot landscape\nquit\n' > "$B/layout.qs"
+# (The Add menu opens by name: the top bar moved with the global status bar.)
+printf 'wait 300\ntap library add\nwait 400\ntap library add.share\nwait 600\nshot portrait\nrotate 1\nwait 400\nshot landscape\nquit\n' > "$B/layout.qs"
 for theme in gothic classic; do
     for spec in "one|wlan0=192.168.100.200" \
                 "two|wlan0=192.168.100.200,usb0=192.168.15.244" \

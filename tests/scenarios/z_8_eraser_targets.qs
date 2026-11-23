@@ -3,7 +3,7 @@
 # env: GRIMOIRE_CHECK_FIT=1
 # rust-only (it opens Pen feel by its Settings row's name: the rows moved in 2.0.0-beta.2)
 wait 100
-tap 1535 95
+tap library settings
 tap library settings.cat.3
 tap library pen-feel
 tap 1723 289
@@ -11,7 +11,7 @@ expect settings.eraser_mode is 0
 expect penset.pad_strokes is 32
 expect penset.pad_ink is 1
 expect penset.pad_lighter is 0
-expect penset.pad_sample_rect is 696 566 1047 240
+expect penset.pad_sample_rect is 696 568 1047 240
 shot 01-handwriting-ready
 # Blank paper does not clear the practice ink.
 pentap 700 500
@@ -61,7 +61,7 @@ expect settings.eraser_mode is 0
 expect penset.pad_strokes is 32
 rotate 1
 expect penset.pad_strokes is 32
-expect penset.pad_sample_rect is 1006 566 1047 240
+expect penset.pad_sample_rect is 1006 568 1047 240
 shot 05-landscape-centered
 pentap 1530 700
 expect penset.pad_strokes not 32

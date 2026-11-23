@@ -2,6 +2,7 @@
 //! coordinates, so a badly wrong current mapping cannot get in the way. Buttons are full-width
 //! bars that accept the other input (finger while calibrating the pen, pen for touch).
 
+use crate::globalui::gui_status_bar;
 use crate::prelude::*;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -90,6 +91,7 @@ fn draw(a: &mut App) {
         // Calibration is the one Settings submenu without the Settings header (no Back, title or X at
         // the top): the screen is the step's own content, and its title sits above the buttons.
         canvas_fill(c, Rect { x: 0, y: 0, w: aw, h: ah }, 255);
+        gui_status_bar(c, aw, wall_time());
         let title_h = ui_px(150.0);
         font_draw_centered(
             c,

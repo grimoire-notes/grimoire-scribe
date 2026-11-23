@@ -349,6 +349,25 @@ static K_AMPM: [&str; 2] = [
     crate::i18n::nc_("date", "PM"),
 ];
 
+/// Just the clock part of `format_time_short` or `format_time_short_12h` (2.3): "14:32" or
+/// "2:32 PM", in the language's order. The top status bar draws its date separately, and both clock
+/// settings apply there (Settings > Sleep & Clock > Status bar).
+pub fn format_clock_short(t: i64, twelve: bool, buf: &mut String, cap: usize) {
+    let mut full = String::new();
+    if twelve {
+        format_time_short_12h(t, &mut full, 64);
+    } else {
+        format_time_short(t, &mut full, 64);
+    }
+    let mut date = String::new();
+    format_date_short(t, &mut date, 64);
+    // The date is a prefix in English and Spanish and can follow the clock in another language;
+    // removing it leaves the clock in either order, and the separator with it.
+    let clock = full.replace(&date, "");
+    let clock = clock.trim_matches(|c: char| c.is_whitespace() || c == ',' || c == '，');
+    strlcpy_q(buf, clock, cap);
+}
+
 /// Format a unix time as "Oct 10, 2:32 PM" (local time) into buf: the clock's 12-hour text.
 pub fn format_time_short_12h(t: i64, buf: &mut String, cap: usize) {
     let tm = local_tm(t);

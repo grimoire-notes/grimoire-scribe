@@ -25,7 +25,7 @@ class MirrorCleanup(unittest.TestCase):
             # (the folder menu's rows by name: rc.12 added Move folder between Rename and Remove)
             actions = "tap library fmore.rename\ntap 569 2205\ntap 1643 2365\n" if rename else "tap library fmore.remove\n"
             script = root / "test.qs"
-            script.write_text("wait 100\nexpect library.items is 1\ntap 547 1052\n"
+            script.write_text("wait 100\nexpect library.items is 1\ntap library card-menu.1\n"
                               "expect library.sheet is folder-more\n" +
                               ("storage full\n" if full else "") + actions +
                               "expect library.sheet is none\nexpect library.items is " +

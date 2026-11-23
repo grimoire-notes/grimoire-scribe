@@ -36,9 +36,15 @@ pub struct App {
     pub dpi: f32,
     /// mirrors the panel
     pub screen: Canvas,
-    /// The Settings → Packages → Widgets page (widgetpkgui.rs), over whatever screen is behind it.
+    /// The Settings → Packages → Widgets/Apps page (widgetpkgui.rs), over whatever screen is behind it.
     pub pkg: WidgetPkgUi,
+    /// The Package Store (packagestore.rs), the Library's catalog of apps and widgets.
+    pub store: PackageStoreUi,
+    /// The full-screen app in front, if any (apphost.rs). Apps are launched from the Library/Apps page.
+    pub app_view: AppRun,
     pub settings: Settings,
+    /// The quick settings panel (quick.rs): the app's, so its pull works on every screen, app included.
+    pub quick: crate::quick::Quick,
     /// the default shortcuts: shortcuts.ini and controller.ini, which every keyboard and controller uses
     /// but one with shortcuts of its own
     pub shortcuts: Shortcuts,
@@ -722,6 +728,9 @@ pub fn app_init(a: &mut App, w: i32, h: i32, dpi: f32) -> i32 {
     bt_init(&store_root(), getenv("GRIMOIRE_BT_SCRIPT").as_deref(), standin.as_deref(),
     );
     wifi_init(getenv("GRIMOIRE_WIFI_SCRIPT").as_deref());
+    // The status bar's Wi-Fi glyph needs the radio's state before Settings or Share asks for it
+    // (the rest of the reads stay with those screens).
+    wifi_request(WifiAction::Status);
     // Settings > Updates (update.h): the launcher says where update.sh and the request file are.
     let mut request = String::new();
     let asked = getenv("GRIMOIRE_UPDATE_REQUEST");
@@ -761,6 +770,8 @@ pub fn app_init(a: &mut App, w: i32, h: i32, dpi: f32) -> i32 {
         );
     }
     ui_init(dpi);
+    crate::globalui::gui_status_style(a.settings.status_size, a.settings.clock_12h);
+    crate::globalui::gui_status_shown(a.settings.status_on);
     if font_init() != 0 {
         return -1;
     }
@@ -848,6 +859,7 @@ pub fn app_shutdown(a: &mut App) {
     // open notebook (leaving straight from the editor) queues its mirror PDF.
     bg_detach_rest();
     canvas_free(&mut a.koreader_wallpaper);
+    crate::quick::quick_free(a);
     canvas_free(&mut a.toast_under);
     canvas_free(&mut a.chip_under);
     canvas_free(&mut a.screen);
@@ -1242,6 +1254,12 @@ fn app_event_screens(a: &mut App, ev: &InEvent) {
     if !a.asleep {
         status_touch(a, ev);
     }
+    // The system quick settings panel is over every screen: its pull and its contacts come before
+    // the screen's own, and it is drawn again by app_flush.
+    if crate::quick::quick_event(a, ev) {
+        live_block(false);
+        return;
+    }
     // A pump inside UI work must not preview the old page or tool before that work finishes.
     let mut before = LiveStyle::default();
     if live_on() && a.scr == ScreenId::Editor {
@@ -1567,7 +1585,8 @@ fn notice_live(a: &App) {
 /// screen guard leaves it out of its comparison.
 pub fn app_overlay_rect(a: &App) -> Rect {
     let toast = if a.toast_visible { a.toast_rect } else { RECT_EMPTY };
-    rect_union(toast, a.notice.rect)
+    let quick = if a.quick.open { a.quick.rect } else { RECT_EMPTY };
+    rect_union(rect_union(toast, a.notice.rect), quick)
 }
 
 /// Same, with the refresh to use (waking uses a no-flash refresh: faster to get back to work).
@@ -1669,6 +1688,35 @@ fn live_raw_sync() {
     live_set_raw_map(if ok { Some(&m) } else { None });
 }
 
+/// A rect of a.screen presented, with the shared status bar left out of its page tiles: the bar is
+/// LIVE_LAYER_STATUS, and the tiles take the screen as it was under it (globalui's saved bar), so a
+/// browser that hides the bar's layer sees the page where it covered.
+pub(crate) fn live_push_under_status(a: &mut App, r: Rect) {
+    let zone = crate::status::status_zone(a);
+    let under = rect_intersect(r, zone);
+    if rect_is_empty(under) {
+        live_push(&a.screen, r);
+        return;
+    }
+    // The layer is the bar as the screen holds it, sent before the tiles take the saved page under it.
+    crate::live::live_layer(crate::live::LIVE_LAYER_STATUS, &a.screen, zone);
+    let stride = a.screen.stride as usize;
+    let mut bar = Vec::with_capacity((under.w as usize) * (under.h as usize));
+    for y in under.y..under.y + under.h {
+        let at = (y as usize) * stride + under.x as usize;
+        bar.extend_from_slice(&a.screen.px[at..at + under.w as usize]);
+    }
+    let put = crate::globalui::gui_status_under_put(&mut a.screen, under);
+    live_push(&a.screen, r);
+    if put {
+        let w = under.w as usize;
+        for (i, y) in (under.y..under.y + under.h).enumerate() {
+            let at = (y as usize) * stride + under.x as usize;
+            a.screen.px[at..at + w].copy_from_slice(&bar[i * w..][..w]);
+        }
+    }
+}
+
 // A rect of a.screen presented, into Live view's frame (live_push): in the editor, the page under its
 // panel instead of the panel (composed again without it, editor_live_under_panel), and the panel as
 // its own layer (live_layer), for the browser to show or not.
@@ -1687,7 +1735,7 @@ fn live_push_screen(a: &mut App, r: Rect) {
         with(|s| s.live_panel = panel);
     }
     if rect_is_empty(under) {
-        live_push(&a.screen, r);
+        live_push_under_status(a, r);
     } else {
         editor_live_under_panel(a, under, r);
     }
@@ -2514,6 +2562,16 @@ fn app_flush_in(a: &mut App) {
     }
     toast_follow(a); // (a screen that moves its floor redraws, so there is something to flush)
     let mut m = a.dirty_mode;
+    // The quick panel is overlaid for this present, like the toast: its pixels are put back after.
+    let quick_covered = {
+        let mut d = a.dirty;
+        let covered = crate::quick::quick_cover(a, &mut d);
+        a.dirty = d;
+        covered
+    };
+    if quick_covered && m.strength() < RefreshMode::Ui.strength() {
+        m = RefreshMode::Ui;
+    }
     let self_dirty = with(|s| s.self_dirty);
     if !rect_is_empty(self_dirty) {
         if rect_is_empty(a.dirty) || m.strength() < RefreshMode::Ui.strength() {
@@ -2589,6 +2647,9 @@ fn app_flush_in(a: &mut App) {
             }, chip.x, chip.y,
         );
     }
+    if quick_covered {
+        crate::quick::quick_uncover(a);
+    }
     status_presented(a, a.dirty);
     a.dirty = RECT_EMPTY;
     a.dirty_mode = RefreshMode::Fast;
@@ -2623,6 +2684,7 @@ fn live_toast_sync(a: &App, drawn: bool, reached: bool, noticed: bool) {
 /// calls leave/enter and redraws fully (REFRESH_FULL)
 pub fn app_switch(a: &mut App, s: ScreenId) {
     // (the C returns for a ScreenId out of range; a Rust ScreenId cannot be)
+    crate::quick::quick_close_silent(a);
     live_reset();
     a.live_processed = 0;
     a.live_processed_ms = 0;
@@ -2875,6 +2937,9 @@ pub fn app_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
     if cap == 0 {
         return -1;
     }
+    if key == "quick" || key.starts_with("quick.") {
+        return crate::quick::quick_probe(a, key, out, cap);
+    }
     if let Some(k) = key.strip_prefix("annotate.") {
         return annotate_app_probe(a, k, out, cap);
     }
@@ -2931,7 +2996,7 @@ pub fn app_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
     }
     // Settings, under their settings.ini names.
     let st = &a.settings;
-    let nums: [(&str, i32); 39] = [
+    let nums: [(&str, i32); 40] = [
         ("settings.invert", st.invert as i32),
         ("settings.mirror_pdf", st.mirror_pdf as i32),
         ("settings.follow_rotation", st.follow_rotation as i32),
@@ -2947,6 +3012,7 @@ pub fn app_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
         ("settings.controller", st.controller as i32),
         ("settings.updates", st.updates),
         ("settings.status_on", st.status_on as i32),
+        ("settings.status_in_notebooks", st.status_in_notebooks as i32),
         ("settings.clock_12h", st.clock_12h as i32),
         ("settings.status_mode", st.status_mode),
         ("settings.shapes", st.shapes as i32),
