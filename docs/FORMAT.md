@@ -1586,8 +1586,12 @@ critical on purpose.
 The editor's open widgets, one line each: an installed package's id (`com.example.timer`). A line
 is the widget's id, an `=`, and seven comma-separated numbers: x, y, width, height, minimized (0
 or 1), z-order, and a reserved flag (written as 0). Coordinates are screen pixels, as the panel's
-are. A closed widget has no line. Unknown ids and malformed lines are skipped. The file is at most
-64 KiB, written atomically.
+are. A closed widget has no line. An id here is read by the rule a manifest's `id` is checked by
+(lowercase letters, digits, dots and hyphens, at most 128 bytes, no dot first or last and no two in
+a row, and not ending in `.previous`), so the frame of any package that installs is found again. Unknown ids and malformed lines
+are skipped. The z-order only orders the frames (a greater number is drawn over a smaller): any
+number an `i32` holds is read, and the frames are numbered again from 0, in their order, when the
+next number would pass the largest. The file is at most 64 KiB, written atomically.
 
 ```
 # Grimoire widget layout. One line per open widget:
@@ -1604,11 +1608,11 @@ HTTPS `.yaml` address; the Widgets popup's **Manage widgets...** row opens the s
 The manifest is `package.yaml`; unknown keys are ignored. An install is refused before anything is
 written if the manifest is invalid, the platform does not match, or the artifact does not match its
 size and SHA-256. The artifact is one file under the package's folder; it cannot be `package.yaml`
-or anything under `state/`, which belongs to the host and the widget's saved data.
+or anything under `state/` (in any case of their letters), which belongs to the host and the widget's saved data.
 
 ```yaml
 name: Timer
-id: com.example.timer          # lowercase letters, digits, dots and hyphens
+id: com.example.timer          # lowercase letters, digits, dots and hyphens, at most 128 bytes; not ending in .previous
 version: 1.0.0                 # semantic version (a -prerelease suffix is allowed)
 type: widget
 author: Jane Doe
@@ -1619,7 +1623,7 @@ license_url: https://example.org/timer/LICENSE  # optional; without it, the repo
 min_grimoire_version: 2.1.0    # optional
 platforms: [all]               # or kindle-scribe-2022, kindle-scribe-2024
 repository: https://example.org/timer
-capabilities: [editor:overlay, storage:widget-local]
+capabilities: [editor:overlay, storage:widget-local]  # editor:overlay is required; the other is for saved state
 settings:                      # optional; a Settings... page of up to 32 rows
   - key: show_seconds          # lowercase letters, digits, . - _
     label: Show seconds
@@ -1655,7 +1659,8 @@ An omitted `platforms` means every supported device; an explicit empty list is r
 platform is `GRIMOIRE_WIDGET_PLATFORM` when set, otherwise the Kindle model in
 `/proc/device-tree/model`. The known values are `all`, `kindle-scribe-2022` and
 `kindle-scribe-2024`. The artifact is at most 32 MiB; at most 64 packages are installed. A manifest
-is at most 256 KiB.
+is at most 256 KiB, and its `name`, `author` and `description` at most 1,023 bytes each: what the
+reader of `packages/index.json` keeps of a string.
 
 `packages/index.json` lists what is installed, and is written atomically after the package's files
 are complete:
@@ -1687,14 +1692,18 @@ answer does.
 `source_url`, one after another, and installs the newer ones; an up-to-date package costs its
 manifest's fetch only. The packages were trusted when they were installed, so the batch does not
 ask again for each one. An update keeps the old directory as `<id>.previous` until the new one is in
-place, so a failed write can be rolled back. Removing a package closes its widget, deletes its files and its
+place, so a failed write can be rolled back; an id that ends in `.previous` is refused wherever an id is
+read (the manifest check, `packages/index.json`, `widgets.ini`), so that directory is no package's own. Removing a package closes its widget, deletes its files and its
 `widgets.ini` line. A package's own state is kept under `packages/widgets/<id>/state/` when the
 package is replaced or removed (Remove keeps that folder; nothing else of the package stays). The
 host's `settings.json` in that folder is kept too; a package should use another file for its own data.
 
 `spec.runtime` must be `wasm`: a package ships behavior as a WebAssembly module, and Grimoire carries
 no widget implementations of its own. A native runtime or entry is refused. The artifact is size-
-and SHA-256-checked at install, then instantiated in the frame when it first draws.
+and SHA-256-checked at install. Each time a frame loads it, it is checked again before it is
+instantiated: the index's `path` must be the installed manifest's `artifact.path` under the
+package's folder, the file a plain file there with no link between the package's folder and it, and
+its SHA-256 the index's `sha`; a file that fails is not loaded.
 
 A module exports `memory`, `widget_draw(width, height, scale_milli)` and
 `widget_tap(hit_id)`, and imports from the `grimoire` module:
@@ -1712,14 +1721,22 @@ state_set(ptr, len)
 now() -> i64
 ```
 
-Coordinates are screen pixels inside the frame body. `style` is `0` normal, `1` selected or `2`
-disabled. Strings are UTF-8 in the module's memory. `request_redraw` names the delay before the
-host draws the widget again (16 ms to 24 hours), for a clock or a countdown. `setting` returns the bytes written for one of
+Coordinates are screen pixels inside the frame body, and the body is all a module draws on: a
+command is clipped to it, and a hit region is the part of it inside the body. `style` is `0` normal,
+`1` selected or `2` disabled. Strings are UTF-8 in the module's memory. `request_redraw` names the delay before the
+host draws the widget again (100 ms to 24 hours), for a clock or a countdown. `setting` returns the bytes written for one of
 the package's saved settings (empty when it is missing); `state_get`/`state_set` read and write the
 widget's saved state in `packages/widgets/<id>/state/runtime.bin`, capped at 64 KiB. `status` sets
-the text read back by the editor's `editor.widget.N.status` probe. Each call has a fixed instruction
-budget and linear memory is capped at 32 MiB, so a looping or greedy widget stops with an error
-instead of freezing the device.
+the text read back by the editor's `editor.widget.N.status` probe. A module is given only what the
+manifest's `capabilities` declare: `editor:overlay` for `rect`, `text`, `button`, `hit` and `request_redraw`, and
+`storage:widget-local` for `state_get`, `state_set` and `state/runtime.bin`; a call without its
+capability does nothing (`state_get` returns 0), and no state file is read or written. A manifest
+that does not declare `editor:overlay` is refused by the manifest check, so every package an install
+writes can draw. Each call has a fixed instruction
+budget, from which the host's work for each import it calls is paid as well (WIDGETS.md, Limits), a module has one linear memory of at most 32 MiB and at most one table of at most 65,536 entries,
+and a drawing pass holds at most 512 commands, 512
+hit regions and 16 KiB of text (the whole list is in WIDGETS.md, Limits), so a looping or greedy
+widget stops with an error instead of freezing the device.
 
 [WIDGETS.md](WIDGETS.md#the-wasm-abi) is the guide to writing one.
 

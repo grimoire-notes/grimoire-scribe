@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "packages": [
+    {"id":"test.runs.loop","name":"Loop","version":"1.0.0","author":"Grimoire tests","description":"A module of the widget host's tests.","icon":"","path":"packages/widgets/test.runs.loop/module.bin","sha":"83f9277b45596de3d581c0714cc0216982a3fcbeec6b79375be99d51e02d9aec","installed_at":1,"source_url":""},
+    {"id":"test.runs.ticker","name":"Ticker","version":"1.0.0","author":"Grimoire tests","description":"A module of the widget host's tests.","icon":"","path":"packages/widgets/test.runs.ticker/module.bin","sha":"db4cc4a6d3445b99f77d0186b2bf8a5423a00f707842739115445e577aa4acea","installed_at":1,"source_url":""},
+    {"id":"test.runs.bare","name":"Bare","version":"1.0.0","author":"Grimoire tests","description":"A module of the widget host's tests.","icon":"","path":"packages/widgets/test.runs.bare/module.bin","sha":"db4cc4a6d3445b99f77d0186b2bf8a5423a00f707842739115445e577aa4acea","installed_at":1,"source_url":""}
+  ]
+}
