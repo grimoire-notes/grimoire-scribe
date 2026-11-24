@@ -1454,6 +1454,84 @@ mod tests {
         assert!(gone(pid));
         assert_eq!(request_files(&dir), none);
     }
+
+    /// Serves one request at a local address: reads it whole (its head, and the upload its
+    /// Content-Length states), writes `answer`, and waits for the other end to close. The thread
+    /// gives back the request as it was received.
+    fn serve_once(answer: Vec<u8>) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let at = format!("http://127.0.0.1:{}", l.local_addr().unwrap().port());
+        let served = std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+            let mut got = Vec::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                let n = s.read(&mut buf).unwrap();
+                got.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&got);
+                if let Some((head, upload)) = text.split_once("\r\n\r\n") {
+                    let stated = head.lines().find_map(|l| l.strip_prefix("Content-Length: ")).map_or(0, |v| v.parse::<usize>().unwrap());
+                    if upload.len() >= stated {
+                        break;
+                    }
+                }
+                assert!(n > 0, "the request ended early: {text:?}");
+            }
+            s.write_all(&answer).unwrap();
+            let _ = s.read(&mut buf);
+            String::from_utf8_lossy(&got).into_owned()
+        });
+        (at, served)
+    }
+
+    // A real request to a local listener: the method, the address as written, the two header lines
+    // and the upload arrive, and the status code and the answer come back.
+    #[test]
+    fn a_real_request_carries_its_header_lines_and_brings_its_answer() {
+        let dir = scratch("real");
+        let mut st = host(&dir);
+        let (at, served) = serve_once(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nworld".to_vec());
+        let url = format!("{at}/a?b=[1]&c={{x,y}}");
+        assert_eq!(st.http_start("post", &url, "Accept: text/plain\r\n\r\n  X-Grimoire-Test: one two  \n", b"hello"), 0, "{NEEDS_CURL}");
+        let pid = child_pid(&st);
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (200, b"world".to_vec(), String::new()));
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+        let request = served.join().unwrap();
+        let (head, upload) = request.split_once("\r\n\r\n").unwrap();
+        let mut lines = head.split("\r\n");
+        assert_eq!(lines.next(), Some("POST /a?b=[1]&c={x,y} HTTP/1.1"), "{head}");
+        let lines: Vec<&str> = lines.collect();
+        for line in ["Accept: text/plain", "X-Grimoire-Test: one two", "User-Agent: Grimoire-App/2.3", "Content-Length: 5"] {
+            assert_eq!(lines.iter().filter(|l| **l == line).count(), 1, "{line:?} in {head}");
+        }
+        assert_eq!(upload, "hello");
+    }
+
+    // A real answer over the limit, with its length stated and without: the request ends with the
+    // reason, no status code and no answer, and nothing of it is left.
+    #[test]
+    fn a_real_answer_over_the_limit_ends_with_the_reason() {
+        let dir = scratch("real-large");
+        let mut st = host(&dir);
+        let stated = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", HTTP_ANSWER_MAX + 1).into_bytes();
+        // (not stated: the answer runs until the connection closes, and is one byte over the limit)
+        let mut grows = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_vec();
+        grows.resize(grows.len() + HTTP_ANSWER_MAX as usize + 1, b'a');
+        for answer in [stated, grows] {
+            let (at, served) = serve_once(answer);
+            assert_eq!(st.http_start("GET", &format!("{at}/"), "", b""), 0, "{NEEDS_CURL}");
+            let pid = child_pid(&st);
+            poll_to_end(&mut st);
+            assert_eq!(outcome(&st), (-1, Vec::new(), "The answer is too large.".to_string()));
+            assert!(gone(pid));
+            assert_eq!(request_files(&dir), Vec::<String>::new());
+            served.join().unwrap();
+        }
+    }
 }
 
 /// The pure geometry of the system Home swipe, shared by the host and its test.
