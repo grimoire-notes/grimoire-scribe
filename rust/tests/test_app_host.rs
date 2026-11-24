@@ -35,6 +35,14 @@ fn installed(id: &str, capabilities: &[&str], app: &Wasm) -> AppRuntime {
     AppRuntime::open(id, SCREEN.0, SCREEN.1, false).unwrap()
 }
 
+/// The same for a test of many modules: the package is removed once its module is loaded, since no more than
+/// 64 app packages are installed at a time. (The loaded module runs on; it has no folder to save a state in.)
+fn loaded(id: &str, capabilities: &[&str], app: &Wasm) -> AppRuntime {
+    let rt = installed(id, capabilities, app);
+    app_package_remove(id, false).unwrap();
+    rt
+}
+
 /// A canvas with no two neighbours alike, so that any pixel a draw changes shows.
 fn patterned(w: i32, h: i32) -> Canvas {
     let mut c = Canvas::default();
@@ -658,7 +666,7 @@ fn whatever_an_app_draws_lands_in_its_body() {
     let inner = Rect { x: 300, y: 200, w: 900, h: 1400 };
     for (b, body) in [body_under_the_bar(), WHOLE, inner].into_iter().enumerate() {
         for (i, (name, cmds)) in passes_that_reach_out(body).into_iter().enumerate() {
-            let mut rt = installed(&format!("test.body.{b}.{i}"), &BOTH, &pass(&cmds));
+            let mut rt = loaded(&format!("test.body.{b}.{i}"), &BOTH, &pass(&cmds));
             for theme in [UiTheme::Gothic, UiTheme::Classic] {
                 ui_set_theme(theme);
                 let before = patterned(SCREEN.0, SCREEN.1);
@@ -706,5 +714,226 @@ fn drawing_keeps_to_the_clip_it_is_given_too() {
     canvas_set_clip(&mut c, Rect { x: 0, y: 0, w: SCREEN.0, h: body.y });
     rt.draw(&mut c, body, 0);
     assert_eq!(changed_outside(&before, &c, RECT_EMPTY), 0);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A module of eight pages of memory (so that the whole saved state, 256 KiB, lies in it) with letters from
+/// address 0, whose `app_draw` is `draw`.
+fn roomy(draw: Vec<u8>) -> Wasm {
+    let mut w = Wasm::with(draw, &[b'n'; 2048]);
+    w.memories = vec![(8, None)];
+    w
+}
+
+const MAX: i32 = i32::MAX;
+const MIN: i32 = i32::MIN;
+
+/// One call of each import that takes a text, with a text of `len` bytes from address 0 (and none beside it,
+/// where the call takes two): its name, and the call.
+fn texts_of(len: i32) -> Vec<(&'static str, Vec<u8>)> {
+    vec![
+        ("a text", call("text", &[0, 0, 60_000, 60, 0, len, 20_000, 0, 0, 0])),
+        ("a text at a place", call("text_at", &[10, 100, 0, len, 20_000, 0, 0])),
+        ("a text that is measured", call("text_width", &[0, len, 20_000, 0])),
+        ("a button's label", call("button", &[0, 0, 400, 120, 0, len, 0, 0, 0])),
+        ("a chip's label", call("chip", &[0, 0, 400, 80, 0, len, 0])),
+        ("a row's label", call("row", &[0, 0, 900, 120, 0, 0, 0, len, 0, -1])),
+        ("a select's caption", call("select", &[0, 0, 700, 100, 0, len, 0, 0])),
+        ("a select's value", call("select", &[0, 0, 700, 100, 0, 0, 0, len])),
+        ("an app tile's label", call("app_tile", &[0, 0, 220, 260, 0, 0, 0, len, 0])),
+        ("a text field's text", call("text_field", &[0, 0, 900, 100, 0, 0, 0, len, 0, 0])),
+        ("a text field's hint", call("text_field", &[0, 0, 900, 100, 0, 0, 0, 0, 0, len])),
+    ]
+}
+
+#[test]
+fn a_call_at_a_limit_runs_and_one_past_it_stops_as_out_of_instructions() {
+    let root = fresh_root("limits");
+    let one = APP_TEXT_MAX as i32;
+    let line = APP_STATUS_MAX as i32;
+    let state = APP_STATE_MAX as i32;
+    let moves = APP_CALL_STATE_MAX / APP_STATE_MAX;
+    assert_eq!((APP_TEXT_MAX, APP_CALL_TEXT_MAX, APP_STATUS_MAX, APP_STATE_MAX, APP_CALL_STATE_MAX), (1024, 65_536, 256, 262_144, 4_194_304));
+    // (name, a call at the limit, a call one past it)
+    let mut cases: Vec<(String, Vec<u8>, Vec<u8>)> = Vec::new();
+    for ((name, at), (_, past)) in texts_of(one).into_iter().zip(texts_of(one + 1)) {
+        cases.push((name.to_string(), at, past));
+    }
+    for ((name, at), (_, past)) in texts_of(-1).into_iter().zip(texts_of(MAX)) {
+        cases.push((format!("{name} of every length an i32 can say"), at, past));
+    }
+    // All the texts of a call: sixty-four of the longest, of every kind in turn, and then one byte more.
+    let kinds = texts_of(one);
+    let most: Vec<u8> = (0..APP_CALL_TEXT_MAX / APP_TEXT_MAX).flat_map(|k| kinds[k % kinds.len()].1.clone()).collect();
+    for (name, more) in texts_of(1) {
+        cases.push((format!("all the texts of a call, the last {name}"), most.clone(), seq(&[most.clone(), more])));
+    }
+    cases.push(("the status line".into(), call("status", &[0, line]), call("status", &[0, line + 1])));
+    cases.push(("a status line of every length".into(), call("status", &[0, -1]), call("status", &[0, MAX])));
+    cases.push(("state written".into(), times(moves, &call("state_set", &[0, state])), times(moves + 1, &call("state_set", &[0, state]))));
+    cases.push((
+        "state read".into(),
+        seq(&[call("state_set", &[0, state]), times(moves - 1, &call("state_get", &[0, state]))]),
+        seq(&[call("state_set", &[0, state]), times(moves, &call("state_get", &[0, state]))]),
+    ));
+    cases.push((
+        "state read and written by their lengths, whatever is asked".into(),
+        times(moves, &call("state_set", &[0, MAX])),
+        seq(&[times(moves, &call("state_set", &[0, MAX])), call("state_get", &[0, MAX])]),
+    ));
+    for (i, (name, at, past)) in cases.into_iter().enumerate() {
+        let before = patterned(SCREEN.0, SCREEN.1);
+        let mut c = before.clone();
+        let mut rt = loaded(&format!("test.at.{i}"), &BOTH, &roomy(at));
+        for _ in 0..2 {
+            // (twice: the counts start again with each call)
+            rt.draw(&mut c, WHOLE, 0);
+            assert_eq!(rt.error(), None, "{name}: a call at the limit runs");
+        }
+        let mut c = before.clone();
+        let mut rt = loaded(&format!("test.past.{i}"), &BOTH, &roomy(seq(&[call("status", &[0, 4]), past])));
+        rt.draw(&mut c, WHOLE, 0);
+        assert_eq!(rt.error(), Some(STOPPED), "{name}: a call one past the limit stops");
+        // Nothing of the stopped pass is drawn or kept, and the module is not called again.
+        assert_eq!(changed_outside(&before, &c, RECT_EMPTY), 0, "{name}");
+        assert_eq!((rt.text().as_str(), rt.status()), ("", ""), "{name}");
+        rt.draw(&mut c, WHOLE, 0);
+        rt.pointer(0, 4, 4, 0);
+        assert_eq!(rt.error(), Some(STOPPED), "{name}");
+        assert_eq!(changed_outside(&before, &c, RECT_EMPTY), 0, "{name}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_limits_hold_in_a_touch_and_a_touch_leaves_nothing_for_the_next_pass() {
+    let root = fresh_root("touch-limits");
+    let one = APP_TEXT_MAX as i32;
+    // A touch that draws and reads as much text as a call may: what it recorded is dropped when the next call
+    // starts, so the pass that follows holds its own commands only and may read as much again.
+    let black = call("fill_rect", &[-50, -50, 4000, 4000, 0]);
+    let all_texts = times(APP_CALL_TEXT_MAX / APP_TEXT_MAX, &call("text_width", &[0, one, 20_000, 0]));
+    let mut w = roomy(seq(&[call("fill_rect", &[10, 10, 20, 20, 0]), all_texts.clone()]));
+    w.pointer = seq(&[black.clone(), all_texts.clone()]);
+    w.key = seq(&[black, all_texts.clone()]);
+    let mut rt = installed("test.touch.draws", &BOTH, &w);
+    let mut c = patterned(SCREEN.0, SCREEN.1);
+    for _ in 0..2 {
+        rt.draw(&mut c, WHOLE, 0);
+        rt.pointer(0, 15, 15, 0);
+        rt.key(30, 0, true);
+        rt.draw(&mut c, WHOLE, 0);
+        assert_eq!(rt.error(), None);
+        assert_eq!(inked(&c, WHOLE), 20 * 20, "the black of the touch and of the key is not drawn: the pass's own square is");
+    }
+    // A touch, and a key, past a limit stop the app as any that fails does.
+    let mut w = roomy(Vec::new());
+    w.pointer = seq(&[all_texts.clone(), call("text_width", &[0, 1, 20_000, 0])]);
+    let mut rt = installed("test.touch.past", &BOTH, &w);
+    rt.draw(&mut c, WHOLE, 0);
+    assert_eq!(rt.error(), None);
+    rt.pointer(0, 1, 1, 0);
+    assert_eq!(rt.error(), Some("The app stopped while handling a touch."));
+    rt.draw(&mut c, WHOLE, 0);
+    assert_eq!(rt.error(), Some("The app stopped while handling a touch."));
+    let mut w = roomy(Vec::new());
+    w.key = call("status", &[0, APP_STATUS_MAX as i32 + 1]);
+    let mut rt = installed("test.key.past", &BOTH, &w);
+    rt.draw(&mut c, WHOLE, 0);
+    rt.key(30, 0, true);
+    assert_eq!(rt.error(), Some("The app stopped while handling a key."));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_host_reads_no_more_of_a_modules_memory_than_a_limit_lets_it() {
+    let root = fresh_root("reads");
+    let mut c = patterned(SCREEN.0, SCREEN.1);
+    // (eight pages of memory, so that a length past a limit still lies in the memory: what is read is the limit's)
+    let mut read = |id: &str, capabilities: &[&str], draw: Vec<u8>| {
+        let mut rt = loaded(&format!("test.reads.{id}"), capabilities, &roomy(draw));
+        rt.draw(&mut c, WHOLE, 0);
+        (rt.error().map(str::to_string), rt.bytes_read())
+    };
+    let (page, both) = (65536, &BOTH[..]);
+    let stopped = Some(STOPPED.to_string());
+    // state_set keeps the first 256 KiB of what it is given, and reads those alone, however long it is told.
+    assert_eq!(read("state.kept", both, call("state_set", &[0, 100])), (None, 100));
+    assert_eq!(read("state.all", both, call("state_set", &[0, 4 * page])), (None, APP_STATE_MAX));
+    assert_eq!(read("state.more", both, call("state_set", &[0, 8 * page])), (None, APP_STATE_MAX));
+    assert_eq!(read("state.most", both, call("state_set", &[0, MAX])), (None, APP_STATE_MAX));
+    assert_eq!(read("state.none", &[NETWORK], call("state_set", &[0, 100])), (None, 0));
+    // A setting's key is read when it is as long as a key can be, and not at all when it is longer.
+    let key = WIDGET_SETTINGS_KEY_MAX as i32;
+    assert_eq!(key, 64);
+    assert_eq!(read("key.short", both, call("setting", &[0, 10, 4096, 64])), (None, 10));
+    assert_eq!(read("key.longest", both, call("setting", &[0, key, 4096, 64])), (None, 64));
+    assert_eq!(read("key.longer", both, call("setting", &[0, key + 1, 4096, 64])), (None, 0));
+    assert_eq!(read("key.page", both, call("setting", &[0, page, 4096, 64])), (None, 0));
+    assert_eq!(read("key.most", both, call("setting", &[0, MAX, 4096, 64])), (None, 0));
+    // An icon's name is read when it is as long as a name can be, and not at all when it is longer.
+    let name = APP_ICON_NAME_MAX as i32;
+    assert_eq!(name, 64);
+    for (import, args) in [("icon", [0, name, 40, 40, 96, 96, 0].to_vec()), ("fab", [40, 40, 160, 160, 0, name].to_vec())] {
+        let at = args.iter().position(|a| *a == name).unwrap();
+        let with = |len: i32| {
+            let mut args = args.clone();
+            args[at] = len;
+            call(import, &args)
+        };
+        assert_eq!(read(&format!("name.{import}.short"), both, with(4)), (None, 4), "{import}");
+        assert_eq!(read(&format!("name.{import}.longest"), both, with(name)), (None, 64), "{import}");
+        assert_eq!(read(&format!("name.{import}.longer"), both, with(name + 1)), (None, 0), "{import}");
+        assert_eq!(read(&format!("name.{import}.most"), both, with(MAX)), (None, 0), "{import}");
+    }
+    assert_eq!(read("name.button", both, call("button", &[0, 0, 400, 120, 0, 4, 0, page, 0])), (None, 4), "the label is read, the name is not");
+    assert_eq!(read("name.row", both, call("row", &[0, 0, 900, 120, 0, MAX, 0, 4, 0, -1])), (None, 4));
+    assert_eq!(read("name.tile", both, call("app_tile", &[0, 0, 220, 260, 0, name + 1, 0, 4, 0])), (None, 4));
+    assert_eq!(read("name.field", both, call("text_field", &[0, 0, 900, 100, 0, name + 1, 0, 4, 0, 4])), (None, 8));
+    // A toast's text: its first 256 bytes are read, whatever its length.
+    assert_eq!(read("toast.short", both, call("toast", &[0, 100, 1500])), (None, 100));
+    assert_eq!(read("toast.at", both, call("toast", &[0, 256, 1500])), (None, APP_TOAST_MAX));
+    assert_eq!(read("toast.long", both, call("toast", &[0, 1000, 1500])), (None, APP_TOAST_MAX));
+    assert_eq!(read("toast.most", both, call("toast", &[0, MAX, 1500])), (None, APP_TOAST_MAX));
+    assert_eq!(read("toast.less", both, call("toast", &[0, MIN, 1500])), (None, 0));
+    // The status line and each text: read at their limit, and not read past it (the call is stopped first).
+    assert_eq!(read("status.at", both, call("status", &[0, APP_STATUS_MAX as i32])), (None, APP_STATUS_MAX));
+    assert_eq!(read("status.past", both, call("status", &[0, APP_STATUS_MAX as i32 + 1])), (stopped.clone(), 0));
+    for (i, ((name, at), (_, past))) in texts_of(APP_TEXT_MAX as i32).into_iter().zip(texts_of(8 * page)).enumerate() {
+        assert_eq!(read(&format!("text.at.{i}"), both, at), (None, APP_TEXT_MAX), "{name}");
+        assert_eq!(read(&format!("text.past.{i}"), both, past), (stopped.clone(), 0), "{name}: nothing is read of a text past the limit");
+    }
+    // state_get reads nothing of the module's memory (it writes), and what the calls of a pass read adds up.
+    assert_eq!(read("sum", both, seq(&[call("state_set", &[0, 300]), call("state_get", &[4096, 300]), call("status", &[0, 50]), call("text_width", &[0, 7, 20_000, 0])])), (None, 357));
+    // The connected network's name, the time and the date are the host's own short texts: they are written, never read.
+    assert_eq!(read("written", both, seq(&[call("wifi_ssid", &[4096, MAX]), call("time_text", &[4096, MAX]), call("date_text", &[4096, MAX])])), (None, 0));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_icon_name_longer_than_any_icons_names_no_icon() {
+    let root = fresh_root("names");
+    // A name of 65 bytes is drawn as a name no icon has is: the grid. (A known name of four letters with spaces
+    // after it is that icon while it is 64 bytes long, and the grid at 65.)
+    let mut padded = b"gear".to_vec();
+    padded.resize(80, b' ');
+    let drawn = |id: &str, len: i32| {
+        let mut rt = installed(id, &BOTH, &Wasm::with(seq(&[call("icon", &[0, len, 40, 40, 200, 200, 0]), call("fab", &[300, 40, 200, 200, 0, len])]), &padded));
+        let mut c = patterned(SCREEN.0, SCREEN.1);
+        rt.draw(&mut c, WHOLE, 0);
+        assert_eq!(rt.error(), None, "{id}");
+        c
+    };
+    let unknown = {
+        let mut rt = installed("test.names.unknown", &BOTH, &Wasm::with(seq(&[call("icon", &[0, 7, 40, 40, 200, 200, 0]), call("fab", &[300, 40, 200, 200, 0, 7])]), b"no-such"));
+        let mut c = patterned(SCREEN.0, SCREEN.1);
+        rt.draw(&mut c, WHOLE, 0);
+        c
+    };
+    let gear = drawn("test.names.gear", 4);
+    assert!(gear.px != unknown.px);
+    assert!(drawn("test.names.padded", 64).px == gear.px, "a name of 64 bytes is read");
+    assert!(drawn("test.names.longer", 65).px == unknown.px, "a name of 65 bytes names no icon");
+    assert!(drawn("test.names.most", MAX).px == unknown.px);
     let _ = std::fs::remove_dir_all(&root);
 }

@@ -341,13 +341,27 @@ The host does not provide filesystem or shell access.
 ## Limits
 
 The host calls a module's `app_draw` (a drawing pass), `app_pointer`, `app_key`, `app_status_bar` and
-`app_stop`. Each call is held to the limits below.
+`app_stop`. Each call is held to the limits below, and the counts start again with every call:
 
 | limit | |
 |---|---|
 | a call's budget | 30,000,000, counted in instructions |
 | the module's memories | 1, of at most 48 MiB (768 pages) |
 | the module's tables | 1, of at most 65,536 entries |
+| bytes of one text (a `text`'s, a `text_at`'s, what `text_width` measures, and each label, caption, value, text and hint of `button`, `chip`, `row`, `select`, `app_tile` and `text_field`) | 1,024 |
+| bytes of all those texts of one call | 65,536 (64 KiB) |
+| bytes of the status line | 256 |
+| bytes `state_get` and `state_set` move in one call, all their uses together | 4,194,304 (4 MiB) |
+| the saved state | 262,144 bytes (256 KiB): `state_set` keeps the first 256 KiB of what it is given |
+| a toast's text | its first 256 bytes are read (a toast shows 255) |
+| an icon's name | 64 bytes, longer than any icon's; a longer one is not read and names no icon, so the grid is drawn, as for any name Grimoire does not know |
+| a key passed to `setting` | 64 bytes, the longest a setting's key can be; a longer one is no setting's and returns `0` |
+| what `wifi_ssid` writes | 32 bytes at most, the longest a network's name is |
+
+A length is compared with its limit before the host reads the module's memory. A call that goes
+past the text, status line or state limit is stopped the way a call that runs past its instruction
+budget is (below), and Grimoire's log names the limit. What a call records is its own: the drawing
+commands of a touch or a key are not kept for the next drawing pass.
 
 A module has one linear memory and at most one table. Memory past 48 MiB and table entries past
 65,536 are not given: `memory.grow` and `table.grow` fail, as WebAssembly defines it (they return

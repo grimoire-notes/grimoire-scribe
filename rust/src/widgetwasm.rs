@@ -44,7 +44,7 @@
 
 use crate::prelude::*;
 use crate::widgetpkg::{WIDGET_CAP_OVERLAY, WIDGET_CAP_STORAGE};
-use wasmi::{Caller, Config, Engine, Extern, Linker, Module, Store, StoreLimits, TrapCode};
+use wasmi::{Caller, Config, Engine, Linker, Module, Store, StoreLimits, TrapCode};
 
 const ABI: &str = "grimoire";
 const STATE_FILE: &str = "state/runtime.bin";
@@ -541,7 +541,7 @@ fn hit_in_body(body: Rect, r: Rect) -> Option<Rect> {
 /// trap `draw` and `tap` report as the widget having stopped. The log says which limit it was.
 fn past(st: &HostState, limit: &str, max: usize) -> wasmi::Error {
     qlog!("widget %s: stopped, a call went past a limit: %s (%d)", &st.id, limit, max as i32);
-    wasmi::Error::from(TrapCode::OutOfFuel)
+    crate::wasmhost::out_of_fuel()
 }
 
 /// Takes `n` from the call's instruction budget for work the host does for the call. When the budget cannot
@@ -612,30 +612,11 @@ fn state_moved(st: &mut HostState, n: usize) -> Result<(), wasmi::Error> {
 /// `len` bytes of the module's memory from `ptr`, or as many as the memory has there. Every read of the
 /// module's memory is this one, and the bytes it copies are counted (`WidgetRuntime::bytes_read`).
 fn read_mem(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32) -> Vec<u8> {
-    if ptr < 0 || len <= 0 {
-        return Vec::new();
-    }
-    let Some(memory) = caller.get_export("memory").and_then(Extern::into_memory) else { return Vec::new() };
-    let data = memory.data(&*caller);
-    let start = ptr as usize;
-    let end = start.saturating_add(len as usize).min(data.len());
-    if start >= end { return Vec::new() }
-    let bytes = data[start..end].to_vec();
+    let bytes = crate::wasmhost::read_mem(caller, ptr, len);
     caller.data_mut().read_bytes += bytes.len();
     bytes
 }
 
 fn write_mem(caller: &mut Caller<'_, HostState>, ptr: i32, cap: i32, bytes: &[u8]) -> i32 {
-    if ptr < 0 || cap <= 0 {
-        return 0;
-    }
-    let Some(memory) = caller.get_export("memory").and_then(Extern::into_memory) else { return 0 };
-    let data = memory.data_mut(caller);
-    let start = ptr as usize;
-    if start >= data.len() {
-        return 0;
-    }
-    let n = bytes.len().min(cap as usize).min(data.len() - start);
-    data[start..start + n].copy_from_slice(&bytes[..n]);
-    n as i32
+    crate::wasmhost::write_mem(caller, ptr, cap, bytes)
 }

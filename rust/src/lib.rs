@@ -137,7 +137,7 @@ pub mod quick; // the global quick settings panel (2.3)
 pub mod ui;
 pub mod upload; // Send a PDF from the Share page: the request's rules, the name shown, the temporary file (2.2, #175)
 pub mod widgets; // the editor's widget windows and widgets.ini (2.2, issue #200)
-pub mod wasmhost; // what the widget host and the app host share: a store's limits (Rust only)
+pub mod wasmhost; // what the widget host and the app host share: the rules of a call, written once (Rust only)
 pub mod widgetwasm; // the generic WebAssembly widget host (2.2, issue #200)
 pub mod widgetpkg; // widget packages: manifests, platforms, installs and the packages index (2.2, #200)
 pub mod widgetpkgui; // the Packages page: installed widgets and apps, install from a repository (2.2, #200)
