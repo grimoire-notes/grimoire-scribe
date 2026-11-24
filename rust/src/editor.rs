@@ -8483,7 +8483,7 @@ fn widget_tick(a: &mut App, now: u32) {
 /// restored (which draws it). While nothing is due, nothing is drawn and nothing is refreshed.
 ///
 /// A pass that is due waits while the pen is near, a stroke or another gesture is in progress, or the driver
-/// is in pen mode: the clock corner's rule (`status_busy`), since the pass's grayscale refresh would end pen
+/// is in pen mode: the status bar's rule (`status_busy`), since the pass's grayscale refresh would end pen
 /// mode and wait for the pen's last frame. The request stays with the frame's runtime meanwhile, so the one
 /// pass and its one refresh come when the pen has left. A tap on a frame is not this path: `widget_pointer`
 /// draws for it at the lift.
