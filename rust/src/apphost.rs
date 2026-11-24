@@ -32,7 +32,7 @@ use crate::prelude::*;
 use std::time::{Duration, Instant};
 use std::os::unix::process::CommandExt;
 use std::process::Command;
-use wasmi::{Caller, Config, Engine, Extern, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
+use wasmi::{Caller, Config, Engine, Extern, Linker, Module, Store, StoreLimits};
 
 const ABI: &str = "grimoire";
 const ARTIFACT_MAX: usize = 32 * 1024 * 1024;
@@ -41,7 +41,13 @@ const STATE_FILE: &str = "state/runtime.bin";
 /// A call's instruction budget: every call of the module by the host (`app_draw`, `app_pointer`, `app_key`,
 /// `app_status_bar`, `app_stop`, and its start) has this many instructions. A call that needs more is stopped.
 pub const APP_CALL_FUEL: u64 = 30_000_000;
+/// A module has one linear memory, and it may not grow past this.
 const MEMORY_MAX: usize = 48 * 1024 * 1024;
+/// A module has at most one table, of at most this many entries (the function references its indirect calls
+/// go through), and a store holds one instance of one module (`wasmhost::store_limits`). A module that
+/// declares a second memory or table, or one larger than its limit, is not started; `memory.grow` and
+/// `table.grow` past a limit fail as WebAssembly defines it (they return -1), and the module runs on.
+pub const APP_TABLE_MAX: usize = 65_536;
 
 /// A drawing command recorded by the module and rendered by the host. Coordinates are body-local.
 #[derive(Clone, Debug)]
@@ -588,7 +594,7 @@ impl AppRuntime {
             texts: Vec::new(),
             toast: None,
             dirty: false,
-            limits: StoreLimitsBuilder::new().memory_size(MEMORY_MAX).build(),
+            limits: crate::wasmhost::store_limits(MEMORY_MAX, APP_TABLE_MAX),
             redraw_at: None,
             screen_w,
             screen_h,
@@ -1530,7 +1536,7 @@ mod tests {
             texts: Vec::new(),
             toast: None,
             dirty: false,
-            limits: StoreLimitsBuilder::new().build(),
+            limits: crate::wasmhost::store_limits(MEMORY_MAX, APP_TABLE_MAX),
             redraw_at: None,
             screen_w: 0,
             screen_h: 0,
@@ -2747,7 +2753,7 @@ mod tests {
         config.consume_fuel(true);
         let engine = Engine::new(&config);
         let module = Module::new(&engine, wasm).unwrap();
-        st.limits = StoreLimitsBuilder::new().memory_size(MEMORY_MAX).build();
+        st.limits = crate::wasmhost::store_limits(MEMORY_MAX, APP_TABLE_MAX);
         let mut store = Store::new(&engine, st);
         store.limiter(|st| &mut st.limits);
         store.set_fuel(APP_CALL_FUEL).unwrap();

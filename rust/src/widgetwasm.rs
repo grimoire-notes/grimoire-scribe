@@ -44,7 +44,7 @@
 
 use crate::prelude::*;
 use crate::widgetpkg::{WIDGET_CAP_OVERLAY, WIDGET_CAP_STORAGE};
-use wasmi::{Caller, Config, Engine, Extern, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, TrapCode};
+use wasmi::{Caller, Config, Engine, Extern, Linker, Module, Store, StoreLimits, TrapCode};
 
 const ABI: &str = "grimoire";
 const STATE_FILE: &str = "state/runtime.bin";
@@ -61,13 +61,10 @@ const STATE_FILE: &str = "state/runtime.bin";
 /// A module has one linear memory, and it may not grow past this.
 const MEMORY_MAX: usize = 32 * 1024 * 1024;
 /// A module has at most one table, of at most this many entries (the function references its indirect
-/// calls go through), and a store holds one instance of one module. A module that declares a second
-/// memory or table, or one larger than its limit, is not started; `memory.grow` and `table.grow` past
-/// a limit fail as WebAssembly defines it (they return -1), and the module runs on.
+/// calls go through), and a store holds one instance of one module (`wasmhost::store_limits`). A module
+/// that declares a second memory or table, or one larger than its limit, is not started; `memory.grow`
+/// and `table.grow` past a limit fail as WebAssembly defines it (they return -1), and the module runs on.
 pub const WIDGET_TABLE_MAX: usize = 65_536;
-const MEMORIES_MAX: usize = 1;
-const TABLES_MAX: usize = 1;
-const INSTANCES_MAX: usize = 1;
 /// A call's instruction budget: the module's own instructions and the host's work for its imports
 /// (the charges below) are paid from it. A call that needs more is stopped.
 pub const WIDGET_CALL_FUEL: u64 = 20_000_000;
@@ -221,13 +218,7 @@ impl WidgetRuntime {
             settings,
             status: String::new(),
             dirty: false,
-            limits: StoreLimitsBuilder::new()
-                .memory_size(MEMORY_MAX)
-                .memories(MEMORIES_MAX)
-                .tables(TABLES_MAX)
-                .table_elements(WIDGET_TABLE_MAX)
-                .instances(INSTANCES_MAX)
-                .build(),
+            limits: crate::wasmhost::store_limits(MEMORY_MAX, WIDGET_TABLE_MAX),
             redraw_at: None,
         });
         store.limiter(|st| &mut st.limits);

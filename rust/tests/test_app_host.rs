@@ -255,3 +255,57 @@ fn a_module_that_calls_every_import_runs() {
     }
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// What a launch says of a module that did not start.
+const NOT_STARTED: &str = "The app could not start: ";
+
+/// A module's load, by its memories (pages at the start) and its tables (entries at the start): None when it
+/// loads, else what the launch says.
+fn load_of(id: &str, memories: &[u32], tables: &[u32]) -> Option<String> {
+    let mut w = Wasm::new(Vec::new());
+    w.memories = memories.iter().map(|&pages| (pages, None)).collect();
+    w.tables = tables.iter().map(|&entries| (entries, None)).collect();
+    install(id, &BOTH, &w.bytes());
+    AppRuntime::open(id, SCREEN.0, SCREEN.1, false).err()
+}
+
+#[test]
+fn a_module_has_one_memory_and_one_table_of_a_bounded_length() {
+    let root = fresh_root("store");
+    let not_started = |e: Option<String>| e.is_some_and(|e| e.starts_with(NOT_STARTED));
+    let (pages, entries) = (48 * 1024 * 1024 / 65536, APP_TABLE_MAX as u32);
+    assert_eq!((pages, entries), (768, 65_536));
+    // One memory of 48 MiB and one table of 65,536 entries are the most a module has.
+    assert_eq!(load_of("test.store.most", &[pages], &[entries]), None);
+    assert_eq!(load_of("test.store.none", &[1], &[]), None);
+    // A second memory, however small; many memories; one memory a page larger than the limit.
+    assert!(not_started(load_of("test.store.two", &[1, 1], &[])));
+    assert!(not_started(load_of("test.store.many", &[768; 16], &[])));
+    assert!(not_started(load_of("test.store.large", &[pages + 1], &[])));
+    // A second table; one table an entry longer than the limit; a table of twenty million entries.
+    assert!(not_started(load_of("test.store.tables", &[1], &[1, 1])));
+    assert!(not_started(load_of("test.store.long", &[1], &[entries + 1])));
+    assert!(not_started(load_of("test.store.longer", &[1], &[20_000_000])));
+    // In a call, growing past a limit fails as WebAssembly defines it: the result is -1, nothing is given,
+    // and the module runs on. The status line is one character for each try: '1' where the result was -1.
+    let tried = |grow: &[u8], at: i32| seq(&[i(at), grow.to_vec(), i(-1), vec![0x46], i(48), vec![0x6a, 0x3a, 0x00, 0x00]]);
+    let table_grow = |by: i32| seq(&[vec![0xd0, 0x70], i(by), vec![0xfc, 0x0f, 0x00]]);
+    let memory_grow = |by: i32| seq(&[i(by), vec![0x40, 0x00]]);
+    let mut w = Wasm::new(seq(&[
+        tried(&table_grow(entries as i32), 0),     // 1 + 65,536 entries: past the limit
+        tried(&table_grow(30_000_000), 1),         // far past it
+        tried(&table_grow(entries as i32 - 1), 2), // to the limit exactly: given
+        tried(&table_grow(1), 3),                  // and one more: not given
+        tried(&memory_grow(pages as i32), 4),      // 1 + 768 pages: past the limit
+        tried(&memory_grow(pages as i32 - 1), 5),  // to the limit exactly: given
+        tried(&memory_grow(1), 6),                 // and one more: not given
+        call("status", &[0, 7]),
+    ]));
+    w.tables = vec![(1, None)];
+    let mut rt = installed("test.store.grow", &BOTH, &w);
+    let mut c = patterned(SCREEN.0, SCREEN.1);
+    rt.draw(&mut c, WHOLE, 0);
+    assert_eq!(rt.error(), None);
+    assert_eq!(rt.status(), "1101101");
+    let _ = std::fs::remove_dir_all(&root);
+}

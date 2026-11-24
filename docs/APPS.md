@@ -281,6 +281,22 @@ a request between the app's polls: a request that has ended keeps its outcome fo
 
 The host does not provide filesystem or shell access.
 
+## Limits
+
+The host calls a module's `app_draw` (a drawing pass), `app_pointer`, `app_key`, `app_status_bar` and
+`app_stop`. Each call is held to the limits below.
+
+| limit | |
+|---|---|
+| a call's budget | 30,000,000, counted in instructions |
+| the module's memories | 1, of at most 48 MiB (768 pages) |
+| the module's tables | 1, of at most 65,536 entries |
+
+A module has one linear memory and at most one table. Memory past 48 MiB and table entries past
+65,536 are not given: `memory.grow` and `table.grow` fail, as WebAssembly defines it (they return
+`-1`), and the module runs on. A module that declares a second memory or a second table, or one that
+starts larger than its limit, is not started: the launch says that the app could not start.
+
 ## Returning Home
 
 The system gesture is **two fingers swiping up from the bottom of the screen to the middle**. It
