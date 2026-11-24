@@ -348,7 +348,7 @@ fn previews_are_made_in_the_real_sandbox() {
 }
 
 // Packages' pictures (2.3, issue #236): the small gray picture the picture worker makes (`T`) through the real
-// sandbox: an `.ico` with BMP entries, an `.ico` whose entry is a PNG (the png crate's calls under the filter), a
+// sandbox: an `.ico` with BMP entries, an `.ico` whose entry is a PNG (decoded by stb_image, as `D`'s pictures), a
 // picture, and one over the side (the page fit's). Then the job as its child runs it, for an app's icon and a
 // screenshot: each a picture in the cache, a file the worker refuses marked. Nothing falls back to the writer. A
 // worker the filter ends on a file (the picture worker's test trap) gives no picture: a try on record, then the

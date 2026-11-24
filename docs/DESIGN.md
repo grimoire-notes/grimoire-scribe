@@ -2351,7 +2351,8 @@ fix round's M13).
 Packages' pictures (2.3, issue #236) go through that worker too: an installed app's bundled `.ico` and the Package
 Store's catalog icons and screenshots, which come from a package or from the network. The picture worker takes one
 more command for them, `T <what> <max> <len>`, and answers with a small gray picture: an `.ico`'s best small entry
-(`picwork/icofile.rs` reads its directory and its PNG and BMP entries: a module private to `picwork.rs`, which only
+(`picwork/icofile.rs` reads its directory and its BMP entries, and has stb_image decode a PNG entry, as it decodes
+every other picture there: 8 bits a channel, no palette; a module private to `picwork.rs`, which only
 the worker's side calls), a PNG, JPEG or PNM picture as `D` decodes one, or either, the `.ico` first; one over `max`
 px a side comes back fitted inside max x max. The writer's side, `PicPool::small`, takes one channel, a size within
 the side it asked at and never larger than the source, and exactly w x h bytes. **A small picture is never decoded

@@ -3678,8 +3678,9 @@ answer), `test_package_pictures.rs` (the job and its cache), `test_app_icons.rs`
 and `u_update_4_packages`, where the simulated panel counts the refreshes (`display.presents`). Under the
 sandbox's real steps `T` runs only in CI's Linux job, which has a case for it (`test_sandbox_linux.rs`,
 `small_pictures_are_made_in_the_real_sandbox`: an `.ico` with BMP entries, one with a PNG entry, a picture, one
-over the side, then the job for each form and a worker the filter ends). The `.ico` reader's PNG entries go
-through the png crate, whose calls under the filter are what that job and a Scribe have to show. What only the
+over the side, then the job for each form and a worker the filter ends). The `.ico` reader's PNG entries are
+decoded by stb_image, as every other picture the worker decodes is (`bgimage.rs`), so `T` runs no decoder that
+`D` does not: what that job and a Scribe have to show is the reader itself and the fit. What only the
 Scribe can tell (read grimoire.log over SSH; it names no file):
 
 1. **An app's icon**: install an app that bundles an `.ico` (Settings > Packages > Apps, or the Package Store).

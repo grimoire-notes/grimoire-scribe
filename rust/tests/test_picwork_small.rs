@@ -237,6 +237,29 @@ fn refused_pictures_are_bad_and_the_worker_goes_on() {
     let mut long = fixture.to_vec();
     long.resize(256 * 1024 + 1, 0);
     check!(bad(&mut pool, &long, SMALL_ICO, 256));
+    // a PNG entry of 16 bits a channel, and one with a palette: the `.ico` reader took neither while the png crate
+    // decoded its entries, and takes neither now that stb_image does (which would decode both)
+    let png_entry = |color: png::ColorType, depth: png::BitDepth, samples: &[u8]| {
+        let mut out = Vec::new();
+        {
+            let mut e = png::Encoder::new(&mut out, 8, 8);
+            e.set_color(color);
+            e.set_depth(depth);
+            if color == png::ColorType::Indexed {
+                e.set_palette(vec![0, 0, 0, 255, 255, 255]);
+            }
+            e.write_header().unwrap().write_image_data(samples).unwrap();
+        }
+        out
+    };
+    let deep = png_entry(png::ColorType::Rgb, png::BitDepth::Sixteen, &[90u8; 8 * 8 * 6]);
+    let indexed = png_entry(png::ColorType::Indexed, png::BitDepth::Eight, &[1u8; 64]);
+    for entry in [&deep, &indexed] {
+        check!(bad(&mut pool, &ico_of(&[(8, 8, entry.clone())]), SMALL_ICO, 256));
+        check!(bad(&mut pool, &ico_of(&[(8, 8, entry.clone())]), SMALL_ICO | SMALL_PICTURE, 256));
+        // (as a picture by itself each is one `D` and a screenshot take)
+        check!(small(&mut pool, entry, SMALL_PICTURE, 256).is_some_and(|(_, _, p)| (p.w, p.h) == (8, 8)));
+    }
     // an entry larger than the side asked for is no picture for that request
     check!(bad(&mut pool, fixture, SMALL_ICO, 32));
     // a form that was not asked for: a PNG as an `.ico`, an `.ico` as a picture; and no picture at all
