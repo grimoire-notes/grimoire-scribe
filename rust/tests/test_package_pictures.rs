@@ -318,13 +318,13 @@ fn a_file_through_a_link_or_outside_its_folder_is_never_read() {
     std::fs::create_dir_all(format!("{g}/packages/apps/linked")).unwrap();
     std::os::unix::fs::symlink(format!("{elsewhere}/app/icon.ico"), format!("{g}/packages/apps/linked/icon.ico")).unwrap();
     check!(PicSrc::of(&format!("{g}/packages/apps/linked/icon.ico"), PicForm::AppIcon).is_none());
-    let forged = PicSrc { rel: "packages/apps/linked/icon.ico".into(), size: md.len(), mtime: md.mtime(), form: PicForm::AppIcon };
-    let (rc, log) = with_log("link", || job(&forged));
+    let named = PicSrc { rel: "packages/apps/linked/icon.ico".into(), size: md.len(), mtime: md.mtime(), form: PicForm::AppIcon };
+    let (rc, log) = with_log("link", || job(&named));
     check!(rc == -1 && log.contains("nothing made (it is not there, or is a link)"));
     // a folder on the way that is a link
     std::os::unix::fs::symlink(format!("{elsewhere}/app"), format!("{g}/packages/apps/folder")).unwrap();
-    let forged = PicSrc { rel: "packages/apps/folder/icon.ico".into(), ..forged };
-    let (rc, log) = with_log("link2", || job(&forged));
+    let named = PicSrc { rel: "packages/apps/folder/icon.ico".into(), ..named };
+    let (rc, log) = with_log("link2", || job(&named));
     check!(rc == -1 && log.contains("nothing made (a folder on its way is not there, or is a link)"));
     check!(cache_names(PicForm::AppIcon).is_empty());
     // outside the form's folder: the UI asks for nothing, and a job's path that names it does not read

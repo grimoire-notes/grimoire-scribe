@@ -276,9 +276,9 @@ fn a_worker_that_ends_or_hangs_is_dead_within_the_pools_time() {
     check!(!in_fallback());
 }
 
-/// A stand-in for a worker a picture took over: the right handshake, the command line read, then `reply` (a
-/// printf format) and `bytes` zero bytes, and it stays.
-fn lying_worker(dir: &str, reply: &str, bytes: usize) -> String {
+/// A stand-in worker (a shell script): the right handshake, the command line read, then `reply` (a printf format)
+/// and `bytes` zero bytes, and it stays.
+fn stand_in_worker(dir: &str, reply: &str, bytes: usize) -> String {
     use std::os::unix::fs::PermissionsExt;
     let path = format!("{dir}/worker.sh");
     let script = format!(
@@ -293,9 +293,9 @@ fn lying_worker(dir: &str, reply: &str, bytes: usize) -> String {
 // What the writer takes of a worker's answer: one channel, a size within the side it asked at and never larger
 // than the source, the source's own bounds, and exactly w * h bytes. Anything else is no picture (`Dead`), and
 // nothing of it is kept.
-fn a_worker_that_lies_gives_no_picture() {
+fn an_answer_the_writer_does_not_take_gives_no_picture() {
     clean_env();
-    let dir = tmp("lies");
+    let dir = tmp("answers");
     let png = png_bytes(&gradient(60, 50, 1), &dir);
     for (reply, bytes, what) in [
         ("G 300 300 300 300 1", 90_000, "a side over the one asked for"),
@@ -310,14 +310,14 @@ fn a_worker_that_lies_gives_no_picture() {
         ("I 60 50", 0, "another command's answer"),
         ("E sandbox chroot", 0, "a sandbox step said to fail after the bytes"),
     ] {
-        std::env::set_var("GRIMOIRE_WORK_EXE", lying_worker(&dir, reply, bytes));
+        std::env::set_var("GRIMOIRE_WORK_EXE", stand_in_worker(&dir, reply, bytes));
         let mut pool = PicPool::for_preview(grimoire::sandbox::mono_ms() + 1_500);
         let out = pool.small(&png, SMALL_PICTURE, 256);
         eprintln!("  {what}: {out:?}");
         check!(matches!(out, PicOut::Dead(_)));
     }
     // and the true answer from that stand-in is taken: the checks above refused the answers, not the stand-in
-    std::env::set_var("GRIMOIRE_WORK_EXE", lying_worker(&dir, "G 60 50 60 50 1", 3_000));
+    std::env::set_var("GRIMOIRE_WORK_EXE", stand_in_worker(&dir, "G 60 50 60 50 1", 3_000));
     let mut pool = PicPool::for_preview(grimoire::sandbox::mono_ms() + 5_000);
     check!(small(&mut pool, &png, SMALL_PICTURE, 256).is_some_and(|(_, _, p)| (p.w, p.h, p.px.len()) == (60, 50, 3_000)));
     check!(!in_fallback());
@@ -331,6 +331,6 @@ fn test_picwork_small() {
     run!(one_over_the_side_is_fitted_inside_it);
     run!(refused_pictures_are_bad_and_the_worker_goes_on);
     run!(a_worker_that_ends_or_hangs_is_dead_within_the_pools_time);
-    run!(a_worker_that_lies_gives_no_picture);
+    run!(an_answer_the_writer_does_not_take_gives_no_picture);
     done();
 }
