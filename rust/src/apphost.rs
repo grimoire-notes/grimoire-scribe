@@ -93,6 +93,12 @@ struct HostState {
 /// set on the files curl may write, watched by `http_watch` while curl runs, and held again when
 /// the answer is read.
 const HTTP_ADDRESS_MAX: usize = 4096;
+/// The method is at most HTTP_METHOD_MAX letters; its text as the module gives it, with any white
+/// space around the method, is at most HTTP_METHOD_TEXT_MAX bytes.
+const HTTP_METHOD_MAX: usize = 16;
+const HTTP_METHOD_TEXT_MAX: usize = 64;
+const HTTP_HEADERS_MAX: usize = 32 * 1024;
+const HTTP_UPLOAD_MAX: usize = 2 * 1024 * 1024;
 const HTTP_HEADER_LINES_MAX: usize = 32;
 const HTTP_HEADER_LINE_MAX: usize = 2048;
 const HTTP_REDIRECTS_MAX: u32 = 5;
@@ -918,6 +924,13 @@ fn install_imports(linker: &mut Linker<HostState>) -> Result<(), String> {
     // An app starts one request and polls it. The request runs in a child curl while the app keeps
     // drawing; `request_redraw` is how it asks to be called again.
     linker.func_wrap(ABI, "http_start", |mut caller: Caller<'_, HostState>, method_ptr: i32, method_len: i32, url_ptr: i32, url_len: i32, headers_ptr: i32, headers_len: i32, body_ptr: i32, body_len: i32| -> i32 {
+        // Nothing of the request is read from the module's memory before the capability, the
+        // request in flight and the four lengths have been checked.
+        let lengths = [method_len, url_len, headers_len, body_len].map(|len| len.max(0) as usize);
+        let before = caller.data().http_start_before_read(lengths);
+        if before != 0 {
+            return before;
+        }
         let method = String::from_utf8_lossy(&read_mem(&caller, method_ptr, method_len)).into_owned();
         let url = String::from_utf8_lossy(&read_mem(&caller, url_ptr, url_len)).into_owned();
         let headers = String::from_utf8_lossy(&read_mem(&caller, headers_ptr, headers_len)).into_owned();
@@ -1081,21 +1094,30 @@ fn http_child_rules(parent: libc::pid_t, caps: ChildCaps, oom: &[u8]) -> std::io
 }
 
 impl HostState {
-    fn http_start(&mut self, method: &str, url: &str, headers: &str, body: &[u8]) -> i32 {
+    /// What `http_start` answers from a request's four lengths alone, in bytes (the method's text,
+    /// the address, the header text and the upload), before anything of the request is read: -2
+    /// without the capability, -3 while a request is in flight, -1 when a length is over its limit,
+    /// and 0 when the request may be read.
+    fn http_start_before_read(&self, [method, url, headers, body]: [usize; 4]) -> i32 {
         if !self.network_http {
             return -2;
         }
         if self.http.as_ref().is_some_and(|j| !j.done) {
             return -3;
         }
+        if method > HTTP_METHOD_TEXT_MAX || url > HTTP_ADDRESS_MAX || headers > HTTP_HEADERS_MAX || body > HTTP_UPLOAD_MAX {
+            return -1;
+        }
+        0
+    }
+
+    fn http_start(&mut self, method: &str, url: &str, headers: &str, body: &[u8]) -> i32 {
+        let before = self.http_start_before_read([method.len(), url.len(), headers.len(), body.len()]);
+        if before != 0 {
+            return before;
+        }
         let method = method.trim().to_ascii_uppercase();
-        if method.is_empty()
-            || method.len() > 16
-            || !method.bytes().all(|b| b.is_ascii_uppercase())
-            || !http_address_ok(url)
-            || headers.len() > 32 * 1024
-            || body.len() > 2 * 1024 * 1024
-        {
+        if method.is_empty() || method.len() > HTTP_METHOD_MAX || !method.bytes().all(|b| b.is_ascii_uppercase()) || !http_address_ok(url) {
             return -1;
         }
         let Some(header_lines) = http_header_lines(headers) else { return -1 };
@@ -2025,6 +2047,141 @@ mod tests {
             assert_eq!(request_files(&dir), Vec::<String>::new());
             served.join().unwrap();
         }
+    }
+
+    /// A module with a memory of `pages` pages, the one import `grimoire.<import>` (`params`
+    /// numbers in, one out) and the export `call`, which passes its arguments to the import and
+    /// gives back its answer: how a test calls an import as an app does.
+    fn module_calling(import: &str, params: u8, pages: u16) -> Vec<u8> {
+        let named = |name: &str, kind: &[u8]| [&[name.len() as u8][..], name.as_bytes(), kind].concat();
+        let section = |id: u8, content: Vec<u8>| [&[id, content.len() as u8][..], &content[..]].concat();
+        // (the function type; the import, function 0; `call`, function 1; the memory, its least
+        // and most the same; the two exports; `call`'s code: each argument, the call, the end)
+        let kind = [&[1, 0x60, params][..], &vec![0x7f; params as usize][..], &[1, 0x7f][..]].concat();
+        let import = [&[1][..], &named(ABI, &[])[..], &named(import, &[0, 0])[..]].concat();
+        let size = [(pages & 0x7f) as u8 | 0x80, (pages >> 7) as u8];
+        let memory = [&[1, 1][..], &size[..], &size[..]].concat();
+        let exports = [&[2][..], &named("memory", &[2, 0])[..], &named("call", &[0, 1])[..]].concat();
+        let arguments: Vec<u8> = (0..params).flat_map(|i| [0x20, i]).collect();
+        let code = [&[1, arguments.len() as u8 + 4, 0][..], &arguments[..], &[0x10, 0, 0x0b][..]].concat();
+        [
+            b"\0asm\x01\0\0\0".to_vec(),
+            section(1, kind),
+            section(2, import),
+            section(3, vec![1, 0]),
+            section(5, memory),
+            section(7, exports),
+            section(10, code),
+        ]
+        .concat()
+    }
+
+    /// An open app's runtime around `st` and `wasm`, with the host's imports and an app's limits.
+    fn runtime_of(mut st: HostState, wasm: &[u8]) -> AppRuntime {
+        let mut config = Config::default();
+        config.consume_fuel(true);
+        let engine = Engine::new(&config);
+        let module = Module::new(&engine, wasm).unwrap();
+        st.limits = StoreLimitsBuilder::new().memory_size(MEMORY_MAX).build();
+        let mut store = Store::new(&engine, st);
+        store.limiter(|st| &mut st.limits);
+        store.set_fuel(FUEL_PER_CALL).unwrap();
+        let mut linker = Linker::new(&engine);
+        install_imports(&mut linker).unwrap();
+        let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
+        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None }
+    }
+
+    /// The module's memory, to place a request's texts in and to read what a call wrote.
+    fn memory_of(rt: &mut AppRuntime) -> &mut [u8] {
+        rt.instance.get_memory(&rt.store, "memory").unwrap().data_mut(&mut rt.store)
+    }
+
+    /// The quickest of `times` runs of `run`.
+    fn quickest(times: usize, mut run: impl FnMut()) -> Duration {
+        (0..times)
+            .map(|_| {
+                let start = Instant::now();
+                run();
+                start.elapsed()
+            })
+            .min()
+            .unwrap()
+    }
+
+    // The http_start import answers from the capability, the request in flight and the request's
+    // four lengths before it reads the request: -2, -3 and -1 in that order, and a refused call
+    // copies nothing of the module's memory. The measure is time: the module's whole 48 MiB is
+    // named by each of the four lengths, and the quickest refused call takes less time than the
+    // quickest single copy of that memory.
+    #[test]
+    fn a_start_refused_by_its_lengths_reads_nothing_of_the_request() {
+        type Start = wasmi::TypedFunc<(i32, i32, i32, i32, i32, i32, i32, i32), i32>;
+        let dir = scratch("lengths");
+        let wasm = module_calling("http_start", 8, (MEMORY_MAX >> 16) as u16);
+        let mut rt = runtime_of(host_standing_in(&dir, "printf 200"), &wasm);
+        let start: Start = rt.instance.get_typed_func(&rt.store, "call").unwrap();
+        let whole = MEMORY_MAX as i32;
+        memory_of(&mut rt).fill(0xff);
+        assert_eq!(memory_of(&mut rt).len(), MEMORY_MAX);
+        let a_copy = quickest(3, || drop(std::hint::black_box(memory_of(&mut rt).to_vec())));
+        let refused = |rt: &mut AppRuntime, lengths: [i32; 4], answer: i32, what: &str| {
+            let [method, url, headers, body] = lengths;
+            let took = quickest(5, || assert_eq!(start.call(&mut rt.store, (0, method, 0, url, 0, headers, 0, body)).unwrap(), answer, "{what}"));
+            assert!(took < a_copy, "{what}: a refused call took {took:?}, one copy of the module's memory {a_copy:?}");
+        };
+
+        // Without the capability: -2, whatever the lengths and whether or not a request runs.
+        rt.store.data_mut().network_http = false;
+        refused(&mut rt, [whole; 4], -2, "no capability");
+        let pid = stand_in(rt.store.data_mut(), &dir, "exec sleep 60", "", None);
+        refused(&mut rt, [whole; 4], -2, "no capability, a request in flight");
+
+        // With it, while a request is in flight: -3, whatever the lengths.
+        rt.store.data_mut().network_http = true;
+        refused(&mut rt, [whole; 4], -3, "a request in flight");
+        refused(&mut rt, [3, 20, 0, 0], -3, "a request in flight, a request that could start");
+        assert_eq!(child_pid(rt.store.data()), pid);
+        rt.store.data_mut().http_cancel();
+        assert!(gone(pid));
+
+        // With no request in flight: -1 for any one length over its limit.
+        let most = [HTTP_METHOD_TEXT_MAX as i32, HTTP_ADDRESS_MAX as i32, HTTP_HEADERS_MAX as i32, HTTP_UPLOAD_MAX as i32];
+        refused(&mut rt, [whole; 4], -1, "every length the whole memory");
+        refused(&mut rt, [i32::MAX; 4], -1, "every length the largest number");
+        for i in 0..4 {
+            let mut lengths = [0; 4];
+            lengths[i] = whole;
+            refused(&mut rt, lengths, -1, &format!("length {i} the whole memory"));
+            lengths = most;
+            lengths[i] += 1;
+            refused(&mut rt, lengths, -1, &format!("length {i} one over its limit"));
+        }
+        assert!(rt.store.data().http.is_none());
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+
+        // A request of exactly the four limits is read and started: the method with white space
+        // around it, the longest address, 32 KiB of header lines and the largest upload.
+        let method = format!("{:^1$}", "post", HTTP_METHOD_TEXT_MAX);
+        let url = format!("http://127.0.0.1:9/{}", "a".repeat(HTTP_ADDRESS_MAX - 19));
+        let headers = format!("X-A: {}\n", "a".repeat(1018)).repeat(32);
+        let texts = [method.as_bytes(), url.as_bytes(), headers.as_bytes(), &vec![b'u'; HTTP_UPLOAD_MAX][..]];
+        assert_eq!(texts.map(<[u8]>::len), most.map(|n| n as usize));
+        let mut at = [0usize; 4];
+        let mut next = 0;
+        for (i, text) in texts.iter().enumerate() {
+            at[i] = next;
+            memory_of(&mut rt)[next..next + text.len()].copy_from_slice(text);
+            next += text.len();
+        }
+        let request = (at[0] as i32, most[0], at[1] as i32, most[1], at[2] as i32, most[2], at[3] as i32, most[3]);
+        assert_eq!(start.call(&mut rt.store, request).unwrap(), 0);
+        let pid = child_pid(rt.store.data());
+        assert_eq!(std::fs::metadata(rt.store.data().http.as_ref().unwrap().files.path("request")).unwrap().len(), HTTP_UPLOAD_MAX as u64);
+        poll_to_end(rt.store.data_mut());
+        assert_eq!(outcome(rt.store.data()), (200, Vec::new(), String::new()));
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), Vec::<String>::new());
     }
 }
 
