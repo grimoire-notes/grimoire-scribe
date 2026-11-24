@@ -85,6 +85,10 @@ struct HostState {
     http: Option<HttpJob>,
 }
 
+/// The limits of one app HTTP request (docs/APPS.md, HTTP).
+const HTTP_HEADER_LINES_MAX: usize = 32;
+const HTTP_HEADER_LINE_MAX: usize = 2048;
+
 /// One app HTTP request, run by curl in the background. The app polls it from
 /// `request_redraw` frames, so no network contact ever blocks drawing or touch.
 struct HttpJob {
@@ -854,6 +858,35 @@ fn install_imports(linker: &mut Linker<HostState>) -> Result<(), String> {
     Ok(())
 }
 
+/// True for a header line of a request: a name, a colon and a value. The name is one or more
+/// HTTP token characters (RFC 9110's tchar) and begins the line, the colon follows it directly,
+/// the value has no control character, and the line is at most HTTP_HEADER_LINE_MAX bytes.
+fn http_header_line_ok(line: &str) -> bool {
+    let Some((name, value)) = line.split_once(':') else { return false };
+    line.len() <= HTTP_HEADER_LINE_MAX
+        && !name.is_empty()
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+        && !value.chars().any(char::is_control)
+}
+
+/// The header lines of a request, one per line of `headers`, without the white space around
+/// each; an empty line is skipped. None when a line is not a header line or there are more than
+/// HTTP_HEADER_LINES_MAX of them: the request is then refused whole.
+fn http_header_lines(headers: &str) -> Option<Vec<&str>> {
+    let mut lines = Vec::new();
+    for line in headers.lines() {
+        let line = line.trim_end_matches('\r').trim();
+        if line.is_empty() {
+            continue;
+        }
+        if lines.len() == HTTP_HEADER_LINES_MAX || !http_header_line_ok(line) {
+            return None;
+        }
+        lines.push(line);
+    }
+    Some(lines)
+}
+
 impl HostState {
     fn http_start(&mut self, method: &str, url: &str, headers: &str, body: &[u8]) -> i32 {
         if !self.network_http {
@@ -873,6 +906,7 @@ impl HostState {
         {
             return -1;
         }
+        let Some(header_lines) = http_header_lines(headers) else { return -1 };
         self.http = None;
         let Some(dir) = self.state_path.rsplit_once('/').map(|(d, _)| d) else { return -1 };
         if mkdir_p(&format!("{dir}/http")) != 0 {
@@ -895,11 +929,8 @@ impl HostState {
             .arg("-o").arg(&body_path)
             .arg("-w").arg("%{http_code}")
             .arg("-H").arg("User-Agent: Grimoire-App/2.3");
-        for line in headers.lines().take(32) {
-            let line = line.trim_end_matches('\r').trim();
-            if !line.is_empty() && line.len() <= 2048 && !line.chars().any(char::is_control) {
-                cmd.arg("-H").arg(line);
-            }
+        for line in &header_lines {
+            cmd.arg("-H").arg(line);
         }
         if !body.is_empty() {
             cmd.arg("--data-binary").arg(format!("@{request_path}"));
@@ -1001,6 +1032,147 @@ mod tests {
         assert!(gesture_matches(900.0, 2300.0, 930.0, 1200.0, 1860, 2480));
         assert!(!gesture_matches(900.0, 1500.0, 930.0, 1200.0, 1860, 2480));
         assert!(!gesture_matches(900.0, 2300.0, 1700.0, 1200.0, 1860, 2480));
+    }
+
+    // ---- HTTP ----
+
+    // A header line is a name of token characters, a colon and a value without control characters.
+    #[test]
+    fn a_header_line_is_a_name_a_colon_and_a_value() {
+        let longest = format!("X-Long: {}", "a".repeat(HTTP_HEADER_LINE_MAX - 8));
+        assert_eq!(longest.len(), HTTP_HEADER_LINE_MAX);
+        for line in [
+            "Accept: application/json",
+            "X-A:1",
+            "X-A:    spaces after the colon",
+            "X-A:",
+            "X-A: a value: with colons",
+            "X-A: caf\u{e9} \u{65e5}\u{672c}",
+            "x!#$%&'*+-.^_`|~9: every kind of token character",
+            longest.as_str(),
+        ] {
+            assert!(http_header_line_ok(line), "{line:?}");
+        }
+        let too_long = format!("X-Long: {}", "a".repeat(HTTP_HEADER_LINE_MAX - 7));
+        for line in [
+            "",
+            "no colon",
+            "Accept",
+            "X-A;",
+            ":",
+            ": no name",
+            "X A: a space in the name",
+            "X-A : a space before the colon",
+            " X-A: a space first",
+            "@X-A: 1",
+            "@",
+            "(X-A): 1",
+            "\"X-A\": 1",
+            "Caf\u{e9}: 1",
+            "X-A: a\ttab",
+            "X-A: a\u{0}b",
+            "X-A: a\rb",
+            "X-A: a\u{1b}b",
+            "X-A: a\u{7f}b",
+            "X-A: a\u{85}b",
+            "X\tA: 1",
+            too_long.as_str(),
+        ] {
+            assert!(!http_header_line_ok(line), "{line:?}");
+        }
+        // Of the ASCII characters, only the token characters are part of a name, first or later.
+        for b in 0u8..128 {
+            let c = b as char;
+            let token = c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
+            assert_eq!(http_header_line_ok(&format!("{c}X: 1")), token, "{c:?} first");
+            if c != ':' {
+                assert_eq!(http_header_line_ok(&format!("X{c}: 1")), token, "{c:?} later");
+            }
+        }
+    }
+
+    // The lines of a request: white space around a line and empty lines are not part of them, and one
+    // line that is not a header line, or one line too many, refuses them all.
+    #[test]
+    fn the_header_lines_of_a_request_are_taken_whole_or_not_at_all() {
+        assert_eq!(http_header_lines(""), Some(vec![]));
+        assert_eq!(http_header_lines("\r\n\n  \n"), Some(vec![]));
+        assert_eq!(http_header_lines("Accept: text/plain\r\n\r\n  X-A: 1 \t\nX-B:2"), Some(vec!["Accept: text/plain", "X-A: 1", "X-B:2"]));
+        assert_eq!(http_header_lines("Accept: text/plain\nno colon\nX-A: 1"), None);
+        assert_eq!(http_header_lines("Accept: text/plain\n@X-A: 1"), None);
+        assert_eq!(http_header_lines("X-A: a\rb\n"), None);
+        let most = "X-A: 1\n\n".repeat(HTTP_HEADER_LINES_MAX);
+        assert_eq!(http_header_lines(&most).map(|l| l.len()), Some(HTTP_HEADER_LINES_MAX));
+        assert_eq!(http_header_lines(&format!("{most}X-A: 1")), None);
+        let longest = format!("X-Long: {}", "a".repeat(HTTP_HEADER_LINE_MAX - 8));
+        assert_eq!(http_header_lines(&format!("  {longest}  \r\n")), Some(vec![longest.as_str()]));
+        assert_eq!(http_header_lines(&format!("{longest}a")), None);
+    }
+
+    /// A scratch folder of one test's own (under GRIMOIRE_TEST_TMP when the Makefile sets it).
+    fn scratch(name: &str) -> String {
+        let base = std::env::var("GRIMOIRE_TEST_TMP").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+        let dir = base.join(format!("grimoire-apphost-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.to_str().unwrap().to_string()
+    }
+
+    /// The host's state for an app with `network:http` whose state folder is `dir/state`.
+    fn host(dir: &str) -> HostState {
+        HostState {
+            commands: Vec::new(),
+            state: Vec::new(),
+            state_path: format!("{dir}/{STATE_FILE}"),
+            settings: Vec::new(),
+            close_requested: false,
+            status_bar: false,
+            status: String::new(),
+            texts: Vec::new(),
+            toast: None,
+            dirty: false,
+            limits: StoreLimitsBuilder::new().build(),
+            redraw_at: None,
+            screen_w: 0,
+            screen_h: 0,
+            clock_12h: false,
+            network_http: true,
+            http: None,
+        }
+    }
+
+    /// The names of the files in the app's request folder.
+    fn request_files(dir: &str) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(format!("{dir}/state/http"))
+            .map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+            .unwrap_or_default();
+        names.sort();
+        names
+    }
+
+    // A refused request starts nothing and makes no file: every case here is one line that is not a
+    // header line, a line over the length limit, or more lines than the limit.
+    #[test]
+    fn a_request_with_a_refused_header_line_starts_nothing() {
+        let dir = scratch("refused");
+        let mut st = host(&dir);
+        let many = "X-A: 1\n".repeat(HTTP_HEADER_LINES_MAX + 1);
+        let long = format!("X-A: {}", "a".repeat(HTTP_HEADER_LINE_MAX));
+        for headers in [
+            "Accept: text/plain\nno colon",
+            "Accept: text/plain\n: no name",
+            "X A: 1",
+            "@X-A: 1",
+            "(X-A): 1",
+            "X-A: a\u{1}b",
+            many.as_str(),
+            long.as_str(),
+        ] {
+            assert_eq!(st.http_start("POST", "http://127.0.0.1:9/", headers, b"upload"), -1, "{headers:?}");
+            assert!(st.http.is_none(), "{headers:?}");
+            assert_eq!(request_files(&dir), Vec::<String>::new(), "{headers:?}");
+        }
+        assert_eq!(st.http_poll(), -1);
     }
 }
 

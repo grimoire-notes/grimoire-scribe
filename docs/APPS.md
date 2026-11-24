@@ -213,12 +213,23 @@ http_cancel()
 
 `http_start` returns 0 when curl started, -1 for a bad argument or a failed start, -2 when the
 manifest lacks `network:http`, and -3 while another request is in flight. The method is
-`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` or another uppercase token. Headers are one
-`Name: value` per line. The upload is at most 2 MiB; the answer is at most 8 MiB. `http_poll`
-returns 0 while it runs and 1 when it has finished; after that `http_status` is the HTTP status
-code (or -1 on a transport failure), `http_body` is the answer, and `http_error` is curl's one-line
-failure when there is one. Poll it after a `request_redraw`; none of these calls blocks drawing or
-touching the screen.
+`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` or another uppercase token.
+
+Headers are one `Name: value` per line, at most 32 lines of at most 2048 bytes each (and 32 KiB
+together). A header line is a name, a colon and a value: the name is one or more HTTP token
+characters (letters, digits and ``! # $ % & ' * + - . ^ _ ` | ~``), the colon follows the name
+directly, and the value has no control character. Spaces after the colon are fine, white space
+around a line is not part of it, and an empty line is skipped. A request with any other line, a
+longer line or more lines is refused whole: `http_start` returns -1 and nothing is sent. A line
+with an empty value sends no header: curl then leaves out its own header of that name, if it has
+one.
+
+The upload is at most 2 MiB; the answer is at most 8 MiB.
+
+`http_poll` returns 0 while the request runs and 1 when it has finished; after that `http_status`
+is the HTTP status code (or -1 on a transport failure), `http_body` is the answer, and
+`http_error` is curl's one-line failure when there is one. Poll it after a `request_redraw`; none
+of these calls blocks drawing or touching the screen.
 
 The host does not provide filesystem or shell access. An app should send a `User-Agent` header;
 the host adds `Grimoire-App/2.3` as a default.
