@@ -3675,7 +3675,12 @@ cache and checked (`pkgpics.rs`, `appicon.rs`, `packagestore.rs`).
   refresh that fills in by itself (`app_invalidate_filling`). Under a press it waits for the lift; behind
   another sheet nothing is drawn, and the sheet's close draws what is under it whole. A picture's download
   that ended asks for that same redraw and no other (`store_tick`): its picture is still to come, so nothing
-  is refreshed for it, but for a screenshot frame's words when the download failed. The Store's status bar
+  is refreshed for it, but for a screenshot frame's words when the download failed. A Store picture that comes
+  for a slot the screen in front does not show (a card of another page of the list, the list's cards while a
+  package's page is up) is kept in its slot, and nothing is drawn or compared for it (`slot_in_front`); an
+  app's icon that comes while the launcher in front does not show it costs one draw and one comparison, and
+  refreshes nothing (the launcher's table is filled for every installed app at each draw, so it cannot tell
+  which icons the row shows). The Store's status bar
   keeps the clock by the same redraw (`library_tick`): when the minute changes only the clock's place is
   refreshed, and a picture that comes later is compared with a frame whose clock is the panel's, so its refresh
   is its own place. The scenarios that count these refreshes hold the clock still with a `clock` line.
