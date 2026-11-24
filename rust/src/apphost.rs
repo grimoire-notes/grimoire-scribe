@@ -26,6 +26,12 @@
 //! Imports (`grimoire`): drawing and Grimoire's global UI elements, state and settings, time and
 //! date, battery and Wi-Fi state, screen geometry, and `close()`. All strings are UTF-8 in the
 //! module's memory. See docs/APPS.md for the full list.
+//!
+//! A module has the capabilities its manifest declares and no other (docs/APPS.md, Capabilities):
+//! `storage:app-local` is the saved state (`state_get`, `state_set`, the state file), and `network:http`
+//! the `http_*` calls. Without the capability the call is still there to link against: `state_get`
+//! gives nothing, `state_set` keeps nothing, and `http_start` answers -2. Drawing, touches, keys and
+//! every other call need none: an app is what it draws.
 
 use crate::globalui::{gui_app_tile, gui_chip, gui_fab, gui_select, gui_status_bar, gui_status_h, gui_surface, gui_text_field};
 use crate::prelude::*;
@@ -73,6 +79,8 @@ enum DrawCmd {
 }
 
 struct HostState {
+    /// the manifest declares `storage:app-local`: the state is read, kept and saved
+    storage: bool,
     commands: Vec<DrawCmd>,
     state: Vec<u8>,
     state_path: String,
@@ -580,9 +588,12 @@ impl AppRuntime {
         let engine = Engine::new(&config);
         let module = Module::new(&engine, bytes).map_err(|e| format!("The app's WebAssembly is invalid: {e}"))?;
         let state_path = format!("{}/{STATE_FILE}", crate::apppkg::app_package_dir(&it.id));
-        let state = read_file_max(&state_path, STATE_MAX).unwrap_or_default();
+        let storage = m.capabilities.iter().any(|c| c == APP_CAP_STORAGE);
+        // (a state file left by a version that declared the capability is not read, and stays as it is)
+        let state = if storage { read_file_max(&state_path, STATE_MAX).unwrap_or_default() } else { Vec::new() };
         let settings = crate::apppkg::app_settings_load(&it.id, &m.settings);
         let mut store = Store::new(&engine, HostState {
+            storage,
             commands: Vec::new(),
             state,
             state_path,
@@ -598,7 +609,7 @@ impl AppRuntime {
             screen_w,
             screen_h,
             clock_12h,
-            network_http: m.capabilities.iter().any(|c| c == "network:http"),
+            network_http: m.capabilities.iter().any(|c| c == APP_CAP_NETWORK),
             http: None,
             #[cfg(test)]
             http_stand_in: Vec::new(),
@@ -790,9 +801,11 @@ impl AppRuntime {
         // The host has no autonomous app callbacks yet; redraw requests are polled by AppRun.
     }
 
+    /// Writes the state file after a call that changed the state. An app without `storage:app-local` has no
+    /// state to change, and no file is made for it.
     fn save(&mut self) {
         let st = self.store.data_mut();
-        if !st.dirty {
+        if !st.storage || !st.dirty {
             return;
         }
         st.dirty = false;
@@ -932,11 +945,19 @@ fn install_imports(linker: &mut Linker<HostState>) -> Result<(), String> {
     }).map_err(e)?;
 
     // ---- state, settings, system ----
+    // (state_get and state_set need `storage:app-local`: without it the one gives nothing and the other keeps
+    // nothing)
     linker.func_wrap(ABI, "state_get", |mut caller: Caller<'_, HostState>, ptr: i32, cap: i32| -> i32 {
+        if !caller.data().storage {
+            return 0;
+        }
         let state = caller.data().state.clone();
         write_mem(&mut caller, ptr, cap, &state)
     }).map_err(e)?;
     linker.func_wrap(ABI, "state_set", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| {
+        if !caller.data().storage {
+            return;
+        }
         let state = read_mem(&caller, ptr, len);
         let st = caller.data_mut();
         st.state = state.into_iter().take(STATE_MAX).collect();
@@ -1525,6 +1546,7 @@ mod tests {
     /// The host's state for an app with `network:http` whose state folder is `dir/state`.
     fn host(dir: &str) -> HostState {
         HostState {
+            storage: true,
             commands: Vec::new(),
             state: Vec::new(),
             state_path: format!("{dir}/{STATE_FILE}"),

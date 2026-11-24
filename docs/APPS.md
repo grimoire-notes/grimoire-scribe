@@ -136,10 +136,27 @@ is no longer the file that was installed, and it is not a signature.
 
 ## Capabilities
 
-- `storage:app-local`: the app's own state and settings under its `state/` folder.
-- `network:http`: the `http_*` host calls. Without this capability every request is refused.
+A module has the capabilities its manifest declares, and no other:
+
+| capability | what it gives the module |
+|---|---|
+| `storage:app-local` | its own saved state: `state_get`, `state_set` and the file `state/runtime.bin`. Without it `state_get` returns `0`, `state_set` does nothing, and no state file is read or written for the app |
+| `network:http` | the `http_*` host calls. Without it `http_start` returns `-2` and no request is started |
 
 A package may declare neither, either or both. Unknown capabilities are refused at install.
+
+A module may import every function of the ABI whatever it declares; a call it has no capability
+for returns at once. Drawing needs no capability: an app is the screen its module draws, so an app
+that declares neither still draws, gets its touches and its keys, and can use every other call
+(`status`, `setting`, `toast`, `close`, `request_redraw`, the clock, the battery and the Wi-Fi
+state). The app's settings are the reader's, changed on its Settings page and kept by the host in
+`state/settings.json` with or without `storage:app-local`.
+
+An app that keeps something and fetches something declares both:
+
+```yaml
+capabilities: [storage:app-local, network:http]
+```
 
 ## Lifecycle and exports
 
@@ -234,7 +251,8 @@ theme() -> i32
 status_bar_height() -> i32
 ```
 
-`state_get`/`state_set` read and write `state/runtime.bin`, capped at 256 KiB. `setting` returns the
+`state_get`/`state_set` read and write `state/runtime.bin`, capped at 256 KiB; they need
+`storage:app-local` ([Capabilities](#capabilities)). `setting` returns the
 saved value for one manifest setting; a missing or invalid value reads as its default. `status`
 sets a line a test or a debug view can read. `request_redraw` asks to be drawn again after the
 delay (16 ms to 24 hours); timers and polling belong behind it rather than a busy loop. `close`

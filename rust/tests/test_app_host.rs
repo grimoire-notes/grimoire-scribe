@@ -450,3 +450,73 @@ fn a_module_is_checked_again_before_each_launch() {
     assert_eq!(load("test.load").as_deref(), Some(NOT_READ), "the next launch checks it");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn an_app_without_the_storage_capability_has_no_saved_state() {
+    let root = fresh_root("storage");
+    let state_file = |id: &str| root.join(format!("packages/apps/{id}/state/runtime.bin"));
+    let mut c = patterned(SCREEN.0, SCREEN.1);
+    // Declared: the first draw finds nothing saved and saves a word, the next finds it, and so does a new
+    // launch; a touch, a key and the stop each save theirs.
+    let mut rt = installed("test.keeps", &[STORAGE], &keeps());
+    rt.draw(&mut c, WHOLE, 0);
+    assert_eq!(rt.status(), "");
+    assert_eq!(std::fs::read(state_file("test.keeps")).unwrap(), b"hello");
+    rt.draw(&mut c, WHOLE, 0);
+    assert_eq!(rt.status(), "hello");
+    rt.pointer(0, 5, 5, 0);
+    assert_eq!(std::fs::read(state_file("test.keeps")).unwrap(), b"touch");
+    rt.key(30, 0, true);
+    assert_eq!(std::fs::read(state_file("test.keeps")).unwrap(), b"key");
+    rt.stop();
+    assert_eq!(std::fs::read(state_file("test.keeps")).unwrap(), b"stop");
+    let mut rt = AppRuntime::open("test.keeps", SCREEN.0, SCREEN.1, false).unwrap();
+    rt.draw(&mut c, WHOLE, 0);
+    assert_eq!(rt.status(), "stop");
+    // Not declared (no capability, and the network alone): state_get gives nothing and state_set keeps nothing,
+    // in a draw, a touch, a key and the stop, and neither the file nor its folder is made. The app draws all the
+    // same: its rectangle is there.
+    for (id, capabilities) in [("test.forgets", &[][..]), ("test.forgets.net", &[NETWORK][..])] {
+        let mut rt = installed(id, capabilities, &keeps());
+        for _ in 0..3 {
+            let mut c = patterned(SCREEN.0, SCREEN.1);
+            rt.draw(&mut c, WHOLE, 0);
+            assert_eq!(rt.error(), None, "{id}");
+            assert_eq!(rt.status(), "", "{id}");
+            assert_eq!(inked(&c, Rect { x: 40, y: 40, w: 200, h: 100 }), 200 * 100, "{id}: an app with no capability draws");
+            rt.pointer(0, 5, 5, 0);
+            rt.key(30, 0, true);
+        }
+        rt.stop();
+        assert_eq!(rt.error(), None, "{id}");
+        assert!(!state_file(id).exists(), "{id}");
+        assert!(!state_file(id).parent().unwrap().exists(), "{id}: no state folder is made either");
+        // A state file from a version of the app that declared the capability is not read, and stays as it is.
+        std::fs::create_dir_all(state_file(id).parent().unwrap()).unwrap();
+        std::fs::write(state_file(id), b"kept").unwrap();
+        let mut rt = AppRuntime::open(id, SCREEN.0, SCREEN.1, false).unwrap();
+        rt.draw(&mut c, WHOLE, 0);
+        rt.pointer(2, 5, 5, 0);
+        rt.draw(&mut c, WHOLE, 0);
+        rt.stop();
+        assert_eq!(rt.status(), "", "{id}");
+        assert_eq!(std::fs::read(state_file(id)).unwrap(), b"kept", "{id}");
+    }
+    // The settings of an app are the reader's, kept by the host with or without the capability.
+    let with_setting = |id: &str, capabilities: &[&str]| {
+        let module = Wasm::with(seq(&[i(100), i(0), i(4), i(100), i(64), invoke("setting"), invoke("status")]), b"dark").bytes();
+        let m = format!("{}settings:\n  - key: dark\n    label: Dark\n    type: toggle\n    default: true\n", manifest(id, "Test", capabilities, false, &module));
+        app_package_install(&m, &module, None, "", SCREEN.0, SCREEN.1).unwrap();
+        AppRuntime::open(id, SCREEN.0, SCREEN.1, false).unwrap()
+    };
+    for (id, capabilities) in [("test.set.none", &[][..]), ("test.set.both", &BOTH[..])] {
+        let mut rt = with_setting(id, capabilities);
+        rt.draw(&mut c, WHOLE, 0);
+        assert_eq!(rt.status(), "true", "{id}");
+        assert_eq!(app_settings_save(id, &[("dark".to_string(), "false".to_string())]), 0);
+        let mut rt = AppRuntime::open(id, SCREEN.0, SCREEN.1, false).unwrap();
+        rt.draw(&mut c, WHOLE, 0);
+        assert_eq!(rt.status(), "false", "{id}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}

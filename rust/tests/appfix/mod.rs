@@ -544,3 +544,21 @@ pub fn honest() -> Vec<Cmd> {
         Cmd::Fab(1600, 2060, 160, 160, "download"),
     ]
 }
+
+// ---- modules that keep something ----
+
+/// Where `keeps` reads its saved state into, and has the words it saves.
+pub const STATE_AT: i32 = 60000;
+pub const WORD_AT: i32 = 32;
+
+/// A module that keeps a word: each `app_draw` says the saved state in the status line, saves "hello" and fills
+/// a black rectangle; a touch saves "touch", a key "key", and `app_stop` "stop".
+pub fn keeps() -> Wasm {
+    let said = seq(&[i(STATE_AT), i(STATE_AT), i(64), invoke("state_get"), invoke("status")]);
+    let mut w = Wasm::new(seq(&[said, call("state_set", &[WORD_AT, 5]), call("fill_rect", &[40, 40, 200, 100, 0])]));
+    w.pointer = call("state_set", &[WORD_AT + 8, 5]);
+    w.key = call("state_set", &[WORD_AT + 16, 3]);
+    w.stop = call("state_set", &[WORD_AT + 24, 4]);
+    w.data = vec![(WORD_AT as u32, b"hello\0\0\0touch\0\0\0key\0\0\0\0\0stop".to_vec())];
+    w
+}

@@ -84,8 +84,13 @@ fn in_state(p: &str) -> bool {
     p.split('/').next().is_some_and(|first| first.eq_ignore_ascii_case("state"))
 }
 
+/// The capabilities a manifest may declare, and what the host gives a module for each (apphost.rs): its own
+/// saved state, and the `http_*` calls. An app needs neither to draw and to be touched.
+pub const APP_CAP_STORAGE: &str = "storage:app-local";
+pub const APP_CAP_NETWORK: &str = "network:http";
+
 fn cap_ok(c: &str) -> bool {
-    matches!(c, "storage:app-local" | "network:http")
+    c == APP_CAP_STORAGE || c == APP_CAP_NETWORK
 }
 
 /// Whether `spec.icon` names a bundled file rather than one of Grimoire's built-in icon names.
