@@ -1089,7 +1089,7 @@ fn visible_rect(v: &MapView, i: usize) -> Rect {
 fn render(v: &mut MapView, c: &mut Canvas, nav: &Nav) {
     canvas_reset_clip(c);
     canvas_fill(c, full(v), 255);
-    gui_status_bar(c, v.w, wall_time());
+    gui_status_bar(c, v.w, sys_wall_clock());
     v.hits.clear();
     v.labels.clear();
     if v.list {render_list(v,c,nav);return;}

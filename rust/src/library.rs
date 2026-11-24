@@ -1099,8 +1099,12 @@ fn draw_base(a: &mut App) {
     hits_clear(&mut s.hits);
     canvas_fill(c, Rect::new(0, 0, aw, ah), 255);
 
-    // The status bar (2.3, issue #209): time and date, Wi-Fi and Bluetooth, the battery.
-    gui_status_bar(c, aw, wall_time());
+    // The status bar (2.3, issue #209): time and date, Wi-Fi and Bluetooth, the battery. The minute it
+    // is drawn with is the one library_tick compares: a tick draws the home again only once the
+    // bar's time has changed (a start with no minute recorded drew it twice).
+    let now = sys_wall_clock();
+    gui_status_bar(c, aw, now);
+    s.status_min = now / 60;
 
     let m = margin();
     let gap = gui_gap();
@@ -9690,9 +9694,10 @@ pub fn library_tick(a: &mut App, now: u32) {
     pictures_due_draw(a);
     crate::userfonts::userfonts_tick(a, now); // (a font check that ended with no verdict is queued again after its wait)
     // The home's status bar keeps the clock: one redraw when the minute changes (nothing behind a
-    // sheet or the keyboard is laying itself out again).
+    // sheet or the keyboard is laying itself out again). The minute is the platform's clock's, as
+    // the bar's own time is (gui_status_bar).
     if !files_shown(a) && !graph_shown(a) && lib(a).modal == Modal::None {
-        let min = wall_time() / 60;
+        let min = sys_wall_clock() / 60;
         if lib(a).status_min != min {
             lib(a).status_min = min;
             redraw(a, RefreshMode::Ui);
@@ -10717,6 +10722,39 @@ mod tests {
         let mut out = String::new();
         assert_eq!(library_probe(a, key, &mut out, 512), 0, "{key}");
         out
+    }
+
+    // The home is drawn with its bar's minute recorded, so a tick in that minute draws nothing again.
+    // Before, the first tick after a start found no minute recorded and drew and refreshed the whole
+    // home a second time with nothing on it changed.
+    #[test]
+    fn a_tick_in_the_minute_the_home_was_drawn_in_draws_nothing() {
+        let mut a = pen_record_app();
+        a.scr = ScreenId::Library;
+        lib(&mut a).modal = Modal::None;
+        lib(&mut a).items.clear();
+        // (the machine's minute can change between a draw and its tick: the next pair is inside one)
+        let mut quiet = false;
+        for _ in 0..2 {
+            lib(&mut a).status_min = 0;
+            redraw(&mut a, RefreshMode::Ui);
+            a.dirty = RECT_EMPTY;
+            library_tick(&mut a, 100);
+            if rect_is_empty(a.dirty) {
+                quiet = true;
+                break;
+            }
+        }
+        assert!(quiet, "a tick in the minute the home was drawn in asked for a refresh");
+        // A minute on by the clock, the tick draws it again, once.
+        lib(&mut a).status_min -= 1;
+        library_tick(&mut a, 200);
+        assert!(!rect_is_empty(a.dirty));
+        a.dirty = RECT_EMPTY;
+        library_tick(&mut a, 300);
+        assert!(rect_is_empty(a.dirty) || lib(&mut a).status_min != sys_wall_clock() / 60);
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
     }
 
     // The global popup menus close on a tap outside their rows; the page under them does not act.
@@ -13296,7 +13334,7 @@ pub(crate) fn library_app_closed(a: &mut App) {
 
 /// Whether the status bar's minute changed while an app was up.
 pub(crate) fn library_app_minute(a: &mut App) -> bool {
-    let min = wall_time() / 60;
+    let min = sys_wall_clock() / 60;
     let Some(s) = a.lib.as_deref_mut() else { return false };
     if s.status_min == min {
         false
