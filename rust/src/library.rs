@@ -6718,6 +6718,9 @@ fn toast_floor(a: &App) -> i32 {
     below
 }
 
+// (One copy: it is two calls long since the draw and the refresh were split, short enough for the compiler to
+// copy it into each of its many callers, which the Kindle's binary has no room for.)
+#[inline(never)]
 fn redraw(a: &mut App, m: RefreshMode) {
     draw_front(a);
     app_invalidate_all(a, m);
