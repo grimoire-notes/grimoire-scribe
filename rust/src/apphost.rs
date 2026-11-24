@@ -1981,6 +1981,90 @@ mod tests {
         (at, served)
     }
 
+    /// Serves requests at a local address until `stop` is set, one to a connection, which it then
+    /// closes: `answer` makes the answer from a request's first line. The thread gives back the
+    /// first lines received, in order.
+    fn serve_each(answer: fn(&str) -> Vec<u8>) -> (String, std::sync::Arc<std::sync::atomic::AtomicBool>, std::thread::JoinHandle<Vec<String>>) {
+        use std::io::{Read, Write};
+        use std::sync::atomic::Ordering;
+        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        l.set_nonblocking(true).unwrap();
+        let at = format!("http://127.0.0.1:{}", l.local_addr().unwrap().port());
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopped = stop.clone();
+        let served = std::thread::spawn(move || {
+            let mut firsts = Vec::new();
+            while !stopped.load(Ordering::SeqCst) {
+                let Ok((mut s, _)) = l.accept() else {
+                    std::thread::sleep(Duration::from_millis(2));
+                    continue;
+                };
+                s.set_nonblocking(false).unwrap();
+                s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+                let mut got = Vec::new();
+                let mut buf = [0u8; 4096];
+                while !got.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let n = s.read(&mut buf).unwrap();
+                    assert!(n > 0, "the request ended early: {:?}", String::from_utf8_lossy(&got));
+                    got.extend_from_slice(&buf[..n]);
+                }
+                let first = String::from_utf8_lossy(&got).lines().next().unwrap_or("").to_string();
+                s.write_all(&answer(&first)).unwrap();
+                firsts.push(first);
+            }
+            firsts
+        });
+        (at, stop, served)
+    }
+
+    /// The answers of a listener that redirects: `/hop/N` leads to `/hop/N-1` and `/hop/0` is the
+    /// last answer; `/to/ADDRESS` leads to ADDRESS. Every redirect has an answer of its own.
+    fn redirecting(first_line: &str) -> Vec<u8> {
+        let path = first_line.split(' ').nth(1).unwrap_or("");
+        let moved = |to: &str| format!("HTTP/1.1 302 Found\r\nLocation: {to}\r\nContent-Length: 5\r\nConnection: close\r\n\r\nmoved").into_bytes();
+        if let Some(to) = path.strip_prefix("/to/") {
+            return moved(to);
+        }
+        match path.strip_prefix("/hop/").and_then(|n| n.parse::<u32>().ok()) {
+            Some(n) if n > 0 => moved(&format!("/hop/{}", n - 1)),
+            _ => b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\narrived".to_vec(),
+        }
+    }
+
+    // The redirects of a real request: five are followed and bring the last answer; a sixth ends
+    // the request as a failure with no answer, and so does a redirect to an address that is not
+    // http or https, which is not asked for.
+    #[test]
+    fn a_real_request_follows_five_redirects_and_only_to_http_and_https() {
+        let dir = scratch("redirects");
+        let mut st = host(&dir);
+        let (at, stop, served) = serve_each(redirecting);
+        let mut ask = |path: &str| {
+            assert_eq!(st.http_start("GET", &format!("{at}{path}"), "", b""), 0, "{NEEDS_CURL}");
+            let pid = child_pid(&st);
+            poll_to_end(&mut st);
+            assert!(gone(pid));
+            assert_eq!(request_files(&dir), Vec::<String>::new());
+            outcome(&st)
+        };
+        assert_eq!(ask("/hop/5"), (200, b"arrived".to_vec(), String::new()));
+        let (code, body, error) = ask("/hop/6");
+        assert_eq!((code, body), (-1, Vec::new()), "{error}");
+        assert!(error.starts_with("curl: (47) "), "{error}");
+        for to in ["ftp://127.0.0.1:1/a", "file:///dev/null", "gopher://127.0.0.1:1/"] {
+            let (code, body, error) = ask(&format!("/to/{to}"));
+            assert_eq!((code, body), (-1, Vec::new()), "{to}: {error}");
+            assert!(error.starts_with("curl: (1) "), "{to}: {error}");
+        }
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        let asked: Vec<String> = [5, 4, 3, 2, 1, 0, 6, 5, 4, 3, 2, 1]
+            .map(|n| format!("GET /hop/{n} HTTP/1.1"))
+            .into_iter()
+            .chain(["ftp://127.0.0.1:1/a", "file:///dev/null", "gopher://127.0.0.1:1/"].map(|to| format!("GET /to/{to} HTTP/1.1")))
+            .collect();
+        assert_eq!(served.join().unwrap(), asked);
+    }
+
     // A real request to a local listener: the method, the address as written, the two header lines
     // and the upload arrive, and the status code and the answer come back.
     #[test]
