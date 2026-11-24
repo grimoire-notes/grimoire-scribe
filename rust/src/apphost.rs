@@ -1549,12 +1549,6 @@ mod tests {
         (l, url)
     }
 
-    /// A local address nothing listens on.
-    fn closed_address() -> String {
-        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        format!("http://127.0.0.1:{}/", l.local_addr().unwrap().port())
-    }
-
     const NEEDS_CURL: &str = "this test starts curl: it must be on the PATH";
 
     // The address of a request is http or https, at most 4096 bytes, and has no control character
@@ -2026,17 +2020,21 @@ mod tests {
         assert!(gone(pid));
         assert_eq!(request_files(&dir), none);
 
-        // An answer read (here curl's failure to connect): the files are gone once http_poll has
-        // said so, and what was read stays until the next request or a cancel.
+        // An outcome read (here curl's failure at a listener of the test's own, which closes the
+        // connection without an answer): the files are gone once http_poll has said so, and what
+        // was read stays until the next request or a cancel.
         let mut st = host(&dir);
-        assert_eq!(st.http_start("POST", &closed_address(), "", b"upload"), 0);
+        let (at, stop, served) = serve_each(no_answer);
+        assert_eq!(st.http_start("GET", &format!("{at}/"), "", b""), 0);
         let pid = child_pid(&st);
         poll_to_end(&mut st);
         let (code, body, error) = outcome(&st);
         assert_eq!((code, body), (-1, Vec::new()));
-        assert!(!error.is_empty());
+        assert!(error.starts_with("curl: (52) "), "{error}");
         assert!(gone(pid));
         assert_eq!(request_files(&dir), none);
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(served.join().unwrap(), ["GET / HTTP/1.1"]);
 
         // A new request after it: only the new one's files are there.
         assert_eq!(st.http_start("GET", &silent, "", b""), 0);
@@ -2338,6 +2336,11 @@ mod tests {
             firsts
         });
         (at, stop, served)
+    }
+
+    /// The answer of a listener that closes the connection without one.
+    fn no_answer(_first_line: &str) -> Vec<u8> {
+        Vec::new()
     }
 
     /// The answers of a listener that redirects: `/hop/N` leads to `/hop/N-1` and `/hop/0` is the
