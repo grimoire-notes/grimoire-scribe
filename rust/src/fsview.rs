@@ -115,6 +115,13 @@ impl StoragePath {
     pub fn components(&self) -> impl Iterator<Item = &[u8]> {
         self.0.split(|&c| c == b'/').filter(|n| !n.is_empty())
     }
+    /// Whether the walk takes this path's names wherever it starts (`zone_of`, with none of Grimoire's folders on
+    /// the way): no part that begins with a dot, ends in a dot or a space or in `.sdr`, and no system folder's
+    /// name first. What is asked of a path before it is kept to be read through the walk later (a widget
+    /// package's module, widgetpkg.rs), so that what was accepted can be opened.
+    pub fn walked(&self) -> bool {
+        zone_of(None, self, false) != FsZone::Refused
+    }
     /// Its folder and its last name; None for the root.
     pub fn split_last(&self) -> Option<(StoragePath, &[u8])> {
         if self.0.is_empty() {

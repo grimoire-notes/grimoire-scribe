@@ -18,7 +18,7 @@ pub const WIDGET_PKG_ARTIFACT_MAX: u64 = 32 * 1024 * 1024;
 pub const WIDGET_PKG_COUNT_MAX: usize = 64;
 pub const WIDGET_PKG_URL_MAX: usize = 1024;
 pub const WIDGET_SETTINGS_MAX: usize = 32;
-const WIDGET_SETTINGS_KEY_MAX: usize = 64;
+pub const WIDGET_SETTINGS_KEY_MAX: usize = 64;
 const WIDGET_SETTINGS_VALUE_MAX: usize = 64;
 const WIDGET_SETTINGS_CHOICES_MAX: usize = 16;
 const WIDGET_SETTINGS_FILE_MAX: usize = 64 * 1024;
@@ -678,13 +678,25 @@ pub fn widget_package_parse(text: &str) -> Result<WidgetPackage, String> {
     Ok(p)
 }
 
-fn id_ok(id: &str) -> bool {
+/// The longest id a package may have, in bytes (docs/WIDGETS.md).
+pub const WIDGET_ID_MAX: usize = 128;
+
+/// What an update adds to a package's id to name the folder it keeps the replaced version in
+/// (`packages/widgets/<id>.previous`). No id ends in it, so that folder is never another package's.
+pub const WIDGET_ID_PREVIOUS: &str = ".previous";
+
+/// Whether `id` is a package's id: lowercase letters, digits, dots and hyphens, at most WIDGET_ID_MAX, no dot
+/// first or last and no two in a row, and not ending in `.previous` (WIDGET_ID_PREVIOUS). The one rule for an
+/// id wherever one is read: a manifest, the packages index, a package's folder, and a frame's line in
+/// widgets.ini (widgets.rs), so a package that installs is one whose open frame is found again.
+pub fn widget_id_ok(id: &str) -> bool {
     !id.is_empty()
-        && id.len() <= 128
+        && id.len() <= WIDGET_ID_MAX
         && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
         && id.as_bytes()[0] != b'.'
         && id.as_bytes()[id.len() - 1] != b'.'
         && !id.contains("..")
+        && !id.ends_with(WIDGET_ID_PREVIOUS)
 }
 
 fn semver_ok(v: &str) -> bool {
@@ -721,8 +733,27 @@ fn path_ok(p: &str) -> bool {
         && p.split('/').all(|s| !s.is_empty() && s != "." && s != "..")
 }
 
+/// The capabilities a manifest may declare, and what the host gives a module for each (widgetwasm.rs):
+/// drawing in its frame over the notebook, and its own saved state. A widget's manifest declares the first
+/// (`widget_package_validate` refuses one that does not); the second is for a widget that saves something.
+pub const WIDGET_CAP_OVERLAY: &str = "editor:overlay";
+pub const WIDGET_CAP_STORAGE: &str = "storage:widget-local";
+
+/// Whether `artifact.path` may name a package's module: a relative path inside the package's folder (`path_ok`)
+/// that is neither the manifest nor anything of `state/`, and whose names the storage walk takes
+/// (`StoragePath::walked`), since the module is read through that walk when it is loaded. The manifest and the
+/// state folder are named without regard to the case of ASCII letters, as a storage that ignores case finds
+/// them (`Package.yaml`, `STATE/x`). The manifest check and the load ask this one question, so a path that
+/// installs is a path that loads.
+fn artifact_path_ok(p: &str) -> bool {
+    path_ok(p)
+        && !p.eq_ignore_ascii_case("package.yaml")
+        && !p.split('/').next().is_some_and(|first| first.eq_ignore_ascii_case("state"))
+        && crate::fsview::StoragePath::new(p.as_bytes()).is_some_and(|sp| sp.walked())
+}
+
 fn cap_ok(c: &str) -> bool {
-    matches!(c, "editor:overlay" | "storage:widget-local")
+    c == WIDGET_CAP_OVERLAY || c == WIDGET_CAP_STORAGE
 }
 
 /// Validates a manifest for this build and this device. `canvas_w` and `canvas_h` are the editor
@@ -731,11 +762,20 @@ pub fn widget_package_validate(p: &WidgetPackage, canvas_w: i32, canvas_h: i32) 
     if p.type_ != "widget" {
         return Err("This repository is not a widget package".into());
     }
-    if !id_ok(&p.id) {
+    if p.id.ends_with(WIDGET_ID_PREVIOUS) {
+        return Err("`id` cannot end in `.previous`; an update keeps the replaced version's folder under that name".into());
+    }
+    if !widget_id_ok(&p.id) {
         return Err("`id` must be lowercase letters, digits, dots and hyphens".into());
     }
     if p.name.trim().is_empty() {
         return Err("`name` is missing".into());
+    }
+    // (the index keeps these three of a package: no longer than its reader takes of a string)
+    for (field, text) in [("name", &p.name), ("author", &p.author), ("description", &p.description)] {
+        if text.len() > WIDGET_PKG_TEXT_MAX {
+            return Err(format!("`{field}` is longer than {WIDGET_PKG_TEXT_MAX} bytes"));
+        }
     }
     if !semver_ok(&p.version) {
         return Err(format!("`version` (`{}`) is not a valid version", p.version));
@@ -767,14 +807,14 @@ pub fn widget_package_validate(p: &WidgetPackage, canvas_w: i32, canvas_h: i32) 
             return Err(format!("Unknown capability '{c}'."));
         }
     }
+    // (a widget is a frame its module draws in: one that could draw nothing is not installed)
+    if !p.capabilities.iter().any(|c| c == WIDGET_CAP_OVERLAY) {
+        return Err(format!("`capabilities` must declare `{WIDGET_CAP_OVERLAY}`; without it nothing a widget draws is shown"));
+    }
     if p.spec.runtime != "wasm" {
         return Err("`spec.runtime` must be `wasm`; Grimoire does not run native widget code".into());
     }
-    if !path_ok(&p.artifact.path)
-        || p.artifact.path == "package.yaml"
-        || p.artifact.path == "state"
-        || p.artifact.path.starts_with("state/")
-    {
+    if !artifact_path_ok(&p.artifact.path) {
         return Err("`artifact.path` is not a safe relative path (it cannot be package.yaml or inside state/)".into());
     }
     if !sha_ok(&p.artifact.sha256) {
@@ -794,8 +834,9 @@ pub fn widget_package_validate(p: &WidgetPackage, canvas_w: i32, canvas_h: i32) 
             return Err("a `releases` entry has an invalid sha256".into());
         }
     }
-    let floor_w = ui_px(120.0).max(1);
-    let floor_h = ui_px(80.0).max(1);
+    // (the smallest frame is the layout's: a title bar, the margins and a body, widgets.rs)
+    let (floor_w, floor_h) = crate::widgets::widget_floor();
+    let (floor_w, floor_h) = (floor_w.max(1), floor_h.max(1));
     let ceil_w = (canvas_w * 70 / 100).max(floor_w);
     let ceil_h = (canvas_h * 70 / 100).max(floor_h);
     let s = &p.spec.size;
@@ -919,13 +960,18 @@ pub fn widget_package_index_save(items: &[WidgetInstall]) -> i32 {
     write_file_atomic(&widget_package_index_path(), s.as_bytes())
 }
 
+/// The bytes the index's reader keeps of one string of an entry (`json_string` keeps one less than the room it
+/// is given). The manifest check holds a package's name, author and description to it, so what an install
+/// writes into the index is what is read back.
+pub const WIDGET_PKG_TEXT_MAX: usize = 1023;
+
 fn json_get_str(text: &[u8], toks: &[JsonTok], obj: i32, key: &str) -> String {
     let v = json_get(text, toks, obj, key);
     if v < 0 {
         return String::new();
     }
     let mut b = Vec::new();
-    if json_string(text, &toks[v as usize], &mut b, 1024) {
+    if json_string(text, &toks[v as usize], &mut b, WIDGET_PKG_TEXT_MAX + 1) {
         String::from_utf8_lossy(&b).into_owned()
     } else {
         String::new()
@@ -953,7 +999,7 @@ pub fn widget_package_index_load() -> Vec<WidgetInstall> {
             continue;
         }
         let id = json_get_str(&data, &toks[..n as usize], it, "id");
-        if !id_ok(&id) {
+        if !widget_id_ok(&id) {
             continue;
         }
         out.push(WidgetInstall {
@@ -992,6 +1038,56 @@ fn parse_installed(p: &WidgetInstall) -> Option<WidgetPackage> {
     let text = String::from_utf8_lossy(&data);
     let m = widget_package_parse(&text).ok()?;
     (m.id == p.id).then_some(m)
+}
+
+/// An installed package's manifest and its module's bytes, for a load (widgetwasm.rs). The file is checked again
+/// here, each time a frame loads it, and it is read only if every check holds:
+///
+/// - the installed manifest's `artifact.path` is one the manifest check takes (`artifact_path_ok`), and the
+///   index names the same file (`packages/widgets/<id>/<artifact.path>`);
+/// - it is a plain file inside the package's own folder, reached with no link on the way: the folder and each
+///   part of the path opened with O_NOFOLLOW from the one before, on the folder's device (fsview's walk);
+/// - it is no larger than an artifact may be, and its SHA-256 is the one the index recorded at the install.
+///
+/// One read and one SHA-256 of the file a load. What failed goes to the log; the frame says that the artifact
+/// could not be read.
+pub fn widget_package_artifact(id: &str) -> Result<(WidgetPackage, Vec<u8>), String> {
+    use std::io::Read;
+    let installed = || "The widget package is not installed.".to_string();
+    let it = widget_package_installed(id).ok_or_else(installed)?;
+    let m = parse_installed(&it).ok_or_else(installed)?;
+    let refused = |why: &str| {
+        qlog!("widget %s: its module is not loaded: %s", id, why);
+        "The widget's artifact could not be read.".to_string()
+    };
+    if !artifact_path_ok(&m.artifact.path) {
+        return Err(refused("the installed manifest's artifact.path is not a path inside the package's folder"));
+    }
+    if it.path != format!("{}/{}/{}", WIDGET_PKG_DIR, id, m.artifact.path) {
+        return Err(refused("the index and the installed manifest name different files"));
+    }
+    if !sha_ok(&it.sha) {
+        return Err(refused("the index holds no SHA-256 for it"));
+    }
+    let file = crate::fsview::StoragePath::new(m.artifact.path.as_bytes())
+        .and_then(|sp| crate::fsview::FsStorage::open(&widget_package_dir(id), &root()).ok()?.open_file(&sp, false).ok())
+        .ok_or_else(|| refused("it is not a plain file inside the package's folder, reached without a link"))?;
+    let mut file = std::fs::File::from(file);
+    let len = file.metadata().map_err(|_| refused("it cannot be read"))?.len();
+    if len > WIDGET_PKG_ARTIFACT_MAX {
+        return Err(refused("it is larger than an artifact may be"));
+    }
+    let mut bytes = Vec::new();
+    if bytes.try_reserve_exact(len as usize).is_err() || file.by_ref().take(WIDGET_PKG_ARTIFACT_MAX + 1).read_to_end(&mut bytes).is_err() {
+        return Err(refused("it cannot be read"));
+    }
+    if bytes.len() as u64 > WIDGET_PKG_ARTIFACT_MAX {
+        return Err(refused("it is larger than an artifact may be"));
+    }
+    if !sha256_of(&bytes).eq_ignore_ascii_case(&it.sha) {
+        return Err(refused("its SHA-256 is not the one recorded when the package was installed"));
+    }
+    Ok((m, bytes))
 }
 
 /// The installed packages whose manifest still reads and whose device is supported.
@@ -1045,7 +1141,7 @@ pub fn widget_package_install(manifest: &str, artifact: &[u8], source_url: &str,
         let _ = std::fs::remove_dir_all(&stage);
         return Err("Could not write the artifact.".into());
     }
-    let old = format!("{dir}.previous");
+    let old = format!("{dir}{WIDGET_ID_PREVIOUS}");
     let _ = std::fs::remove_dir_all(&old);
     if std::fs::metadata(&dir).is_ok() && std::fs::rename(&dir, &old).is_err() {
         let _ = std::fs::remove_dir_all(&stage);
@@ -1093,7 +1189,7 @@ pub fn widget_package_install(manifest: &str, artifact: &[u8], source_url: &str,
 
 /// Removes an installed package and its files. The `state` folder is kept when `keep_state` is set.
 pub fn widget_package_remove(id: &str, keep_state: bool) -> Result<(), String> {
-    if !id_ok(id) {
+    if !widget_id_ok(id) {
         return Err("That id is not a widget package's.".into());
     }
     let dir = widget_package_dir(id);
@@ -1127,11 +1223,11 @@ pub fn widget_package_remove(id: &str, keep_state: bool) -> Result<(), String> {
 
 /// Rolls an install back to the `.previous` copy.
 pub fn widget_package_rollback(id: &str) -> Result<(), String> {
-    if !id_ok(id) {
+    if !widget_id_ok(id) {
         return Err("That id is not a widget package's.".into());
     }
     let dir = widget_package_dir(id);
-    let old = format!("{dir}.previous");
+    let old = format!("{dir}{WIDGET_ID_PREVIOUS}");
     if std::fs::metadata(&old).is_err() {
         return Err("There is no previous version to roll back to.".into());
     }
@@ -1194,7 +1290,7 @@ pub fn widget_setting_next(s: &WidgetSetting, current: &str) -> String {
 /// this version no longer offers reads as the default; an old key is left out.
 pub fn widget_settings_load(id: &str, schema: &[WidgetSetting]) -> Vec<(String, String)> {
     let mut out = widget_settings_defaults(schema);
-    if !id_ok(id) {
+    if !widget_id_ok(id) {
         return out;
     }
     let Some(data) = read_file_max(&widget_settings_path(id), WIDGET_SETTINGS_FILE_MAX) else { return out };
@@ -1227,7 +1323,7 @@ pub fn widget_settings_load(id: &str, schema: &[WidgetSetting]) -> Vec<(String, 
 /// Writes setting values atomically under the package's state folder. Keys that are not valid
 /// setting keys are skipped, as are values longer than a choice can hold.
 pub fn widget_settings_save(id: &str, values: &[(String, String)]) -> i32 {
-    if !id_ok(id) {
+    if !widget_id_ok(id) {
         return -1;
     }
     let mut body = String::from("{\n  \"version\": 1,\n  \"values\": {");
@@ -1259,7 +1355,7 @@ pub fn widget_settings_save(id: &str, values: &[(String, String)]) -> i32 {
 /// Removes the saved values, so every setting reads its manifest default again. A missing file is
 /// already reset.
 pub fn widget_settings_clear(id: &str) -> i32 {
-    if !id_ok(id) {
+    if !widget_id_ok(id) {
         return -1;
     }
     match std::fs::remove_file(widget_settings_path(id)) {
@@ -1675,7 +1771,7 @@ spec:
   size:
     mode: resizable
     default: [220, 160]
-    min: [120, 80]
+    min: [120, 120]
     max: [800, 600]
 "#,
             sha = sha256_of(b"test")
@@ -1691,6 +1787,15 @@ spec:
         assert_eq!(p.spec.size.default, (220, 160));
         assert_eq!(p.spec.size.mode, WidgetSizeMode::Resizable);
         widget_package_validate(&p, 1860, 2480).unwrap();
+        // (a name that only begins as the state folder's or the manifest's does, and those names deeper in the path)
+        for path in ["states/widget.bin", "state.bin", "package.yaml.bin", "dist/package.yaml", "dist/state/widget.bin", "Dist/Widget.BIN"] {
+            let p = widget_package_parse(&manifest("com.example.test").replace("path: dist/widget.bin", &format!("path: {path}"))).unwrap();
+            assert_eq!(widget_package_validate(&p, 1860, 2480), Ok(()), "{path}");
+        }
+        // (the capability to draw alone is a whole list: a widget that saves nothing)
+        let p = widget_package_parse(&manifest("com.example.test").replace(", storage:widget-local]", "]")).unwrap();
+        assert_eq!(p.capabilities, ["editor:overlay"]);
+        widget_package_validate(&p, 1860, 2480).unwrap();
     }
 
     #[test]
@@ -1700,15 +1805,59 @@ spec:
         for (bad, want) in [
             (good.replace("type: widget", "type: plugin"), "not a widget"),
             (good.replace("com.example.test", "Bad Id"), "lowercase"),
+            // (the name an update gives the replaced version's folder is no package's)
+            (good.replace("com.example.test", "com.example.test.previous"), "`id` cannot end in `.previous`"),
+            (good.replace("com.example.test", "a.previous"), "`id` cannot end in `.previous`"),
             (good.replace("platforms: [all]", "platforms: [kindle-oasis]"), "Unknown platform"),
             (good.replace("capabilities: [editor:overlay, storage:widget-local]", "capabilities: [net]"), "Unknown capability"),
+            (good.replace("capabilities: [editor:overlay, storage:widget-local]", "capabilities: [editor:overlay, net]"), "Unknown capability"),
+            // (a widget draws in its frame: its manifest says so)
+            (good.replace("capabilities: [editor:overlay, storage:widget-local]", "capabilities: []"), "`capabilities` must declare `editor:overlay`"),
+            (good.replace("capabilities: [editor:overlay, storage:widget-local]", "capabilities: [storage:widget-local]"), "`capabilities` must declare `editor:overlay`"),
+            (good.replace("capabilities: [editor:overlay, storage:widget-local]\n", ""), "`capabilities` must declare `editor:overlay`"),
             (good.replace("path: dist/widget.bin", "path: package.yaml"), "safe relative path"),
             (good.replace("path: dist/widget.bin", "path: state/widget.bin"), "safe relative path"),
+            (good.replace("path: dist/widget.bin", "path: state"), "safe relative path"),
+            // (the manifest and the state folder in any case of their letters: a storage that ignores case finds them)
+            (good.replace("path: dist/widget.bin", "path: state/runtime.bin"), "safe relative path"),
+            (good.replace("path: dist/widget.bin", "path: STATE/runtime.bin"), "safe relative path"),
+            (good.replace("path: dist/widget.bin", "path: State/settings.json"), "safe relative path"),
+            (good.replace("path: dist/widget.bin", "path: Package.yaml"), "safe relative path"),
+            (good.replace("path: dist/widget.bin", "path: PACKAGE.YAML"), "safe relative path"),
+            (good.replace("path: dist/widget.bin", "path: sTaTe"), "safe relative path"),
+            (good.replace("path: dist/widget.bin", "path: ../widget.bin"), "safe relative path"),
+            (good.replace("path: dist/widget.bin", "path: /dist/widget.bin"), "safe relative path"),
+            // (names the storage walk does not take: the module is read through it when a frame loads it)
+            (good.replace("path: dist/widget.bin", "path: .dist/widget.bin"), "safe relative path"),
+            (good.replace("path: dist/widget.bin", "path: dist/.widget.bin"), "safe relative path"),
+            (good.replace("path: dist/widget.bin", "path: dist./widget.bin"), "safe relative path"),
+            (good.replace("path: dist/widget.bin", "path: widget.sdr/widget.bin"), "safe relative path"),
+            (good.replace("path: dist/widget.bin", "path: system/widget.bin"), "safe relative path"),
             (good.replace("runtime: wasm", "runtime: native"), "must be `wasm`"),
         ] {
             let p = widget_package_parse(&bad).unwrap();
             let e = widget_package_validate(&p, 1860, 2480).unwrap_err();
             assert!(e.contains(want), "{e}");
+        }
+    }
+
+    #[test]
+    fn a_size_below_the_smallest_frame_is_refused() {
+        ui_init(300.0);
+        let good = manifest("com.example.test");
+        // 120x120 is the smallest frame: a title bar, the margins and a body one line high.
+        for (size, ok) in [("min: [120, 120]", true), ("min: [120, 119]", false), ("min: [119, 120]", false), ("min: [120, 80]", false)] {
+            let p = widget_package_parse(&good.replace("min: [120, 120]", size)).unwrap();
+            let got = widget_package_validate(&p, 1860, 2480);
+            assert_eq!(got.is_ok(), ok, "{size}: {got:?}");
+            if let Err(e) = got {
+                assert!(e.contains("below the minimum of 120x120"), "{e}");
+            }
+        }
+        for (size, ok) in [("default: [120, 120]", true), ("default: [220, 119]", false)] {
+            let fixed = good.replace("mode: resizable", "mode: fixed").replace("default: [220, 160]", size);
+            let p = widget_package_parse(&fixed).unwrap();
+            assert_eq!(widget_package_validate(&p, 1860, 2480).is_ok(), ok, "{size}");
         }
     }
 
@@ -1811,6 +1960,92 @@ spec:
         }
         assert_eq!(widget_github_repo_url("jane/widgets").as_deref(), Some("https://github.com/jane/widgets"));
         assert!(widget_github_repo_url("https://example.org/widgets").is_none());
+    }
+
+    #[test]
+    fn a_name_an_author_and_a_description_are_no_longer_than_the_index_keeps() {
+        ui_init(300.0);
+        assert_eq!(WIDGET_PKG_TEXT_MAX, 1023);
+        let good = manifest("com.example.test");
+        // (words, `n` bytes of them, the last a letter)
+        let long = |n: usize| {
+            let mut s = "word ".repeat((n - 1) / 5);
+            s.push_str(&"x".repeat(n - s.len()));
+            s
+        };
+        assert_eq!(long(1023).len(), 1023);
+        for (line, field) in [("name: Test Widget", "name"), ("author: Jane", "author"), ("description: A test.", "description")] {
+            let at = widget_package_parse(&good.replace(line, &format!("{field}: {}", long(1023)))).unwrap();
+            assert_eq!(widget_package_validate(&at, 1860, 2480), Ok(()), "{field} of 1,023 bytes");
+            let past = widget_package_parse(&good.replace(line, &format!("{field}: {}", long(1024)))).unwrap();
+            assert_eq!(widget_package_validate(&past, 1860, 2480), Err(format!("`{field}` is longer than 1023 bytes")), "{field} of 1,024 bytes");
+            let far = widget_package_parse(&good.replace(line, &format!("{field}: {}", long(200_000)))).unwrap();
+            assert_eq!(widget_package_validate(&far, 1860, 2480), Err(format!("`{field}` is longer than 1023 bytes")), "{field} of 200,000 bytes");
+        }
+        // What an install writes into the index is what is read back: the three at their longest, whole.
+        let root = std::env::temp_dir().join(format!("grimoire-widgetpkg-texts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        let m = good.replace("name: Test Widget", &format!("name: {}", long(1023))).replace("author: Jane", &format!("author: {}", long(1023))).replace("description: A test.", &format!("description: {}", long(1023)));
+        widget_package_install(&m, b"test", "", 1860, 2480).unwrap();
+        let read = widget_package_index_load();
+        assert_eq!(read.len(), 1);
+        assert_eq!((read[0].name.as_str(), read[0].author.as_str(), read[0].description.as_str()), (long(1023).as_str(), long(1023).as_str(), long(1023).as_str()));
+        // (and a manifest with a longer one leaves the index as it was)
+        let e = widget_package_install(&m.replace("id: com.example.test", "id: com.example.other").replace(&format!("description: {}", long(1023)), &format!("description: {}", long(255_000))), b"test", "", 1860, 2480).unwrap_err();
+        assert_eq!(e, "`description` is longer than 1023 bytes");
+        assert_eq!(widget_package_index_load(), read);
+        widget_catalog_invalidate();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn no_id_ends_as_the_folder_of_a_replaced_version_does() {
+        ui_init(300.0);
+        assert_eq!(WIDGET_ID_PREVIOUS, ".previous");
+        for (id, ok) in [
+            ("com.example.test", true),
+            ("com.example.test.previous", false),
+            ("a.previous", false),
+            ("x-1.previous", false),
+            // (only the end of an id: these name no replaced version's folder)
+            ("previous", true),
+            ("com.example.previous.test", true),
+            ("com.example.previousx", true),
+            ("com.example.test-previous", true),
+            ("com.example.test.previous.previous", false),
+        ] {
+            assert_eq!(widget_id_ok(id), ok, "{id}");
+        }
+        let root = std::env::temp_dir().join(format!("grimoire-widgetpkg-previous-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        // A package, and one whose id is that id with `.previous` after it: the second is not installed.
+        let it = widget_package_install(&manifest("com.example.test"), b"test", "", 1860, 2480).unwrap();
+        let e = widget_package_install(&manifest("com.example.test.previous"), b"test", "", 1860, 2480).unwrap_err();
+        assert!(e.contains("`id` cannot end in `.previous`"), "{e}");
+        assert!(!root.join("packages/widgets/com.example.test.previous").exists());
+        // An update of the first keeps the replaced version in that folder, which is nobody else's; the index and
+        // widgets.ini read no such id, whoever wrote it there.
+        let state = format!("{}/state", widget_package_dir(&it.id));
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(format!("{state}/session"), b"keep").unwrap();
+        widget_package_install(&manifest("com.example.test").replace("version: 1.2.0", "version: 1.3.0"), b"test", "", 1860, 2480).unwrap();
+        let kept = std::fs::read_to_string(root.join("packages/widgets/com.example.test.previous/package.yaml")).unwrap();
+        assert!(kept.contains("version: 1.2.0") && kept.contains("id: com.example.test\n"));
+        assert_eq!(std::fs::read(format!("{state}/session")).unwrap(), b"keep");
+        let index = std::fs::read_to_string(widget_package_index_path()).unwrap();
+        std::fs::write(widget_package_index_path(), index.replace("\"id\":\"com.example.test\"", "\"id\":\"com.example.test.previous\"")).unwrap();
+        assert!(widget_package_index_load().is_empty(), "an index entry with such an id is skipped");
+        assert!(widget_package_remove("com.example.test.previous", false).is_err());
+        assert!(root.join("packages/widgets/com.example.test.previous").exists(), "and removing by that id touches nothing");
+        std::fs::write(root.join("widgets.ini"), "com.example.test.previous=1,2,300,300,0,1,0\ncom.example.test=5,6,300,300,0,2,0\n").unwrap();
+        let lines = crate::widgets::widgets_load();
+        assert_eq!(lines.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(), ["com.example.test"]);
+        widget_catalog_invalidate();
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -626,6 +626,7 @@ shows what the app holds.
 | `editor.packages`, `editor.packages.open` | the installed widget packages: their count, then their ids and versions (`0`, or `1 com.example.timer 1.0.0`), and `1` while the Packages page is up, else `0` |
 | `editor.widget.N.status`, `editor.widget.N.text` | the text the frame's package last passed to its `status` import, and the text it drew, joined by `\|`; empty until its first draw |
 | `editor.widget.N.hits`, `editor.widget.N.error` | how many hit regions its last draw registered, and the runtime error that stopped it, empty while it runs |
+| `editor.widget.N.says` | what a frame whose module failed says in place of its body, in the order it is drawn: the reason, ` \| `, then the package's name, version and author (`The widget stopped: ... \| Timer v1.0.0 · Jane Doe`); empty while it runs |
 | `editor.package.ID` | an installed package's version (`1.0.0`), or empty for an id that is not installed |
 | `editor.widget.ID.rect`, `editor.widget.ID.state` | an open frame's screen rect (`x y w h`, the minimized square while minimized) and `normal` or `minimized`; ID is its package id or its index in the open list; empty for a frame that is not open |
 | `editor.hold_eraser` | `1` while a controller's Erase while held is down (from its press to its release), else `0` |

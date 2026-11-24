@@ -2587,9 +2587,7 @@ fn draw_widgets(a: &mut App, r: Rect) {
 }
 
 fn widget_body(f: &WidgetFrame) -> Rect {
-    let r = f.rect();
-    let title = f.title_rect();
-    Rect { x: r.x + ui_px(14.0), y: title.y + title.h + ui_px(8.0), w: r.w - ui_px(28.0), h: r.h - title.h - ui_px(22.0) }
+    f.body_rect()
 }
 
 fn draw_widget_frame(a: &mut App, i: usize) {
@@ -2623,14 +2621,21 @@ fn draw_widget_frame(a: &mut App, i: usize) {
         if let Some(rt) = f.runtime.as_mut() {
             rt.draw(c, body);
         }
-        if let Some(err) = f.error() {
-            let mut text = format!("{}\nv{}", f.def.name, f.def.version);
-            if !f.def.author.is_empty() {
-                text.push_str(&format!(" · {}", f.def.author));
+        if let Some((reason, whose)) = f.says() {
+            // The reason first, in as many lines as it needs and the body holds, so that a small body shows it;
+            // under it, where lines are left, whose widget it is. Nothing of either leaves the body.
+            let px = ui_small_size();
+            let lh = (font_ascent(FontFace::Regular, px) + font_descent(FontFace::Regular, px)).max(1);
+            let room = (body.h / lh).clamp(1, 6);
+            let lines = font_wrap_lines(FontFace::Regular, px, &reason, body.w, None).clamp(1, room);
+            let clip = c.clip;
+            canvas_set_clip(c, rect_intersect(clip, body));
+            ui_text(c, FontFace::Regular, px, px, Rect { x: body.x, y: body.y, w: body.w, h: lines * lh }, &reason, lines, false, 0);
+            if room > lines {
+                let under = (room - lines).min(2);
+                ui_text(c, FontFace::Regular, px, px, Rect { x: body.x, y: body.y + lines * lh, w: body.w, h: under * lh }, &whose, under, false, 0);
             }
-            text.push('\n');
-            text.push_str(err);
-            ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), body, &text, 6, false, 0);
+            c.clip = clip;
         } else if f.runtime.is_none() {
             let mut text = f.def.name.to_string();
             if !f.def.version.is_empty() {
@@ -8470,21 +8475,24 @@ fn widget_tick(a: &mut App, now: u32) {
     }
 }
 
-/// editor_tick: an open package that asked for a later draw (a clock, a countdown) has its frame
-/// refreshed then; a package that never asks is only drawn when something else repaints it.
-fn widget_runtime_tick(a: &mut App) {
+/// editor_tick: an open frame whose module asked for a later drawing pass (a clock, a countdown) is drawn
+/// again when the pass is due, and its rectangle is refreshed once; a module that never asks is only drawn
+/// when something else repaints it. A minimized frame draws no body, so its request waits until the frame is
+/// restored (which draws it). While nothing is due, nothing is drawn and nothing is refreshed.
+fn widget_runtime_tick(a: &mut App, now: u32) {
     let s = ed_ref(a);
     if !s.open || a.asleep || s.owner != Owner::None || s.peek.active || sheet_open(s) || crate::library::library_settings_active(a) {
         return;
     }
-    let now = std::time::Instant::now();
     let mut dirty: Option<Rect> = None;
-    for f in &s.widgets.frames {
-        if f.runtime.as_ref().is_some_and(|r| r.redraw_due(now)) {
+    for f in &mut ed(a).widgets.frames {
+        // (the request is taken here: the pass below answers it, and the module asks again if it wants another)
+        if !f.layout.minimized && f.runtime.as_mut().is_some_and(|r| r.redraw_taken(now)) {
             dirty = Some(dirty.map_or(f.rect(), |r| rect_union(r, f.rect())));
         }
     }
     if let Some(r) = dirty {
+        compose(a, r);
         app_invalidate(a, r, RefreshMode::Ui);
     }
 }
@@ -12649,7 +12657,7 @@ pub fn editor_tick(a: &mut App, now: u32) {
     // A pen held still in Select mode: a paste there (select.rs).
     if ed(a).open {
         sel_tick(a, now);
-        widget_runtime_tick(a);
+        widget_runtime_tick(a, now);
         if ed_ref(a).owner == Owner::Widget {
             widget_tick(a, now);
         }
@@ -13017,6 +13025,7 @@ pub fn editor_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32
             "text" => { csnprintf!(out, cap, "%s", f.runtime.as_ref().map_or(String::new(), WidgetRuntime::text).as_str()); }
             "hits" => { csnprintf!(out, cap, "%d", f.runtime.as_ref().map_or(0, |r| r.hit_count() as i32)); }
             "error" => { csnprintf!(out, cap, "%s", f.error().unwrap_or("")); }
+            "says" => { csnprintf!(out, cap, "%s", f.says().map_or(String::new(), |(reason, whose)| format!("{reason} | {whose}")).as_str()); }
             _ => return -1,
         }
         return 0;
