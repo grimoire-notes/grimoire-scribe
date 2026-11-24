@@ -1002,6 +1002,11 @@ fn http_header_lines(headers: &str) -> Option<Vec<&str>> {
 /// redirects are followed, the address is taken as written (`-g`), and the answer is at most
 /// HTTP_ANSWER_MAX bytes. The default User-Agent is `-A`'s, so a `User-Agent` line of the request
 /// takes its place and is not sent beside it. Each header line is one `-H`; the address is last.
+///
+/// A `HEAD` request is curl's own (`--head`), not a method put in another request's place: curl
+/// then expects no body behind an answer's header lines, and writes those lines as the answer.
+/// The length such an answer states is not its own, so `--max-filesize` is not given: the
+/// answer file's other limits (`http_child_rules`, `http_watch`) hold as for any request.
 fn http_args(method: &str, url: &str, header_lines: &[&str], body_path: &str, request_path: Option<&str>) -> Vec<String> {
     let redirects = HTTP_REDIRECTS_MAX.to_string();
     let answer = HTTP_ANSWER_MAX.to_string();
@@ -1009,10 +1014,14 @@ fn http_args(method: &str, url: &str, header_lines: &[&str], body_path: &str, re
         "-q", "-sS", "-g",
         "--proto", "=http,https", "--proto-redir", "=http,https",
         "-L", "--max-redirs", &redirects,
-        "--max-time", "30", "--max-filesize", &answer,
-        "-X", method, "-o", body_path, "-w", "%{http_code}",
-        "-A", HTTP_USER_AGENT,
+        "--max-time", "30",
     ].map(String::from).to_vec();
+    if method == "HEAD" {
+        args.push("--head".to_string());
+    } else {
+        args.extend(["--max-filesize", &answer, "-X", method].map(String::from));
+    }
+    args.extend(["-o", body_path, "-w", "%{http_code}", "-A", HTTP_USER_AGENT].map(String::from));
     for line in header_lines {
         args.extend(["-H".to_string(), line.to_string()]);
     }
@@ -1118,6 +1127,10 @@ impl HostState {
         }
         let method = method.trim().to_ascii_uppercase();
         if method.is_empty() || method.len() > HTTP_METHOD_MAX || !method.bytes().all(|b| b.is_ascii_uppercase()) || !http_address_ok(url) {
+            return -1;
+        }
+        // (a HEAD request has no upload)
+        if method == "HEAD" && !body.is_empty() {
             return -1;
         }
         let Some(header_lines) = http_header_lines(headers) else { return -1 };
@@ -1373,6 +1386,18 @@ mod tests {
             "--max-time", "30", "--max-filesize", "8388608",
             "-X", "GET", "-o", "/s/http/2.body", "-w", "%{http_code}",
             "-A", "Grimoire-App/2.3",
+            "http://example.org/",
+        ]);
+        // A HEAD request: --head where another request has --max-filesize and its method.
+        let head = http_args("HEAD", "http://example.org/", &["X-A: 1"], "/s/http/3.body", None);
+        assert_eq!(head, [
+            "-q", "-sS", "-g",
+            "--proto", "=http,https", "--proto-redir", "=http,https",
+            "-L", "--max-redirs", "5",
+            "--max-time", "30",
+            "--head", "-o", "/s/http/3.body", "-w", "%{http_code}",
+            "-A", "Grimoire-App/2.3",
+            "-H", "X-A: 1",
             "http://example.org/",
         ]);
         assert_eq!(HTTP_ANSWER_MAX, 8_388_608);
@@ -2149,6 +2174,73 @@ mod tests {
             assert_eq!(lines.iter().filter(|l| **l == line).count(), 1, "{line:?} in {head}");
         }
         assert_eq!(upload, "hello");
+    }
+
+    /// The answer to a HEAD request of a listener that closes the connection behind it.
+    fn head_of_twelve_bytes(_first_line: &str) -> Vec<u8> {
+        b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\nContent-Type: text/plain\r\n\r\n".to_vec()
+    }
+
+    // A real HEAD request ends when the answer's header lines have arrived, whether the listener
+    // keeps the connection open behind them or closes it, and those lines are its answer: of
+    // each answer in turn when a redirect was followed, and whatever length they state. A HEAD
+    // request with an upload is refused.
+    #[test]
+    fn a_real_head_request_brings_the_answers_header_lines() {
+        let dir = scratch("head");
+        let mut st = host(&dir);
+        let none = Vec::<String>::new();
+        let lines = head_of_twelve_bytes("");
+
+        // A listener that keeps the connection open until the other end closes it.
+        let (at, served) = serve_once(lines.clone());
+        assert_eq!(st.http_start("head", &format!("{at}/a"), "X-A: 1", b""), 0, "{NEEDS_CURL}");
+        let pid = child_pid(&st);
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (200, lines.clone(), String::new()));
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), none);
+        let request = served.join().unwrap();
+        assert!(request.starts_with("HEAD /a HTTP/1.1\r\n"), "{request}");
+        assert_eq!(request.split("\r\n").filter(|l| *l == "X-A: 1").count(), 1, "{request}");
+
+        // A listener that closes the connection behind the header lines.
+        let (at, stop, served) = serve_each(head_of_twelve_bytes);
+        assert_eq!(st.http_start("HEAD", &format!("{at}/b"), "", b""), 0);
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (200, lines.clone(), String::new()));
+        assert_eq!(request_files(&dir), none);
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(served.join().unwrap(), ["HEAD /b HTTP/1.1"]);
+
+        // The length the header lines state is not the answer's: one over the answer's limit.
+        let large = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", HTTP_ANSWER_MAX + 1).into_bytes();
+        let (at, served) = serve_once(large.clone());
+        assert_eq!(st.http_start("HEAD", &format!("{at}/"), "", b""), 0);
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (200, large, String::new()));
+        served.join().unwrap();
+
+        // A redirect that is followed: the header lines of both answers, in turn.
+        let (at, stop, served) = serve_each(redirecting);
+        assert_eq!(st.http_start("HEAD", &format!("{at}/hop/1"), "", b""), 0);
+        poll_to_end(&mut st);
+        let (code, body, error) = outcome(&st);
+        let text = String::from_utf8(body).unwrap();
+        assert_eq!((code, error), (200, String::new()), "{text}");
+        let moved = "HTTP/1.1 302 Found\r\nLocation: /hop/0\r\nContent-Length: 5\r\nConnection: close\r\n\r\n";
+        let arrived = "HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\n";
+        assert_eq!(text, format!("{moved}{arrived}"));
+        assert_eq!(request_files(&dir), none);
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(served.join().unwrap(), ["HEAD /hop/1 HTTP/1.1", "HEAD /hop/0 HTTP/1.1"]);
+
+        // A HEAD request has no upload: with one it is refused, and the last outcome stays.
+        let before = outcome(&st);
+        assert_eq!(st.http_start("HEAD", "http://127.0.0.1:9/", "", b"upload"), -1);
+        assert_eq!(st.http_start(" head ", "http://127.0.0.1:9/", "", b"u"), -1);
+        assert_eq!(outcome(&st), before);
+        assert_eq!(request_files(&dir), none);
     }
 
     // One User-Agent line arrives with a real request: the host's default, or the request's own

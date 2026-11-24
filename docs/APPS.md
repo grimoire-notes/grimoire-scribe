@@ -234,6 +234,12 @@ A request without a `User-Agent` line is sent with `User-Agent: Grimoire-App/2.3
 with a `User-Agent` line of its own is sent with that line in its place, never with both. An app
 should send its own.
 
+A `HEAD` request has no upload: with one, `http_start` returns -1. It ends when the answer's
+header lines have arrived, and those lines are its answer: `http_body` is the status line, the
+header lines and the empty line behind them, as the server sent them, of each answer in turn
+when redirects were followed. The length those lines state is not counted against the answer's
+limit.
+
 The upload is at most 2 MiB. The answer is at most 8 MiB (8,388,608 bytes). A longer answer ends
 the request: at once when the server states its length, and otherwise once it has grown past the
 limit, whether or not the app polls. Such a request has no status code (`http_status` is -1), no
