@@ -58,6 +58,13 @@ const SCREENSHOT_MAX: usize = crate::pkgpics::SHOT_FILE_MAX;
 const INSTALL_ICON_MAX: usize = crate::apppkg::APP_ICON_MAX;
 const LICENSE_MAX: usize = 256 * 1024;
 
+/// Where a package being worked on is tried before it is published: a repository cloned into
+/// `packages/import/` (its `package.yaml` and the artifact beside it). Each package there is installed
+/// when the Store opens or is refreshed, so it is in the Launcher, the Widgets popup and the Installed
+/// tab without a catalog entry.
+const DEV_IMPORT_DIR: &str = "packages/import";
+const DEV_IMPORT_MAX: usize = 16;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StoreView {
     #[default]
@@ -225,6 +232,8 @@ pub struct PackageStoreUi {
     pub query: String,
     /// every installed package, gathered when the Store opens or a package is installed or removed
     pub installed: Vec<StorePackage>,
+    /// what importing the developers' packages left in `packages/import/` said, for the list's note
+    pub dev_note: String,
     /// the one keyboard: a Search's text, or a repository to install from
     pub kb: Keyboard,
     kb_for: KbFor,
@@ -680,6 +689,7 @@ fn load_cached_index(ui: &mut PackageStoreUi) -> bool {
 }
 
 pub fn store_open(a: &mut App) {
+    import_development(a);
     let ui = &mut a.store;
     ui.open = true;
     ui.view = StoreView::List;
@@ -964,6 +974,140 @@ fn refresh_installed(ui: &mut PackageStoreUi) {
     }
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.id.cmp(&b.id)));
     ui.installed = out;
+}
+
+/// The package folders under `packages/import/`: the folder itself (a repository cloned into it) and
+/// one level of folders inside it (a repository cloned there), each only when it holds a
+/// `package.yaml`. A link is not a folder of the user's own and is left out.
+fn dev_import_folders() -> Vec<String> {
+    let base = format!("{}/{DEV_IMPORT_DIR}", store_root());
+    let mut out = Vec::new();
+    let holds_manifest = |dir: &std::path::Path| dir.join("package.yaml").is_file();
+    if holds_manifest(std::path::Path::new(&base)) {
+        out.push(base.clone());
+    }
+    let Ok(entries) = std::fs::read_dir(&base) else { return out };
+    let mut dirs: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|e| e.path())
+        .filter(|d| holds_manifest(d))
+        .map(|d| d.to_string_lossy().into_owned())
+        .collect();
+    dirs.sort();
+    out.append(&mut dirs);
+    out.truncate(DEV_IMPORT_MAX);
+    out
+}
+
+/// A path inside a package's folder, as its manifest names it: relative, with no `.` or `..` part and
+/// no backslash, the rules an installed package's `artifact.path` meets too.
+fn dev_rel_ok(p: &str) -> bool {
+    !p.is_empty()
+        && p.len() <= 240
+        && !p.starts_with('/')
+        && !p.contains('\\')
+        && p.split('/').all(|s| !s.is_empty() && s != "." && s != "..")
+}
+
+/// Installs one folder left in `packages/import/`: its manifest, its artifact and (for an app) the
+/// `.ico` its spec names, all read from beside it, then the package manager's own checks on the way in.
+/// A package already installed at that version and artifact is left alone; a newer one, and a rebuilt
+/// one at the same version, replaces it with its state kept. Returns the package's id and what the
+/// note should say, empty when there is nothing to say.
+fn import_dev_folder(dir: &str, w: i32, h: i32) -> Result<(String, String), String> {
+    let label = dir.rsplit('/').next().unwrap_or(dir).to_string();
+    let text = read_file_max(&format!("{dir}/package.yaml"), WIDGET_PKG_MANIFEST_MAX)
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .ok_or_else(|| format!("{label}: package.yaml could not be read"))?;
+    let p = widget_package_parse(&text).map_err(|e| format!("{label}: {e}"))?;
+    if !matches!(p.type_.as_str(), "app" | "widget") {
+        return Err(format!("{label}: package.yaml names no package type"));
+    }
+    let (want_sha, _) = widget_package_artifact_digest(&p);
+    let installed = if p.type_ == "app" { app_package_installed(&p.id) } else { widget_package_installed(&p.id) };
+    if let Some(it) = installed.as_ref() {
+        let rebuilt = it.version == p.version && !it.sha.eq_ignore_ascii_case(want_sha);
+        let newer = update_version_cmp(&p.version, &it.version) > 0;
+        if !newer && !rebuilt {
+            // (already installed, or at a version newer than the folder was left at)
+            return Ok((p.id.clone(), String::new()));
+        }
+    }
+    if !dev_rel_ok(&p.artifact.path) {
+        return Err(format!("{label}: artifact.path is not a safe relative path"));
+    }
+    let Some(artifact) = read_file_max(&format!("{dir}/{}", p.artifact.path), WIDGET_PKG_ARTIFACT_MAX as usize) else {
+        return Err(format!("{label}: {} could not be read beside package.yaml", p.artifact.path));
+    };
+    let icon = if p.type_ == "app" && app_icon_is_file(&p.spec.icon) {
+        let icon = p.spec.icon.trim();
+        if !dev_rel_ok(icon) {
+            return Err(format!("{label}: spec.icon is not a safe relative path"));
+        }
+        match read_file_max(&format!("{dir}/{icon}"), INSTALL_ICON_MAX) {
+            Some(bytes) => Some(bytes),
+            None => return Err(format!("{label}: {icon} could not be read beside package.yaml")),
+        }
+    } else {
+        None
+    };
+    // (the source an install records: the repository the package names, when it names one)
+    let repository = p.repository.trim();
+    let source = if repository.starts_with("https://") { repository.to_string() } else { String::new() };
+    let it = if p.type_ == "app" {
+        app_package_install(&text, &artifact, icon.as_deref(), &source, w, h)
+    } else {
+        widget_package_install(&text, &artifact, &source, w, h)
+    }
+    .map_err(|e| format!("{label}: {e}"))?;
+    qlog!("packages: %s %s imported from %s", &it.name, &it.version, dir);
+    Ok((it.id.clone(), format!("{} {}", tr("Imported"), it.name)))
+}
+
+/// Imports every package left in `packages/import/` and writes what happened on the note the Store's
+/// list shows: what was imported, and what could not be (so a developer sees a bad manifest or a
+/// missing artifact without the log).
+fn import_development_for(ui: &mut PackageStoreUi, w: i32, h: i32) {
+    let mut imported = Vec::new();
+    let mut failed = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+    for dir in dev_import_folders() {
+        match import_dev_folder(&dir, w, h) {
+            // (one package per id: two folders of one id would replace each other on every open)
+            Ok((id, _)) if seen.contains(&id) => {}
+            Ok((id, line)) => {
+                seen.push(id);
+                if !line.is_empty() {
+                    imported.push(line);
+                }
+            }
+            Err(e) => {
+                qlog!("packages: %s", &e);
+                failed.push(e);
+            }
+        }
+    }
+    let mut note = String::new();
+    if !imported.is_empty() {
+        note = format!("{}: {}", tr("Imported from packages/import"), imported.join(", "));
+    }
+    if !failed.is_empty() {
+        if !note.is_empty() {
+            note.push_str(" · ");
+        }
+        note.push_str(&format!("{}: {}", tr("Couldn't import"), failed.join("; ")));
+    }
+    ui.dev_note = note;
+}
+
+/// What the Store does as it opens: a developer's packages are put in before anything is listed.
+fn import_development(a: &mut App) {
+    let (w, h) = (a.w, a.h - status_reserved(a));
+    import_development_for(&mut a.store, w, h);
+    if !a.store.dev_note.is_empty() {
+        refresh_installed(&mut a.store);
+    }
 }
 
 /// Which package index `id` is in, whether it is installed at all.
@@ -2141,6 +2285,7 @@ fn tapped(a: &mut App, h: Hit) {
         }
         H_REFRESH => {
             a.store.error.clear();
+            import_development(a);
             start_catalog(&mut a.store);
             redraw(a);
         }
@@ -2534,6 +2679,9 @@ fn draw_list(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
             hits_add(&mut ui.hits, r, H_CARD, card_arg(*item));
         }
         draw_pager(c, ui, Rect::new(area.x, bottom - PAGER_H, area.w, PAGER_H), ui.page, pages);
+    }
+    if !ui.dev_note.is_empty() {
+        font_draw_centered(c, FontFace::Regular, ui_small_size(), Rect::new(area.x, bottom - PAGER_H - ui_px(76.0), area.w, ui_px(34.0)), &ui.dev_note, 110);
     }
     if !ui.status.is_empty() {
         font_draw_centered(c, FontFace::Regular, ui_small_size(), Rect::new(area.x, bottom - PAGER_H - ui_px(38.0), area.w, ui_px(34.0)), &ui.status, 100);
@@ -3185,6 +3333,7 @@ pub fn store_probe(ui: &PackageStoreUi, key: &str) -> Option<String> {
         "icon.loaded" => (!ui.icon.image.px.is_empty() as i32).to_string(),
         "list.icons" => ui.list_icons.iter().filter(|icon| !icon.px.is_empty()).count().to_string(),
         "status" => ui.status.clone(),
+        "dev.note" => ui.dev_note.clone(),
         "desc.more" => (ui.desc_more as i32).to_string(),
         "desc.page" => ui.desc_page.to_string(),
         "license" => ui.license_text.chars().take(120).collect::<String>(),
@@ -3482,6 +3631,54 @@ mod tests {
         ui.view = StoreView::Qr;
         ui.pic_waits.push(wait(&src));
         assert!(!tick_pictures(&mut ui) && ui.pic_waits.is_empty());
+    }
+
+    // A package cloned into `packages/import/` is installed as the Store opens, and again only when the folder
+    // holds something newer (a higher version, or the same one rebuilt); a version older than the installed one
+    // is left alone. It is in the Installed tab through the same index an install writes.
+    #[test]
+    fn a_repository_left_in_the_import_folder_is_installed() {
+        let base = std::env::var("GRIMOIRE_TEST_TMP").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+        let root = base.join(format!("grimoire-store-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        let dir = root.join("packages/import/dev");
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |version: &str, bytes: &[u8]| {
+            let yaml = format!(
+                "name: Dev App\nid: com.example.dev\ntype: app\nversion: {version}\nauthor: Tests\ndescription: In the import folder.\nlicense: MIT\nartifact:\n  path: app.wasm\n  sha256: {}\n  size: {}\nspec:\n  runtime: wasm\n  entry: _start\n",
+                sha256_of(bytes),
+                bytes.len()
+            );
+            std::fs::write(dir.join("package.yaml"), yaml).unwrap();
+            std::fs::write(dir.join("app.wasm"), bytes).unwrap();
+        };
+        write("1.0.0", b"a module");
+        let mut ui = PackageStoreUi::default();
+        import_development_for(&mut ui, 1860, 2400);
+        let it = app_package_installed("com.example.dev").expect("the folder's package is installed");
+        assert_eq!(it.version, "1.0.0");
+        assert!(ui.dev_note.contains("Dev App"), "{}", ui.dev_note);
+        // (the same folder again: nothing installed, nothing said)
+        ui.dev_note.clear();
+        import_development_for(&mut ui, 1860, 2400);
+        assert!(ui.dev_note.is_empty(), "{}", ui.dev_note);
+        // a rebuild at the same version replaces it
+        write("1.0.0", b"a newer module");
+        import_development_for(&mut ui, 1860, 2400);
+        assert!(ui.dev_note.contains("Dev App"));
+        assert_eq!(app_package_installed("com.example.dev").unwrap().sha, sha256_of(b"a newer module"));
+        // a newer version updates it
+        write("1.1.0", b"a newer module");
+        import_development_for(&mut ui, 1860, 2400);
+        assert_eq!(app_package_installed("com.example.dev").unwrap().version, "1.1.0");
+        // an older one is left alone
+        write("1.0.0", b"a newer module");
+        ui.dev_note.clear();
+        import_development_for(&mut ui, 1860, 2400);
+        assert!(ui.dev_note.is_empty(), "{}", ui.dev_note);
+        assert_eq!(app_package_installed("com.example.dev").unwrap().version, "1.1.0");
     }
 
     #[test]

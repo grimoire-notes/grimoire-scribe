@@ -33,6 +33,22 @@ catalog is [grimoire-notes/package-store-contents](https://github.com/grimoire-n
 repository's README documents the format, and `tools/check.py` validates a catalog before it is
 published. A mirror can be used with `GRIMOIRE_PACKAGE_STORE_URL`.
 
+### Trying a package before it is published
+
+A package that is still being worked on need not be in the catalog, or installed by hand from its
+repository: clone the repository into `grimoire/packages/import/` (either into that folder itself,
+as `git clone URL .` does, or into a folder of its own) and opening the Store installs it. The folder
+holds the `package.yaml` and the artifact it names, beside it, and an app's `.ico` when its
+`spec.icon` names one; the manifest's sizes and SHA-256 are checked as for any install, and the
+package then shows in the Launcher or the Widgets popup and in the Store's Installed tab.
+
+This happens each time the Store opens, and on Refresh, but only when the folder holds a newer
+version than the installed one, or the same version rebuilt (its `artifact.sha256` changed). Its
+state folder is kept, as an update's is. A folder older than the installed package is left alone.
+What was imported, and what could not be, is said on a line under the Store's list, with the
+folder's name leading a failure's message. Nothing is published by this: the catalog entry is still
+what other people install.
+
 ## A manifest
 
 ```yaml

@@ -201,7 +201,8 @@ license before an install or a license-changing update), `license`, `busy`, `err
 `.open`, `.filter`, `.packages`, `.visible` (ids in catalog order), `.selected`, `.featured`,
 `.screenshots`, `.shot`, `.shot.loaded`, `.shot.coming`, `.icon.loaded`, `.list.icons`,
 `.status`, `.error`, `.page`, `.license` (the license text read so far), `.license.note` (what
-is said while there is none, or why), `.license.page`, `.desc.more` and `.desc.page`. `GRIMOIRE_PACKAGE_STORE_URL`
+is said while there is none, or why), `.license.page`, `.desc.more`, `.desc.page` and `.dev.note` (what importing
+`packages/import/` said). `GRIMOIRE_PACKAGE_STORE_URL`
 points the Store at another catalog; `GRIMOIRE_PACKAGE_STORE_OFFLINE=1` reads only the saved
 catalog and its cached images (tests/scenarios/z_package_store.qs).
 The Store's icons and screenshots, and an installed app's bundled icon, are decoded by the
