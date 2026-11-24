@@ -975,7 +975,7 @@ fn start_list_icons(a: &mut App) -> bool {
 }
 
 fn store_image(data: &[u8]) -> Option<Canvas> {
-    if let Some(img) = crate::appicon::decode_ico(data) {
+    if let Some(img) = crate::icofile::ico_gray(data) {
         let mut out = Canvas::default();
         if canvas_init(&mut out, img.w as i32, img.h as i32) != 0 {
             return None;
