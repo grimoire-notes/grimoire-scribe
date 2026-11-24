@@ -9681,6 +9681,14 @@ pub fn library_tick(a: &mut App, now: u32) {
     }
     if a.store.open {
         crate::packagestore::store_tick(a, now);
+        // The Store's status bar keeps the clock, as the home's does below: when the minute changes its page is
+        // drawn again, by the compared redraw, so only the clock's own digits are refreshed (and a picture that
+        // comes later is compared with a frame whose clock is the panel's: its refresh is its own place).
+        let min = sys_wall_clock() / 60;
+        if lib(a).status_min != min {
+            lib(a).status_min = min;
+            lib(a).pictures_due = true;
+        }
         pictures_due_draw(a);
         return;
     }

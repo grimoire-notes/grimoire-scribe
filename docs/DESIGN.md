@@ -3667,7 +3667,10 @@ cache and checked (`pkgpics.rs`, `appicon.rs`, `packagestore.rs`).
 - **How the panel is refreshed**: a picture that came draws the screen in front again and refreshes only the
   rectangle in which the new frame differs from the old (`library::redraw_filling`, `canvas_changed_rect`), as a
   refresh that fills in by itself (`app_invalidate_filling`). Under a press it waits for the lift; behind
-  another sheet nothing is drawn, and the sheet's close draws what is under it whole.
+  another sheet nothing is drawn, and the sheet's close draws what is under it whole. The Store's status bar
+  keeps the clock by the same redraw (`library_tick`): when the minute changes only the clock's place is
+  refreshed, and a picture that comes later is compared with a frame whose clock is the panel's, so its refresh
+  is its own place. The scenarios that count these refreshes hold the clock still with a `clock` line.
 - **Logs** (docs/KINDLE.md): `bg: package pictures of a file (pid N)`, then `package pictures: app-icon|icon|screenshot
   made in T ms`, `... has no picture (refused|slow|ended), marked`, `... gave no picture (slow|ended) ...; one more
   try at another look`, `nothing made (<why>)`, and `the cache of icons|shots pruned: ...`; never a name.
