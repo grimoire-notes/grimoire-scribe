@@ -1,6 +1,9 @@
 # rust-only
 # generate: tests/notebook_links_fixture.py
 # env: GRIMOIRE_CHECK_FIT=1
+# (the status bar's clock held still: a new minute between a drawing and a look at editor.screen_composed
+# would make the two differ)
+clock 1700000000
 wait 300
 tap library folder.Void
 tap library notebook.A
