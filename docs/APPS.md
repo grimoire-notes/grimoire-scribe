@@ -21,7 +21,14 @@ installer as **Settings → Packages**. The store does not replace the package m
 packages are still managed there.
 
 The catalog is cached at `grimoire/package-store/index.json`, and its images at
-`grimoire/package-store/assets/`, so the last store still opens without a network. Grimoire's
+`grimoire/package-store/assets/`, so the last store still opens without a network. The Store itself
+never decodes an image: the catalog's icons and screenshots are decoded by the sandboxed picture
+worker, as the pictures of Files are ([DESIGN.md](DESIGN.md), "Packages' pictures"), and the
+Store draws the gray pictures the worker left in `grimoire/.cache/packages/`. So an icon or a
+screenshot shows a moment after its page; until then, and when the worker refuses a picture or
+cannot run, a card and the detail page show the package glyph and the screenshot's frame its
+glyph. A catalog icon is an `.ico`, a PNG or a JPEG of at most 256 KiB, shown at most 256 px a
+side; a screenshot is a PNG or a JPEG of at most 8 MiB, kept at most 2,560 px a side. Grimoire's
 catalog is [grimoire-notes/package-store-contents](https://github.com/grimoire-notes/package-store-contents); the
 repository's README documents the format, and `tools/check.py` validates a catalog before it is
 published. A mirror can be used with `GRIMOIRE_PACKAGE_STORE_URL`.
@@ -64,10 +71,17 @@ and SHA-256 before anything is written, and an update is staged before it replac
 
 `spec.icon` may name one of Grimoire's built-in icons, or a `.ico` bundled beside `package.yaml`.
 A bundled icon is a second package file: the installer fetches it from the manifest's folder, checks
-its `spec.icon_sha256` and `spec.icon_size` (at most 256 KiB), and saves it with the artifact. The
-launcher decodes PNG entries and classic 1, 4, 8, 24 and 32-bit BMP entries to a small grayscale
-bitmap for the home app row, All Apps, the package manager's list and its detail page. A built-in
-name still works, and is the fallback if the icon file is missing or unreadable.
+its `spec.icon_sha256` and `spec.icon_size` (at most 256 KiB), and saves it with the artifact. Its
+path is never one inside the app's `state/` folder, whatever case the manifest writes that name in
+(the storage takes `State/` for `state/`). The
+launcher never reads the icon file: the sandboxed picture worker decodes its PNG entries (8 bits a
+channel, gray or RGB, with or without alpha; none with a palette or 16 bits) and
+classic 1, 4, 8, 24 and 32-bit BMP entries (at most 256 px a side; the largest entry of at most
+64 px is taken, else the smallest) to a small grayscale bitmap, kept in
+`grimoire/.cache/packages/icons/`, which the home app row, All Apps, the package manager's list
+and its detail page draw ([DESIGN.md](DESIGN.md), "Packages' pictures"). A built-in name still
+works, and the launcher shows it (or the grid) until the icon's picture is made, and for good if
+the icon file is missing, the worker refuses it, or the worker cannot run.
 
 The index is `packages/apps-index.json`:
 

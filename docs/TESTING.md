@@ -85,12 +85,13 @@ unit, the shards and l10n to Linux runners, which start sooner and of which a fr
 at once (macOS: 5); it stays off until a run passes there (docs/BACKLOG.md).
 
 **Tests that read the documents.** A docs-only pull request runs no test, and a few tests read the
-documents: `rust/tests/test_sec_invariants.rs` (DESIGN.md, FORMAT.md, KINDLE.md, TESTING.md, BACKLOG.md and
-RELEASING.md: sentences about the safe loader and the font check that must not come back, the names
+documents: `rust/tests/test_sec_invariants.rs` (DESIGN.md, FORMAT.md, KINDLE.md, TESTING.md, BACKLOG.md,
+RELEASING.md and APPS.md: sentences about the safe loader and the font check that must not come back, the names
 `RECORDS_MAX_BYTES`, `<key>.slow` and `<key>.no`, the font check's glyph limit with its figure, the number in
 a font verdict's first line and in a `<key>.slow` mark's line, the font check's other placeholders with
-their values, a few sentences that hold only while another one stands, and what must not come back about
-Files' rename, delete and restore), `mapview.rs` (the Graph's keys)
+their values, a few sentences that hold only while another one stands, what must not come back about
+Files' rename, delete and restore, and what is said of packages' pictures, which the launcher and the Package
+Store never decode), `mapview.rs` (the Graph's keys)
 and
 `test_scenarios.rs` with `sim_sdl.rs` (SIM.md). After rewording a sentence they hold, run `make test-sim`
 by hand: otherwise the push to main is the first run to say so.
@@ -3668,3 +3669,45 @@ They check the headless runner's panel; on the Kindle, check what the screen sho
     notebook, Select, Paste: the line is scaled down to fit the page, and on the screen it looks as it did in the
     notebook it came from, its lines as thick and its gaps as wide (before 2.2 they kept their width in mm and came
     out a little thicker and wider). Undo.
+
+## 2.3, packages' pictures decoded by the worker (issue #236): device checks
+
+Not run on a Scribe. The picture worker's new command (`T`, a small gray picture of an `.ico` or a picture) has
+run on the Mac, where a worker has plain process isolation. The Mac's tests cover the logic: `rust/tests/test_picwork_small.rs` (the worker and what the writer takes of its
+answer), `test_package_pictures.rs` (the job and its cache), `test_app_icons.rs` (the launcher),
+`test_sec_invariants.rs` (no decoder named in the launcher's and the Store's files), and the scenarios `z_apps`,
+`z_apps_icon`, `z_package_store`, `z_package_store_pictures`, `z_package_store_refused`,
+`z_package_store_first_visit`, `z_package_store_page_first`, `z_pictures_under_a_press`, `z_pictures_no_worker`
+and `u_update_4_packages`, where the simulated panel counts the refreshes (`display.presents`). Under the
+sandbox's real steps `T` runs only in CI's Linux job, which has a case for it (`test_sandbox_linux.rs`,
+`small_pictures_are_made_in_the_real_sandbox`: an `.ico` with BMP entries, one with a PNG entry, a picture, one
+over the side, then the job for each form and a worker the filter ends). The `.ico` reader's PNG entries are
+decoded by stb_image, as every other picture the worker decodes is (`bgimage.rs`), so `T` runs no decoder that
+`D` does not: what that job and a Scribe have to show is the reader itself and the fit. What only the
+Scribe can tell (read grimoire.log over SSH; it names no file):
+
+1. **An app's icon**: install an app that bundles an `.ico` (Settings > Packages > Apps, or the Package Store).
+   Home: the app's tile shows its built-in icon for a moment and then its own, with a refresh of the tile's icon
+   alone (no flash of the screen). The log says `package pictures: app-icon made in T ms`: send T. Close Grimoire
+   and start it again: the icon is there at the first draw, and the log has no new `package pictures` line.
+2. **Many apps**: with ten or more apps that bundle icons installed, delete `/mnt/us/grimoire/.cache/packages`
+   and start Grimoire: every icon comes, a few at a time, and the pen and taps stay quick meanwhile. Note how
+   long until the last one shows.
+3. **The Package Store** with a network: open it with `.cache/packages` deleted. Each card's icon comes after its
+   download, the cards do not flash (a download's end refreshes nothing by itself; an icon is one refresh of its
+   own place), and a tap on a card opens its page at once while icons are still coming, with its screenshot
+   before the rest of the list's icons. Leave the Store open over a minute's change: the clock follows, with a
+   refresh of the clock alone. On
+   a package's page the icon and each screenshot come a moment after the page; send the `screenshot made in T ms`
+   lines (a Scribe page's screenshot is 4.6 MP) and `grep VmRSS /proc/$(pidof grimoire)/status` before and after
+   paging through a package's screenshots. Leave the Store and open it again: the pictures are there at once,
+   with no new `made` line.
+4. **The sandbox**: the first `package pictures` job of a start is followed by `work: sandboxed (uid 62001, ...)`
+   and never by `E sigsys`, `pictures wait` or `nothing made (no sandboxed worker can be had)`. If one of those
+   shows, send the line: the launcher and the Store must then show their glyphs, and nothing else changes.
+5. **Refused**: put a text file renamed `icon.ico` in place of an installed app's icon (over USB): after a start
+   the tile keeps its built-in icon and the log says `app-icon has no picture (refused), marked` once; a second
+   start makes no new line.
+6. **The cache**: `du -sh /mnt/us/grimoire/.cache/packages/icons /mnt/us/grimoire/.cache/packages/shots` after the
+   checks above (an icon of 64 x 64 px is about 4 kB, a Scribe page's screenshot 4.6 MB; screenshots are held to
+   32 files or 48 MiB). Remove an app: its icon's two files are gone from `icons/`.

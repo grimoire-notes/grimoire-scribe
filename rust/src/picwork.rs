@@ -17,12 +17,18 @@
 //!   pictures then fail closed (the owner's ruling, 2026-11-10): nothing is
 //!   decoded, in a worker or in the writer, and the picture waits (`PicOut::NoWorker`: a template or photo is not
 //!   marked, a folder's import counts no try, and a later job tries again). Elsewhere (the Mac, the simulator,
-//!   tests) the pool decodes in the writer, as 2.0 did (D21). Either way the log says so once a process.
+//!   tests) the pool decodes in the writer, as 2.0 did (D21). Either way the log says so once a process. A small
+//!   picture (`T`, `PicPool::small`) is never decoded in the writer, on any build and by any pool: with no worker
+//!   it waits.
 //!
 //! Commands (writer to worker, one line, then `len` bytes):
 //!   `C <file_len> <len>`            the header check of a picture (the first `len` bytes of a file of
 //!                                   `file_len` bytes)
 //!   `D <flags> <pw> <ph> <len>`     decode, turn upright when flags & 1, fit onto a pw x ph page
+//!   `T <what> <max> <len>`          a small gray picture (2.3, issue #236: a package's icon, a Package Store
+//!                                   picture): `what` 1 an `.ico` (picwork/icofile.rs: its directory and its PNG and
+//!                                   BMP entries), 2 a picture as `D` decodes one, 3 either, the `.ico` first; one
+//!                                   over `max` px a side is made smaller, fitted inside max x max, its aspect kept
 //!   `H <hook> <n>`                  a test hook (headless and test builds only: `crash`, `hang`, `trap`; the
 //!                                   n-th request of this worker)
 //!   `Q`                             end
@@ -31,7 +37,7 @@
 //!   `B <version> <protocol>`, `S <0|1|2>`  the handshake, as the PDF worker's
 //!   `I <w> <h>`                     the answer to `C`: a picture Grimoire takes, this big
 //!   `G <sw> <sh> <w> <h> <ch>`      the answer to `D`, then w * h * ch bytes: the page picture (sw x sh was the
-//!                                   source's size), top row first
+//!                                   source's size), top row first; and to `T`, with ch 1 and the small picture
 //!   `E bad <n>`                     the picture is at fault (n: one of `WHYS`)
 //!   `E mem`                         the memory it needed was not there
 //!   `E sandbox <step>`, `E protocol`, `E sigsys <call>`
@@ -39,6 +45,10 @@
 use crate::prelude::*;
 use crate::sandbox::*;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+// The `.ico` container's reader: private to this file, and called by the worker's side alone (`small_one`).
+mod icofile;
+pub use icofile::{ICO_FILE_MAX, ICO_SIDE_MAX, ICO_TARGET};
 
 /// What the worker says when a picture is at fault, as numbers (the writer maps them back to these texts and
 /// never logs a worker's own words).
@@ -200,6 +210,65 @@ fn decode_one(data: &[u8], orient: bool, pw: i32, ph: i32) -> Result<(BgPicture,
     Ok((fit, sw, sh))
 }
 
+/// `T`'s `what`: an `.ico` is tried (its directory and entries, picwork/icofile.rs) ...
+pub const SMALL_ICO: usize = 1;
+/// ... and a picture as `D` decodes one (bgimage.rs). 3 is both, the `.ico` first.
+pub const SMALL_PICTURE: usize = 2;
+/// The largest `max` a `T` takes: a small picture is at most this many pixels a side.
+pub const SMALL_SIDE_MAX: usize = 4096;
+
+/// The small gray picture one `T` asks for: its pixels (w * h bytes, top row first), its size, and the source's.
+/// An `.ico`'s entry as picwork/icofile.rs reads it (256 KiB, 256 px a side, the entry nearest 64 px); a picture decoded
+/// as `D`'s (the same header check and budget), its luma, and when it is over `max` px a side fitted inside
+/// max x max by the page fit's area filter, its aspect kept. Err is the record to send.
+fn small_one(data: &[u8], what: usize, max: i32) -> Result<(Vec<u8>, i32, i32, i32, i32), String> {
+    if what & SMALL_ICO != 0 {
+        match icofile::ico_gray(data) {
+            Some(i) if i.w as i32 <= max && i.h as i32 <= max => return Ok((i.gray, i.w as i32, i.h as i32, i.w as i32, i.h as i32)),
+            Some(_) => return Err("E bad 0\n".to_string()),
+            None if what & SMALL_PICTURE == 0 => return Err("E bad 0\n".to_string()),
+            None => {}
+        }
+    }
+    let mut why: &'static str = "a damaged or unsupported picture";
+    let mut p = BgPicture::default();
+    match bgimage_decode(data, &mut p, &mut why) {
+        0 => {}
+        -2 => return Err("E mem\n".to_string()),
+        _ => return Err(format!("E bad {}\n", why_index(why))),
+    }
+    let (sw, sh) = (p.w, p.h);
+    if sw > max || sh > max {
+        // (the page fit onto a page of the fitted size; where its rounding leaves a pixel of the page's white at
+        // one side, the picture is the part the fit drew)
+        let b = crate::bgimage::fit_box(sw, sh, max, max);
+        let mut page = BgPicture::default();
+        if bgimage_normalize(&p, b.w, b.h, &mut page) != 0 {
+            return Err("E mem\n".to_string());
+        }
+        let r = crate::bgimage::fit_box(sw, sh, b.w, b.h);
+        if (r.w, r.h) != (page.w, page.h) {
+            let ch = page.ch as usize;
+            let mut px: Vec<u8> = Vec::new();
+            if px.try_reserve_exact(r.w as usize * r.h as usize * ch).is_err() {
+                return Err("E mem\n".to_string());
+            }
+            for y in r.y..r.y + r.h {
+                let at = (y as usize * page.w as usize + r.x as usize) * ch;
+                px.extend_from_slice(&page.px[at..at + r.w as usize * ch]);
+            }
+            page = BgPicture { px, w: r.w, h: r.h, ch: page.ch };
+        }
+        p = page;
+    }
+    let mut c = Canvas::default();
+    if bgimage_luma(&p, &mut c) != 0 {
+        return Err("E mem\n".to_string());
+    }
+    let (w, h) = (c.w, c.h);
+    Ok((c.px, w, h, sw, sh))
+}
+
 /// The worker's loop (after sandbox.rs's steps): one picture a command.
 pub fn worker_run(_l: &Limits) -> i32 {
     #[cfg_attr(feature = "kindle", allow(unused_mut))]
@@ -249,6 +318,29 @@ pub fn worker_run(_l: &Limits) -> i32 {
                         drop(data);
                         say(&format!("G {sw} {sh} {} {} {}\n", fit.w, fit.h, fit.ch));
                         write_all(FD_OUT, &fit.px);
+                    }
+                    Err(rec) => say(&rec),
+                }
+            }
+            ["T", what, max, len] => {
+                let (Some(what), Some(max), Some(len)) = (number(what), number(max), number(len)) else {
+                    say("E protocol\n");
+                    return 1;
+                };
+                if !(1..=3).contains(&what) || max == 0 || max > SMALL_SIDE_MAX || len == 0 || len > BYTES_MAX {
+                    say("E protocol\n");
+                    return 1;
+                }
+                let Some(data) = read_bytes_fd(FD_IN, len) else {
+                    return 1;
+                };
+                served += 1;
+                run_hooks(&hooks, served);
+                match small_one(&data, what, max as i32) {
+                    Ok((px, w, h, sw, sh)) => {
+                        drop(data);
+                        say(&format!("G {sw} {sh} {w} {h} 1\n"));
+                        write_all(FD_OUT, &px);
                     }
                     Err(rec) => say(&rec),
                 }
@@ -646,21 +738,10 @@ impl PicPool {
                     self.drop_worker();
                     return Ok(PicOut::Dead("the worker broke the protocol"));
                 }
-                let n = w as usize * h as usize * ch as usize;
-                let mut px: Vec<u8> = Vec::new();
-                if px.try_reserve_exact(n).is_err() {
-                    self.drop_worker();
-                    return Ok(PicOut::Retry("out of memory"));
+                match self.pixels(w as usize * h as usize * ch as usize)? {
+                    Some(px) => PicOut::Pic { src_w: sw, src_h: sh, fit: BgPicture { px, w, h, ch } },
+                    None => PicOut::Retry("out of memory"),
                 }
-                px.resize(n, 0);
-                let deadline = (mono_ms() + watchdog_ms()).min(self.until);
-                let got = self.w.as_mut().map(|w| w.read_exact(&mut px, deadline));
-                if !matches!(got, Some(Ok(()))) {
-                    self.drop_worker();
-                    qlog!("work: a picture's worker ended while it sent the pixels");
-                    return Err(if matches!(got, Some(Err(ReadErr::Timeout))) { STALLED } else { "the worker ended" });
-                }
-                PicOut::Pic { src_w: sw, src_h: sh, fit: BgPicture { px, w, h, ch } }
             }
             Reply::Bad(why) => PicOut::Bad(why),
             Reply::Mem => PicOut::Retry("out of memory"),
@@ -671,6 +752,66 @@ impl PicPool {
                 PicOut::Dead("the worker broke the protocol")
             }
         })
+    }
+
+    /// The `n` bytes of pixels that follow a `G` record, exactly: None when the memory for them is not there (the
+    /// worker is ended), Err when the worker ended or stalled while it sent them.
+    fn pixels(&mut self, n: usize) -> Result<Option<Vec<u8>>, &'static str> {
+        let mut px: Vec<u8> = Vec::new();
+        if px.try_reserve_exact(n).is_err() {
+            self.drop_worker();
+            return Ok(None);
+        }
+        px.resize(n, 0);
+        let deadline = (mono_ms() + watchdog_ms()).min(self.until);
+        let got = self.w.as_mut().map(|w| w.read_exact(&mut px, deadline));
+        if !matches!(got, Some(Ok(()))) {
+            self.drop_worker();
+            qlog!("work: a picture's worker ended while it sent the pixels");
+            return Err(if matches!(got, Some(Err(ReadErr::Timeout))) { STALLED } else { "the worker ended" });
+        }
+        Ok(Some(px))
+    }
+
+    /// A small gray picture (`T`; 2.3, issue #236: a package's icon, a Package Store picture): `what` is SMALL_ICO,
+    /// SMALL_PICTURE or both (the `.ico` first), and one over `max` px a side comes back fitted inside max x max.
+    /// `PicOut::Pic` holds one channel, at most max x max and never larger than its source. One worker run: a
+    /// worker that ends or stalls on it is `Dead` (a second try is another job's). Never decoded in the writer, on
+    /// any build and by any pool: with no worker to be had the answer is `PicOut::NoWorker`.
+    pub fn small(&mut self, data: &[u8], what: usize, max: i32) -> PicOut {
+        if data.is_empty() || data.len() > BYTES_MAX || !(1..=3).contains(&what) || !(1..=SMALL_SIDE_MAX as i32).contains(&max) {
+            return PicOut::Bad(WHYS[0]);
+        }
+        let line = match self.ask(&format!("T {what} {max} {}\n", data.len()), data, false) {
+            Ok(Asked::Line(l)) => l,
+            // (no worker: nothing decodes it here, where the pool's other pictures would decode in the writer too)
+            Ok(Asked::Local | Asked::Wait) => return PicOut::NoWorker(NO_WORKER_WHY),
+            Err(why) => {
+                qlog!("work: a picture's worker ended (%s)", why);
+                return PicOut::Dead(why);
+            }
+        };
+        match parse_info(&line) {
+            Reply::Pic { sw, sh, w, h, ch } => {
+                if ch != 1 || w < 1 || h < 1 || w > max || h > max || w > sw || h > sh || sw > 8192 || sh > 8192 || (sw as i64) * (sh as i64) > BG_MAX_PIXELS {
+                    self.drop_worker();
+                    return PicOut::Dead("the worker broke the protocol");
+                }
+                match self.pixels(w as usize * h as usize) {
+                    Ok(Some(px)) => PicOut::Pic { src_w: sw, src_h: sh, fit: BgPicture { px, w, h, ch: 1 } },
+                    Ok(None) => PicOut::Retry("out of memory"),
+                    Err(why) => PicOut::Dead(why),
+                }
+            }
+            Reply::Bad(why) => PicOut::Bad(why),
+            Reply::Mem => PicOut::Retry("out of memory"),
+            Reply::Sandbox => self.late_sandbox(),
+            Reply::Sigsys(n) => self.sigsys(n),
+            _ => {
+                self.drop_worker();
+                PicOut::Dead("the worker broke the protocol")
+            }
+        }
     }
 }
 

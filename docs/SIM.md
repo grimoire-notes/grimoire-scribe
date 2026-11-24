@@ -194,9 +194,28 @@ The Package Store is the home app row's fourth built-in app, `library app.store`
 `store.install`, `store.trust`, `store.qr` and `store.retry`. Its state is read with
 `library.store.view` (`list`, `detail`, `trust`, `busy`, `error` or `qr`), `.open`, `.filter`,
 `.packages`, `.visible` (ids in catalog order), `.selected`, `.featured`, `.screenshots`, `.shot`,
-`.shot.loaded`, `.icon.loaded`, `.status`, `.error` and `.page`. `GRIMOIRE_PACKAGE_STORE_URL`
+`.shot.loaded`, `.shot.coming`, `.icon.loaded`, `.list.icons`, `.status`, `.error` and `.page`. `GRIMOIRE_PACKAGE_STORE_URL`
 points the Store at another catalog; `GRIMOIRE_PACKAGE_STORE_OFFLINE=1` reads only the saved
 catalog and its cached images (tests/scenarios/z_package_store.qs).
+The Store's icons and screenshots, and an installed app's bundled icon, are decoded by the
+sandboxed worker in a background job (issue #236), so each comes a moment after its screen: a
+scenario waits for one with `waitfor` (`library.store.list.icons`, the cards' icons shown;
+`library.store.icon.loaded` and `.shot.loaded`, the detail page's; `library.update.pkg.icons`,
+Settings > Updates' rows; `library.apps.icons`, how many installed apps' bundled icons a launcher
+draws now, an app that shows its built-in icon not counted). `library.store.shot.coming` is `1`
+while the detail page's screenshot is still to come (to download, or asked of the worker) and `0`
+once it is there or none will come. A picture's arrival is one `ui` refresh of its own place in
+`display.presents` (tests/scenarios/z_apps_icon.qs, z_package_store_pictures.qs);
+`GRIMOIRE_BG_DELAY_MS` holds its job back, and `GRIMOIRE_WORK_FAIL_STEP` leaves it with no worker
+(z_pictures_no_worker.qs). A scenario that counts these refreshes sets the script's clock first
+(`clock 1700000000`), so that no refresh for a new minute falls among them.
+A visit with a network runs without one: tests/store-curl/curl stands in for curl when a
+scenario's `# env:` line puts its folder first in `PATH` and names a catalog at
+`https://store.test/index.json`; it answers from the folder `package-store-served` of the
+scenario's data root, which tests/store_many_packages.py fills, 0.3 s a download
+(tests/scenarios/z_package_store_first_visit.qs: a download's end refreshes nothing by itself).
+The same generator makes a saved catalog of any number of packages
+(z_package_store_page_first.qs).
 A disabled button
 (Undo with nothing to undo, Clear on an empty page, Previous on page 1) has no hit and no name. A scenario
 that wants a panel button taps it by name, so that it does not break when the panel gains a button;
