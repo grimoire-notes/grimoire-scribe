@@ -99,7 +99,7 @@ pub const APP_REDRAW_MAX_MS: i32 = 86_400_000;
 /// digits this high are as wide as the screen.
 pub const APP_TEXT_PX_MAX: i32 = 768;
 /// An icon is drawn at most this many pixels each way; in a larger rectangle it is this size, in the middle.
-/// (An icon's glyph is made as large as it is drawn.)
+/// (Under the greatest size the font makes a glyph at, for any caller: font.rs, GLYPH_SIDE_MAX.)
 pub const APP_ICON_PX_MAX: i32 = 1024;
 /// A line is drawn at most this many pixels wide, wider than any body; a wider one is drawn at this width.
 pub const APP_LINE_WIDTH_MAX: f32 = 4096.0;
@@ -829,7 +829,7 @@ impl AppRuntime {
         // APP_ICON_PX_MAX: no sum the drawing makes overflows, and nothing is drawn at a size without bound.
         let at = |r: Rect| on_screen(body, r.x, r.y, r.w, r.h);
         let texts = &mut self.texts;
-        font_with_icon_side_max(APP_ICON_PX_MAX, || {
+        font_with_icon_side_max(icon_px_max(), || {
             for cmd in commands {
                 match cmd {
                     DrawCmd::Fill(r, gray) => canvas_fill(c, at(r), gray),
@@ -1035,10 +1035,35 @@ impl AppRuntime {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Tests: the host's own greatest sizes of a text and an icon are set aside (`text_px_max`, `icon_px_max`), so
+    /// that a module's sizes reach the font as given and meet the font's own greatest glyph.
+    static OWN_SIZES_ASIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The height a text is drawn at most, in pixels: APP_TEXT_PX_MAX.
+fn text_px_max() -> i32 {
+    #[cfg(test)]
+    if OWN_SIZES_ASIDE.get() {
+        return i32::MAX / 1000;
+    }
+    APP_TEXT_PX_MAX
+}
+
+/// The side an icon is drawn at most, in pixels: APP_ICON_PX_MAX.
+fn icon_px_max() -> i32 {
+    #[cfg(test)]
+    if OWN_SIZES_ASIDE.get() {
+        return i32::MAX;
+    }
+    APP_ICON_PX_MAX
+}
+
 /// The height a text is drawn and measured at, in pixels, from the thousandths a module passes: from one
 /// thousandth to APP_TEXT_PX_MAX, a value outside taken as the nearer end.
 fn text_px(px_milli: i32) -> f32 {
-    px_milli.clamp(1, APP_TEXT_PX_MAX * 1000) as f32 / 1000.0
+    px_milli.clamp(1, text_px_max() * 1000) as f32 / 1000.0
 }
 
 /// An end of a line farther from the body than this, each way by itself, is first taken at this distance: the
@@ -2007,6 +2032,117 @@ mod tests {
                 assert_eq!(line_in_reach(body, ends[0], ends[1], ends[2], ends[3]), None, "{v} as number {at}");
             }
         }
+    }
+
+    /// A module with one page of memory, `data` from its address 0, the one import `grimoire.<import>` (as many
+    /// numbers in as `args` has, none out), and an `app_draw` that calls the import once with `args`: how a test
+    /// has an app draw one command with any numbers.
+    fn module_drawing(import: &str, args: &[i32], data: &[u8]) -> Vec<u8> {
+        let named = |name: &str, kind: &[u8]| [&[name.len() as u8][..], name.as_bytes(), kind].concat();
+        let section = |id: u8, content: Vec<u8>| [&[id, content.len() as u8][..], &content[..]].concat();
+        // (i32.const: the number as a signed LEB128)
+        let number = |mut v: i32| {
+            let mut out = vec![0x41];
+            loop {
+                let b = (v & 0x7f) as u8;
+                v >>= 7;
+                if (v == 0 && b & 0x40 == 0) || (v == -1 && b & 0x40 != 0) {
+                    out.push(b);
+                    return out;
+                }
+                out.push(b | 0x80);
+            }
+        };
+        let n = args.len();
+        // (the import's type and app_draw's; the import, function 0; app_draw, function 1; the memory; the two
+        // exports; app_draw's code: each number, the call, the end; the data)
+        let kinds = [&[2, 0x60, n as u8][..], &vec![0x7f; n][..], &[0, 0x60, 4, 0x7f, 0x7f, 0x7f, 0x7f, 0][..]].concat();
+        let imported = [&[1][..], &named(ABI, &[])[..], &named(import, &[0, 0])[..]].concat();
+        let exports = [&[2][..], &named("memory", &[2, 0])[..], &named("app_draw", &[0, 1])[..]].concat();
+        let numbers: Vec<u8> = args.iter().flat_map(|a| number(*a)).collect();
+        let code = [&[1, numbers.len() as u8 + 4, 0][..], &numbers[..], &[0x10, 0, 0x0b][..]].concat();
+        let placed = [&[1, 0, 0x41, 0, 0x0b, data.len() as u8][..], data].concat();
+        [b"\0asm\x01\0\0\0".to_vec(), section(1, kinds), section(2, imported), section(3, vec![1, 1]), section(5, vec![1, 0, 1]), section(7, exports), section(10, code), section(11, placed)].concat()
+    }
+
+    // The font makes no glyph past its greatest size, whoever draws (font.rs, GLYPH_SIDE_MAX), and the host
+    // holds an app's text and icons to sizes of its own far under it. Here the host's own sizes are set aside,
+    // so that a module's numbers reach the font as given: an icon in a square of 100,000 px and a letter
+    // 150,000 px high, the sizes between and the greatest numbers, through each command that draws an icon or
+    // a text. No glyph is made of any of them and stb is not asked for one; the pass ends well, with nothing
+    // drawn outside the body. With sizes a screen has, setting the host's own aside changes no pixel.
+    #[test]
+    fn with_the_hosts_own_sizes_aside_the_fonts_greatest_glyph_holds() {
+        let dir = scratch("glyphs");
+        ui_init(300.0);
+        assert_eq!(font_init(), 0);
+        let screen = Rect::new(0, 0, 1860, 2480);
+        let body = Rect::new(0, 78, 1860, 2402);
+        // (one pass of a module that draws one command, with the host's own sizes or with them aside: the canvas
+        // after it, and how many bitmaps the font asked stb for)
+        let pass = |import: &str, args: &[i32], data: &[u8], aside: bool| -> (Canvas, u32) {
+            let mut rt = runtime_of(host(&dir), &module_drawing(import, args, data));
+            let mut c = Canvas::default();
+            assert_eq!(canvas_init(&mut c, screen.w, screen.h), 0);
+            c.px.fill(200);
+            let asked = crate::font::font_bitmaps_asked();
+            OWN_SIZES_ASIDE.set(aside);
+            rt.draw(&mut c, body, 0);
+            OWN_SIZES_ASIDE.set(false);
+            assert_eq!(rt.error(), None, "{import} {args:?}");
+            assert!(c.px[..(body.y * c.stride) as usize].iter().all(|p| *p == 200), "{import} {args:?}: drawn above the body");
+            (c, crate::font::font_bitmaps_asked() - asked)
+        };
+        let inked = |c: &Canvas| c.px[(body.y * c.stride) as usize..].iter().filter(|p| **p != 255).count();
+        let most = i32::MAX;
+        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+            ui_set_theme(theme);
+            // An icon by itself, and a letter at a place: drawn by the host at its own greatest sizes, and not
+            // at all once those are aside.
+            for side in [6000, 12_000, 58_000, 90_000, 100_000, 120_000, 133_000, most] {
+                // (about the body's middle, where the host draws the icon of a larger rectangle)
+                let args = [0, 4, 930 - side / 2, 1200 - side / 2, side, side, 0];
+                assert!(inked(&pass("icon", &args, b"gear", false).0) > 100_000, "{theme:?}: the host draws the icon of a square of {side} px at its own greatest size");
+                let (c, asked) = pass("icon", &args, b"gear", true);
+                assert_eq!((inked(&c), asked), (0, 0), "{theme:?}: an icon in a square of {side} px");
+            }
+            for px_milli in [8_192_000, 20_000_000, 100_000_000, 150_000_000, 1_000_000_000, most] {
+                for face in 0..6 {
+                    let args = [0, 1000, 0, 1, px_milli, face, 0];
+                    assert!(inked(&pass("text_at", &args, b"W", false).0) > 10_000, "{theme:?}: the host draws a letter of {px_milli} thousandths at its own greatest height");
+                    let (c, asked) = pass("text_at", &args, b"W", true);
+                    // (a pixel face asks stb for a letter's design pixels, whatever the height: one small bitmap)
+                    assert!(inked(&c) == 0 && asked <= 1, "{theme:?}: a letter of {px_milli} thousandths in face {face}: {} pixels, {asked} asked", inked(&c));
+                    let args = [0, 0, 1860, 2402, 0, 1, px_milli, face, 1, 0];
+                    let (c, asked) = pass("text", &args, b"W", true);
+                    assert!(inked(&c) == 0 && asked <= 1, "{theme:?}: a text of {px_milli} thousandths in face {face}: {} pixels, {asked} asked", inked(&c));
+                }
+            }
+            // The kit's elements that draw an icon as large as they are, far larger than the body: each is the
+            // element with no icon, pixel for pixel, and no bitmap is asked for its icon.
+            for (import, with_icon, without) in [
+                ("fab", vec![-49_000, -49_000, 100_000, 100_000, 0, 4], None),
+                ("button", vec![-49_000, -49_000, 100_000, 100_000, 0, 0, 0, 4, 0], Some(vec![-49_000, -49_000, 100_000, 100_000, 0, 0, 0, 0, 0])),
+                ("text_field", vec![-200, -49_000, 2400, 100_000, 0, 4, 0, 0, 0, 0], Some(vec![-200, -49_000, 2400, 100_000, 0, 0, 0, 0, 0, 0])),
+            ] {
+                let (c, asked) = pass(import, &with_icon, b"gear", true);
+                assert_eq!(asked, 0, "{theme:?}: {import} {with_icon:?}");
+                if let Some(without) = without {
+                    assert!(c.px == pass(import, &without, b"gear", true).0.px, "{theme:?}: {import} {with_icon:?} is the element with no icon");
+                }
+            }
+            // Sizes a screen has: the same picture with the host's own sizes and with them aside.
+            for (import, args, data) in [
+                ("icon", vec![0, 4, 40, 40, 400, 400, 0], &b"gear"[..]),
+                ("text_at", vec![40, 900, 0, 5, 300_000, 1, 0], &b"12:34"[..]),
+                ("text", vec![40, 40, 1700, 200, 0, 5, 120_000, 0, 1, 0], &b"12:34"[..]),
+                ("button", vec![40, 40, 400, 400, 0, 0, 0, 4, 0], &b"gear"[..]),
+            ] {
+                let (held, aside) = (pass(import, &args, data, false).0, pass(import, &args, data, true).0);
+                assert!(inked(&held) > 1000 && held.px == aside.px, "{theme:?}: {import} {args:?}");
+            }
+        }
+        ui_set_theme(UiTheme::Classic);
     }
 
     // ---- HTTP ----
