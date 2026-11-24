@@ -1355,8 +1355,14 @@ mod tests {
             " X-A: a space first",
             "@X-A: 1",
             "@",
+            "=X-A: 1",
+            "=",
             "(X-A): 1",
+            "(",
+            "<X-A>: 1",
+            "<",
             "\"X-A\": 1",
+            "\"",
             "Caf\u{e9}: 1",
             "X-A: a\ttab",
             "X-A: a\u{0}b",
@@ -1389,6 +1395,9 @@ mod tests {
         assert_eq!(http_header_lines("Accept: text/plain\r\n\r\n  X-A: 1 \t\nX-B:2"), Some(vec!["Accept: text/plain", "X-A: 1", "X-B:2"]));
         assert_eq!(http_header_lines("Accept: text/plain\nno colon\nX-A: 1"), None);
         assert_eq!(http_header_lines("Accept: text/plain\n@X-A: 1"), None);
+        for line in ["=X-A: 1", "(X-A): 1", "<X-A>: 1", "\"X-A\": 1"] {
+            assert_eq!(http_header_lines(&format!("Accept: text/plain\n{line}")), None, "{line:?}");
+        }
         assert_eq!(http_header_lines("X-A: a\rb\n"), None);
         let most = "X-A: 1\n\n".repeat(HTTP_HEADER_LINES_MAX);
         assert_eq!(http_header_lines(&most).map(|l| l.len()), Some(HTTP_HEADER_LINES_MAX));
@@ -1609,7 +1618,10 @@ mod tests {
             "Accept: text/plain\n: no name",
             "X A: 1",
             "@X-A: 1",
+            "=X-A: 1",
             "(X-A): 1",
+            "<X-A>: 1",
+            "\"X-A\": 1",
             "X-A: a\u{1}b",
             many.as_str(),
             long.as_str(),
