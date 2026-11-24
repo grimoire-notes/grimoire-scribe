@@ -2527,11 +2527,11 @@ pub fn store_list_folders_from(nbs: &[NotebookInfo], out: &mut Vec<String>) -> i
 //
 // # Grimoire: folder icons and pictures
 // folder=School
-// icon=castle
-// picture=IMG_1234.jpg
+// icon=school
 //
-// One block a folder with a look of its own: the name of its icon (library.rs's FOLDER_ICONS) and the picture on
-// its card, by a file name in grimoire/photos/. Kept apart from folders.ini, whose every line older versions read as
+// or picture=IMG_1234.jpg in its place (one of the two, never both). One block a folder with a look of its own:
+// the name of its icon (library.rs's FOLDER_ICONS) or the picture on its card, by a file name in grimoire/photos/.
+// Kept apart from folders.ini, whose every line older versions read as
 // a folder's name: an older Grimoire keeps this file as it is and writes a new folder's line beside it. No other
 // version reads it.
 
@@ -2539,8 +2539,8 @@ const FOLDER_LOOKS_HEADER: &[u8] = b"# Grimoire: folder icons and pictures\n";
 /// folder-looks.ini is read up to this size; a bigger one is not this version's and names no look.
 pub const FOLDER_LOOKS_FILE_MAX: usize = 64 * 1024;
 
-/// What a folder's card looks like instead of the plain folder icon: an icon by name, a picture from
-/// grimoire/photos/, or both (the picture wins on the card, the icon is kept for when it goes).
+/// What a folder's card looks like instead of the plain folder icon: an icon by name or a picture from
+/// grimoire/photos/, never both: a picture takes the icon's place.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FolderLook {
     /// its icon's name in library.rs's FOLDER_ICONS, "" for the plain folder icon
@@ -2622,6 +2622,12 @@ fn load_folder_looks() -> Vec<(String, FolderLook)> {
             _ => {}
         }
     }
+    // A picture takes the icon's place, whichever line came first.
+    for (_, look) in out.iter_mut() {
+        if !look.picture.is_empty() {
+            look.icon.clear();
+        }
+    }
     out.retain(|(_, look)| !look.is_empty());
     out
 }
@@ -2636,7 +2642,7 @@ fn save_folder_looks(looks: &[(String, FolderLook)]) -> i32 {
         b.extend_from_slice(b"folder=");
         b.extend_from_slice(folder.as_bytes());
         b.push(b'\n');
-        if folder_icon_valid(&look.icon) {
+        if look.picture.is_empty() && folder_icon_valid(&look.icon) {
             b.extend_from_slice(b"icon=");
             b.extend_from_slice(look.icon.as_bytes());
             b.push(b'\n');
@@ -2669,9 +2675,9 @@ pub fn store_folder_look(path: &str) -> FolderLook {
     load_folder_looks().into_iter().find(|(f, _)| f == path).map_or_else(FolderLook::default, |(_, look)| look)
 }
 
-/// Folder `path`'s look: its icon's name and its picture's file name, either empty for none. Saved at once; a look
-/// with neither takes the folder's block out of folder-looks.ini. -1 when the folder's path or what it is given is
-/// not one of those shapes, or the file cannot be written.
+/// Folder `path`'s look: its icon's name or its picture's file name, the other empty. Saved at once, and a
+/// picture clears the icon; a look with neither takes the folder's block out of folder-looks.ini. -1 when the
+/// folder's path or what it is given is not one of those shapes, or the file cannot be written.
 pub fn store_set_folder_look(path: &str, look: &FolderLook) -> i32 {
     if !store_folder_valid(path)
         || (!look.icon.is_empty() && !folder_icon_valid(&look.icon))
@@ -2679,10 +2685,14 @@ pub fn store_set_folder_look(path: &str, look: &FolderLook) -> i32 {
     {
         return -1;
     }
+    let mut look = look.clone();
+    if !look.picture.is_empty() {
+        look.icon.clear();
+    }
     let mut looks = load_folder_looks();
     looks.retain(|(f, _)| f != path);
     if !look.is_empty() {
-        looks.push((path.to_string(), look.clone()));
+        looks.push((path.to_string(), look));
     }
     looks.sort_by(|a, b| a.0.cmp(&b.0));
     save_folder_looks(&looks)
@@ -6079,7 +6089,7 @@ mod tests {
         for f in ["School", "School/x", "Work"] {
             assert_eq!(store_add_folder(f), 0);
         }
-        let look = FolderLook { icon: "castle".into(), picture: "IMG 1.jpg".into() };
+        let look = FolderLook { icon: "castle".into(), ..Default::default() };
         assert_eq!(store_set_folder_look("School", &look), 0);
         assert_eq!(store_set_folder_look("School/x", &FolderLook { icon: "music".into(), ..Default::default() }), 0);
         assert_eq!(store_folder_look("School"), look);
@@ -6088,7 +6098,7 @@ mod tests {
         let ini = std::fs::read_to_string(r.join("folder-looks.ini")).unwrap();
         assert!(ini.starts_with("# Grimoire: folder icons and pictures\n"), "{ini}");
         let folders = std::fs::read_to_string(r.join("folders.ini")).unwrap();
-        assert!(!folders.contains("castle") && !folders.contains("IMG"), "folders.ini is left as it was: {folders}");
+        assert!(!folders.contains("castle"), "folders.ini is left as it was: {folders}");
         // a rename carries the look, the subtree's too
         assert_eq!(store_rename_folder("School", "College"), 0);
         assert_eq!(store_folder_look("College"), look);
@@ -6104,6 +6114,12 @@ mod tests {
         assert_eq!(store_remove_folder("Work/x"), 0);
         assert!(store_folder_looks().is_empty());
         assert!(!r.join("folder-looks.ini").exists(), "nothing is left to keep");
+        // a picture takes the icon's place: the two are never kept together
+        let pic = FolderLook { picture: "IMG 1.jpg".into(), ..Default::default() };
+        let both = FolderLook { icon: "music".into(), picture: "IMG 1.jpg".into() };
+        assert_eq!(store_set_folder_look("Work", &both), 0);
+        assert_eq!(store_folder_look("Work"), pic);
+        assert_eq!(store_set_folder_look("Work", &FolderLook::default()), 0);
         // what is no look is refused
         assert_eq!(store_set_folder_look("", &look), -1);
         assert_eq!(store_set_folder_look("Work", &FolderLook { icon: "Castle!".into(), ..Default::default() }), -1);

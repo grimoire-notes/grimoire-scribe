@@ -6,11 +6,12 @@
   Pen, Controls and System, each row opening its own sheet.
 - **Auto brightness** (#163, nebuff). Settings > Display can let the front light follow the room's light.
 - **Polish** (#181, nebuff): Grimoire's screens and documents in Polish.
-- **Folder icons and pictures** (#230). A folder's menu (its `...`) has Icon & picture...: pick one of 24 icons for
-  the folder's card, or give it a picture from `grimoire/photos` (From a file... copies one in from anywhere on the
-  Kindle). The card shows the picture in the icon's place, and falls back to the icon (or the plain folder) while
-  the picture's preview is made or if it goes. Kept in `grimoire/folder-looks.ini`, which older versions leave as
-  it is; renaming or moving a folder carries its look with it.
+- **Folder icons and pictures** (#230). A folder's menu (its `...`) has Icon & picture...: pick one of 48 icons for
+  the folder's card, in two pages of ordinary uses (school, work, documents, photos, music, recipes, travel, pets
+  and more), or give it a picture from `grimoire/photos` (From a file... copies one in from anywhere on the Kindle).
+  Picking one clears the other: the card shows the picture in place of the icon, and the plain folder while the
+  picture's preview is made or if it goes. Kept in `grimoire/folder-looks.ini`, which older versions leave as it
+  is; renaming or moving a folder carries its look with it.
 - **Web links in PDFs** (#174). A PDF's web links, left out until now, are kept when you import the PDF: tap one and
   a card shows the address and a QR code to scan with your phone's camera, which opens it there (the Kindle opens
   nothing itself). Only http and https addresses of up to 200 characters whose host is written plainly are kept.

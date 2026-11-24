@@ -113,7 +113,7 @@ v_storage_full 11.2
 w_carry 4.4
 x_turn_calibrated 4.6
 y_all_screens 77.7
-y_folder_look 7.4
+y_folder_look 8.1
 y_ink_backlog 1.9
 y_koreader_hosted 5.9
 y_koreader_not_hosted 3.3

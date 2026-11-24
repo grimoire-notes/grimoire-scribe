@@ -2151,15 +2151,16 @@ no block:
 ```
 # Grimoire: folder icons and pictures
 folder=School
-icon=castle
-picture=IMG_1234.jpg
+icon=school
 ```
 
 `folder=` starts a folder's block: its logical path as `notebook.ini`'s `folder` writes it. `icon=` is the
-icon's name, one of the app's (lowercase letters, digits and `-`), and `picture=` a file name in
-`root/photos/` (no folder part). Both are optional. A block whose folder is gone draws nothing; an icon this
-version does not know draws as the plain folder, and a picture that is not there (or whose preview is not made
-yet) leaves the icon in its place. Lines of another kind, paths that are no valid folder and names that are not
+icon's name, one of the app's 48 (lowercase letters, digits and `-`), shown two pages of six by four, and
+`picture=` a file name in `root/photos/` (no folder part). They are alternatives: a block has one or neither,
+and a picture takes the icon's place. A block whose folder is gone draws nothing; an icon this version does not
+know draws as the plain folder, and an older name (`castle`, `image`, `files`) draws as the icon it became; a
+picture that is not there (or whose preview is not made yet) leaves the plain folder. Lines of another kind,
+paths that are no valid folder and names that are not
 those shapes are ignored; a file over 64 KiB names no look. Renaming or moving a folder moves its block and
 those of the folders inside it; removing an (empty) folder drops its block; with no folder left the file is
 removed. It is kept apart from `folders.ini`, whose every line older versions read as a folder's name: an
