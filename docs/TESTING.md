@@ -3674,7 +3674,8 @@ Not run on a Scribe. The picture worker's new command (`T`, a small gray picture
 run on the Mac, where a worker has plain process isolation. The Mac's tests cover the logic: `rust/tests/test_picwork_small.rs` (the worker and what the writer takes of its
 answer), `test_package_pictures.rs` (the job and its cache), `test_app_icons.rs` (the launcher),
 `test_sec_invariants.rs` (no decoder named in the launcher's and the Store's files), and the scenarios `z_apps`,
-`z_apps_icon`, `z_package_store`, `z_package_store_pictures`, `z_package_store_refused`, `z_pictures_no_worker`
+`z_apps_icon`, `z_package_store`, `z_package_store_pictures`, `z_package_store_refused`,
+`z_package_store_first_visit`, `z_package_store_page_first`, `z_pictures_under_a_press`, `z_pictures_no_worker`
 and `u_update_4_packages`, where the simulated panel counts the refreshes (`display.presents`). Under the
 sandbox's real steps `T` runs only in CI's Linux job, which has a case for it (`test_sandbox_linux.rs`,
 `small_pictures_are_made_in_the_real_sandbox`: an `.ico` with BMP entries, one with a PNG entry, a picture, one
@@ -3691,7 +3692,10 @@ Scribe can tell (read grimoire.log over SSH; it names no file):
    and start Grimoire: every icon comes, a few at a time, and the pen and taps stay quick meanwhile. Note how
    long until the last one shows.
 3. **The Package Store** with a network: open it with `.cache/packages` deleted. Each card's icon comes after its
-   download, the cards do not flash, and a tap on a card opens its page at once while icons are still coming. On
+   download, the cards do not flash (a download's end refreshes nothing by itself; an icon is one refresh of its
+   own place), and a tap on a card opens its page at once while icons are still coming, with its screenshot
+   before the rest of the list's icons. Leave the Store open over a minute's change: the clock follows, with a
+   refresh of the clock alone. On
    a package's page the icon and each screenshot come a moment after the page; send the `screenshot made in T ms`
    lines (a Scribe page's screenshot is 4.6 MP) and `grep VmRSS /proc/$(pidof grimoire)/status` before and after
    paging through a package's screenshots. Leave the Store and open it again: the pictures are there at once,

@@ -804,9 +804,11 @@ An installed app's bundled icon and the Package Store's icons and screenshots ar
 worker in the background (docs/DESIGN.md, "Packages' pictures"), never by Grimoire itself, and kept in
 `grimoire/.cache/packages/`, which may be deleted at any time (the pictures are made again). A picture shows a
 moment after its screen; until then, and when it cannot be made, the launcher shows the app's built-in icon and
-the Store its package glyph. A picture is work behind everything else Grimoire does in the background, as a
-file's preview is, and is given 6 s at most. grimoire.log says, for each picture that was not in the cache (never
-a file's name: the form, timings, reasons):
+the Store its package glyph. A picture's job waits behind what Grimoire does in the background for someone who
+asked by name (an export, a map's layout, the PDF mirror, an import, a font check), runs in turn with Files'
+previews, and ahead of compaction and the idle page previews; it is given 6 s at most. In the Package Store the
+pictures of the page in front are asked for first. grimoire.log says, for each picture that was not in the cache
+(never a file's name: the form, timings, reasons):
 
 - `bg: package pictures of a file (pid N)`, then `bg: package pictures pid N done` or `FAILED`.
 - `package pictures: app-icon|icon|screenshot made in T ms`: T is the whole job (the worker's start, the file

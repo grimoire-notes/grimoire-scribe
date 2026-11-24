@@ -1268,6 +1268,18 @@ fn packages_pictures_are_told_as_they_are() {
     told_on(&mut fails, DESIGN, "While the queue is full none is queued (`bg_queue_full`", BGJOB, "pub fn bg_queue_full() -> bool { with(|s| s.q.len() >= BG_QUEUE) }");
     stands_on(&mut fails, DESIGN, "the queue holds 16", BGJOB, "const BG_QUEUE: usize = 16;");
     told_on(&mut fails, DESIGN, "It ranks with Files' previews (`bgjob.rs` `rank`)", BGJOB, "BgKind::PackagePictures => 4,");
+    // (KINDLE.md's words for the rank: behind what was asked for by name, ahead of what nobody waits for)
+    let turn = "runs in turn with Files' previews, and ahead of compaction and the idle page previews";
+    told_on(&mut fails, KINDLE, turn, BGJOB, "BgKind::PackagePictures => 4,");
+    stands_on(&mut fails, KINDLE, turn, BGJOB, "BgKind::FilePreviews => 4,");
+    stands_on(&mut fails, KINDLE, turn, BGJOB, "BgKind::PagePreviews => 5,");
+    stands_on(&mut fails, KINDLE, turn, BGJOB, "BgKind::ImportFolder | BgKind::PdfImport => 3,");
+    gone(&mut fails, KINDLE, "A picture is work behind everything else Grimoire does in the background");
+    // the Store asks for the pictures of what is in front first, and a download's end asks only for the compared redraw
+    told_on(&mut fails, DESIGN, "The Store asks for the pictures of what is in front first", PACKAGESTORE, "let page = ui.open && ui.view != StoreView::List;");
+    told_on(&mut fails, KINDLE, "the pictures of the page in front are asked for first", PACKAGESTORE, "if (of_page(ui.pic_waits[i].stage) == page) != first {");
+    told_on(&mut fails, DESIGN, "A picture's download that ended asks for that same redraw and no other (`store_tick`)", PACKAGESTORE, "let mut came = tick_asset(a);");
+    told_on(&mut fails, TESTING, "a download's end refreshes nothing by itself", PACKAGESTORE, "let mut came = tick_asset(a);");
     stands_on(&mut fails, DESIGN, "It ranks with Files' previews (`bgjob.rs` `rank`)", BGJOB, "BgKind::FilePreviews => 4,");
     let walk = "opens the file from Grimoire's folder one part at a time and never through a link (`open_below`)";
     told_on(&mut fails, DESIGN, walk, PKGPICS, "libc::openat(at.as_raw_fd(), part.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)");

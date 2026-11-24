@@ -3693,12 +3693,18 @@ cache and checked (`pkgpics.rs`, `appicon.rs`, `packagestore.rs`).
   entry, a PNG, a JPEG, one over the side, the refused ones, a worker that ends or hangs, stand-in workers whose
   answers the writer must not take); `test_picwork_fallback.rs` (no pool decodes a small picture in the writer);
   `test_package_pictures.rs` (the job: every form made, refused files marked, a try and then the mark, a changed
-  file, a file through a link or outside its folder never read, a cache entry that does not read, the prune,
-  four jobs at a time, no worker writing nothing); `test_app_icons.rs` (the launcher: the built-in icon at once
+  file, a file through a link or outside its folder never read, a cache entry that does not read or is another
+  form's, the prune and the job's own call of it, never through a link, four jobs at a time, the pictures queued
+  at exit dropped, no worker writing nothing, and a sandbox step refused in a job's own child breaking the
+  session of the process that asked); `test_app_icons.rs` (the launcher: the built-in icon at once
   and no worker started by a draw, the picture after the tick's job, an app's entry gone with the app);
   `test_sec_invariants.rs` (no decoder named in the launcher's and the Store's files; these sentences against
-  the code); `picwork/icofile.rs`, `pkgpics.rs` and `canvas.rs` unit tests; the scenarios `z_apps`, `z_apps_icon`,
-  `z_package_store`, `z_package_store_pictures`, `z_package_store_refused`, `z_pictures_no_worker` and
+  the code); `picwork/icofile.rs` (a PNG entry's pixels against the png crate's, which the tests alone build),
+  `pkgpics.rs` (a full queue), `packagestore.rs` (the asking order, a slot not on the screen), `apppkg.rs` and
+  `canvas.rs` unit tests; the scenarios `z_apps`, `z_apps_icon`,
+  `z_package_store`, `z_package_store_pictures` (the Store's clock too), `z_package_store_refused`,
+  `z_package_store_first_visit` (a network stood in for: the refreshes of a first visit),
+  `z_package_store_page_first`, `z_pictures_under_a_press`, `z_pictures_no_worker` and
   `u_update_4_packages`. Under the sandbox's real steps `T` and the job have a case in `test_sandbox_linux.rs`
   (`small_pictures_are_made_in_the_real_sandbox`), which only CI's Linux job runs; docs/TESTING.md has the
   Scribe's check.

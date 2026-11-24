@@ -74,7 +74,8 @@ A bundled icon is a second package file: the installer fetches it from the manif
 its `spec.icon_sha256` and `spec.icon_size` (at most 256 KiB), and saves it with the artifact. Its
 path is never one inside the app's `state/` folder, whatever case the manifest writes that name in
 (the storage takes `State/` for `state/`). The
-launcher never reads the icon file: the sandboxed picture worker decodes its PNG entries and
+launcher never reads the icon file: the sandboxed picture worker decodes its PNG entries (8 bits a
+channel, gray or RGB, with or without alpha; none with a palette or 16 bits) and
 classic 1, 4, 8, 24 and 32-bit BMP entries (at most 256 px a side; the largest entry of at most
 64 px is taken, else the smallest) to a small grayscale bitmap, kept in
 `grimoire/.cache/packages/icons/`, which the home app row, All Apps, the package manager's list
