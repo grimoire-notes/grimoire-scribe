@@ -80,6 +80,12 @@ fn path_ok(p: &str) -> bool {
         && p.split('/').all(|s| !s.is_empty() && s != "." && s != "..")
 }
 
+/// Whether a path inside an app's folder is its state folder or a file of it, by the folder's name without regard
+/// to ASCII case, as the Kindle's storage compares names (FAT): `State/saved.ico` is a file of `state/` there.
+fn in_state(p: &str) -> bool {
+    p.split('/').next().is_some_and(|first| first.eq_ignore_ascii_case("state"))
+}
+
 fn cap_ok(c: &str) -> bool {
     matches!(c, "storage:app-local" | "network:http")
 }
@@ -105,7 +111,9 @@ pub fn app_package_icon_url(manifest_url: &str, p: &WidgetPackage) -> Option<Str
 /// An installed app's `.ico`, or None when its manifest uses a built-in icon name.
 pub fn app_package_icon_path(it: &WidgetInstall) -> Option<String> {
     let icon = it.icon.trim();
-    if !app_icon_is_file(icon) || !path_ok(icon) || icon == "package.yaml" || icon.starts_with("state/") {
+    // (never a file of the app's state folder: the app writes those itself, and the icon's file is handed to the
+    // picture worker)
+    if !app_icon_is_file(icon) || !path_ok(icon) || icon == "package.yaml" || in_state(icon) {
         return None;
     }
     Some(format!("{}/{icon}", app_package_dir(&it.id)))
@@ -167,12 +175,7 @@ pub fn app_package_validate(p: &WidgetPackage, _canvas_w: i32, _canvas_h: i32) -
     }
     let icon = p.spec.icon.trim();
     if app_icon_is_file(icon) {
-        if !path_ok(icon)
-            || icon == "package.yaml"
-            || icon == "state"
-            || icon.starts_with("state/")
-            || icon == p.artifact.path
-        {
+        if !path_ok(icon) || icon == "package.yaml" || in_state(icon) || icon == p.artifact.path {
             return Err("`spec.icon` is not a safe relative path for the app's icon".into());
         }
         if !sha_ok(&p.spec.icon_sha256) {
@@ -642,6 +645,30 @@ settings:
         assert!(std::path::Path::new(&app_settings_path(&it.id)).exists());
         app_settings_clear(&it.id);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // An icon is never a file of the app's state folder, whatever the case its manifest writes the folder's name
+    // in: the storage takes `State/` and `STATE/` for `state/`. Neither the launcher's look nor an install takes
+    // such a path; a folder that only begins with the word, or has it further down, is another folder.
+    #[test]
+    fn an_icon_in_the_state_folder_is_refused_in_any_case() {
+        let installed = |icon: &str| app_package_icon_path(&WidgetInstall { id: "test.app".into(), icon: icon.into(), ..Default::default() });
+        for icon in ["state/saved.ico", "State/saved.ico", "STATE/saved.ico", "sTaTe/a/b.ico"] {
+            assert_eq!(installed(icon), None, "{icon}");
+        }
+        for icon in ["icon.ico", "stateful/icon.ico", "art/state/icon.ico", "States/icon.ico"] {
+            assert!(installed(icon).is_some_and(|p| p.ends_with(&format!("/test.app/{icon}"))), "{icon}");
+        }
+        assert!(in_state("state") && in_state("STATE") && in_state("State/x") && !in_state("") && !in_state("x/state"));
+        let with_icon = |icon: &str| {
+            let m = manifest().replace("  status_bar: false", &format!("  icon: {icon}\n  icon_sha256: {}\n  icon_size: 18\n  status_bar: false", sha256_of(b"fixture icon bytes")));
+            app_package_validate(&widget_package_parse(&m).unwrap(), 1000, 1000)
+        };
+        assert!(with_icon("icon.ico").is_ok() && with_icon("art/state/icon.ico").is_ok());
+        for icon in ["state/saved.ico", "State/saved.ico", "STATE/saved.ico"] {
+            let err = with_icon(icon).unwrap_err();
+            assert!(err.contains("`spec.icon` is not a safe relative path"), "{icon}: {err}");
+        }
     }
 
     #[test]

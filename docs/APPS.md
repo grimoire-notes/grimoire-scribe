@@ -71,7 +71,9 @@ and SHA-256 before anything is written, and an update is staged before it replac
 
 `spec.icon` may name one of Grimoire's built-in icons, or a `.ico` bundled beside `package.yaml`.
 A bundled icon is a second package file: the installer fetches it from the manifest's folder, checks
-its `spec.icon_sha256` and `spec.icon_size` (at most 256 KiB), and saves it with the artifact. The
+its `spec.icon_sha256` and `spec.icon_size` (at most 256 KiB), and saves it with the artifact. Its
+path is never one inside the app's `state/` folder, whatever case the manifest writes that name in
+(the storage takes `State/` for `state/`). The
 launcher never reads the icon file: the sandboxed picture worker decodes its PNG entries and
 classic 1, 4, 8, 24 and 32-bit BMP entries (at most 256 px a side; the largest entry of at most
 64 px is taken, else the smallest) to a small grayscale bitmap, kept in
