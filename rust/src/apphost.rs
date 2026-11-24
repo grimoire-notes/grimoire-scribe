@@ -100,6 +100,9 @@ const HTTP_TOO_LARGE: &str = "The answer is too large.";
 /// (childcaps.rs): the margin a child with no number of its own has there.
 const HTTP_CHILD_MARGIN: u64 = 256 << 20;
 
+/// The kinds of a request's files: the endings of their names.
+const HTTP_FILE_KINDS: [&str; 4] = ["body", "status", "err", "request"];
+
 /// One request's files under the app's `state/http` folder, named by their common start: the
 /// answer (`.body`), curl's status code (`.status`) and error text (`.err`), and the upload
 /// (`.request`). They are removed when this is dropped, so no way out of a request keeps them.
@@ -113,9 +116,37 @@ impl HttpFiles {
     }
 
     fn remove(&self) {
-        for kind in ["body", "status", "err", "request"] {
+        for kind in HTTP_FILE_KINDS {
             let _ = std::fs::remove_file(self.path(kind));
         }
+    }
+}
+
+/// True for a name `http_start` gives a request's file: the process's number, a hyphen, the
+/// start's time as a number, a dot and one of the four kinds.
+fn http_file_name(name: &str) -> bool {
+    let number = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    name.rsplit_once('.').is_some_and(|(start, kind)| {
+        HTTP_FILE_KINDS.contains(&kind) && start.split_once('-').is_some_and(|(pid, tick)| number(pid) && number(tick))
+    })
+}
+
+/// Removes the request files an earlier run left in `folder`, an app's `state/http`: a Grimoire
+/// that stopped while a request ran removed none of them. Only plain files with a request file's
+/// name go. A link is neither followed nor removed, every other name stays, and a `folder` that
+/// is not a real folder is left as it is. For when no request of the host is in flight.
+fn http_sweep(folder: &str) {
+    if !std::fs::symlink_metadata(folder).is_ok_and(|m| m.is_dir()) {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(folder) else { return };
+    let left: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()) && e.file_name().to_str().is_some_and(http_file_name))
+        .map(|e| e.path())
+        .collect();
+    for path in left {
+        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -1054,12 +1085,15 @@ impl HostState {
         let Some(header_lines) = http_header_lines(headers) else { return -1 };
         self.http = None;
         let Some(dir) = self.state_path.rsplit_once('/').map(|(d, _)| d) else { return -1 };
-        if mkdir_p(&format!("{dir}/http")) != 0 {
+        let folder = format!("{dir}/http");
+        if mkdir_p(&folder) != 0 {
             return -1;
         }
+        // No request of this host is in flight now: what an earlier run left in the folder goes.
+        http_sweep(&folder);
         let tick = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
         // (from here every return drops `files`, or the job that holds it: the files go with it)
-        let files = HttpFiles { base: format!("{dir}/http/{}-{tick}", std::process::id()) };
+        let files = HttpFiles { base: format!("{folder}/{}-{tick}", std::process::id()) };
         let request_path = files.path("request");
         if !body.is_empty() && std::fs::write(&request_path, body).is_err() {
             return -1;
@@ -1676,6 +1710,85 @@ mod tests {
         drop(st);
         assert!(gone(pid));
         assert_eq!(request_files(&dir), none);
+    }
+
+    // The names http_start gives a request's files, and no other name.
+    #[test]
+    fn a_request_files_name_is_two_numbers_and_a_kind() {
+        for name in ["1-2.body", "1-2.status", "1-2.err", "1-2.request", "40213-1795000000123456789.body"] {
+            assert!(http_file_name(name), "{name:?}");
+        }
+        for name in [
+            "", "body", ".body", "1-2", "1-2.", "1-2.other", "1-2.body.tmp", "1-2.BODY", "12.body", "-2.body", "1-.body",
+            "x-2.body", "1-x.body", "1-2-3.body", "1 -2.body", "+1-2.body", "stand-in.body", "runtime.bin", "notes.txt",
+        ] {
+            assert!(!http_file_name(name), "{name:?}");
+        }
+    }
+
+    // What an earlier run left in the request folder is removed when the next request starts: the
+    // plain files with a request file's name, and nothing else.
+    #[test]
+    fn the_request_files_of_an_earlier_run_are_removed_at_the_next_start() {
+        let dir = scratch("earlier-run");
+        let folder = format!("{dir}/state/http");
+        let (_listener, silent) = silent_address();
+
+        // An earlier run that stopped with its request in flight: nothing removed the files.
+        let mut st = host(&dir);
+        assert_eq!(st.http_start("POST", &silent, "", b"upload"), 0, "{NEEDS_CURL}");
+        let job = st.http.as_mut().unwrap();
+        std::fs::write(job.files.path("body"), "part of an answer").unwrap();
+        job.child.kill().unwrap();
+        job.child.wait().unwrap();
+        std::mem::forget(st);
+        let left = request_files(&dir);
+        assert_eq!(request_kinds(&dir), ["body", "err", "request", "status"]);
+        std::fs::write(format!("{folder}/1-2.status"), "200").unwrap();
+
+        // Other things in the folder: other names, and a folder and a link with such a name.
+        let outside = format!("{dir}/outside");
+        std::fs::write(&outside, "kept").unwrap();
+        let mut others = vec!["1-2.other", "7-7.err", "8-8.body", "notes.txt", "x-2.body"];
+        std::fs::write(format!("{folder}/notes.txt"), "kept").unwrap();
+        std::fs::write(format!("{folder}/1-2.other"), "kept").unwrap();
+        std::fs::write(format!("{folder}/x-2.body"), "kept").unwrap();
+        std::fs::create_dir(format!("{folder}/7-7.err")).unwrap();
+        std::os::unix::fs::symlink(&outside, format!("{folder}/8-8.body")).unwrap();
+
+        // A request that is refused starts nothing and removes nothing.
+        let mut st = host(&dir);
+        assert_eq!(st.http_start("GET", &silent, "no colon", b""), -1);
+        assert_eq!(request_files(&dir).len(), left.len() + 1 + others.len());
+
+        // The next request: the earlier run's files are gone, the others are there, and the
+        // request has its own two.
+        assert_eq!(st.http_start("GET", &silent, "", b""), 0);
+        let now = request_files(&dir);
+        assert!(left.iter().all(|name| !now.contains(name)), "{now:?}");
+        assert!(!now.contains(&"1-2.status".to_string()), "{now:?}");
+        let own: Vec<&String> = now.iter().filter(|name| !others.contains(&name.as_str())).collect();
+        assert_eq!(own.len(), 2, "{now:?}");
+        assert!(own[0].ends_with(".err") && own[1].ends_with(".status") && http_file_name(own[0]), "{now:?}");
+        assert_eq!(now.len(), others.len() + 2, "{now:?}");
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "kept");
+        assert!(std::fs::symlink_metadata(format!("{folder}/8-8.body")).unwrap().file_type().is_symlink());
+        assert!(std::fs::symlink_metadata(format!("{folder}/7-7.err")).unwrap().is_dir());
+
+        // A request folder that is a link to a folder is left as it is.
+        let elsewhere = format!("{dir}/elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        std::fs::write(format!("{elsewhere}/1-2.body"), "kept").unwrap();
+        let link = format!("{dir}/link");
+        std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+        http_sweep(&link);
+        assert_eq!(std::fs::read_to_string(format!("{elsewhere}/1-2.body")).unwrap(), "kept");
+        http_sweep(&elsewhere);
+        assert!(!std::path::Path::new(&format!("{elsewhere}/1-2.body")).exists());
+
+        drop(st);
+        others.sort();
+        assert_eq!(request_files(&dir), others);
     }
 
     /// Serves one request at a local address: reads it whole (its head, and the upload its
