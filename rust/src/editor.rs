@@ -2975,10 +2975,12 @@ fn compose(a: &mut App, r: Rect) {
     }
     draw_menus(a, r);
     sel_draw(a, r);
-    if a.settings.status_on && a.settings.status_in_notebooks && rect_overlaps(r, Rect::new(0, 0, a.w, gui_status_h())) {
+    let strip = Rect::new(0, 0, a.w, gui_status_h());
+    if a.settings.status_on && a.settings.status_in_notebooks && rect_overlaps(r, strip) {
         // The page continues beneath the bar. It is drawn without a background, so the ink under it
         // still shows; a tap hides it, and another on the top strip brings it back (status.rs).
-        crate::globalui::gui_status_bar_transparent(&mut a.screen, a.w, sys_wall_clock());
+        // A draw of part of the strip repeats the time the whole strip was drawn with (status_bar_time).
+        crate::globalui::gui_status_bar_transparent(&mut a.screen, a.w, status_bar_time(rect_contains_rect(r, strip)));
     }
 }
 
@@ -12550,7 +12552,11 @@ pub fn editor_tick(a: &mut App, now: u32) {
     if crate::library::library_settings_active(a) {crate::library::library_tick(a,now);touch_context(a);return;}
     // The notebook's status bar keeps the clock too: one top-bar refresh when the minute changes, as
     // the Library's does (library_tick). Without it the bar keeps the minute it was last drawn with.
-    if !a.asleep && crate::status::status_bar_visible(a) && crate::library::library_app_minute(a) {
+    // The refresh waits for the pen, over the page, the Pages view and the Graph alike (status_busy:
+    // the pen near, a stroke or a drag in progress, or the driver in pen mode). The minute is not
+    // read until then (library_app_minute stores the one it reads), so when the pen has left the
+    // refresh comes once, with the minute that is current then.
+    if !a.asleep && crate::status::status_bar_visible(a) && !status_busy(a) && crate::library::library_app_minute(a) {
         let r=Rect::new(0,0,a.w,crate::globalui::gui_status_h());
         compose(a,r);
         app_invalidate(a,r,RefreshMode::Ui);
