@@ -2970,10 +2970,12 @@ fn compose(a: &mut App, r: Rect) {
     }
     draw_menus(a, r);
     sel_draw(a, r);
-    if a.settings.status_on && a.settings.status_in_notebooks && rect_overlaps(r, Rect::new(0, 0, a.w, gui_status_h())) {
+    let strip = Rect::new(0, 0, a.w, gui_status_h());
+    if a.settings.status_on && a.settings.status_in_notebooks && rect_overlaps(r, strip) {
         // The page continues beneath the bar. It is drawn without a background, so the ink under it
         // still shows; a tap hides it, and another on the top strip brings it back (status.rs).
-        crate::globalui::gui_status_bar_transparent(&mut a.screen, a.w, sys_wall_clock());
+        // A draw of part of the strip repeats the time the whole strip was drawn with (status_bar_time).
+        crate::globalui::gui_status_bar_transparent(&mut a.screen, a.w, status_bar_time(rect_contains_rect(r, strip)));
     }
 }
 

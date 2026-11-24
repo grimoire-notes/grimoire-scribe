@@ -225,6 +225,24 @@ pub fn status_busy(a: &App) -> bool {
     PEN_NEAR.with(|n| n.get()) || editor_busy(a) || display_pen_mode_on()
 }
 
+thread_local! {
+    /// The time a notebook's page last drew its whole bar with (0 before the first).
+    static BAR_TIME: Cell<i64> = const { Cell::new(0) };
+}
+
+/// The time a notebook's page draws its bar with (editor.rs compose). A draw of the whole strip takes
+/// the clock's and keeps it; a draw of part of the strip (a stroke's frame under the bar, its settle)
+/// repeats the kept one. So while the minute's refresh waits for the pen (status_busy), a refresh of
+/// the page under the bar never puts part of the next minute on the panel.
+pub fn status_bar_time(whole: bool) -> i64 {
+    BAR_TIME.with(|t| {
+        if whole || t.get() == 0 {
+            t.set(sys_wall_clock());
+        }
+        t.get()
+    })
+}
+
 /// A status setting changed: the shared bar redraws with the next composition; there is no overlay to
 /// refresh.
 pub(crate) fn ask_change(_a: &App) {}
@@ -432,6 +450,26 @@ mod tests {
             display_pen_mode(false);
             assert!(!status_busy(&a));
         }
+    }
+
+    #[test]
+    fn part_of_the_strip_is_drawn_with_the_time_the_whole_strip_was() {
+        // (the clock here is the machine's, or the runner's, which follows it until a script sets it)
+        let now = sys_wall_clock();
+        let whole = status_bar_time(true);
+        assert!((now..=now + 5).contains(&whole), "{now} {whole}");
+        // an earlier whole draw: its time is repeated for a part, however often
+        BAR_TIME.with(|t| t.set(now - 600));
+        assert_eq!(status_bar_time(false), now - 600);
+        assert_eq!(status_bar_time(false), now - 600);
+        // the next whole draw takes the clock's again, and parts follow it
+        let whole = status_bar_time(true);
+        assert!((now..=now + 5).contains(&whole), "{now} {whole}");
+        assert_eq!(status_bar_time(false), whole);
+        // with no whole draw before it, a part takes the clock's too
+        BAR_TIME.with(|t| t.set(0));
+        let first = status_bar_time(false);
+        assert!((now..=now + 5).contains(&first), "{now} {first}");
     }
 
     #[test]

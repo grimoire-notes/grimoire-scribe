@@ -8,6 +8,9 @@
 # status_busy, which editor_tick asks). When the pen has left it comes once, with the minute that is current
 # then; a finger coming down takes a "near" back too, as it did for the corner. The same over the page, the Pages
 # view and the Graph. Before, the strip was refreshed under a hovering pen and between two moves of a stroke.
+# While a minute waits, a stroke's own refreshes that reach the strip show the time the strip holds, never part
+# of the next minute (status.rs status_bar_time: the page draws part of the strip with the time the whole strip
+# was last drawn with).
 # The time on the panel is read as the dark pixels of the strip's left end (the time and the date, 2023-11-14
 # UTC from 22:13 on: each minute here has a count of its own beside the one before it).
 # (past the two launch repaints, at 1.2 s and 3.5 s, which refresh the whole screen)
@@ -89,6 +92,29 @@ expect display.presents is ui 0 0 1860 78
 expect display.dark.45.0.400.60 is 1644
 wait 2000
 expect display.presents is
+# a stroke beside the time while a minute waits (down the left of it and along under it, no ink on it): its
+# frame and its settle reach the time, and the time they show is still the strip's, whole
+pen hover 900 900
+clock 1700000360
+wait 300
+expect display.presents is
+pen down 30 8 0.6
+pen move 30 40 0.6
+pen move 30 70 0.6
+pen move 130 70 0.6
+pen move 240 70 0.6
+wait 100
+expect display.presents is fast 25 3 222 74
+pen up 240 70
+wait 2000
+expect display.presents is ui 13 0 246 89
+expect display.dark.45.0.400.60 is 1644
+pen leave
+wait 300
+expect display.presents is ui 0 0 1860 78
+expect display.dark.45.0.400.60 is 1636
+wait 2000
+expect display.presents is
 # the Pages view, where the pen drags pages: the same
 tap panel pages
 wait 500
@@ -99,14 +125,14 @@ expect display.presents not -1
 wait 2000
 expect display.presents is
 pen hover 900 1200
-clock 1700000360
+clock 1700000420
 wait 300
 expect display.presents is
-expect display.dark.45.0.400.60 is 1644
+expect display.dark.45.0.400.60 is 1636
 pen leave
 wait 300
 expect display.presents is ui 0 0 1860 78
-expect display.dark.45.0.400.60 is 1636
+expect display.dark.45.0.400.60 is 1716
 wait 2000
 expect display.presents is
 # the Graph, which the pen drags: the same
@@ -118,13 +144,13 @@ expect display.presents not -1
 wait 2000
 expect display.presents is
 pen hover 900 1200
-clock 1700000420
+clock 1700000480
 wait 300
 expect display.presents is
 pen leave
 wait 300
 expect display.presents is ui 0 0 1860 78
-expect display.dark.45.0.400.60 is 1716
+expect display.dark.45.0.400.60 is 1604
 wait 2000
 expect display.presents is
 quit
