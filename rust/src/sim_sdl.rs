@@ -1572,15 +1572,31 @@ fn live_toast_stale(a: Option<&mut App>, key: &[u8], out: &mut String, cap: usiz
 
 /// "live.frame.stale": how many pixels of Live view's frame (what a browser is sent) differ from the app's
 /// screen, the editor's panel left out (the frame holds the page under it, the panel being a layer of its
-/// own): 0 when every change on the screen went out to the frame with its present; "none" while Live view
-/// is off.
+/// own) and a notebook's status bar taken off: the bar is a layer of its own too, the frame holds the screen
+/// as it was under the bar (app.rs live_push_under_status), and the count is against that screen, the bar's
+/// rows put back after. 0 when every change on the screen went out to the frame with its present; "none"
+/// while Live view is off.
 fn live_frame_stale(a: Option<&mut App>, key: &[u8], out: &mut String, cap: usize) -> bool {
     if key != b"live.frame.stale" {
         return false;
     }
     let Some(a) = a else { return false };
     let skip = if a.scr == ScreenId::Editor { editor_live_hole(a) } else { RECT_EMPTY };
-    match live_frame_differs(&a.screen, skip) {
+    let zone = rect_intersect(crate::status::status_live_zone(a), Rect::new(0, 0, a.screen.w, a.screen.h));
+    let (stride, w) = (a.screen.stride as usize, zone.w as usize);
+    let rows = |y: i32| (y as usize) * stride + zone.x as usize;
+    let mut bar = Vec::with_capacity(w * zone.h.max(0) as usize);
+    for y in zone.y..zone.y + zone.h {
+        bar.extend_from_slice(&a.screen.px[rows(y)..rows(y) + w]);
+    }
+    let under = !rect_is_empty(zone) && crate::globalui::gui_status_under_put(&mut a.screen, zone);
+    let differs = live_frame_differs(&a.screen, skip);
+    if under {
+        for (i, y) in (zone.y..zone.y + zone.h).enumerate() {
+            a.screen.px[rows(y)..rows(y) + w].copy_from_slice(&bar[i * w..][..w]);
+        }
+    }
+    match differs {
         Some(n) => csnprintf!(out, cap, "%lld", n),
         None => csnprintf!(out, cap, "%s", "none"),
     };
