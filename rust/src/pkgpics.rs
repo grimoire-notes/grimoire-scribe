@@ -6,7 +6,9 @@
 //! - What a screen asks (UI thread): `PicSrc::of` stats the file (no byte of it is read), `picture_cached` reads
 //!   what the cache holds for it, and with nothing there `picture_request` queues a job of its own
 //!   (BgKind::PackagePictures; path: `<form>.<size>.<mtime>:<the file's path from Grimoire's folder>`), at most
-//!   PICTURES_AT_ONCE of them queued or running at a time, and none in a session in which a sandbox step failed.
+//!   PICTURES_AT_ONCE of them queued or running at a time, and none in a session in which a sandbox step failed
+//!   (a step refused to a picture's own worker, in its job's child, reaches the UI by the job's exit status:
+//!   CODE_SANDBOX, bgjob.rs).
 //!   It ranks with Files' previews (bgjob.rs `rank`): never a job the user waits on by name.
 //! - The job (a background child, `bg_package_picture`): takes only a file of the form's own folder
 //!   (`packages/apps/` for an app's icon, `package-store/assets/` for the Store's), opens it from Grimoire's folder
@@ -52,6 +54,11 @@ pub const ICON_SIDE: i32 = 256;
 pub const SHOT_SIDE: i32 = 2560;
 /// The largest catalog screenshot file read (packagestore.rs downloads none larger).
 pub const SHOT_FILE_MAX: usize = 8 * 1024 * 1024;
+
+/// A job whose worker the sandbox refused a step (its exit status, a template PDF's number for the same:
+/// bgwork_tplpdf.rs): bgjob.rs marks the UI's session broken too, so that no screen asks for a picture again until
+/// Grimoire starts again.
+pub const CODE_SANDBOX: i32 = 4;
 
 /// What a picture is, which says where its file may be, what the worker reads it as and how big it may come back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -363,7 +370,9 @@ enum Fail {
 
 /// BgKind::PackagePictures, in the background child: the picture of the file `path` names (the job's path), its
 /// "no picture" mark or its first try's record, in the cache; then the cache's folder held to its limits. 0 when the
-/// job wrote one of them or found the picture or the mark there, -1 when nothing was written (the log says why).
+/// job wrote one of them or found the picture or the mark there, -1 when nothing was written (the log says why),
+/// CODE_SANDBOX when that was because the sandbox refused the worker a step (this child's session is broken then,
+/// picwork.rs; its exit status tells the UI's).
 pub fn bg_package_picture(path: &str) -> i32 {
     let t0 = real_now_ms();
     let r = make(path);
@@ -384,7 +393,11 @@ pub fn bg_package_picture(path: &str) -> i32 {
         Ok((_, Outcome::There)) => 0,
         Err(why) => {
             qlog!("package pictures: nothing made (%s)", why.as_str());
-            -1
+            if why == NO_WORKER && crate::sandbox::session_broken() {
+                CODE_SANDBOX
+            } else {
+                -1
+            }
         }
     };
     if let Ok((form, Outcome::Made | Outcome::Marked(_) | Outcome::Once(_))) = r {

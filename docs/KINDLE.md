@@ -824,6 +824,10 @@ a file's name: the form, timings, reasons):
   32 files or 48 MiB of screenshots, the oldest go.
 - `bg: N package picture(s) dropped (Grimoire ends)`: pictures still queued when Grimoire closed; none is made
   after.
+- `bg: the sandbox refused a package picture's worker a step: no worker is asked for again until Grimoire starts
+  again`: after a `nothing made (no sandboxed worker can be had)` whose worker could not take a sandbox step. No
+  picture is asked for again in that run, and the launcher and the Store keep their glyphs. Send the lines
+  around it.
 
 ## Touch gestures and the touch trace
 

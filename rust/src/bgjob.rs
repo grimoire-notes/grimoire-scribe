@@ -60,7 +60,8 @@ pub enum BgKind {
     /// for it: an installed app's bundled icon or a Package Store icon or screenshot, made by the sandboxed worker
     /// into grimoire/.cache/packages, or its "no picture" mark (pkgpics.rs, 2.3, issue #236). One file a job, held
     /// to a few seconds, never one the user waits on by name: it runs with Files' previews (`rank`); dropped at
-    /// exit. Ends 0 or 1.
+    /// exit. Ends 0 or 1, or 4 when the sandbox refused its worker a step (the session is then broken here too, and
+    /// the pictures still queued are dropped).
     PackagePictures = 12,
 }
 
@@ -279,6 +280,13 @@ pub fn bg_poll_job(done_kind:Option<&mut i32>,mut done_id:Option<&mut FixedStr<S
             if template_pdf(&job) && code == crate::bgwork_tplpdf::CODE_SANDBOX {
                 crate::sandbox::session_set_broken();
                 qlog!("bg: the sandbox refused a template PDF's worker a step: no worker is asked for again until Grimoire starts again");
+            }
+            // (a picture's worker refused a sandbox step, 2.3, issue #236: the same, so that no screen asks for a
+            // picture again in this session; the pictures still queued would each fork to find the same, and go)
+            if kind == BgKind::PackagePictures && code == crate::pkgpics::CODE_SANDBOX {
+                crate::sandbox::session_set_broken();
+                with(|s| s.q.retain(|j| j.kind != BgKind::PackagePictures));
+                qlog!("bg: the sandbox refused a package picture's worker a step: no worker is asked for again until Grimoire starts again");
             }
             // (a font check's 3: some files were still being copied and wait for the next look)
             let ok = code == 0 || (is_pdf && (code == 2 || code == 3)) || (kind == BgKind::FontCheck && (code == 3 || code == 5)) || tpl_more;
@@ -827,11 +835,13 @@ fn start_job(j: Job, extra: bool) -> bool {
         // buffers. (A PDF import slice's 2 and 3 mean done with blank pages, and more to do; a font check's 3,
         // 4, 5 and 6, some files wait, no worker can be had, more fonts are left, and what it finds cannot be kept;
         // a copy's 2, 3 and 4, the file is bigger than its folder takes, is no longer the one listed, and has too
-        // long a path; a template PDF's 3 and 4, more pages are left, and the sandbox refused its worker a step.)
+        // long a path; a template PDF's 3 and 4, more pages are left, and the sandbox refused its worker a step; a
+        // package picture's 4, the same.)
         let says_more = (j.kind == BgKind::PdfImport && (rc == 2 || rc == 3))
             || (j.kind == BgKind::FontCheck && (rc == 3 || rc == 4 || rc == 5 || rc == 6))
             || (j.kind == BgKind::CopyFile && (rc == 2 || rc == 3 || rc == 4))
-            || (template_pdf(&j) && (rc == crate::bgwork_tplpdf::CODE_MORE || rc == crate::bgwork_tplpdf::CODE_SANDBOX));
+            || (template_pdf(&j) && (rc == crate::bgwork_tplpdf::CODE_MORE || rc == crate::bgwork_tplpdf::CODE_SANDBOX))
+            || (j.kind == BgKind::PackagePictures && rc == crate::pkgpics::CODE_SANDBOX);
         unsafe { libc::_exit(if rc == 0 { 0 } else if says_more { rc } else { 1 }) };
     }
     let beside = with(|s| {

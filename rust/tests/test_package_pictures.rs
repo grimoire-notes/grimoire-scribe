@@ -491,8 +491,9 @@ fn the_request_queues_a_few_jobs_at_a_time() {
 }
 
 // No worker to be had (none starts, or a sandbox step fails): nothing is written, no mark and no try, and nothing is
-// decoded in the writer; a later look asks again. In a session whose sandbox step failed nothing more is asked for.
-// (Last: it leaves this process without picture workers.)
+// decoded in the writer; a later look asks again. A sandbox step refused to a picture's worker, in the job's own
+// child as the app runs it: the child's exit status marks this process's session broken too, the pictures still
+// queued are dropped, and nothing more is asked for. (Last: it leaves this process without picture workers.)
 fn no_worker_writes_nothing() {
     clean_env();
     let g = root();
@@ -515,19 +516,36 @@ fn no_worker_writes_nothing() {
     check!(all.iter().all(|s| matches!(picture_cached(s), Cached::Nothing)));
     check!(cache_names(PicForm::AppIcon).is_empty() && cache_names(PicForm::Screenshot).is_empty());
     check!(!grimoire::picwork::in_fallback() && !grimoire::sandbox::session_broken());
-    // a sandbox step fails (the worker says so before it reads a byte)
+    // a sandbox step fails (the worker says so before it reads a byte), in the jobs' own children: the three are
+    // asked for and queued; the first one's child ends with the status that says so, this process's session is
+    // broken by it, and the two still queued never run
     clean_env();
     std::env::set_var("GRIMOIRE_WORK_FAIL_STEP", "seccomp");
+    check!(CODE_SANDBOX == 4 && CODE_SANDBOX == grimoire::bgwork_tplpdf::CODE_SANDBOX);
+    let (asked, log) = with_log("nosandbox", || {
+        let asked: Vec<Ask> = all.iter().map(picture_request).collect();
+        settle();
+        asked
+    });
+    check!(asked.iter().all(|a| matches!(a, Ask::Job(_))));
+    check!(log.matches("nothing made (no sandboxed worker can be had)").count() == 1);
+    check!(log.matches("bg: the sandbox refused a package picture's worker a step").count() == 1);
+    check!(log.matches("bg: package pictures of a file").count() == 1 && bg_last_exit() == CODE_SANDBOX);
+    check!(!log.contains("pictures decode in the writer"));
+    check!(grimoire::sandbox::session_broken());
+    check!(all.iter().all(|s| matches!(picture_cached(s), Cached::Nothing)));
+    check!(cache_names(PicForm::AppIcon).is_empty() && cache_names(PicForm::Screenshot).is_empty());
+    // nothing more is asked for in this session: no job, no child
+    check!(all.iter().all(|s| picture_request(s) == Ask::No) && !bg_busy() && bg_kind_count(BgKind::PackagePictures) == 0);
+    // (and the job called here, in the session that is broken now: the same status, nothing written)
     for s in &all {
-        let (rc, log) = with_log("nosandbox", || job(s));
-        check!(rc == -1 && log.contains("nothing made (no sandboxed worker can be had)"));
+        let (rc, log) = with_log("nosandbox2", || job(s));
+        check!(rc == CODE_SANDBOX && log.contains("nothing made (no sandboxed worker can be had)"));
         check!(!log.contains("pictures decode in the writer"));
         check!(matches!(picture_cached(s), Cached::Nothing));
     }
     check!(cache_names(PicForm::AppIcon).is_empty() && cache_names(PicForm::Screenshot).is_empty());
-    // (a step failed in this process: the session is broken, and no picture is asked for in it)
-    check!(grimoire::sandbox::session_broken() && grimoire::picwork::in_fallback());
-    check!(picture_request(&all[0]) == Ask::No && !bg_busy());
+    check!(grimoire::picwork::in_fallback());
     clean_env();
 }
 

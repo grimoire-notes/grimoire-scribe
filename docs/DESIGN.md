@@ -3647,7 +3647,11 @@ cache and checked (`pkgpics.rs`, `appicon.rs`, `packagestore.rs`).
 - **What a job ends with**, by previews' rule for a try: a picture; a "no picture" mark at once when the worker
   refuses the bytes; a try on record (`once`) the first time a worker ends, lies or runs out of time, and the
   mark only the second time; or nothing at all when no worker can be had, memory or room is short, or the file
-  changed or is gone. It ends 0 or 1 only.
+  changed or is gone. It ends 0 or 1, or 4 (`pkgpics::CODE_SANDBOX`, a template PDF's number for the same) when
+  the sandbox refused its worker a step: the step failed in the job's child, whose session is broken, and
+  `bgjob.rs` takes that exit status as it takes a template PDF's and marks the UI's session broken too
+  (`bg_poll_job`), dropping the pictures still queued. So nothing more is asked for in that session, by any
+  screen, until Grimoire starts again.
 - **The cache**, `grimoire/.cache/packages/icons/` and `grimoire/.cache/packages/shots/` (docs/FORMAT.md),
   `<key>.pgm` and `<key>.info`, `<key>` the FNV-1a 64 hash of the file's path, size and time, so a changed file
   has an entry of its own (no trust rides on this cache, unlike a font's verdict, so it is tied to the file's
@@ -3677,7 +3681,8 @@ cache and checked (`pkgpics.rs`, `appicon.rs`, `packagestore.rs`).
   is its own place. The scenarios that count these refreshes hold the clock still with a `clock` line.
 - **Logs** (docs/KINDLE.md): `bg: package pictures of a file (pid N)`, then `package pictures: app-icon|icon|screenshot
   made in T ms`, `... has no picture (refused|slow|ended), marked`, `... gave no picture (slow|ended) ...; one more
-  try at another look`, `nothing made (<why>)`, and `the cache of icons|shots pruned: ...`; never a name.
+  try at another look`, `nothing made (<why>)`, and `the cache of icons|shots pruned: ...`; never a name. And
+  `bg: the sandbox refused a package picture's worker a step: ...` when a job's exit status said so.
 - **Tests**: `rust/tests/test_picwork_small.rs` (the worker's `T`: an `.ico` with a BMP entry and one with a PNG
   entry, a PNG, a JPEG, one over the side, the refused ones, a worker that ends or hangs, stand-in workers whose
   answers the writer must not take); `test_picwork_fallback.rs` (no pool decodes a small picture in the writer);

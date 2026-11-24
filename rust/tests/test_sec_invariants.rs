@@ -1256,6 +1256,12 @@ fn packages_pictures_are_told_as_they_are() {
     // no link followed, one run of the worker and nothing else
     let broken = "if crate::sandbox::session_broken() { return Ask::No; }";
     told_on(&mut fails, DESIGN, "nothing is asked for in a session in which a sandbox step already failed", PKGPICS, broken);
+    // (a step refused in the job's own child reaches the UI's session by the job's exit status)
+    let status = "`bgjob.rs` takes that exit status as it takes a template PDF's and marks the UI's session broken too";
+    told_on(&mut fails, DESIGN, status, PKGPICS, "if why == NO_WORKER && crate::sandbox::session_broken() { CODE_SANDBOX } else { -1 }");
+    told_on(&mut fails, DESIGN, status, BGJOB, "if kind == BgKind::PackagePictures && code == crate::pkgpics::CODE_SANDBOX { crate::sandbox::session_set_broken();");
+    told_on(&mut fails, DESIGN, status, BGJOB, "|| (j.kind == BgKind::PackagePictures && rc == crate::pkgpics::CODE_SANDBOX);");
+    beside(&mut fails, DESIGN, "or 4 (`pkgpics::CODE_SANDBOX`", &grimoire::pkgpics::CODE_SANDBOX.to_string());
     told_on(&mut fails, DESIGN, "at most 4 queued or running at a time (`PICTURES_AT_ONCE`; the queue holds 16)", PKGPICS, "if bg_kind_count(BgKind::PackagePictures) >= PICTURES_AT_ONCE { return Ask::Later; }");
     beside(&mut fails, DESIGN, "`PICTURES_AT_ONCE`", &grimoire::pkgpics::PICTURES_AT_ONCE.to_string());
     told_on(&mut fails, DESIGN, "While the queue is full none is queued (`bg_queue_full`", PKGPICS, "if bg_queue_full() { return Ask::Later; }");

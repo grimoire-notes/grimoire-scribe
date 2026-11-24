@@ -5,8 +5,10 @@
 # Packages' pictures with no worker to be had (2.3, issue #236): every worker here refuses a sandbox step before it
 # reads a byte, as a Kindle whose sandbox does not hold would. Nothing decodes the pictures then, in a worker or in
 # the app: the home's app row keeps the app's built-in icon, a Store card and the detail page keep the package
-# glyph, and the screenshot's frame keeps its glyph and no longer says a screenshot is loading once its job has ended.
-# Each picture's job ends having written nothing, and the screens stay usable.
+# glyph, and the screenshot's frame keeps its glyph and does not say a screenshot is loading.
+# The first picture's job (the app's icon, asked for by the home) ends having written nothing, and its exit status
+# says the sandbox refused its worker a step: from then on no picture is asked for in this run (no job is queued
+# for the Store's icon or for the screenshot), and the screens stay usable.
 wait 300
 expect library.apps is com.example.fixture
 waitbg
@@ -17,15 +19,13 @@ tap library app.store
 wait 400
 expect library.store.view is list
 expect library.store.packages is 2
-waitbg
-wait 200
+expect bg.busy is 0
 expect library.store.list.icons is 0
 shot 01-catalog-glyphs
 tap library store.package.com.example.fixture
 wait 400
 expect library.store.view is detail
-waitbg
-wait 200
+expect bg.busy is 0
 expect library.store.icon.loaded is 0
 expect library.store.shot.loaded is 0
 expect library.store.shot.coming is 0
