@@ -212,8 +212,10 @@ http_cancel()
 ```
 
 `http_start` returns 0 when curl started, -1 for a bad argument or a failed start, -2 when the
-manifest lacks `network:http`, and -3 while another request is in flight. The method is
-`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` or another uppercase token.
+manifest lacks `network:http`, and -3 while another request is in flight. The method is 1 to 16
+ASCII letters, such as `GET`, `POST`, `PUT`, `PATCH`, `DELETE` or `HEAD`: lower case is read as
+upper case, and white space around the method is not part of it (with it, the method's text is at
+most 64 bytes). Any other method is a bad argument.
 
 The address begins with `http://` or `https://`, is at most 4096 bytes, has no space and no
 control character, and is taken as written: brackets and braces in it are part of the address.
@@ -241,10 +243,17 @@ header lines and the empty line behind them, as the server sent them, of each an
 when redirects were followed. The length those lines state is not counted against the answer's
 limit.
 
-The upload is at most 2 MiB. The answer is at most 8 MiB (8,388,608 bytes). A longer answer ends
+The upload is at most 2 MiB and is sent as it is. A request with an upload and no `Content-Type`
+line of its own is sent with curl's `Content-Type: application/x-www-form-urlencoded`: an app
+that uploads anything else says so with its own line.
+
+The answer is at most 8 MiB (8,388,608 bytes). A longer answer ends
 the request: at once when the server states its length, and otherwise once it has grown past the
 limit, whether or not the app polls. Such a request has no status code (`http_status` is -1), no
 answer, and its `http_error` is `The answer is too large.`
+
+A request has 30 seconds, its redirects included: one that has not ended by then ends as a
+failure.
 
 `http_poll` returns 0 while the request runs and 1 when it has finished; after that `http_status`
 is the HTTP status code, `http_body` is the answer and `http_error` is empty. A request that curl
@@ -253,7 +262,8 @@ answer had arrived) has no status code (`http_status` is -1) and no answer, and 
 is curl's one-line failure: the part of an answer that had arrived is not given. Poll it after a
 `request_redraw`; none of these calls blocks drawing or touching the screen. The host looks after
 a request between the app's polls: a request that has ended keeps its outcome for the next
-`http_poll`, until the next request or `http_cancel`.
+`http_poll`, until the next request starts (`http_start` returns 0) or `http_cancel`. An
+`http_start` that returns anything else leaves that outcome as it was.
 
 The host does not provide filesystem or shell access.
 

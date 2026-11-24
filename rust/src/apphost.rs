@@ -1168,7 +1168,8 @@ impl HostState {
             return -1;
         }
         let Some(header_lines) = http_header_lines(headers) else { return -1 };
-        self.http = None;
+        // (an ended request stays as it is until this one has started: a start that fails from
+        // here on leaves its outcome readable, as a refused one does)
         let Some(dir) = self.state_path.rsplit_once('/').map(|(d, _)| d) else { return -1 };
         let folder = format!("{dir}/http");
         // The request's files are made in the app's state folder and its `http` folder, which are
@@ -1706,6 +1707,44 @@ mod tests {
         assert_eq!(st.http_start("GET", at, "", b""), -2);
         assert_eq!(outcome(&st), ended);
         assert_eq!(st.http_poll(), 1);
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+    }
+
+    // A start that fails after its arguments were accepted (the request folder is not a real
+    // folder, the program cannot be started) leaves the outcome of an ended request as it was
+    // too. The next request that starts takes its place.
+    #[test]
+    fn a_start_that_fails_leaves_an_ended_requests_outcome_readable() {
+        let dir = scratch("failed-keeps");
+        let mut st = host_standing_in(&dir, "printf 201");
+        stand_in(&mut st, &dir, "exit 0", "200", Some(5));
+        poll_to_end(&mut st);
+        let ended = (200, vec![0u8; 5], String::new());
+        assert_eq!(outcome(&st), ended);
+        let at = "http://127.0.0.1:9/";
+
+        // The program to start is not there: the start fails after the request's files were made.
+        let stand_in_program = std::mem::replace(&mut st.http_stand_in, vec![format!("{dir}/no-such-program")]);
+        assert_eq!(st.http_start("POST", at, "X-A: 1", b"upload"), -1);
+        assert_eq!(outcome(&st), ended);
+        assert_eq!(st.http_poll(), 1);
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+        st.http_stand_in = stand_in_program;
+
+        // The request folder is a link.
+        let folder = format!("{dir}/state/http");
+        std::fs::remove_dir(&folder).unwrap();
+        std::os::unix::fs::symlink(&dir, &folder).unwrap();
+        assert_eq!(st.http_start("POST", at, "X-A: 1", b"upload"), -1);
+        assert_eq!(outcome(&st), ended);
+        assert_eq!(st.http_poll(), 1);
+        std::fs::remove_file(&folder).unwrap();
+
+        // A request that starts takes the ended one's place.
+        assert_eq!(st.http_start("GET", at, "", b""), 0);
+        assert_eq!(st.http.as_ref().unwrap().code, -1);
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (201, Vec::new(), String::new()));
         assert_eq!(request_files(&dir), Vec::<String>::new());
     }
 
@@ -2481,6 +2520,28 @@ mod tests {
         assert_eq!(st.http_start(" head ", "http://127.0.0.1:9/", "", b"u"), -1);
         assert_eq!(outcome(&st), before);
         assert_eq!(request_files(&dir), none);
+    }
+
+    // One Content-Type line arrives with a real upload: curl's default, or the request's own line
+    // in its place. A request with no upload has none.
+    #[test]
+    fn a_real_upload_carries_one_content_type_line_and_its_own_when_it_has_one() {
+        let dir = scratch("content-type");
+        let mut st = host(&dir);
+        let mut kinds = |headers: &str, upload: &[u8]| -> Vec<String> {
+            let (at, served) = serve_once(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_vec());
+            assert_eq!(st.http_start("POST", &format!("{at}/"), headers, upload), 0, "{NEEDS_CURL}");
+            poll_to_end(&mut st);
+            assert_eq!(outcome(&st), (200, b"ok".to_vec(), String::new()));
+            let request = served.join().unwrap();
+            assert!(request.ends_with(&format!("\r\n\r\n{}", String::from_utf8_lossy(upload))), "{request}");
+            request.split("\r\n").filter(|l| l.to_ascii_lowercase().starts_with("content-type")).map(String::from).collect()
+        };
+        assert_eq!(kinds("", b"a=1"), ["Content-Type: application/x-www-form-urlencoded"]);
+        assert_eq!(kinds("Accept: text/plain", b"{}"), ["Content-Type: application/x-www-form-urlencoded"]);
+        assert_eq!(kinds("Content-Type: application/json", b"{}"), ["Content-Type: application/json"]);
+        assert_eq!(kinds("content-type: text/plain\nX-A: 1", b"hello"), ["content-type: text/plain"]);
+        assert_eq!(kinds("", b""), Vec::<String>::new());
     }
 
     // One User-Agent line arrives with a real request: the host's default, or the request's own
