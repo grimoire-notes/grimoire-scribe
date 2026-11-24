@@ -5,10 +5,11 @@
 # Widget modules that run for long (issue #208), with the packages of tests/fixtures/widgetruns (written by
 # rust/tests/widgetfix: `make widget-fixtures`). App time is the script's (GRIMOIRE_SIM_CLOCK=script): each
 # `wait` moves it on by exactly its milliseconds, so what comes due in a stretch is the same on any machine.
-# (the clock corner held still: its minute's refresh would land among the counted ones)
+# (the status bar's clock held still: its minute's refresh would land among the counted ones)
 clock 1700000000
 wait 3600
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 1564 2254
 wait 300
@@ -21,16 +22,16 @@ expect editor.widgets.open is 1
 tap panel widgets.test.runs.loop
 wait 400
 expect editor.widgets is 1 test.runs.loop
-expect editor.widget.0.rect is 1456 28 220 160
+expect editor.widget.0.rect is 1456 106 220 160
 expect editor.widget.0.error is The widget stopped: all fuel consumed by WebAssembly
 expect editor.widget.0.hits is 0
-# A frame whose module failed says the reason first, then whose widget it is. This body, 192x74 at 1470,100, has
+# A frame whose module failed says the reason first, then whose widget it is. This body, 192x74 at 1470,178, has
 # room for one line: the start of the reason ("The widget s..."), at the top of the body, and nothing under it or
 # under the frame.
 expect editor.widget.0.says is The widget stopped: all fuel consumed by WebAssembly | Loop v1.0.0 · Grimoire tests
-expect display.dark.1470.100.192.40 is 1576
-expect display.dark.1470.140.192.34 is 0
-expect display.dark.1456.192.220.40 is 0
+expect display.dark.1470.178.192.40 is 1576
+expect display.dark.1470.218.192.34 is 0
+expect display.dark.1456.270.220.40 is 0
 shot 01-loop
 # (the frame is still a frame: it closes)
 tap panel widget.0.close
@@ -45,7 +46,7 @@ wait 300
 tap panel widgets.test.runs.ticker
 wait 400
 expect editor.widgets is 1 test.runs.ticker
-expect editor.widget.0.rect is 1456 28 220 160
+expect editor.widget.0.rect is 1456 106 220 160
 expect editor.widget.0.error is
 expect editor.widget.0.status is 1
 waitfor editor.widget.0.status is 2
@@ -57,23 +58,23 @@ expect display.presents is
 # 200 ms more: the pass that was due, and one refresh of the frame's rectangle.
 wait 200
 expect editor.widget.0.status is 3
-expect display.presents is ui 1456 28 220 160
+expect display.presents is ui 1456 106 220 160
 # And so on, a pass and a refresh a second.
 waitfor editor.widget.0.status is 4
-expect display.presents is ui 1456 28 220 160
+expect display.presents is ui 1456 106 220 160
 wait 900
 expect editor.widget.0.status is 4
 expect display.presents is
 wait 200
 expect editor.widget.0.status is 5
-expect display.presents is ui 1456 28 220 160
+expect display.presents is ui 1456 106 220 160
 shot 02-ticker
 # Minimized, the frame draws no body: its module has no pass and its square is not refreshed, however long the
 # request has been due. Three seconds: nothing.
 tap panel widget.0.min
 wait 300
 expect editor.widget.0.state is minimized
-expect editor.widget.0.rect is 1456 28 112 112
+expect editor.widget.0.rect is 1456 106 112 112
 expect display.presents not -1
 wait 3000
 expect editor.widget.0.status is 5
@@ -89,7 +90,7 @@ expect editor.widget.0.status is 6
 expect display.presents is
 wait 200
 expect editor.widget.0.status is 7
-expect display.presents is ui 1456 28 220 160
+expect display.presents is ui 1456 106 220 160
 tap panel widget.0.close
 wait 300
 expect editor.widgets is 0
@@ -103,7 +104,7 @@ wait 400
 expect editor.widgets is 1 test.runs.bare
 expect editor.widget.0.error is
 expect editor.widget.0.status is 1
-expect display.dark.1470.100.192.74 is 0
+expect display.dark.1470.178.192.74 is 0
 expect display.presents not -1
 wait 3000
 expect editor.widget.0.status is 1
