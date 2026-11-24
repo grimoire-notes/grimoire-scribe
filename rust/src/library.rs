@@ -9645,9 +9645,13 @@ fn pictures_due_draw(a: &mut App) {
             return;
         }
         crate::widgetpkgui::packages_ui_at_rest(a)
-    } else if a.scr != ScreenId::Library || files_shown(a) || graph_shown(a) || !matches!(lib(a).modal, Modal::None | Modal::Apps | Modal::Updates) {
-        return;
     } else {
+        let modal = lib(a).modal;
+        let home = a.scr == ScreenId::Library && !files_shown(a) && !graph_shown(a) && matches!(modal, Modal::None | Modal::Apps | Modal::Updates);
+        // (Settings > Updates opened from a notebook: the same page, over the editor)
+        if !home && !(library_settings_active(a) && modal == Modal::Updates) {
+            return;
+        }
         lib(a).pressed.is_none()
     };
     if at_rest {

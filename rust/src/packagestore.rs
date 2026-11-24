@@ -1033,7 +1033,11 @@ fn start_list_icons(a: &mut App) -> bool {
                 return loaded;
             }
             now => {
-                loaded |= place_picture(&mut a.store, FetchStage::ListIcon, &key, now);
+                // (this card's own slot: two packages may name one icon file)
+                if let (PicNow::There(image), Some(slot)) = (now, a.store.list_icons.get_mut(i)) {
+                    *slot = image;
+                    loaded = true;
+                }
                 a.store.list_tried[i] = true;
             }
         }
@@ -1048,6 +1052,11 @@ fn start_list_icons(a: &mut App) -> bool {
 fn asset_picture(ui: &mut PackageStoreUi, stage: FetchStage, key: &str) -> PicNow {
     if safe_key(key).as_deref() != Some(key) {
         return PicNow::NoFile;
+    }
+    // (a key with a control character names no file a picture's job can be asked for: no picture, and nothing
+    // to download for one)
+    if key.chars().any(|c| c.is_control()) {
+        return PicNow::None;
     }
     let form = if stage == FetchStage::Screenshot { PicForm::Screenshot } else { PicForm::StoreIcon };
     let Some(src) = PicSrc::of(&asset_cache_path(key), form) else { return PicNow::NoFile };
@@ -1064,15 +1073,21 @@ fn asset_picture(ui: &mut PackageStoreUi, stage: FetchStage, key: &str) -> PicNo
 }
 
 /// A picture that is there goes to the slot it was asked for, if that slot still shows the asset
-/// `key`: a card's icon, the detail page's icon, or its screenshot. True when it was placed.
+/// `key`: the icon of every card whose package names it and has none yet, the detail page's icon,
+/// or its screenshot. True when it was placed.
 fn place_picture(ui: &mut PackageStoreUi, stage: FetchStage, key: &str, now: PicNow) -> bool {
     let PicNow::There(image) = now else { return false };
     match stage {
         FetchStage::ListIcon => {
-            let index = ui.index.packages.iter().position(|p| matches!(&p.icon, StoreIconRef::Image(a) if a.key == key));
-            let Some(slot) = index.and_then(|i| ui.list_icons.get_mut(i)) else { return false };
-            *slot = image;
-            true
+            let mut placed = false;
+            for (i, p) in ui.index.packages.iter().enumerate() {
+                let names = matches!(&p.icon, StoreIconRef::Image(a) if a.key == key);
+                if let Some(slot) = ui.list_icons.get_mut(i).filter(|slot| names && slot.px.is_empty()) {
+                    *slot = image.clone();
+                    placed = true;
+                }
+            }
+            placed
         }
         FetchStage::Icon => {
             let shows = ui.selected_package().is_some_and(|p| p.id == ui.icon_for && matches!(&p.icon, StoreIconRef::Image(a) if a.key == key));
@@ -2105,6 +2120,67 @@ mod tests {
         assert_eq!(p.screenshots[0].url, "https://example.org/store/packages/com.example.app/screens/1.png");
         assert_eq!(p.screenshots[0].key, "packages/com.example.app/screens/1.png");
         assert!(matches!(p.icon, StoreIconRef::Image(_)));
+    }
+
+    // A picture the worker made goes to the slots that show its file: every card whose package names it and has
+    // none yet (two packages may name one icon), the detail page's icon and screenshot only while the page still
+    // shows that package and that screenshot. A key no job's path can carry has no picture and no download.
+    #[test]
+    fn a_picture_goes_to_the_slots_that_show_its_file() {
+        let json = r#"{"version": 1, "packages": [
+            {"id":"com.example.app","name":"Example","version":"1.0.0","type":"app","manifest":"packages/com.example.app/package.yaml",
+             "icon":"packages/shared/icon.png","screenshots":["packages/com.example.app/screens/1.png","packages/com.example.app/screens/2.png"]},
+            {"id":"com.example.other","name":"Other","version":"1.0.0","type":"app","manifest":"packages/com.example.other/package.yaml",
+             "icon":"packages/shared/icon.png","screenshots":["packages/com.example.other/screens/1.png"]},
+            {"id":"com.example.glyph","name":"Glyph","version":"1.0.0","type":"widget","manifest":"packages/com.example.glyph/package.yaml","icon":"package"}
+          ]}"#;
+        let mut ui = PackageStoreUi { index: store_index_parse(json.as_bytes(), "https://example.org/store/index.json").unwrap(), ..Default::default() };
+        ui.reset_list_icons();
+        let pic = |w: i32| {
+            let mut c = Canvas::default();
+            assert_eq!(canvas_init(&mut c, w, 3), 0);
+            PicNow::There(c)
+        };
+        let icon = "packages/shared/icon.png";
+        assert!(!place_picture(&mut ui, FetchStage::ListIcon, "packages/another.png", pic(4)));
+        assert!(place_picture(&mut ui, FetchStage::ListIcon, icon, pic(4)));
+        assert_eq!(ui.list_icons.iter().map(|c| c.w).collect::<Vec<_>>(), [4, 4, 0]);
+        // (each has one: nothing more to place, and a slot that has its picture keeps it)
+        assert!(!place_picture(&mut ui, FetchStage::ListIcon, icon, pic(5)));
+        assert_eq!(ui.list_icons[0].w, 4);
+        assert!(!place_picture(&mut ui, FetchStage::ListIcon, icon, PicNow::Coming) && !place_picture(&mut ui, FetchStage::ListIcon, icon, PicNow::None));
+        // the detail page: no package shown, then one
+        let shot = "packages/com.example.app/screens/1.png";
+        assert!(!place_picture(&mut ui, FetchStage::Icon, icon, pic(6)) && !place_picture(&mut ui, FetchStage::Screenshot, shot, pic(7)));
+        ui.selected = Some("com.example.app".into());
+        ui.icon_for = "com.example.app".into();
+        ui.shot_for = "com.example.app".into();
+        assert!(place_picture(&mut ui, FetchStage::Icon, icon, pic(6)) && ui.icon.image.w == 6);
+        assert!(place_picture(&mut ui, FetchStage::Screenshot, shot, pic(7)) && ui.shot.w == 7);
+        // another screenshot is on the page now, or another package: a picture asked for before does not land
+        ui.shot_index = 1;
+        assert!(!place_picture(&mut ui, FetchStage::Screenshot, shot, pic(8)) && ui.shot.w == 7);
+        assert!(place_picture(&mut ui, FetchStage::Screenshot, "packages/com.example.app/screens/2.png", pic(8)) && ui.shot.w == 8);
+        ui.selected = Some("com.example.other".into());
+        assert!(!place_picture(&mut ui, FetchStage::Screenshot, "packages/com.example.app/screens/2.png", pic(9)));
+        assert!(!place_picture(&mut ui, FetchStage::Icon, icon, pic(9)) && ui.icon.image.w == 6);
+        // keys that name no file a picture can be asked for
+        assert!(matches!(asset_picture(&mut ui, FetchStage::ListIcon, "packages/a\nb.png"), PicNow::None));
+        assert!(matches!(asset_picture(&mut ui, FetchStage::Screenshot, "../b.png"), PicNow::NoFile));
+        assert!(ui.pic_waits.is_empty());
+        // the screenshot's frame: one is to come until it was tried, and while its download or its job is on
+        let mut ui = PackageStoreUi::default();
+        assert!(shot_coming(&ui));
+        ui.shot_tried = true;
+        assert!(!shot_coming(&ui));
+        ui.pic_waits.push(PicWait { stage: FetchStage::Icon, key: icon.into(), src: PicSrc { rel: format!("package-store/assets/{icon}"), size: 1, mtime: 1, form: PicForm::StoreIcon }, job: None });
+        assert!(!shot_coming(&ui));
+        ui.pic_waits[0].stage = FetchStage::Screenshot;
+        assert!(shot_coming(&ui));
+        ui.drop_waits(|stage| stage == FetchStage::Icon);
+        assert!(shot_coming(&ui));
+        ui.drop_waits(|stage| stage == FetchStage::Screenshot);
+        assert!(!shot_coming(&ui) && ui.pic_waits.is_empty());
     }
 
     #[test]
