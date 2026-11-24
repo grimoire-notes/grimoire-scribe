@@ -133,7 +133,8 @@ pub fn build_id() -> String {
 pub enum WorkKind {
     /// a PDF: probe, then pages to gray or RGB pixels
     Pdf,
-    /// pictures: templates, photos and picture-folder imports (picwork.rs, lane L7): the bytes come down fd 5
+    /// pictures: templates, photos and picture-folder imports (picwork.rs, lane L7), Files' previews of pictures
+    /// (2.2) and packages' icons and the Package Store's pictures (2.3, issue #236): the bytes come down fd 5
     /// one picture after another, validated pixels go back on fd 4
     Picture,
     /// a font of grimoire/fonts (fontcheck.rs, lane L10): its bytes come down fd 5, a verdict's records and a

@@ -69,6 +69,7 @@ root/trash/                             deleted notebooks and pages, moved here,
 root/PDFs/                              the PDF mirror (an export, not data)
 root/.cache/pdf/<id>/                   the notebook PDF's page streams, disposable (2.1.0-beta.2)
 root/.cache/files/                      Files' previews of the files its Covers view shows, disposable (2.2; Files' previews)
+root/.cache/packages/                   the worker's pictures of installed apps' icons and of the Package Store's icons and screenshots, disposable (2.3; Packages' pictures)
 ```
 
 `root` is `/mnt/us/grimoire` on the Kindle. A notebook id is the folder's name: letters, digits,
@@ -2697,3 +2698,44 @@ names is no longer there with that size and time. Past 2,000 files or 64 MiB sti
 their files' newest time, both files of an entry together), down to 1,500 files and 48 MiB. Deleting
 `.cache/files/` loses nothing: the previews are made again as their files show in Covers. No other version reads
 it.
+
+## Packages' pictures: `.cache/packages/` (2.3)
+
+The pictures the launcher and the Package Store draw of files that come from outside Grimoire (docs/DESIGN.md,
+"Packages' pictures"): an installed app's bundled icon (`packages/apps/<id>/<icon>.ico`) and the Store's catalog
+icons and screenshots (files of `package-store/assets/`), each decoded by the sandboxed picture worker and kept
+here as plain gray pixels. Two folders: `.cache/packages/icons/` (apps' icons and Store icons) and
+`.cache/packages/shots/` (screenshots). For each picture, two files named by its key, the FNV-1a 64 hash (16
+lowercase hex digits) of the file's path from Grimoire's folder followed by `/<size>/<mtime>` (its size in bytes
+and its modification time in seconds, in decimal): a file changed or replaced has another key.
+
+- `<key>.pgm`: the picture, a P5 PGM with the header `P5\n<w> <h>\n255\n` and w x h gray bytes, at most 256 x
+  256 for an icon and 2,560 x 2,560 for a screenshot. Present only beside a `.info` that says `made`.
+- `<key>.info`: five lines of text, each ended by a line break, at most 700 bytes:
+
+  ```text
+  grimoire-package-picture 1
+  of <size> <mtime>
+  form app-icon|icon|screenshot
+  made <w> <h>
+  path <the file's path from Grimoire's folder>
+  ```
+
+  The fourth line is `made <w> <h>` (the picture beside it), or `none refused|slow|ended` for a file that has no
+  picture (its worker refused it, took too long on it, or ended on it): a mark, kept so the file is not tried
+  again until it changes; or `once slow|ended`: one try on record, no mark yet (the job of another look tries once
+  more, and a second time in a row writes the mark). Numbers are decimal, without a sign (a time before 1970 has
+  a minus) or a leading zero. The path is UTF-8 without a control character or a backslash, with no empty, `.` or
+  `..` part, under `packages/apps/` for `app-icon` and under `package-store/assets/` for the other two. The first
+  line's number stands for this text and for the rules a mark was made by: an entry of another number is no
+  entry.
+
+Only the background job writes the folders, each file atomically (`<file>.tmp`, fsync, rename), the picture first
+and then the `.info`; they are made where they are missing, and neither read nor written through a link. A `.info`
+and its picture are read only when each is a plain file within its size, the `.info` exactly the text above for
+what it says and of the file asked for (its path, size, time and form), the picture exactly its header and
+w x h bytes for the size the `.info` says: anything else is no picture, and the entry is made again. After a job
+that wrote, a folder past 1,200 files or 24 MiB (icons), or 32 files or 48 MiB (screenshots), loses its oldest
+entries (by their files' newest time, both files of an entry together), down to three quarters of each. An app's
+entry is removed when the app is removed or updated. Deleting `.cache/packages/` loses nothing: the pictures are
+made again as their screens show. No other version reads it.

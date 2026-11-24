@@ -5,6 +5,9 @@
 # Package Store: the fourth built-in app opens the saved GitHub catalog, filters apps and widgets,
 # shows a package's screenshot and icon, offers its repository QR and returns Home. The fixture is
 # the real catalog and assets from the content repository, so this checks the offline path.
+# The icons and screenshots are decoded by the sandboxed worker (issue #236), so each comes a
+# moment after its page: the script waits for it (tests/scenarios/z_package_store_pictures.qs
+# holds how they arrive).
 wait 300
 expect library.recent-apps is files,share,settings,store
 tap library app.store
@@ -15,7 +18,7 @@ expect library.store.view is list
 expect library.store.packages is 2
 expect library.store.visible is com.example.fixture com.example.timer
 expect library.store.featured is com.example.fixture
-expect library.store.list.icons is 1
+waitfor library.store.list.icons is 1
 shot 00-catalog
 tap library store.filter.2
 wait 300
@@ -27,7 +30,7 @@ wait 500
 expect library.store.view is detail
 expect library.store.selected is com.example.timer
 expect library.store.screenshots is 1
-expect library.store.shot.loaded is 1
+waitfor library.store.shot.loaded is 1
 expect library.store.icon.loaded is 0
 shot 02-widget-detail
 tap library store.qr
@@ -47,8 +50,8 @@ wait 500
 expect library.store.view is detail
 expect library.store.selected is com.example.fixture
 expect library.store.screenshots is 1
-expect library.store.shot.loaded is 1
-expect library.store.icon.loaded is 1
+waitfor library.store.shot.loaded is 1
+waitfor library.store.icon.loaded is 1
 shot 04-app-detail
 # Sideways, the detail page puts its text beside a larger screenshot; the store stays open
 # through the re-layout.

@@ -347,6 +347,89 @@ fn previews_are_made_in_the_real_sandbox() {
     assert!(!session_broken(), "a worker the filter ended is the worker's end, not the sandbox's");
 }
 
+// Packages' pictures (2.3, issue #236): the small gray picture the picture worker makes (`T`) through the real
+// sandbox: an `.ico` with BMP entries, an `.ico` whose entry is a PNG (decoded by stb_image, as `D`'s pictures), a
+// picture, and one over the side (the page fit's). Then the job as its child runs it, for an app's icon and a
+// screenshot: each a picture in the cache, a file the worker refuses marked. Nothing falls back to the writer. A
+// worker the filter ends on a file (the picture worker's test trap) gives no picture: a try on record, then the
+// mark, and the session is not broken.
+#[test]
+fn small_pictures_are_made_in_the_real_sandbox() {
+    use grimoire::bgwork_previews::{Made, NoPreview};
+    use grimoire::picwork::*;
+    use grimoire::pkgpics::*;
+    use grimoire::prelude::*;
+    if !root() {
+        return;
+    }
+    let (_g, _f, _len) = setup();
+    std::env::remove_var("GRIMOIRE_PIC_TEST_TRAP");
+    let base = std::env::temp_dir().join(format!("grimoire-sandbox-{}/pictures", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let png_of = |w: i32, h: i32| -> (Vec<u8>, Vec<u8>) {
+        let px: Vec<u8> = (0..w * h).map(|i| if i % w < w / 2 { 20 } else { 230 }).collect();
+        let path = base.join("gen.png");
+        assert_eq!(bgimage_write_png(path.to_str().unwrap(), &BgPicture { px: px.clone(), w, h, ch: 1 }), 0);
+        (std::fs::read(&path).unwrap(), px)
+    };
+    let ico: &[u8] = include_bytes!("../../tests/fixtures/apppkg/packages/apps/com.example.fixture/icon.ico");
+    let (png, px) = png_of(48, 40);
+    let mut png_ico = vec![0, 0, 1, 0, 1, 0, 48, 40, 0, 0, 1, 0, 32, 0];
+    png_ico.extend_from_slice(&(png.len() as u32).to_le_bytes());
+    png_ico.extend_from_slice(&22u32.to_le_bytes());
+    png_ico.extend_from_slice(&png);
+    let mut pool = PicPool::worker_only();
+    assert!(matches!(pool.small(ico, SMALL_ICO, 256), PicOut::Pic { src_w: 64, src_h: 64, .. }));
+    match pool.small(&png_ico, SMALL_ICO, 256) {
+        PicOut::Pic { fit, .. } => assert!((fit.w, fit.h, fit.ch) == (48, 40, 1) && fit.px == px, "the PNG entry's own pixels"),
+        o => panic!("an .ico with a PNG entry: {o:?}"),
+    }
+    assert!(matches!(pool.small(&png, SMALL_PICTURE, 256), PicOut::Pic { src_w: 48, src_h: 40, .. }));
+    match pool.small(&png_of(600, 400).0, SMALL_ICO | SMALL_PICTURE, 256) {
+        PicOut::Pic { src_w: 600, src_h: 400, fit } => assert_eq!((fit.w, fit.h), (256, 171)),
+        o => panic!("one over the side: {o:?}"),
+    }
+    assert!(matches!(pool.small(b"no picture at all", SMALL_ICO | SMALL_PICTURE, 256), PicOut::Bad(_)));
+    assert!(!in_fallback(), "the sandbox held");
+    // the job, as its child runs it
+    let g = base.join("grimoire");
+    std::fs::create_dir_all(g.join("packages/apps/a")).unwrap();
+    std::fs::create_dir_all(g.join("package-store/assets/p/screens")).unwrap();
+    assert_eq!(store_init(g.to_str().unwrap()), 0);
+    let put = |rel: &str, data: &[u8]| -> String {
+        let path = g.join(rel);
+        std::fs::write(&path, data).unwrap();
+        path.to_str().unwrap().to_string()
+    };
+    for (rel, form, data, made) in [
+        ("packages/apps/a/icon.ico", PicForm::AppIcon, ico.to_vec(), Some((64, 64))),
+        ("package-store/assets/p/icon.ico", PicForm::StoreIcon, png_ico.clone(), Some((48, 40))),
+        ("package-store/assets/p/screens/1.png", PicForm::Screenshot, png_of(600, 400).0, Some((600, 400))),
+        ("packages/apps/a/junk.ico", PicForm::AppIcon, b"no icon".to_vec(), None),
+    ] {
+        let s = PicSrc::of(&put(rel, &data), form).unwrap();
+        assert_eq!(bg_package_picture(&s.job_path().unwrap()), 0, "{rel}");
+        match (picture_cached(&s), made) {
+            (Cached::Picture(c), Some(size)) => assert_eq!((c.w, c.h), size, "{rel}"),
+            (Cached::None, None) => {}
+            _ => panic!("{rel}: not what the worker should have made"),
+        }
+    }
+    assert!(!in_fallback(), "the pictures were decoded by a worker");
+    assert!(!session_broken(), "every worker held its sandbox");
+    // the filter ends the worker on the file: a try on record, then the mark
+    let s = PicSrc::of(&put("packages/apps/a/trap.ico", ico), PicForm::AppIcon).unwrap();
+    std::env::set_var("GRIMOIRE_PIC_TEST_TRAP", "1");
+    assert_eq!(bg_package_picture(&s.job_path().unwrap()), 0);
+    assert_eq!(picture_info(&s).map(|i| i.made), Some(Made::Once(NoPreview::Ended)), "the first death is a try");
+    assert!(matches!(picture_cached(&s), Cached::Nothing));
+    assert_eq!(bg_package_picture(&s.job_path().unwrap()), 0);
+    assert_eq!(picture_info(&s).map(|i| i.made), Some(Made::None(NoPreview::Ended)), "the second is the mark");
+    std::env::remove_var("GRIMOIRE_PIC_TEST_TRAP");
+    assert!(!session_broken(), "a worker the filter ended is the worker's end, not the sandbox's");
+}
+
 // The worker's clean end (the 2.1.0-beta.2 fix round): `--work` ends with _exit, so a worker told to stop under
 // the filter makes no call outside the list on its way out (the runtime's own exit lets go of the main thread's
 // signal stack with sigaltstack, 186 on the Kindle, which would read as `E sigsys 186` at every clean end).

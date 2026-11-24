@@ -692,14 +692,15 @@ fn over_white(v: i32, a: i32) -> u8 {
     ((v * a + 255 * (255 - a) + 127) / 255) as u8
 }
 
-// bgimage_decode within budget bytes, the data's own included.
-fn decode_within(data: &[u8], budget: usize, out: &mut BgPicture, why: &mut &'static str) -> i32 {
+// What stb_image decodes of data within budget bytes, the data's own included: the samples as the file has
+// them (n a pixel: 1 gray, 2 gray and alpha, 3 RGB, 4 RGB and alpha; 8 bits each), w, h and n. Err is
+// bgimage_decode's -1 or -2, with why.
+fn load_within(data: &[u8], budget: usize, why: &mut &'static str) -> Result<(StbPixels, i32, i32, i32), i32> {
     let len = data.len();
-    *out = BgPicture::default();
     let (mut w, mut h) = (0, 0);
     let mut cost = 0usize;
     if check_within(data, len, budget, &mut w, &mut h, &mut cost, why) != 0 {
-        return -1;
+        return Err(-1);
     }
     // stb_image may hold twice what the header says it needs (that is already the most it takes),
     // never more than the budget leaves beside the data: a picture whose data inflates past that
@@ -710,17 +711,41 @@ fn decode_within(data: &[u8], budget: usize, out: &mut BgPicture, why: &mut &'st
     let loaded = stbi_load(data);
     let over = stb(|s| s.over);
     stb_end();
-    let Some((mut px, w, h, n)) = loaded else {
+    let Some(loaded) = loaded else {
         if over {
             *why = "a damaged picture (it takes more memory to decode than its size says)";
-            return -1;
+            return Err(-1);
         }
         if stbi_reason_is_outofmem() {
             *why = "out of memory";
-            return -2;
+            return Err(-2);
         }
         *why = "a damaged or unsupported picture";
-        return -1;
+        return Err(-1);
+    };
+    Ok(loaded)
+}
+
+/// The samples of a picture as its file has them, with nothing composed: `n` a pixel (1 gray, 2 gray and
+/// alpha, 3 RGB, 4 RGB and alpha; a PNG's colour key comes as alpha), 8 bits each, w * h * n bytes, top row
+/// first, with w, h and n. Decoded by stb_image as bgimage_decode decodes (the same header check, the same
+/// budget). For the `.ico` reader's PNG entries (picwork/icofile.rs, in the worker), which composes over
+/// white by its own rule. None for a picture bgimage_decode would not take, or when the memory was not there.
+pub fn bgimage_decode_samples(data: &[u8]) -> Option<(Vec<u8>, i32, i32, i32)> {
+    let mut why: &'static str = "";
+    let (mut px, w, h, n) = load_within(data, BG_DECODE_BUDGET, &mut why).ok()?;
+    let mut v: Vec<u8> = Vec::new();
+    v.try_reserve_exact(px.bytes().len()).ok()?;
+    v.extend_from_slice(px.bytes());
+    Some((v, w, h, n))
+}
+
+// bgimage_decode within budget bytes, the data's own included.
+fn decode_within(data: &[u8], budget: usize, out: &mut BgPicture, why: &mut &'static str) -> i32 {
+    *out = BgPicture::default();
+    let (mut px, w, h, n) = match load_within(data, budget, why) {
+        Ok(loaded) => loaded,
+        Err(rc) => return rc,
     };
     let np = (w as usize) * (h as usize);
     let mut ch = if n >= 3 { 3 } else { 1 };
