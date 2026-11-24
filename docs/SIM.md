@@ -182,10 +182,10 @@ named by its index in the open list, which is how a scenario reaches the control
 `widget.0.hit.N` stays a valid name only while that region exists. A package's own status text is
 read with `editor.widget.0.status`. A frame's due redraw (`request_redraw`) waits while the pen is near, as the
 status bar's minute refresh does in a notebook: a script follows a `pentap` with `pen leave` to let it come
-(tests/scenarios/z_widget_pen.qs). The Packages page is Settings → Packages
-→ Widgets: `settings.cat.5` picks the Packages category and `settings.packages` opens the Widgets
-page. Its controls are `packages.close` (the X, which closes Settings), `packages.back` (to
-Settings), `packages.row.ID` (or its index, `packages.row.0`), `packages.update-all`,
+(tests/scenarios/z_widget_pen.qs). The Packages page opens from the widget popup's Manage widgets…
+(`widgets.manage`); packages are installed from the Package Store now. Its controls are
+`packages.close` (the X, which closes Settings), `packages.back` (to Settings),
+`packages.row.ID` (or its index, `packages.row.0`), `packages.update-all`,
 `packages.install`, `packages.remove`, `packages.remove-yes`, `packages.update`, `packages.trust`,
 `packages.license-yes`, `packages.license-view`, `packages.license-prev`, `packages.license-next` and
 `packages.qr`; a settings row is `packages.setting.KEY` (or `packages.setting.N`); the repository

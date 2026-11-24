@@ -35,6 +35,14 @@ const H_QR: i32 = 810;
 const H_SHOT_PREV: i32 = 811;
 const H_SHOT_NEXT: i32 = 812;
 const H_RETRY: i32 = 813;
+const H_SEARCH: i32 = 814;
+const H_REPO: i32 = 815;
+const H_UNINSTALL: i32 = 816;
+const H_UNINSTALL_YES: i32 = 817;
+const H_QUERY_CLEAR: i32 = 818;
+/// A card of the Installed tab in a hit: `H_CARD`'s argument from this number up is an index into
+/// `PackageStoreUi::installed` rather than the catalog.
+const INSTALLED_CARD: i32 = 10_000;
 
 const INDEX_MAX: usize = 512 * 1024;
 const INDEX_TOKENS: usize = 32 * 1024;
@@ -51,6 +59,18 @@ pub enum StoreView {
     Busy,
     Error,
     Qr,
+    /// a GitHub repository or .yaml address is typed on the keyboard
+    InstallRepo,
+    /// asking before a package is uninstalled
+    Remove,
+}
+
+/// Which field the Store's keyboard edits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum KbFor {
+    #[default]
+    Search,
+    Repo,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -112,6 +132,8 @@ pub struct PackageUpdate {
 enum FetchStage {
     #[default]
     Catalog,
+    /// GitHub's repository answer, for its default branch (a repository install)
+    Branch,
     Manifest,
     Artifact,
     Icon,
@@ -185,6 +207,17 @@ pub struct PackageStoreUi {
     pressed_hit: Option<Hit>,
     pub status: String,
     pub error: String,
+    /// the text a Search typed, which filters the catalog or the Installed tab
+    pub query: String,
+    /// every installed package, gathered when the Store opens or a package is installed or removed
+    pub installed: Vec<StorePackage>,
+    /// the one keyboard: a Search's text, or a repository to install from
+    pub kb: Keyboard,
+    kb_for: KbFor,
+    /// the manifest being installed from a repository rather than the catalog
+    repo_install: bool,
+    repo_input: String,
+    repo_pkg: Option<StorePackage>,
     index_url: String,
     catalog_job: Option<FetchJob>,
     install_job: Option<FetchJob>,
@@ -220,7 +253,17 @@ pub struct PackageStoreUi {
 impl PackageStoreUi {
     fn selected_package(&self) -> Option<&StorePackage> {
         let id = self.selected.as_deref()?;
-        self.index.packages.iter().find(|p| p.id == id)
+        if self.repo_install {
+            if let Some(p) = self.repo_pkg.as_ref().filter(|p| p.id == id) {
+                return Some(p);
+            }
+        }
+        self.index
+            .packages
+            .iter()
+            .find(|p| p.id == id)
+            .or_else(|| self.installed.iter().find(|p| p.id == id))
+            .or_else(|| self.repo_pkg.as_ref().filter(|p| p.id == id))
     }
 
     fn clear_selection(&mut self) {
@@ -247,6 +290,9 @@ impl PackageStoreUi {
         self.install_job = None;
         self.asset_job = None;
         self.refreshing = false;
+        self.repo_install = false;
+        self.repo_input.clear();
+        self.repo_pkg = None;
         self.drop_waits(&|_| true);
     }
 
@@ -298,7 +344,7 @@ fn unqueue_list_pictures(ui: &mut PackageStoreUi) {
 /// Whether the Store can be drawn again by itself now (a picture that came from the worker): not
 /// under a press, whose lift draws.
 pub(crate) fn store_at_rest(ui: &PackageStoreUi) -> bool {
-    ui.pressed.is_none()
+    ui.pressed.is_none() && !ui.kb.open
 }
 
 fn catalog_url() -> String {
@@ -607,6 +653,7 @@ pub fn store_open(a: &mut App) {
     ui.view = StoreView::List;
     ui.filter = 0;
     ui.page = 0;
+    ui.query.clear();
     ui.status.clear();
     ui.error.clear();
     ui.index = StoreIndex::default();
@@ -614,6 +661,8 @@ pub fn store_open(a: &mut App) {
     ui.cancel_jobs();
     ui.clear_selection();
     ui.reset_list_icons();
+    keyboard_close(&mut ui.kb);
+    refresh_installed(ui);
     ui.index_url = catalog_url();
     let cached = load_cached_index(ui);
     if cached {
@@ -776,18 +825,124 @@ fn redraw(a: &mut App) {
     crate::library::store_redraw(a);
 }
 
-fn filtered(ui: &PackageStoreUi) -> Vec<usize> {
-    ui.index
-        .packages
-        .iter()
-        .enumerate()
-        .filter(|(_, p)| match ui.filter {
+/// One of the list's packages: a catalog entry (the All, Apps and Widgets tabs) or an installed
+/// one (the Installed tab).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PkgRef {
+    Catalog(usize),
+    Installed(usize),
+}
+
+fn pkg_matches(p: &StorePackage, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    let q = query.to_lowercase();
+    p.name.to_lowercase().contains(&q)
+        || p.id.to_lowercase().contains(&q)
+        || p.author.to_lowercase().contains(&q)
+        || p.category.to_lowercase().contains(&q)
+        || p.summary.to_lowercase().contains(&q)
+        || p.description.to_lowercase().contains(&q)
+        || p.tags.iter().any(|t| t.to_lowercase().contains(&q))
+}
+
+fn filtered(ui: &PackageStoreUi) -> Vec<PkgRef> {
+    let mut out = Vec::new();
+    if ui.filter == 3 {
+        for (i, p) in ui.installed.iter().enumerate() {
+            if pkg_matches(p, &ui.query) {
+                out.push(PkgRef::Installed(i));
+            }
+        }
+        return out;
+    }
+    for (i, p) in ui.index.packages.iter().enumerate() {
+        let kind = match ui.filter {
             1 => p.kind == "app",
             2 => p.kind == "widget",
             _ => true,
-        })
-        .map(|(i, _)| i)
-        .collect()
+        };
+        if kind && pkg_matches(p, &ui.query) {
+            out.push(PkgRef::Catalog(i));
+        }
+    }
+    out
+}
+
+fn pkg_at(ui: &PackageStoreUi, item: PkgRef) -> Option<&StorePackage> {
+    match item {
+        PkgRef::Catalog(i) => ui.index.packages.get(i),
+        PkgRef::Installed(i) => ui.installed.get(i),
+    }
+}
+
+fn card_arg(item: PkgRef) -> i32 {
+    match item {
+        PkgRef::Catalog(i) => i as i32,
+        PkgRef::Installed(i) => INSTALLED_CARD + i as i32,
+    }
+}
+
+fn card_ref(n: i32) -> Option<PkgRef> {
+    if n >= INSTALLED_CARD {
+        Some(PkgRef::Installed((n - INSTALLED_CARD) as usize))
+    } else if n >= 0 {
+        Some(PkgRef::Catalog(n as usize))
+    } else {
+        None
+    }
+}
+
+/// An installed package as a catalog entry looks, so the list and the detail page show both alike.
+fn installed_package(it: &WidgetInstall, kind: &str) -> StorePackage {
+    let manifest = if kind == "app" {
+        app_package_installed_manifest(&it.id)
+    } else {
+        widget_package_installed_manifest(&it.id)
+    };
+    let icon = if kind == "widget" {
+        if it.icon.trim().is_empty() { IconKind::Grid } else { widget_icon(&it.icon) }
+    } else {
+        IconKind::Package
+    };
+    StorePackage {
+        id: it.id.clone(),
+        name: it.name.clone(),
+        version: it.version.clone(),
+        kind: kind.to_string(),
+        author: it.author.clone(),
+        summary: it.description.clone(),
+        description: it.description.clone(),
+        license: manifest.as_ref().map_or(String::new(), |m| m.license.clone()),
+        repository: widget_github_repo_url(&it.source_url).unwrap_or_else(|| it.source_url.clone()),
+        manifest_url: it.source_url.clone(),
+        icon: StoreIconRef::Glyph(icon),
+        ..Default::default()
+    }
+}
+
+fn refresh_installed(ui: &mut PackageStoreUi) {
+    let mut out = Vec::new();
+    for it in widget_package_list() {
+        out.push(installed_package(&it, "widget"));
+    }
+    for it in app_package_list() {
+        out.push(installed_package(&it, "app"));
+    }
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.id.cmp(&b.id)));
+    ui.installed = out;
+}
+
+/// Which package index `id` is in, whether it is installed at all.
+fn installed_kind(id: &str) -> Option<&'static str> {
+    if app_package_installed(id).is_some() {
+        Some("app")
+    } else if widget_package_installed(id).is_some() {
+        Some("widget")
+    } else {
+        None
+    }
 }
 
 fn installed_for(p: &StorePackage) -> Option<WidgetInstall> {
@@ -828,6 +983,13 @@ fn begin_fetch(ui: &mut PackageStoreUi, slot: FetchSlot, stage: FetchStage, url:
 
 fn begin_install(a: &mut App) {
     let Some(pkg) = a.store.selected_package().cloned() else { return };
+    let newer = installed_for(&pkg).is_some_and(|it| update_version_cmp(&pkg.version, &it.version) > 0);
+    if installed_kind(&pkg.id).is_some() && !newer {
+        return;
+    }
+    // A catalog install is not a repository one, whatever the last try left behind.
+    a.store.repo_install = false;
+    a.store.repo_pkg = None;
     let (_, style, enabled) = install_label(&pkg);
     if !enabled && style == ButtonStyle::Disabled {
         return;
@@ -848,6 +1010,112 @@ fn begin_install(a: &mut App) {
         ui.view = StoreView::Error;
     }
     redraw(a);
+}
+
+/// Starts installing a package that is not in the catalog: `user/repo`, a GitHub address, or an
+/// https `.yaml`. Its manifest, artifact and hashes are checked as a catalog install's are.
+fn begin_repo_install(a: &mut App, input: &str) {
+    let mut input = input.trim().to_string();
+    // A pasted GitHub page address (https://github.com/user/repo) is the same repository as its
+    // user/repo shorthand.
+    if input.starts_with("https://github.com/") || input.starts_with("http://github.com/") {
+        if let Some(repo) = widget_github_repo(&input) {
+            input = repo;
+        }
+    }
+    let ui = &mut a.store;
+    ui.repo_input = input.clone();
+    ui.repo_pkg = None;
+    ui.selected = None;
+    ui.clear_selection();
+    ui.repo_install = false;
+    ui.error.clear();
+    ui.status.clear();
+    if input.is_empty() {
+        ui.error = tr("Enter a GitHub repository or a .yaml address.").to_string();
+        ui.view = StoreView::Error;
+        return;
+    }
+    ui.repo_install = true;
+    ui.view = StoreView::Busy;
+    ui.status = tr("Looking up the repository...").to_string();
+    if let Some(api) = widget_github_api(&input) {
+        if let Err(e) = begin_fetch(ui, FetchSlot::Install, FetchStage::Branch, &api, 512 * 1024, "") {
+            ui.error = e;
+            ui.view = StoreView::Error;
+        }
+        return;
+    }
+    match widget_manifest_url(&input) {
+        Ok((url, _)) => {
+            ui.manifest_url = url.clone();
+            ui.status = tr("Reading package.yaml...").to_string();
+            if let Err(e) = begin_fetch(ui, FetchSlot::Install, FetchStage::Manifest, &url, WIDGET_PKG_MANIFEST_MAX, "") {
+                ui.error = e;
+                ui.view = StoreView::Error;
+            }
+        }
+        Err(e) => {
+            ui.error = e;
+            ui.view = StoreView::Error;
+        }
+    }
+}
+
+/// The manifest of a repository install: validated by its own kind, then shown on the Trust page.
+fn after_repo_manifest(ui: &mut PackageStoreUi, data: &[u8], w: i32, h: i32) {
+    let text = String::from_utf8_lossy(data).into_owned();
+    let parsed = widget_package_parse(&text).and_then(|p| {
+        let checked = match p.type_.as_str() {
+            "app" => app_package_validate(&p, w, h),
+            "widget" => widget_package_validate(&p, w, h),
+            _ => Err("The manifest is neither an app nor a widget package.".to_string()),
+        };
+        checked.map(|_| p)
+    });
+    let p = match parsed {
+        Ok(p) => p,
+        Err(e) => {
+            ui.error = e;
+            ui.view = StoreView::Error;
+            return;
+        }
+    };
+    ui.manifest_yaml = text;
+    ui.artifact_url = widget_package_artifact_url(&ui.manifest_url, &p).unwrap_or_default();
+    ui.icon_url = if p.type_ == "app" { app_package_icon_url(&ui.manifest_url, &p) } else { None };
+    ui.install_icon_key.clear();
+    if ui.icon_url.is_some() {
+        if let Some(key) = safe_key(&format!("{}/{}", p.id, p.spec.icon)) {
+            ui.install_icon_key = key;
+        }
+    }
+    let icon = if p.type_ == "widget" {
+        if p.spec.icon.trim().is_empty() { IconKind::Grid } else { widget_icon(&p.spec.icon) }
+    } else {
+        IconKind::Package
+    };
+    let pkg = StorePackage {
+        id: p.id.clone(),
+        name: p.name.clone(),
+        version: p.version.clone(),
+        kind: p.type_.clone(),
+        author: p.author.clone(),
+        summary: p.description.clone(),
+        description: p.description.clone(),
+        license: p.license.clone(),
+        repository: p.repository.clone(),
+        homepage: p.repository.clone(),
+        manifest_url: ui.manifest_url.clone(),
+        icon: StoreIconRef::Glyph(icon),
+        ..Default::default()
+    };
+    ui.selected = Some(pkg.id.clone());
+    ui.repo_pkg = Some(pkg);
+    ui.manifest = Some(p);
+    ui.status.clear();
+    ui.error.clear();
+    ui.view = StoreView::Trust;
 }
 
 fn start_artifact(a: &mut App) {
@@ -907,18 +1175,23 @@ fn install_from_pending(a: &mut App, icon: Option<&[u8]>) -> Result<(String, Str
     let manifest = std::mem::take(&mut a.store.manifest_yaml);
     let artifact = std::mem::take(&mut a.store.pending_artifact);
     let source = a.store.manifest_url.clone();
-    let listed = a
-        .store
-        .index
-        .packages
-        .iter()
-        .find(|p| p.id == m.id)
-        .cloned()
-        .ok_or_else(|| tr("That package is no longer in the Store.").to_string())?;
-    let it = if listed.kind == "app" {
-        app_package_install(&manifest, &artifact, icon, &source, a.w, a.h - status_reserved(a))?
+    let kind = if a.store.repo_install {
+        m.type_.clone()
     } else {
+        a.store
+            .index
+            .packages
+            .iter()
+            .find(|p| p.id == m.id)
+            .map(|p| p.kind.clone())
+            .ok_or_else(|| tr("That package is no longer in the Store.").to_string())?
+    };
+    let it = if kind == "app" {
+        app_package_install(&manifest, &artifact, icon, &source, a.w, a.h - status_reserved(a))?
+    } else if kind == "widget" {
         widget_package_install(&manifest, &artifact, &source, a.w, a.h - status_reserved(a))?
+    } else {
+        return Err(tr("The Store does not know this package kind.").to_string());
     };
     Ok((it.name, it.version))
 }
@@ -926,9 +1199,22 @@ fn install_from_pending(a: &mut App, icon: Option<&[u8]>) -> Result<(String, Str
 fn install_pending(a: &mut App, icon: Option<&[u8]>) {
     match install_from_pending(a, icon) {
         Ok((name, _)) => {
+            let repo = a.store.repo_install;
             a.store.status = format!("{} {}", tr("Installed"), name);
-            a.store.view = StoreView::Detail;
             a.store.error.clear();
+            a.store.repo_install = false;
+            a.store.repo_input.clear();
+            a.store.repo_pkg = None;
+            refresh_installed(&mut a.store);
+            if repo {
+                a.store.selected = None;
+                a.store.filter = 3;
+                a.store.query.clear();
+                a.store.page = 0;
+                a.store.view = StoreView::List;
+            } else {
+                a.store.view = StoreView::Detail;
+            }
         }
         Err(e) => {
             a.store.error = e;
@@ -1369,9 +1655,34 @@ fn tick_install(a: &mut App) -> bool {
     };
     match res {
         Ok(data) => match job.stage {
+            FetchStage::Branch => {
+                let input = a.store.repo_input.clone();
+                let fallback = widget_manifest_url(&input).map(|(u, _)| u).unwrap_or_default();
+                let url = widget_github_branch(&String::from_utf8_lossy(&data))
+                    .and_then(|b| {
+                        let parts: Vec<&str> = input.split('/').collect();
+                        (parts.len() == 2).then(|| format!("https://raw.githubusercontent.com/{}/{}/{b}/package.yaml", parts[0], parts[1]))
+                    })
+                    .unwrap_or(fallback);
+                if url.is_empty() {
+                    a.store.error = tr("That repository has no package.yaml.").to_string();
+                    a.store.view = StoreView::Error;
+                } else {
+                    a.store.manifest_url = url.clone();
+                    a.store.status = tr("Reading package.yaml...").to_string();
+                    if let Err(e) = begin_fetch(&mut a.store, FetchSlot::Install, FetchStage::Manifest, &url, WIDGET_PKG_MANIFEST_MAX, "") {
+                        a.store.error = e;
+                        a.store.view = StoreView::Error;
+                    }
+                }
+            }
             FetchStage::Manifest => {
                 if a.store.update_installing {
                     after_update_manifest(a, &data);
+                } else if a.store.repo_install {
+                    let w = a.w;
+                    let h = a.h - status_reserved(a);
+                    after_repo_manifest(&mut a.store, &data, w, h);
                 } else {
                     let w = a.w;
                     let h = a.h - status_reserved(a);
@@ -1408,6 +1719,22 @@ fn tick_install(a: &mut App) -> bool {
         Err(e) => {
             if a.store.update_installing {
                 update_failed(a, e);
+            } else if job.stage == FetchStage::Branch {
+                // The GitHub API is an optimization: a failed lookup falls back to main's package.yaml.
+                let input = a.store.repo_input.clone();
+                match widget_manifest_url(&input) {
+                    Ok((url, _)) => {
+                        a.store.manifest_url = url.clone();
+                        if let Err(e) = begin_fetch(&mut a.store, FetchSlot::Install, FetchStage::Manifest, &url, WIDGET_PKG_MANIFEST_MAX, "") {
+                            a.store.error = e;
+                            a.store.view = StoreView::Error;
+                        }
+                    }
+                    Err(e) => {
+                        a.store.error = e;
+                        a.store.view = StoreView::Error;
+                    }
+                }
             } else {
                 a.store.error = e;
                 a.store.view = StoreView::Error;
@@ -1464,6 +1791,14 @@ pub fn store_tick(a: &mut App, _now: u32) {
     if !a.store.open {
         return;
     }
+    if a.store.kb.open {
+        // The keyboard draws by itself (app_keyboard_pointer): this is its held delete's repeats and
+        // the one grayscale clean-up after typing pauses. The page under it does not move.
+        let mut kb = std::mem::take(&mut a.store.kb);
+        app_keyboard_tick(a, &mut kb, _now);
+        a.store.kb = kb;
+        return;
+    }
     let mut changed = tick_catalog(a);
     changed |= tick_install(a);
     // A picture's download that ended puts nothing new on the screen by itself: its picture is still to come
@@ -1485,8 +1820,8 @@ pub fn store_tick(a: &mut App, _now: u32) {
 
 // ---- pointer ----
 
-fn open_detail(a: &mut App, n: usize) {
-    let Some(pkg) = a.store.index.packages.get(n).cloned() else { return };
+fn open_detail(a: &mut App, n: i32) {
+    let Some(pkg) = card_ref(n).and_then(|r| pkg_at(&a.store, r)).cloned() else { return };
     // A card icon still downloading must not hold up the page the tap asked for.
     if a.store.asset_job.as_ref().is_some_and(|job| job.stage == FetchStage::ListIcon) {
         a.store.asset_job = None;
@@ -1504,6 +1839,48 @@ fn open_detail(a: &mut App, n: usize) {
     a.store.shot_tried = false;
     start_selected_assets(a);
     redraw(a);
+}
+
+/// Removes the selected package from the Kindle (its files, not the user's layout) and returns to
+/// the Installed tab.
+fn uninstall_selected(a: &mut App) {
+    let Some(pkg) = a.store.selected_package().cloned() else { return };
+    let kind = installed_kind(&pkg.id).unwrap_or(pkg.kind.as_str());
+    let res = if kind == "app" {
+        app_package_remove(&pkg.id, true)
+    } else {
+        widget_package_remove(&pkg.id, true)
+    };
+    match res {
+        Ok(()) => {
+            // An open frame or app goes with its package.
+            if kind == "widget" {
+                if let Some(ed) = a.ed.as_deref_mut() {
+                    while let Some(i) = ed.widgets.index_of(&pkg.id) {
+                        ed.widgets.close(i);
+                    }
+                    ed.widgets.save();
+                }
+            } else if a.app_view.open && a.app_view.id == pkg.id {
+                crate::apphost::apphost_close(a);
+            }
+            a.store.selected = None;
+            a.store.clear_selection();
+            refresh_installed(&mut a.store);
+            a.store.filter = 3;
+            a.store.query.clear();
+            a.store.page = 0;
+            a.store.view = StoreView::List;
+            a.store.error.clear();
+            a.store.status = format!("{} {}", tr("Uninstalled"), pkg.name);
+            redraw(a);
+        }
+        Err(e) => {
+            a.store.error = e;
+            a.store.view = StoreView::Error;
+            redraw(a);
+        }
+    }
 }
 
 fn shot_move(a: &mut App, step: i32) {
@@ -1530,7 +1907,17 @@ fn tapped(a: &mut App, h: Hit) {
         H_BACK => {
             match a.store.view {
                 StoreView::List => close(a),
-                StoreView::Trust | StoreView::Error | StoreView::Qr => {
+                StoreView::Trust | StoreView::Error if a.store.repo_install => {
+                    a.store.view = StoreView::List;
+                    a.store.error.clear();
+                    a.store.install_job = None;
+                    a.store.repo_install = false;
+                    a.store.repo_input.clear();
+                    a.store.repo_pkg = None;
+                    a.store.selected = None;
+                    redraw(a);
+                }
+                StoreView::Trust | StoreView::Error | StoreView::Qr | StoreView::Remove => {
                     a.store.view = StoreView::Detail;
                     a.store.error.clear();
                     a.store.install_job = None;
@@ -1551,11 +1938,31 @@ fn tapped(a: &mut App, h: Hit) {
             redraw(a);
         }
         H_FILTER => {
-            a.store.filter = clampi(h.arg, 0, 2);
+            a.store.filter = clampi(h.arg, 0, 3);
             a.store.page = 0;
             redraw(a);
         }
-        H_CARD => open_detail(a, h.arg as usize),
+        H_CARD => open_detail(a, h.arg),
+        H_SEARCH => {
+            a.store.kb_for = KbFor::Search;
+            keyboard_open(&mut a.store.kb, tr("Search packages"), a.store.query.as_bytes());
+        }
+        H_REPO => {
+            a.store.view = StoreView::InstallRepo;
+            a.store.kb_for = KbFor::Repo;
+            a.store.error.clear();
+            keyboard_open(&mut a.store.kb, tr("GitHub repository"), b"");
+        }
+        H_QUERY_CLEAR => {
+            a.store.query.clear();
+            a.store.page = 0;
+            redraw(a);
+        }
+        H_UNINSTALL => {
+            a.store.view = StoreView::Remove;
+            redraw(a);
+        }
+        H_UNINSTALL_YES => uninstall_selected(a),
         H_PREV => {
             a.store.page = (a.store.page - 1).max(0);
             redraw(a);
@@ -1579,6 +1986,9 @@ fn tapped(a: &mut App, h: Hit) {
             redraw(a);
         }
         H_RETRY => {
+            a.store.repo_install = false;
+            a.store.repo_input.clear();
+            a.store.repo_pkg = None;
             if a.store.index.packages.is_empty() {
                 start_catalog(&mut a.store);
             } else {
@@ -1593,6 +2003,35 @@ fn tapped(a: &mut App, h: Hit) {
 
 pub fn store_pointer(a: &mut App, ph: i32, ev: &InEvent) {
     if !a.store.open {
+        return;
+    }
+    if a.store.kb.open {
+        let mut ui = std::mem::take(&mut a.store);
+        let r = app_keyboard_pointer(a, &mut ui.kb, ph, ev);
+        let finished = r == KbResult::Done || r == KbResult::Cancel;
+        if finished {
+            keyboard_close(&mut ui.kb);
+            let text = ui.kb.text.as_str().to_string();
+            let to_repo = ui.kb_for == KbFor::Repo;
+            a.store = ui;
+            if r == KbResult::Done {
+                if to_repo {
+                    begin_repo_install(a, &text);
+                } else {
+                    a.store.query = text;
+                    a.store.page = 0;
+                    a.store.view = StoreView::List;
+                    redraw(a);
+                }
+            } else {
+                if a.store.view == StoreView::InstallRepo {
+                    a.store.view = StoreView::List;
+                }
+                redraw(a);
+            }
+        } else {
+            a.store = ui;
+        }
         return;
     }
     if ph == 0 {
@@ -1632,36 +2071,48 @@ struct StorePage {
     back: Rect,
     close: Rect,
     refresh: Rect,
+    search: Rect,
+    repo: Rect,
 }
 
-fn store_page(c: &mut Canvas, aw: i32, ah: i32, title: &str, back: bool, refresh: bool) -> StorePage {
+fn store_page(c: &mut Canvas, aw: i32, ah: i32, title: &str, back: bool, tools: bool) -> StorePage {
     canvas_fill(c, Rect::new(0, 0, aw, ah), 255);
-    let mut actions: Vec<(IconKind, i32)> = Vec::with_capacity(2);
-    if refresh {
+    let mut actions: Vec<(IconKind, i32)> = Vec::with_capacity(4);
+    if tools {
         actions.push((IconKind::Update, 0));
+        actions.push((IconKind::Search, 0));
+        actions.push((IconKind::Download, 0));
     }
     actions.push((IconKind::Close, 0));
     let (head, rects) = gui_header(c, aw, title, back, &actions);
     let pad = gui_margin();
     let close = rects.last().map_or(RECT_EMPTY, |r| r.0);
-    let refresh_r = if refresh { rects.first().map_or(RECT_EMPTY, |r| r.0) } else { RECT_EMPTY };
+    let tool = |i: usize| if tools { rects.get(i).map_or(RECT_EMPTY, |r| r.0) } else { RECT_EMPTY };
     StorePage {
         content: Rect::new(pad, head.foot, aw - 2 * pad, ah - head.foot - pad),
         back: head.back,
         close,
-        refresh: refresh_r,
+        refresh: tool(0),
+        search: tool(1),
+        repo: tool(2),
     }
 }
 
-fn draw_header_hits(ui: &mut PackageStoreUi, page: &StorePage, refresh: bool) {
+fn draw_header_hits(ui: &mut PackageStoreUi, page: &StorePage) {
     if !rect_is_empty(page.back) {
         hits_add(&mut ui.hits, page.back, H_BACK, 0);
     }
     if !rect_is_empty(page.close) {
         hits_add(&mut ui.hits, page.close, H_CLOSE, 0);
     }
-    if refresh && !rect_is_empty(page.refresh) {
+    if !rect_is_empty(page.refresh) {
         hits_add(&mut ui.hits, page.refresh, H_REFRESH, 0);
+    }
+    if !rect_is_empty(page.search) {
+        hits_add(&mut ui.hits, page.search, H_SEARCH, 0);
+    }
+    if !rect_is_empty(page.repo) {
+        hits_add(&mut ui.hits, page.repo, H_REPO, 0);
     }
 }
 
@@ -1754,34 +2205,45 @@ fn draw_package_card(c: &mut Canvas, r: Rect, p: &StorePackage, featured: bool, 
 
 fn draw_list(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let page = store_page(c, aw, ah, tr("Package Store"), false, true);
-    draw_header_hits(ui, &page, true);
+    draw_header_hits(ui, &page);
     let area = page.content;
     let gap = gui_gap();
-    let chips_h = ui_px(86.0);
-    let labels = [tr("All"), tr("Apps"), tr("Widgets")];
-    let mut widths = Vec::with_capacity(3);
-    for label in &labels {
-        widths.push((font_measure(FontFace::Bold, ui_text_size(), label) + ui_px(78.0)).max(ui_px(190.0)));
+    let mut top = area.y;
+    if !ui.query.is_empty() {
+        let qh = ui_px(54.0);
+        let text = format!("{} {}", tr("Search:"), ui.query);
+        font_draw_left(c, FontFace::Regular, ui_small_size(), Rect::new(area.x, top, (area.w - ui_px(80.0)).max(0), qh), &text, 80);
+        let xr = Rect::new(area.x + area.w - ui_px(64.0), top, ui_px(64.0), qh);
+        gui_icon_button(c, xr, IconKind::Close, ButtonStyle::Plain);
+        hits_add(&mut ui.hits, xr, H_QUERY_CLEAR, 0);
+        top += qh + gap;
     }
-    let total: i32 = widths.iter().sum::<i32>() + gap * 2;
+    let chips_h = ui_px(86.0);
+    let labels = [tr("All"), tr("Apps"), tr("Widgets"), tr("Installed")];
+    let mut widths = Vec::with_capacity(labels.len());
+    for label in &labels {
+        widths.push((font_measure(FontFace::Bold, ui_text_size(), label) + ui_px(78.0)).max(ui_px(170.0)));
+    }
+    let total: i32 = widths.iter().sum::<i32>() + gap * 3;
     let max_w = (area.w - ui_px(12.0)).max(ui_px(240.0));
     if total > max_w {
-        let each = ((max_w - gap * 2) / 3).max(ui_px(120.0));
+        let each = ((max_w - gap * 3) / 4).max(ui_px(110.0));
         for w in &mut widths {
             *w = each;
         }
     }
     let mut x = area.x;
     for (i, label) in labels.iter().enumerate() {
-        let r = Rect::new(x, area.y, widths[i], chips_h);
+        let r = Rect::new(x, top, widths[i], chips_h);
         gui_chip(c, r, label, ui.filter == i as i32);
         hits_add(&mut ui.hits, r, H_FILTER, i as i32);
         x += widths[i] + gap;
     }
-    let top = area.y + chips_h + gap;
+    let grid_top = top + chips_h + gap;
     let bottom = area.y + area.h;
-    let pager = if filtered(ui).len() > 0 { PAGER_H + gap } else { 0 };
-    let grid_h = (bottom - top - pager).max(ui_px(200.0));
+    let vis = filtered(ui);
+    let pager = if vis.is_empty() { 0 } else { PAGER_H + gap };
+    let grid_h = (bottom - grid_top - pager).max(ui_px(200.0));
     let cols = if area.w >= ui_px(2550.0) {
         4
     } else if area.w >= ui_px(1700.0) {
@@ -1793,37 +2255,47 @@ fn draw_list(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let rows = ((grid_h + gap) / (ui_px(330.0) + gap)).max(1);
     let card_h = ((grid_h - gap * (rows - 1)) / rows).clamp(ui_px(260.0), ui_px(430.0));
     let per = (cols * rows).max(1) as usize;
-    let vis = filtered(ui);
     let pages = ((vis.len() + per - 1) / per).max(1) as i32;
     ui.page = ui.page.clamp(0, pages - 1);
     let first = ui.page as usize * per;
     if vis.is_empty() {
-        let msg = if ui.refreshing { tr("Reading the Store...") } else { tr("Nothing in the Store yet.") };
-        font_draw_centered(c, FontFace::Bold, ui_title_size(), Rect::new(area.x, top + ui_px(120.0), area.w, ui_px(90.0)), msg, 0);
+        let msg = if ui.refreshing {
+            tr("Reading the Store...").to_string()
+        } else if ui.filter == 3 {
+            tr("No packages are installed.").to_string()
+        } else if !ui.query.is_empty() {
+            tr("No packages match your search.").to_string()
+        } else {
+            tr("Nothing in the Store yet.").to_string()
+        };
+        font_draw_centered(c, FontFace::Bold, ui_title_size(), Rect::new(area.x, grid_top + ui_px(120.0), area.w, ui_px(90.0)), &msg, 0);
         let hint = if ui.error.is_empty() { tr("Tap Refresh to check again.") } else { ui.error.as_str() };
-        ui_text(c, FontFace::Regular, ui_text_size(), ui_small_size(), Rect::new(area.x, top + ui_px(230.0), area.w, ui_px(180.0)), hint, 2, true, 70);
+        ui_text(c, FontFace::Regular, ui_text_size(), ui_small_size(), Rect::new(area.x, grid_top + ui_px(230.0), area.w, ui_px(180.0)), hint, 2, true, 70);
         if !ui.error.is_empty() {
-            let r = Rect::new(area.x + area.w / 2 - ui_px(170.0), top + ui_px(430.0), ui_px(340.0), ui_px(100.0));
+            let r = Rect::new(area.x + area.w / 2 - ui_px(170.0), grid_top + ui_px(430.0), ui_px(340.0), ui_px(100.0));
             gui_button(c, r, IconKind::Update, tr("Refresh"), ButtonStyle::Plain);
             hits_add(&mut ui.hits, r, H_RETRY, 0);
         }
-        return;
+    } else {
+        let shown = vis.len().saturating_sub(first).min(per);
+        for (k, item) in vis.iter().skip(first).take(shown).enumerate() {
+            let row = (k / cols as usize) as i32;
+            let in_row = (shown - row as usize * cols as usize).min(cols as usize) as i32;
+            let row_w = in_row * card_w + (in_row - 1).max(0) * gap;
+            let x0 = area.x + (area.w - row_w) / 2;
+            let col = (k % cols as usize) as i32;
+            let r = Rect::new(x0 + col * (card_w + gap), grid_top + row * (card_h + gap), card_w, card_h);
+            let Some(p) = pkg_at(ui, *item) else { continue };
+            let featured = p.id == ui.index.featured && ui.filter != 3;
+            let icon_image = match item {
+                PkgRef::Catalog(n) => ui.list_icons.get(*n).filter(|icon| !icon.px.is_empty()),
+                PkgRef::Installed(_) => None,
+            };
+            draw_package_card(c, r, p, featured, icon_image);
+            hits_add(&mut ui.hits, r, H_CARD, card_arg(*item));
+        }
+        draw_pager(c, ui, Rect::new(area.x, bottom - PAGER_H, area.w, PAGER_H), ui.page, pages);
     }
-    let shown = vis.len().saturating_sub(first).min(per);
-    for (k, n) in vis.iter().skip(first).take(shown).enumerate() {
-        let row = (k / cols as usize) as i32;
-        let in_row = (shown - row as usize * cols as usize).min(cols as usize) as i32;
-        let row_w = in_row * card_w + (in_row - 1).max(0) * gap;
-        let x0 = area.x + (area.w - row_w) / 2;
-        let col = (k % cols as usize) as i32;
-        let r = Rect::new(x0 + col * (card_w + gap), top + row * (card_h + gap), card_w, card_h);
-        let p = &ui.index.packages[*n];
-        let featured = p.id == ui.index.featured;
-        let icon_image = ui.list_icons.get(*n).filter(|icon| !icon.px.is_empty());
-        draw_package_card(c, r, p, featured, icon_image);
-        hits_add(&mut ui.hits, r, H_CARD, *n as i32);
-    }
-    draw_pager(c, ui, Rect::new(area.x, bottom - PAGER_H, area.w, PAGER_H), ui.page, pages);
     if !ui.status.is_empty() {
         font_draw_centered(c, FontFace::Regular, ui_small_size(), Rect::new(area.x, bottom - PAGER_H - ui_px(38.0), area.w, ui_px(34.0)), &ui.status, 100);
     }
@@ -1917,7 +2389,7 @@ fn draw_description(c: &mut Canvas, r: Rect, p: &StorePackage) {
 fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let title = tr("Package");
     let page = store_page(c, aw, ah, title, true, false);
-    draw_header_hits(ui, &page, false);
+    draw_header_hits(ui, &page);
     let Some(p) = ui.selected_package().cloned() else {
         ui.view = StoreView::List;
         return;
@@ -1927,10 +2399,45 @@ fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let wide = area.w > area.h;
     let icon_sz = if wide { ui_px(150.0) } else { ui_px(140.0) };
     let header_h = icon_sz.max(ui_px(150.0));
-    let action_h = ui_px(100.0);
-    let action_gap = ui_px(14.0);
-    let action_count = if p.repository.is_empty() { 1 } else { 2 };
-    let actions_h = action_h;
+    // Install (or Update), Uninstall and the repository link stand side by side, each with its
+    // icon and its name beside it. They wrap onto another row only when the width cannot hold them.
+    let installed_now = installed_kind(&p.id).is_some();
+    let has_update = installed_for(&p).is_some_and(|it| update_version_cmp(&p.version, &it.version) > 0);
+    let mut actions: Vec<(String, IconKind, i32, ButtonStyle)> = Vec::new();
+    if installed_now {
+        if has_update {
+            actions.push((format!("{} {}", tr("Update to"), p.version), IconKind::Download, H_INSTALL, ButtonStyle::Primary));
+        }
+        actions.push((tr("Uninstall").to_string(), IconKind::Close, H_UNINSTALL, ButtonStyle::Primary));
+    } else {
+        actions.push((tr("Install").to_string(), IconKind::Download, H_INSTALL, ButtonStyle::Primary));
+    }
+    if !p.repository.is_empty() {
+        actions.push((tr("Repository URL").to_string(), IconKind::Link, H_QR, ButtonStyle::Plain));
+    }
+    let action_h = ui_px(96.0);
+    let action_gap = ui_px(12.0);
+    let action_w = if wide { area.w * 43 / 100 } else { area.w };
+    let widths: Vec<i32> = actions
+        .iter()
+        .map(|(label, _, _, _)| (font_measure(FontFace::Bold, ui_text_size(), label) + ui_px(104.0)).min(action_w))
+        .collect();
+    let mut action_rows: Vec<Vec<usize>> = Vec::new();
+    let mut row: Vec<usize> = Vec::new();
+    let mut row_w = 0;
+    for (i, w) in widths.iter().enumerate() {
+        if !row.is_empty() && row_w + action_gap + w > action_w {
+            action_rows.push(std::mem::take(&mut row));
+            row_w = 0;
+        }
+        row_w += if row.is_empty() { *w } else { *w + action_gap };
+        row.push(i);
+    }
+    if !row.is_empty() {
+        action_rows.push(row);
+    }
+    let rows_n = action_rows.len().max(1) as i32;
+    let actions_h = rows_n * action_h + (rows_n - 1) * action_gap;
     let meta_h = ui_px(228.0);
     let (info, shot, desc_h) = if wide {
         let info = Rect::new(area.x, area.y, area.w * 43 / 100, area.h);
@@ -1973,27 +2480,27 @@ fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     } else {
         (meta_y + meta_h + ui_px(14.0)).min(info.y + info.h - actions_h)
     };
-    let (label, style, enabled) = install_label(&p);
-    let action_w = if action_count == 2 { (info.w - action_gap) / 2 } else { info.w };
-    let install_r = Rect::new(info.x, ay, action_w, action_h);
-    gui_button(c, install_r, IconKind::Download, &label, style);
-    if enabled {
-        hits_add(&mut ui.hits, install_r, H_INSTALL, 0);
-    }
-    if !p.repository.is_empty() {
-        let r = Rect::new(info.x + action_w + action_gap, ay, action_w, action_h);
-        gui_button(c, r, IconKind::Link, tr("Repository QR"), ButtonStyle::Plain);
-        hits_add(&mut ui.hits, r, H_QR, 0);
-    }
     if !ui.status.is_empty() {
-        font_draw_left(c, FontFace::Regular, ui_small_size(), Rect::new(info.x, ay + action_h, info.w, ui_px(44.0)), &ui.status, 90);
+        font_draw_left(c, FontFace::Regular, ui_small_size(), Rect::new(info.x, ay - ui_px(50.0), info.w, ui_px(44.0)), &ui.status, 90);
+    }
+    let mut row_y = ay;
+    for row in &action_rows {
+        let mut bx = info.x;
+        for &i in row {
+            let (label, icon, id, style) = &actions[i];
+            let r = Rect::new(bx, row_y, widths[i], action_h);
+            gui_button(c, r, *icon, label, *style);
+            hits_add(&mut ui.hits, r, *id, 0);
+            bx += widths[i] + action_gap;
+        }
+        row_y += action_h + action_gap;
     }
     draw_shot(c, ui, shot, &p);
 }
 
 fn draw_trust(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let page = store_page(c, aw, ah, tr("Trust this package?"), true, false);
-    draw_header_hits(ui, &page, false);
+    draw_header_hits(ui, &page);
     let area = page.content;
     let Some(p) = ui.selected_package().cloned() else { ui.view = StoreView::List; return };
     let m = ui.manifest.clone().unwrap_or_default();
@@ -2043,9 +2550,64 @@ fn draw_trust(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     hits_add(&mut ui.hits, cancel, H_BACK, 0);
 }
 
+fn draw_remove(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
+    let page = store_page(c, aw, ah, tr("Uninstall this package?"), true, false);
+    draw_header_hits(ui, &page);
+    let area = page.content;
+    let Some(p) = ui.selected_package().cloned() else {
+        ui.view = StoreView::List;
+        return;
+    };
+    let mut text = String::new();
+    csnprintf!(
+        &mut text,
+        1200,
+        tr("Uninstall %s? Its widget or app is closed and its files are deleted. Your layout is kept."),
+        &p.name
+    );
+    draw_description(c, Rect::new(area.x, area.y, area.w, ui_px(320.0)), &StorePackage { description: text, ..p.clone() });
+    let bh = ui_px(100.0);
+    let gap = ui_px(14.0);
+    let bw = (area.w - gap) / 2;
+    let yes = Rect::new(area.x, area.y + area.h - bh, bw, bh);
+    gui_button(c, yes, IconKind::Close, tr("Uninstall"), ButtonStyle::Primary);
+    hits_add(&mut ui.hits, yes, H_UNINSTALL_YES, 0);
+    let keep = Rect::new(area.x + bw + gap, yes.y, bw, bh);
+    gui_button(c, keep, IconKind::Back, tr("Keep it"), ButtonStyle::Plain);
+    hits_add(&mut ui.hits, keep, H_BACK, 0);
+}
+
+fn draw_install_repo(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
+    let page = store_page(c, aw, ah, tr("Install from GitHub"), true, false);
+    draw_header_hits(ui, &page);
+    let area = page.content;
+    ui_text(
+        c,
+        FontFace::Regular,
+        ui_text_size(),
+        ui_small_size(),
+        Rect::new(area.x, area.y, area.w, ui_px(220.0)),
+        tr("Type a GitHub repository as user/repo, or an https address ending in .yaml, on the keyboard below."),
+        4,
+        true,
+        0,
+    );
+    ui_text(
+        c,
+        FontFace::Regular,
+        ui_small_size(),
+        ui_small_size(),
+        Rect::new(area.x, area.y + ui_px(240.0), area.w, ui_px(120.0)),
+        tr("Tap Done to download it. Nothing is written until you trust the author."),
+        3,
+        true,
+        90,
+    );
+}
+
 fn draw_qr(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let page = store_page(c, aw, ah, tr("Repository"), true, false);
-    draw_header_hits(ui, &page, false);
+    draw_header_hits(ui, &page);
     let Some(p) = ui.selected_package() else { ui.view = StoreView::Detail; return };
     let area = page.content;
     let side = (area.w.min(area.h) - ui_px(260.0)).max(ui_px(260.0)).min(ui_px(900.0));
@@ -2059,7 +2621,7 @@ fn draw_qr(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
 
 fn draw_error(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let page = store_page(c, aw, ah, tr("Package Store"), true, false);
-    draw_header_hits(ui, &page, false);
+    draw_header_hits(ui, &page);
     let area = page.content;
     let title = if ui.index.packages.is_empty() { tr("Couldn't open the Store") } else { tr("Something went wrong") };
     font_draw_centered(c, FontFace::Bold, ui_title_size(), Rect::new(area.x, area.y + ui_px(80.0), area.w, ui_px(90.0)), title, 0);
@@ -2071,7 +2633,7 @@ fn draw_error(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
 
 fn draw_busy(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let page = store_page(c, aw, ah, tr("Package Store"), false, false);
-    draw_header_hits(ui, &page, false);
+    draw_header_hits(ui, &page);
     let area = page.content;
     ui_icon(c, IconKind::Hourglass, Rect::new(area.x + (area.w - ui_px(180.0)) / 2, area.y + ui_px(160.0), ui_px(180.0), ui_px(180.0)), 80);
     ui_text(c, FontFace::Bold, ui_title_size(), ui_text_size(), Rect::new(area.x, area.y + ui_px(400.0), area.w, ui_px(90.0)), &ui.status, 2, true, 0);
@@ -2090,6 +2652,12 @@ pub fn store_draw(a: &mut App) {
         StoreView::Qr => draw_qr(c, ui, *w, *h),
         StoreView::Error => draw_error(c, ui, *w, *h),
         StoreView::Busy => draw_busy(c, ui, *w, *h),
+        StoreView::InstallRepo => draw_install_repo(c, ui, *w, *h),
+        StoreView::Remove => draw_remove(c, ui, *w, *h),
+    }
+    if ui.kb.open {
+        let screen = Rect::new(0, 0, *w, *h);
+        keyboard_draw(&mut ui.kb, c, screen);
     }
 }
 
@@ -2103,17 +2671,22 @@ pub fn store_probe(ui: &PackageStoreUi, key: &str) -> Option<String> {
         StoreView::Busy => "busy",
         StoreView::Error => "error",
         StoreView::Qr => "qr",
+        StoreView::InstallRepo => "install-repo",
+        StoreView::Remove => "remove",
     };
     Some(match key {
         "view" => view.to_string(),
         "open" => (ui.open as i32).to_string(),
         "filter" => ui.filter.to_string(),
+        "query" => ui.query.clone(),
+        "installed" => ui.installed.len().to_string(),
         "featured" => ui.index.featured.clone(),
         "selected" => ui.selected.clone().unwrap_or_default(),
         "packages" => ui.index.packages.len().to_string(),
         "visible" => filtered(ui)
             .iter()
-            .map(|i| ui.index.packages[*i].id.clone())
+            .filter_map(|r| pkg_at(ui, *r))
+            .map(|p| p.id.clone())
             .collect::<Vec<_>>()
             .join(" "),
         "screenshots" => ui
@@ -2138,7 +2711,11 @@ pub fn store_control_point(ui: &PackageStoreUi, name: &str) -> Option<(f32, f32)
         "close" => H_CLOSE,
         "back" => H_BACK,
         "refresh" => H_REFRESH,
+        "search" => H_SEARCH,
+        "repo" => H_REPO,
         "install" => H_INSTALL,
+        "uninstall" => H_UNINSTALL,
+        "uninstall-yes" => H_UNINSTALL_YES,
         "trust" => H_TRUST,
         "qr" => H_QR,
         "retry" => H_RETRY,
@@ -2152,11 +2729,19 @@ pub fn store_control_point(ui: &PackageStoreUi, name: &str) -> Option<(f32, f32)
                 return ui.hits.h.iter().find(|h| h.id == H_FILTER && h.arg == i).map(|h| ((h.r.x + h.r.w / 2) as f32, (h.r.y + h.r.h / 2) as f32));
             }
             let n = name.strip_prefix("package.").or_else(|| name.strip_prefix("row."))?;
-            let i = n
-                .parse::<usize>()
+            let found = n
+                .parse::<i32>()
                 .ok()
-                .or_else(|| ui.index.packages.iter().position(|p| p.id == n))?;
-            return ui.hits.h.iter().find(|h| h.id == H_CARD && h.arg == i as i32).map(|h| ((h.r.x + h.r.w / 2) as f32, (h.r.y + h.r.h / 2) as f32));
+                .and_then(card_ref)
+                .or_else(|| {
+                    ui.index
+                        .packages
+                        .iter()
+                        .position(|p| p.id == n)
+                        .map(PkgRef::Catalog)
+                        .or_else(|| ui.installed.iter().position(|p| p.id == n).map(PkgRef::Installed))
+                })?;
+            return ui.hits.h.iter().find(|h| h.id == H_CARD && h.arg == card_arg(found)).map(|h| ((h.r.x + h.r.w / 2) as f32, (h.r.y + h.r.h / 2) as f32));
         }
     };
     ui.hits.h.iter().find(|h| h.id == id).map(|h| ((h.r.x + h.r.w / 2) as f32, (h.r.y + h.r.h / 2) as f32))
