@@ -239,7 +239,7 @@ impl PackageStoreUi {
         self.shot_for.clear();
         self.shot_tried = false;
         self.shot_index = 0;
-        self.drop_waits(|stage| matches!(stage, FetchStage::Icon | FetchStage::Screenshot));
+        self.drop_waits(&|stage| matches!(stage, FetchStage::Icon | FetchStage::Screenshot));
     }
 
     fn cancel_jobs(&mut self) {
@@ -247,7 +247,7 @@ impl PackageStoreUi {
         self.install_job = None;
         self.asset_job = None;
         self.refreshing = false;
-        self.drop_waits(|_| true);
+        self.drop_waits(&|_| true);
     }
 
     fn reset_list_icons(&mut self) {
@@ -256,13 +256,15 @@ impl PackageStoreUi {
         }
         self.list_icons = vec![Canvas::default(); self.index.packages.len()];
         self.list_tried = vec![false; self.index.packages.len()];
-        self.drop_waits(|stage| stage == FetchStage::ListIcon);
+        self.drop_waits(&|stage| stage == FetchStage::ListIcon);
     }
 
     /// The pictures of these slots are no longer waited for (another package, another screenshot,
     /// the Store closed): a job of theirs that is still queued leaves the queue, unless another
     /// slot waits on that very job (a running one runs on: its picture is kept for the next look).
-    fn drop_waits(&mut self, which: impl Fn(FetchStage) -> bool) {
+    /// (One function, never a copy in each of its callers: the Kindle's binary has no room for them.)
+    #[inline(never)]
+    fn drop_waits(&mut self, which: &dyn Fn(FetchStage) -> bool) {
         let (gone, kept): (Vec<PicWait>, Vec<PicWait>) = std::mem::take(&mut self.pic_waits).into_iter().partition(|w| which(w.stage));
         self.pic_waits = kept;
         for job in gone.iter().filter_map(|w| w.job.as_deref()) {
@@ -942,7 +944,7 @@ fn start_selected_assets(a: &mut App) {
         a.store.icon.reset();
         a.store.icon_for = pkg.id.clone();
         a.store.icon_tried = false;
-        a.store.drop_waits(|stage| stage == FetchStage::Icon);
+        a.store.drop_waits(&|stage| stage == FetchStage::Icon);
         if let StoreIconRef::Glyph(g) = pkg.icon.clone() {
             a.store.icon.glyph = g;
         }
@@ -952,7 +954,7 @@ fn start_selected_assets(a: &mut App) {
         a.store.shot_for = pkg.id.clone();
         a.store.shot_tried = false;
         a.store.shot_index = 0;
-        a.store.drop_waits(|stage| stage == FetchStage::Screenshot);
+        a.store.drop_waits(&|stage| stage == FetchStage::Screenshot);
     }
     if a.store.asset_job.is_some() {
         return;
@@ -1454,7 +1456,7 @@ fn shot_move(a: &mut App, step: i32) {
     a.store.shot_tried = false;
     canvas_free(&mut a.store.shot);
     a.store.asset_job = None;
-    a.store.drop_waits(|stage| stage == FetchStage::Screenshot);
+    a.store.drop_waits(&|stage| stage == FetchStage::Screenshot);
     start_selected_assets(a);
 }
 
@@ -2177,9 +2179,9 @@ mod tests {
         assert!(!shot_coming(&ui));
         ui.pic_waits[0].stage = FetchStage::Screenshot;
         assert!(shot_coming(&ui));
-        ui.drop_waits(|stage| stage == FetchStage::Icon);
+        ui.drop_waits(&|stage| stage == FetchStage::Icon);
         assert!(shot_coming(&ui));
-        ui.drop_waits(|stage| stage == FetchStage::Screenshot);
+        ui.drop_waits(&|stage| stage == FetchStage::Screenshot);
         assert!(!shot_coming(&ui) && ui.pic_waits.is_empty());
     }
 
