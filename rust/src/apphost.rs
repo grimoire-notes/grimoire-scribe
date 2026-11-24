@@ -141,10 +141,21 @@ fn http_file_name(name: &str) -> bool {
     })
 }
 
+/// Makes an app's state folder `state` and its request folder `folder` (`state/http`) when they
+/// are missing, and says whether both are real folders: folders themselves, not links to one.
+/// Neither name is followed when it is a link, so nothing is made behind one.
+fn http_folders(state: &str, folder: &str) -> bool {
+    let real = |path: &str| std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir());
+    let missing = |path: &str| std::fs::symlink_metadata(path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound);
+    (real(state) || missing(state)) && (real(folder) || missing(folder)) && mkdir_p(folder) == 0 && real(state) && real(folder)
+}
+
 /// Removes the request files an earlier run left in `folder`, an app's `state/http`: a Grimoire
 /// that stopped while a request ran removed none of them. Only plain files with a request file's
-/// name go. A link is neither followed nor removed, every other name stays, and a `folder` that
-/// is not a real folder is left as it is. For when no request of the host is in flight.
+/// name go. A link in the folder is neither followed nor removed, and every other name stays.
+/// When `folder`'s own name is a link, or anything but a folder, nothing is removed; the names
+/// before it in the path are followed as any path's are, and are the caller's to check
+/// (`http_start` does, with `http_folders`). For when no request of the host is in flight.
 fn http_sweep(folder: &str) {
     if !std::fs::symlink_metadata(folder).is_ok_and(|m| m.is_dir()) {
         return;
@@ -1147,7 +1158,9 @@ impl HostState {
         self.http = None;
         let Some(dir) = self.state_path.rsplit_once('/').map(|(d, _)| d) else { return -1 };
         let folder = format!("{dir}/http");
-        if mkdir_p(&folder) != 0 {
+        // The request's files are made in the app's state folder and its `http` folder, which are
+        // real folders: with a link at either name the start fails, and makes and removes nothing.
+        if !http_folders(dir, &folder) {
             return -1;
         }
         // No request of this host is in flight now: what an earlier run left in the folder goes.
@@ -1977,6 +1990,86 @@ mod tests {
         drop(st);
         others.sort();
         assert_eq!(request_files(&dir), others);
+    }
+
+    // A request is started only when the app's state folder and its http folder are real folders.
+    // With a link at either name, whatever it leads to, or a file there, the start fails: nothing
+    // is started, nothing is made and nothing is removed.
+    #[test]
+    fn a_request_is_started_only_in_real_folders() {
+        use std::os::unix::fs::symlink;
+        let listed = |folder: &str| {
+            let mut names: Vec<String> = std::fs::read_dir(folder).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+            names.sort();
+            names
+        };
+        let refused = |dir: &str| {
+            let mut st = host_standing_in(dir, "printf 200");
+            assert_eq!(st.http_start("POST", "http://127.0.0.1:9/", "X-A: 1", b"upload"), -1, "{dir}");
+            assert!(st.http.is_none(), "{dir}");
+        };
+
+        // The state folder is a link to a folder that has a request folder with files in it.
+        let dir = scratch("links-state");
+        let target = format!("{dir}/target");
+        std::fs::create_dir_all(format!("{target}/http")).unwrap();
+        std::fs::write(format!("{target}/http/5-5.body"), "kept").unwrap();
+        std::fs::write(format!("{target}/http/notes.txt"), "kept").unwrap();
+        symlink(&target, format!("{dir}/state")).unwrap();
+        refused(&dir);
+        assert_eq!(listed(&format!("{target}/http")), ["5-5.body", "notes.txt"]);
+        assert_eq!(listed(&dir), ["state", "target"]);
+
+        // The state folder is a link to a folder with nothing in it, and a link that leads nowhere.
+        let dir = scratch("links-state-empty");
+        let target = format!("{dir}/target");
+        std::fs::create_dir(&target).unwrap();
+        symlink(&target, format!("{dir}/state")).unwrap();
+        refused(&dir);
+        assert_eq!(listed(&target), Vec::<String>::new());
+        std::fs::remove_file(format!("{dir}/state")).unwrap();
+        symlink(format!("{dir}/nowhere"), format!("{dir}/state")).unwrap();
+        refused(&dir);
+        assert_eq!(listed(&dir), ["state", "target"]);
+
+        // The request folder is a link to a folder with files in it, and a link that leads nowhere.
+        let dir = scratch("links-http");
+        let elsewhere = format!("{dir}/elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        std::fs::write(format!("{elsewhere}/5-5.body"), "kept").unwrap();
+        std::fs::create_dir(format!("{dir}/state")).unwrap();
+        symlink(&elsewhere, format!("{dir}/state/http")).unwrap();
+        refused(&dir);
+        assert_eq!(listed(&elsewhere), ["5-5.body"]);
+        std::fs::remove_file(format!("{dir}/state/http")).unwrap();
+        symlink(format!("{dir}/nowhere"), format!("{dir}/state/http")).unwrap();
+        refused(&dir);
+        assert_eq!(listed(&dir), ["elsewhere", "state"]);
+        assert_eq!(listed(&format!("{dir}/state")), ["http"]);
+
+        // A file at either name.
+        let dir = scratch("links-files");
+        std::fs::create_dir(format!("{dir}/state")).unwrap();
+        std::fs::write(format!("{dir}/state/http"), "kept").unwrap();
+        refused(&dir);
+        assert_eq!(std::fs::read_to_string(format!("{dir}/state/http")).unwrap(), "kept");
+        std::fs::remove_file(format!("{dir}/state/http")).unwrap();
+        std::fs::remove_dir(format!("{dir}/state")).unwrap();
+        std::fs::write(format!("{dir}/state"), "kept").unwrap();
+        refused(&dir);
+        assert_eq!(std::fs::read_to_string(format!("{dir}/state")).unwrap(), "kept");
+
+        // Real folders, there already or made by the start: the request starts, and what an
+        // earlier run left in the request folder goes.
+        let dir = scratch("links-none");
+        let mut st = host_standing_in(&dir, "printf 200");
+        assert_eq!(st.http_start("GET", "http://127.0.0.1:9/", "", b""), 0);
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (200, Vec::new(), String::new()));
+        std::fs::write(format!("{dir}/state/http/5-5.body"), "left").unwrap();
+        assert_eq!(st.http_start("GET", "http://127.0.0.1:9/", "", b""), 0);
+        poll_to_end(&mut st);
+        assert_eq!(request_files(&dir), Vec::<String>::new());
     }
 
     /// An open app's runtime around `st`, with a module that has nothing in it: what the host's
