@@ -38,7 +38,9 @@ const ABI: &str = "grimoire";
 const ARTIFACT_MAX: usize = 32 * 1024 * 1024;
 const STATE_MAX: usize = 256 * 1024;
 const STATE_FILE: &str = "state/runtime.bin";
-const FUEL_PER_CALL: u64 = 30_000_000;
+/// A call's instruction budget: every call of the module by the host (`app_draw`, `app_pointer`, `app_key`,
+/// `app_status_bar`, `app_stop`, and its start) has this many instructions. A call that needs more is stopped.
+pub const APP_CALL_FUEL: u64 = 30_000_000;
 const MEMORY_MAX: usize = 48 * 1024 * 1024;
 
 /// A drawing command recorded by the module and rendered by the host. Coordinates are body-local.
@@ -232,6 +234,8 @@ pub struct AppRuntime {
     status: String,
     texts: Vec<String>,
     error: Option<String>,
+    /// what the last call took from its budget
+    used: u64,
 }
 
 impl std::fmt::Debug for AppRuntime {
@@ -301,12 +305,12 @@ impl AppRun {
         }
     }
 
-    fn draw(&mut self, c: &mut Canvas, body: Rect, status_h: i32) {
+    fn draw(&mut self, c: &mut Canvas, body: Rect) {
         let now = Instant::now();
         let elapsed = self.last_draw.map_or(0, |at| now.duration_since(at).as_millis().min(i32::MAX as u128) as i32);
         self.last_draw = Some(now);
         let Some(r) = self.runtime.as_mut() else { return };
-        r.draw(c, body, status_h, elapsed);
+        r.draw(c, body, elapsed);
     }
 
     fn tick(&mut self) {
@@ -375,7 +379,7 @@ pub fn apphost_launch(a: &mut App, id: &str) -> bool {
             crate::library::library_app_launched(a);
             a.app_view.last_draw = Some(Instant::now());
             let App { screen: c, app_view, .. } = a;
-            app_view.draw(c, app_view.body, gui_status_h());
+            app_view.draw(c, app_view.body);
             app_invalidate_all(a, RefreshMode::Full);
             true
         }
@@ -425,7 +429,7 @@ pub fn apphost_draw(a: &mut App) {
     }
     if !rect_is_empty(body) {
         app_view.body = body;
-        app_view.draw(c, body, gui_status_h());
+        app_view.draw(c, body);
     }
     if let Some(err) = app_view.runtime.as_ref().and_then(|r| r.error.as_deref()) {
         app_view.error = err.to_string();
@@ -554,6 +558,15 @@ pub fn apphost_control_point(a: &App, name: &str) -> Option<(f32, f32)> {
 // ---- the runtime ----
 
 impl AppRuntime {
+    /// Loads an installed app's module and starts it, for a screen of `screen_w` by `screen_h` pixels: what a
+    /// launch does, without the screen (the host's tests drive a module through this).
+    pub fn open(id: &str, screen_w: i32, screen_h: i32, clock_12h: bool) -> Result<Self, String> {
+        let installed = || "That app is no longer installed.".to_string();
+        let m = crate::apppkg::app_package_installed_manifest(id).ok_or_else(installed)?;
+        let it = crate::apppkg::app_package_installed(id).ok_or_else(installed)?;
+        Self::new(&it, &m, screen_w, screen_h, clock_12h)
+    }
+
     fn new(it: &WidgetInstall, m: &WidgetPackage, screen_w: i32, screen_h: i32, clock_12h: bool) -> Result<Self, String> {
         let path = format!("{}/{}", crate::apppkg::app_package_dir(&it.id), m.artifact.path);
         let bytes = read_file_max(&path, ARTIFACT_MAX).ok_or("The app's artifact could not be read.")?;
@@ -586,7 +599,8 @@ impl AppRuntime {
             http_stand_in: Vec::new(),
         });
         store.limiter(|st| &mut st.limits);
-        let _ = store.set_fuel(FUEL_PER_CALL);
+        // The start section runs here, before the app can draw: it has the budget of a call.
+        let _ = store.set_fuel(APP_CALL_FUEL);
         let mut linker = Linker::new(&engine);
         install_imports(&mut linker)?;
         let instance = linker.instantiate_and_start(&mut store, &module).map_err(|e| format!("The app could not start: {e}"))?;
@@ -600,10 +614,12 @@ impl AppRuntime {
             status: String::new(),
             texts: Vec::new(),
             error: None,
+            used: 0,
         })
     }
 
-    fn draw(&mut self, c: &mut Canvas, body: Rect, status_h: i32, elapsed_ms: i32) {
+    /// Calls `app_draw` and renders its commands into `body`.
+    pub fn draw(&mut self, c: &mut Canvas, body: Rect, elapsed_ms: i32) {
         if self.error.is_some() {
             return;
         }
@@ -617,9 +633,11 @@ impl AppRuntime {
         self.store.data_mut().commands.clear();
         self.store.data_mut().status.clear();
         self.store.data_mut().texts.clear();
-        let _ = self.store.set_fuel(FUEL_PER_CALL);
+        self.begin_call();
         let scale = ui_px(1000.0);
-        if let Err(e) = draw.call(&mut self.store, (body.w, body.h, scale, elapsed_ms)) {
+        let called = draw.call(&mut self.store, (body.w, body.h, scale, elapsed_ms));
+        self.end_call();
+        if let Err(e) = called {
             self.error = Some(format!("The app stopped: {e}"));
             return;
         }
@@ -627,7 +645,6 @@ impl AppRuntime {
         let commands = std::mem::take(&mut self.store.data_mut().commands);
         self.status = std::mem::take(&mut self.store.data_mut().status);
         self.texts = std::mem::take(&mut self.store.data_mut().texts);
-        let _ = status_h;
         canvas_fill(c, body, 255);
         let saved_clip = c.clip;
         for cmd in commands {
@@ -691,26 +708,32 @@ impl AppRuntime {
         c.clip = saved_clip;
     }
 
-    fn pointer(&mut self, phase: i32, x: i32, y: i32, source: i32) {
+    /// Calls `app_pointer`, when the module has one: a pointer phase at a place of the body.
+    pub fn pointer(&mut self, phase: i32, x: i32, y: i32, source: i32) {
         if self.error.is_some() {
             return;
         }
         let Some(f) = self.instance.get_typed_func::<(i32, i32, i32, i32), ()>(&self.store, "app_pointer").ok() else { return };
-        let _ = self.store.set_fuel(FUEL_PER_CALL);
-        if f.call(&mut self.store, (phase, x, y, source)).is_err() {
+        self.begin_call();
+        let called = f.call(&mut self.store, (phase, x, y, source));
+        self.end_call();
+        if called.is_err() {
             self.error = Some("The app stopped while handling a touch.".into());
             return;
         }
         self.save();
     }
 
-    fn key(&mut self, code: i32, mods: i32, down: bool) {
+    /// Calls `app_key`, when the module has one.
+    pub fn key(&mut self, code: i32, mods: i32, down: bool) {
         if self.error.is_some() {
             return;
         }
         let Some(f) = self.instance.get_typed_func::<(i32, i32, i32), ()>(&self.store, "app_key").ok() else { return };
-        let _ = self.store.set_fuel(FUEL_PER_CALL);
-        if f.call(&mut self.store, (code, mods, i32::from(down))).is_err() {
+        self.begin_call();
+        let called = f.call(&mut self.store, (code, mods, i32::from(down)));
+        self.end_call();
+        if called.is_err() {
             self.error = Some("The app stopped while handling a key.".into());
             return;
         }
@@ -719,18 +742,38 @@ impl AppRuntime {
 
     fn export_status_bar(&mut self) -> Option<bool> {
         let f = self.instance.get_typed_func::<(), i32>(&self.store, "app_status_bar").ok()?;
-        let _ = self.store.set_fuel(FUEL_PER_CALL);
-        f.call(&mut self.store, ()).ok().map(|v| v != 0)
+        self.begin_call();
+        let called = f.call(&mut self.store, ());
+        self.end_call();
+        called.ok().map(|v| v != 0)
     }
 
-    fn stop(&mut self) {
+    /// Calls `app_stop`, when the module has one and has not stopped with an error, and saves its state.
+    pub fn stop(&mut self) {
         if self.error.is_none() {
             if let Ok(f) = self.instance.get_typed_func::<(), ()>(&self.store, "app_stop") {
-                let _ = self.store.set_fuel(FUEL_PER_CALL);
+                self.begin_call();
                 let _ = f.call(&mut self.store, ());
+                self.end_call();
             }
         }
         self.save();
+    }
+
+    /// Starts a call of the module: its instruction budget.
+    fn begin_call(&mut self) {
+        let _ = self.store.set_fuel(APP_CALL_FUEL);
+    }
+
+    /// After a call: what it took from its budget, whether it ended or was stopped.
+    fn end_call(&mut self) {
+        self.used = APP_CALL_FUEL.saturating_sub(self.store.get_fuel().unwrap_or(0));
+    }
+
+    /// What the last call of the module took from its budget. At most APP_CALL_FUEL, which a call that was
+    /// stopped for it has used up.
+    pub fn fuel_used(&self) -> u64 {
+        self.used
     }
 
     fn tick(&mut self) {
@@ -758,6 +801,21 @@ impl AppRuntime {
 
     fn redraw_due(&self, now: Instant) -> bool {
         self.store.data().redraw_at.is_some_and(|at| at <= now)
+    }
+
+    /// What the app shows in place of going on, once a call of its module has failed.
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    /// The status line of the last drawing pass, for tests and a debug view.
+    pub fn status(&self) -> &str {
+        &self.status
+    }
+
+    /// The text drawn in the last drawing pass, joined by `|`, for generic scenario probes.
+    pub fn text(&self) -> String {
+        self.texts.join("|")
     }
 }
 
@@ -2319,7 +2377,7 @@ mod tests {
         let module = Module::new(&engine, &b"\0asm\x01\0\0\0"[..]).unwrap();
         let mut store = Store::new(&engine, st);
         let instance = Linker::new(&engine).instantiate_and_start(&mut store, &module).unwrap();
-        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None }
+        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None, used: 0 }
     }
 
     /// Ticks the host until its request has ended, with no poll of the app's.
@@ -2692,11 +2750,11 @@ mod tests {
         st.limits = StoreLimitsBuilder::new().memory_size(MEMORY_MAX).build();
         let mut store = Store::new(&engine, st);
         store.limiter(|st| &mut st.limits);
-        store.set_fuel(FUEL_PER_CALL).unwrap();
+        store.set_fuel(APP_CALL_FUEL).unwrap();
         let mut linker = Linker::new(&engine);
         install_imports(&mut linker).unwrap();
         let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
-        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None }
+        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None, used: 0 }
     }
 
     /// The module's memory, to place a request's texts in and to read what a call wrote.
