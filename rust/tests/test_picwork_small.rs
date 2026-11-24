@@ -1,7 +1,7 @@
 // test_picwork_small.rs: the picture worker's small gray pictures (2.3, issue #236; picwork.rs `T`,
 // `PicPool::small`): a package's icon and the Package Store's pictures. Every picture goes through a real worker, a
 // fresh exec of the headless runner (GRIMOIRE_WORK_EXE), as in the app: an `.ico` with a BMP entry and one with a
-// PNG entry (icofile.rs's reader, which only the worker runs), a PNG and a JPEG, one over the side it was asked at
+// PNG entry (picwork/icofile.rs's reader, which only the worker runs), a PNG and a JPEG, one over the side it was asked at
 // fitted inside it, and the ones the worker refuses. Then workers that are stand-ins (a shell script with the right
 // handshake) and answer with a size, a channel count or a length the writer must not take. That no small picture is
 // ever decoded in the writer, with no worker to be had, is test_picwork_fallback.rs's (its own binary: the state
@@ -89,7 +89,7 @@ fn dib32(w: usize, h: usize, px: impl Fn(usize, usize) -> [u8; 4]) -> Vec<u8> {
     d
 }
 
-/// What icofile.rs makes of a colour over white: the launcher's gray.
+/// What picwork/icofile.rs makes of a colour over white: the launcher's gray.
 fn ico_gray_of(r: u8, g: u8, b: u8, a: u8) -> u8 {
     let over = |v: u8| (v as u32 * a as u32 + 255 * (255 - a as u32)) / 255;
     ((over(r) * 77 + over(g) * 150 + over(b) * 29) >> 8) as u8

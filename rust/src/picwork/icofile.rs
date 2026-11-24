@@ -1,8 +1,9 @@
 //! The `.ico` container's reader (2.3, issue #236): an icon file's directory, its PNG entries (through the png
 //! crate) and its classic BMP/DIB entries (32, 24, 8, 4 and 1 bits). An `.ico` comes from outside Grimoire (an app
 //! package's bundled icon, the Package Store's catalog), so this reader runs in the safe loader's picture worker
-//! only (picwork.rs, the `T` command): nothing in the UI process or in a background job's writer calls it
-//! (rust/tests/test_sec_invariants.rs holds that). It was appicon.rs's until then.
+//! only: it is a module private to picwork.rs, whose worker side alone calls it (the `T` command's `small_one`),
+//! so nothing in the UI process or in a background job's writer can (rust/tests/test_sec_invariants.rs holds
+//! that). It was appicon.rs's until then.
 //!
 //! The result is a small grayscale picture: the e-ink panel has no colour, and compositing against white keeps
 //! transparent corners clean on the launcher's white tiles.
@@ -221,7 +222,7 @@ mod tests {
 
     #[test]
     fn an_ico_is_decoded_to_a_small_gray_image() {
-        let data = include_bytes!("../../tests/fixtures/apppkg/packages/apps/com.example.fixture/icon.ico");
+        let data = include_bytes!("../../../tests/fixtures/apppkg/packages/apps/com.example.fixture/icon.ico");
         let image = ico_gray(data).expect("the fixture icon decodes");
         assert_eq!((image.w, image.h), (64, 64));
         assert_eq!(image.gray.len(), 64 * 64);
@@ -234,7 +235,7 @@ mod tests {
     #[test]
     fn the_limits_are_the_ones_the_launcher_had() {
         assert_eq!((ICO_FILE_MAX, ICO_SIDE_MAX, ICO_TARGET), (256 * 1024, 256, 64));
-        let data = include_bytes!("../../tests/fixtures/apppkg/packages/apps/com.example.fixture/icon.ico");
+        let data = include_bytes!("../../../tests/fixtures/apppkg/packages/apps/com.example.fixture/icon.ico");
         let mut long = data.to_vec();
         long.resize(ICO_FILE_MAX + 1, 0);
         assert!(ico_gray(&long).is_none());

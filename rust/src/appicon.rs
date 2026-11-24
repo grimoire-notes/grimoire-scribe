@@ -1,7 +1,7 @@
 //! Icons for installed apps: a built-in Grimoire glyph, or the `.ico` an app package bundles.
 //!
 //! A bundled `.ico` comes from outside Grimoire, so nothing here reads or decodes it (2.3, issue #236): the safe
-//! loader's picture worker does (pkgpics.rs, picwork.rs `T`, icofile.rs), and what the launcher draws is the gray
+//! loader's picture worker does (pkgpics.rs, picwork.rs `T`, picwork/icofile.rs), and what the launcher draws is the gray
 //! picture kept in grimoire/.cache/packages/icons, read back and checked (`pkgpics::picture_cached`). The result
 //! is a small grayscale bitmap: the e-ink panel has no colour, and compositing against white keeps transparent
 //! corners clean on the launcher's white tiles.

@@ -57,6 +57,16 @@ const UPLOAD: File = ("rust/src/upload.rs", include_str!("../src/upload.rs"));
 const SHARE: File = ("rust/src/share.rs", include_str!("../src/share.rs"));
 const PAIR: File = ("rust/src/pair.rs", include_str!("../src/pair.rs"));
 const UPLOAD_TESTS: File = ("rust/tests/test_share_upload.rs", include_str!("test_share_upload.rs"));
+const APPS: File = ("docs/APPS.md", include_str!("../../docs/APPS.md"));
+const LIB: File = ("rust/src/lib.rs", include_str!("../src/lib.rs"));
+const PICWORK: File = ("rust/src/picwork.rs", include_str!("../src/picwork.rs"));
+const ICOFILE: File = ("rust/src/picwork/icofile.rs", include_str!("../src/picwork/icofile.rs"));
+const PKGPICS: File = ("rust/src/pkgpics.rs", include_str!("../src/pkgpics.rs"));
+const APPICON: File = ("rust/src/appicon.rs", include_str!("../src/appicon.rs"));
+const APPPKG: File = ("rust/src/apppkg.rs", include_str!("../src/apppkg.rs"));
+const APPHOST: File = ("rust/src/apphost.rs", include_str!("../src/apphost.rs"));
+const PACKAGESTORE: File = ("rust/src/packagestore.rs", include_str!("../src/packagestore.rs"));
+const WIDGETPKGUI: File = ("rust/src/widgetpkgui.rs", include_str!("../src/widgetpkgui.rs"));
 
 /// A file's text with every run of white space (a line's end too) made one space. In a file that is no document
 /// the mark that opens a comment's line is left out first (`//`, `///` and `//!` in Rust, `#` elsewhere), so a
@@ -167,6 +177,11 @@ fn beside(fails: &mut Vec<String>, f: File, name: &str, figure: &str) {
     if !(from..to.saturating_sub(figure.len() - 1)).any(|i| b[i..].starts_with(figure.as_bytes()) && (i == 0 || !b[i - 1].is_ascii_digit())) {
         fails.push(format!("{} names {name} without its figure, \"{figure}\", within 200 bytes of it", f.0));
     }
+}
+
+/// A source file's code alone: its comment lines left out, every run of white space made one space.
+fn code(f: File) -> String {
+    f.1.lines().map(str::trim_start).filter(|l| !l.starts_with("//")).flat_map(str::split_whitespace).collect::<Vec<_>>().join(" ")
 }
 
 /// The end of a test: every failed pin, or none.
@@ -1186,4 +1201,128 @@ fn a_pdf_sent_from_the_share_page_is_told_as_it_is() {
     told_on(&mut fails, DESIGN, send, HTTPD, r#"if with(|s| s.quiet_from).is_some_and(|t| ms_since(now_ms(), t) < limit_ms("QUIET", UPLOAD_QUIET_MS) as i32) {"#);
     beside(&mut fails, DESIGN, "before the next send after one ends", &format!("{} s", grimoire::upload::UPLOAD_QUIET_MS / 1000));
     none_failed(&fails, "a PDF sent from the Share page");
+}
+
+// Packages' pictures (2.3, issue #236): an installed app's bundled icon and the Package Store's icons and
+// screenshots are decoded by the safe loader's picture worker, never by the main process. What holds that here:
+// - the files of the launcher and the Store (and pkgpics.rs, whose job hands the bytes to the worker) name no
+//   decoder in their code: stb_image through bgimage.rs, the stb bindings, the png crate, the `.ico` reader;
+// - the `.ico` reader is a module private to picwork.rs (the compiler lets no other file call it), lib.rs declares
+//   no such module, and in picwork.rs it is called once, by `small_one`, which the worker's loop alone calls;
+// - the sentences of DESIGN.md, APPS.md, FORMAT.md and KINDLE.md that state the rule stand on the code that makes
+//   it true: the pool's `small` whole (no decode in the writer, on any build), the job's one worker run whole, the
+//   file opened with no link followed, the UI's read of the cache whole (an `.info` held to the file asked for, a
+//   picture of exactly its header and w x h bytes), the launcher's and the Store's looks whole (a stat and the
+//   cache, nothing read of the file), no job in a broken session, a few jobs at a time, and the limits' figures.
+// A changed line, or a reworded sentence, fails here until the two are read again together. That the rule holds
+// when the code runs is the tests' that go through a real worker: test_picwork_small.rs, test_picwork_fallback.rs,
+// test_package_pictures.rs and test_app_icons.rs.
+#[test]
+fn packages_pictures_are_told_as_they_are() {
+    let mut fails = Vec::new();
+    // no decoder is named in the code of the launcher's and the Store's files
+    const DECODERS: [&str; 7] = ["bgimage_decode", "bgimage_check", "bgimage_drawable", "stbi_", "ffi_stb", "png::", "ico_gray"];
+    let nothing_decodes = "**Nothing in the launcher or the Store decodes a picture.**";
+    present(&mut fails, DESIGN, nothing_decodes);
+    for f in [PACKAGESTORE, APPICON, APPPKG, APPHOST, WIDGETPKGUI, HOME, LIBRARY, PKGPICS] {
+        let text = code(f);
+        for d in DECODERS {
+            if text.contains(d) {
+                fails.push(format!("{} names `{d}` in its code, and {} says \"{nothing_decodes}\"", f.0, DESIGN.0));
+            }
+        }
+    }
+    // the `.ico` reader: private to picwork.rs, called once there, by the worker's side
+    let private = "a module private to `picwork.rs`: no other file can call it";
+    told_on(&mut fails, DESIGN, private, PICWORK, "mod icofile; pub use icofile::{ICO_FILE_MAX, ICO_SIDE_MAX, ICO_TARGET};");
+    told_on(&mut fails, ICOFILE, "it is a module private to picwork.rs, whose worker side alone calls it", PICWORK, "match icofile::ico_gray(data) {");
+    let picwork = code(PICWORK);
+    if picwork.contains("pub mod icofile") || picwork.contains(") mod icofile") || code(LIB).contains("mod icofile") {
+        fails.push(format!("the `.ico` reader is no longer a module private to picwork.rs, and {} says \"{private}\"", DESIGN.0));
+    }
+    let in_fn = |sig: &str, call: &str| code_of(PICWORK, sig).is_some_and(|c| c.matches(call).count() == 1);
+    if picwork.matches("ico_gray(").count() != 1 || !in_fn("fn small_one(", "icofile::ico_gray(data)") {
+        fails.push("picwork.rs calls the `.ico` reader elsewhere than once in small_one (the worker's side)".to_string());
+    }
+    if picwork.matches("small_one(").count() != 2 || !in_fn("pub fn worker_run(", "small_one(&data, what, max as i32)") {
+        fails.push("picwork.rs calls small_one elsewhere than once in worker_run (the worker's loop)".to_string());
+    }
+    // the pool's side: one channel, the size asked at, never larger than the source, exactly w x h bytes, and never
+    // a decode in the writer (no worker: NoWorker, whatever the pool)
+    const SMALL: &str = r#"pub fn small(&mut self, data: &[u8], what: usize, max: i32) -> PicOut { if data.is_empty() || data.len() > BYTES_MAX || !(1..=3).contains(&what) || !(1..=SMALL_SIDE_MAX as i32).contains(&max) { return PicOut::Bad(WHYS[0]); } let line = match self.ask(&format!("T {what} {max} {}\n", data.len()), data, false) { Ok(Asked::Line(l)) => l, Ok(Asked::Local | Asked::Wait) => return PicOut::NoWorker(NO_WORKER_WHY), Err(why) => { qlog!("work: a picture's worker ended (%s)", why); return PicOut::Dead(why); } }; match parse_info(&line) { Reply::Pic { sw, sh, w, h, ch } => { if ch != 1 || w < 1 || h < 1 || w > max || h > max || w > sw || h > sh || sw > 8192 || sh > 8192 || (sw as i64) * (sh as i64) > BG_MAX_PIXELS { self.drop_worker(); return PicOut::Dead("the worker broke the protocol"); } match self.pixels(w as usize * h as usize) { Ok(Some(px)) => PicOut::Pic { src_w: sw, src_h: sh, fit: BgPicture { px, w, h, ch: 1 } }, Ok(None) => PicOut::Retry("out of memory"), Err(why) => PicOut::Dead(why), } } Reply::Bad(why) => PicOut::Bad(why), Reply::Mem => PicOut::Retry("out of memory"), Reply::Sandbox => self.late_sandbox(), Reply::Sigsys(n) => self.sigsys(n), _ => { self.drop_worker(); PicOut::Dead("the worker broke the protocol") } } }"#;
+    told_on_code(&mut fails, DESIGN, "**A small picture is never decoded in the writer**", PICWORK, "pub fn small(", SMALL);
+    told_on_code(&mut fails, PICWORK, "is never decoded in the writer, on any build and by any pool", PICWORK, "pub fn small(", SMALL);
+    // the job: no job in a broken session, a few at a time, with Files' previews in the queue, the file opened with
+    // no link followed, one run of the worker and nothing else
+    let broken = "if crate::sandbox::session_broken() { return Ask::No; }";
+    told_on(&mut fails, DESIGN, "nothing is asked for in a session in which a sandbox step already failed", PKGPICS, broken);
+    told_on(&mut fails, DESIGN, "at most 4 queued or running at a time (`PICTURES_AT_ONCE`; the queue holds 16)", PKGPICS, "if bg_kind_count(BgKind::PackagePictures) >= PICTURES_AT_ONCE { return Ask::Later; }");
+    beside(&mut fails, DESIGN, "`PICTURES_AT_ONCE`", &grimoire::pkgpics::PICTURES_AT_ONCE.to_string());
+    stands_on(&mut fails, DESIGN, "the queue holds 16", BGJOB, "const BG_QUEUE: usize = 16;");
+    told_on(&mut fails, DESIGN, "It ranks with Files' previews (`bgjob.rs` `rank`)", BGJOB, "BgKind::PackagePictures => 4,");
+    stands_on(&mut fails, DESIGN, "It ranks with Files' previews (`bgjob.rs` `rank`)", BGJOB, "BgKind::FilePreviews => 4,");
+    let walk = "opens the file from Grimoire's folder one part at a time and never through a link (`open_below`)";
+    told_on(&mut fails, DESIGN, walk, PKGPICS, "libc::openat(at.as_raw_fd(), part.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)");
+    told_on(&mut fails, DESIGN, walk, PKGPICS, "libc::openat(at.as_raw_fd(), name.as_ptr(), libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)");
+    told_on(&mut fails, DESIGN, walk, PKGPICS, "let (f, md) = open_below(&root, &src.rel)?;");
+    const WORKER_PICTURE: &str = r#"fn worker_picture(data: &[u8], form: PicForm) -> Result<(i32, i32, Vec<u8>), Fail> { let mut pool = PicPool::for_preview(mono_ms() + preview_limit_ms(PreviewKind::Picture)); match pool.small(data, form.what(), form.side_max()) { PicOut::Pic { fit, .. } if fit.ch == 1 && fit.px.len() == fit.w as usize * fit.h as usize => Ok((fit.w, fit.h, fit.px)), PicOut::Pic { .. } => Err(Fail::Strike(NoPreview::Ended)), PicOut::Bad(_) => Err(Fail::Refused), PicOut::Dead(why) if why == STALLED => Err(Fail::Strike(NoPreview::Slow)), PicOut::Dead(_) => Err(Fail::Strike(NoPreview::Ended)), PicOut::Retry(_) | PicOut::Info { .. } => Err(Fail::Later("out of memory")), PicOut::NoWorker(_) => Err(Fail::Later(NO_WORKER)), } }"#;
+    told_on_code(&mut fails, DESIGN, "has ONE run of the picture worker make the picture", PKGPICS, "fn worker_picture(", WORKER_PICTURE);
+    // the UI's read of the cache
+    const PICTURE_INFO: &str = r#"pub fn picture_info(src: &PicSrc) -> Option<PicInfo> { let info = PicInfo::parse(&read_file_max(&picture_file(src, "info"), INFO_MAX)?)?; (info.size == src.size && info.mtime == src.mtime && info.form == src.form && info.path == src.rel).then_some(info) }"#;
+    const PICTURE_CACHED: &str = r#"pub fn picture_cached(src: &PicSrc) -> Cached { if !no_link_below(&store_root(), &picture_cache_dir(src.form)) { return Cached::Nothing; } let Some(info) = picture_info(src) else { return Cached::Nothing }; let (w, h) = match info.made { Made::Preview(w, h) => (w, h), Made::None(_) => return Cached::None, Made::Once(_) => return Cached::Nothing, }; let head = format!("P5\n{w} {h}\n255\n"); let n = w as usize * h as usize; let Some(d) = read_file_max(&picture_file(src, "pgm"), head.len() + n) else { return Cached::Nothing }; if d.len() != head.len() + n || !d.starts_with(head.as_bytes()) { return Cached::Nothing; } let mut c = Canvas::default(); if canvas_init(&mut c, w, h) != 0 { return Cached::Nothing; } c.px[..n].copy_from_slice(&d[head.len()..]); Cached::Picture(c) }"#;
+    let checked = "**The UI takes an entry only as checked plain pixels**";
+    told_on_code(&mut fails, DESIGN, checked, PKGPICS, "pub fn picture_info(", PICTURE_INFO);
+    told_on_code(&mut fails, DESIGN, checked, PKGPICS, "pub fn picture_cached(", PICTURE_CACHED);
+    let read = "A `.info` and its picture are read only when each is a plain file within its size";
+    told_on_code(&mut fails, FORMAT, read, PKGPICS, "pub fn picture_info(", PICTURE_INFO);
+    told_on_code(&mut fails, FORMAT, read, PKGPICS, "pub fn picture_cached(", PICTURE_CACHED);
+    // the launcher's and the Store's looks: a stat of the file and the cache, nothing read of the file
+    const BUNDLED_ICON: &str = r#"fn bundled_icon(path: &str) -> Option<IconImage> { let src = PicSrc::of(path, PicForm::AppIcon)?; KEPT.with(|k| { let mut k = k.borrow_mut(); let i = match k.iter().position(|e| e.src.rel == src.rel) { Some(i) if k[i].src == src => i, Some(i) => { k[i] = Kept { state: look(&src), src }; i } None => { if k.len() >= KEPT_MAX { k.remove(0); } k.push(Kept { state: look(&src), src }); k.len() - 1 } }; match &k[i].state { Icon::There(image) => Some(image.clone()), _ => None, } }) }"#;
+    const LOOK: &str = r#"fn look(src: &PicSrc) -> Icon { match picture_cached(src) { Cached::Picture(c) => Icon::There(IconImage::of(&c)), Cached::None => Icon::Nothing, Cached::Nothing => Icon::ToAsk, } }"#;
+    const ASSET_PICTURE: &str = r#"fn asset_picture(ui: &mut PackageStoreUi, stage: FetchStage, key: &str) -> PicNow { if safe_key(key).as_deref() != Some(key) { return PicNow::NoFile; } let form = if stage == FetchStage::Screenshot { PicForm::Screenshot } else { PicForm::StoreIcon }; let Some(src) = PicSrc::of(&asset_cache_path(key), form) else { return PicNow::NoFile }; match picture_cached(&src) { Cached::Picture(c) => PicNow::There(c), Cached::None => PicNow::None, Cached::Nothing => { if !ui.pic_waits.iter().any(|w| w.stage == stage && w.key == key) { ui.pic_waits.push(PicWait { stage, key: key.to_string(), src, job: None }); } PicNow::Coming } } }"#;
+    let no_fallback = "Nothing falls back to decoding in the main process.";
+    for (f, words) in [(DESIGN, no_fallback), (APPS, "The launcher never reads the icon file")] {
+        told_on_code(&mut fails, f, words, APPICON, "fn bundled_icon(", BUNDLED_ICON);
+        told_on_code(&mut fails, f, words, APPICON, "fn look(", LOOK);
+        told_on(&mut fails, f, words, APPICON, "let image = crate::apppkg::app_package_icon_path(it).and_then(|path| bundled_icon(&path));");
+    }
+    for (f, words) in [(DESIGN, no_fallback), (APPS, "The Store itself never decodes an image")] {
+        told_on_code(&mut fails, f, words, PACKAGESTORE, "fn asset_picture(", ASSET_PICTURE);
+    }
+    // the limits, each figure with the constant that sets it
+    let icons = r#"PicForm::AppIcon | PicForm::StoreIcon => ("icons", 1200, 24 << 20),"#;
+    let shots = r#"PicForm::Screenshot => ("shots", 32, 48 << 20),"#;
+    for (f, words) in [
+        (DESIGN, "past 1,200 files or 24 MiB of icons, or 32 files or 48 MiB of screenshots"),
+        (KINDLE, "past 1,200 files or 24 MiB of icons, or 32 files or 48 MiB of screenshots"),
+        (FORMAT, "a folder past 1,200 files or 24 MiB (icons), or 32 files or 48 MiB (screenshots)"),
+    ] {
+        told_on(&mut fails, f, words, PKGPICS, icons);
+        told_on(&mut fails, f, words, PKGPICS, shots);
+    }
+    for (f, words) in [(DESIGN, "kept at most 2,560 px a side"), (APPS, "kept at most 2,560 px a side"), (FORMAT, "2,560 x 2,560 for a screenshot")] {
+        told_on(&mut fails, f, words, PKGPICS, "pub const SHOT_SIDE: i32 = 2560;");
+    }
+    for (f, words) in [(DESIGN, "a file of at most 8 MiB"), (APPS, "a screenshot is a PNG or a JPEG of at most 8 MiB")] {
+        told_on(&mut fails, f, words, PKGPICS, "pub const SHOT_FILE_MAX: usize = 8 * 1024 * 1024;");
+    }
+    for (f, words) in [
+        (DESIGN, "256 KiB, 256 px a side, the largest entry of at most 64 px, else the smallest"),
+        (APPS, "(at most 256 px a side; the largest entry of at most 64 px is taken, else the smallest)"),
+    ] {
+        for base in ["pub const ICO_FILE_MAX: usize = 256 * 1024;", "pub const ICO_SIDE_MAX: usize = 256;", "pub const ICO_TARGET: u32 = 64;"] {
+            told_on(&mut fails, f, words, ICOFILE, base);
+        }
+    }
+    told_on(&mut fails, FORMAT, "at most 256 x 256 for an icon", PKGPICS, "pub const ICON_SIDE: i32 = 256;");
+    told_on(&mut fails, FORMAT, "grimoire-package-picture 1", PKGPICS, "pub const INFO_NUMBER: u32 = 1;");
+    told_on(&mut fails, FORMAT, "each ended by a line break, at most 700 bytes", PKGPICS, "const REL_MAX: usize = 540;");
+    told_on(&mut fails, FORMAT, "each ended by a line break, at most 700 bytes", PKGPICS, "const INFO_MAX: usize = 160 + REL_MAX;");
+    // what the files said while the launcher and the Store decoded these pictures themselves
+    gone(&mut fails, APPS, "The launcher decodes PNG entries");
+    gone(&mut fails, APPPKG, "its pixels are decoded by appicon.rs.");
+    gone(&mut fails, APPICON, "An ICO is read once when the launcher asks for it.");
+    gone(&mut fails, PACKAGESTORE, "fn store_image(");
+    gone(&mut fails, PACKAGESTORE, "fn apply_screenshot(");
+    none_failed(&fails, "packages' pictures");
 }

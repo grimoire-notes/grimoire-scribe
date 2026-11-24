@@ -2348,6 +2348,16 @@ says so once a process, with the reason, and a picture a worker was given is nev
 checks a template or photo itself: one with no preview yet waits for the previews job (`install_picture`, the
 fix round's M13).
 
+Packages' pictures (2.3, issue #236) go through that worker too: an installed app's bundled `.ico` and the Package
+Store's catalog icons and screenshots, which come from a package or from the network. The picture worker takes one
+more command for them, `T <what> <max> <len>`, and answers with a small gray picture: an `.ico`'s best small entry
+(`picwork/icofile.rs` reads its directory and its PNG and BMP entries: a module private to `picwork.rs`, which only
+the worker's side calls), a PNG, JPEG or PNM picture as `D` decodes one, or either, the `.ico` first; one over `max`
+px a side comes back fitted inside max x max. The writer's side, `PicPool::small`, takes one channel, a size within
+the side it asked at and never larger than the source, and exactly w x h bytes. **A small picture is never decoded
+in the writer**, on any build and by any pool: with no worker to be had it waits. "Packages' pictures", below, has
+the job, the cache and the screens.
+
 The same PDF again fills its notebook (2.2): where slice 0 would say "PDF already imported." because a notebook is
 the PDF's (by its file record, or by the book key for a notebook that has none: an earlier version's, or
 KOReader's), it asks that notebook what it lacks (`pdfimport::fill_plan`: the book's page count its `source.ini`
@@ -3594,6 +3604,80 @@ send at all.
   after an Import), `share_upload_2_cancelled`, `share_upload_3_refused`, `share_upload_4_twice` (the 5 s),
   `share_upload_5_es_fit_gothic`, `share_upload_5_es_fit_classic` and `share_upload_6_x_closes` (X and Esc while it
   asks). docs/TESTING.md has the Scribe's checks.
+
+## Packages' pictures (2.3, issue #236)
+
+The home redesign's launcher and the Package Store draw pictures that come from outside Grimoire: an installed
+app's bundled `.ico` (the home's app row, the All apps page, the package manager's list and detail page) and the
+Store's catalog icons and screenshots (its cards, its detail page, Settings > Updates), fetched from the network
+into `package-store/assets/`. The main process runs as root and parses none of them: they are decoded by the safe
+loader's picture worker, as the pictures of Files are, and what a screen draws is a gray picture read back from a
+cache and checked (`pkgpics.rs`, `appicon.rs`, `packagestore.rs`).
+
+- **Nothing in the launcher or the Store decodes a picture.** `packagestore.rs`, `appicon.rs`, `apppkg.rs`,
+  `apphost.rs`, `widgetpkgui.rs`, `home.rs` and `library.rs` call no decoder (stb_image through `bgimage.rs`, the
+  png crate, the `.ico` reader), and neither does `pkgpics.rs`, whose job hands the file's bytes to the worker.
+  The `.ico` reader is `picwork/icofile.rs`, a module private to `picwork.rs`: no other file can call it, and in
+  `picwork.rs` the worker's side alone does (`small_one`). `rust/tests/test_sec_invariants.rs` holds both.
+- **What a screen asks** (UI thread): it stats the picture's file, never reads it (`PicSrc::of`: a plain file in
+  the form's own folder, `packages/apps/` or `package-store/assets/`, within the form's size; a link is not
+  followed), reads what the cache holds for it (`picture_cached`), and with nothing there asks for a job
+  (`picture_request`). An app's icons are kept in a small table of the UI's so that a draw is one stat a file
+  (`appicon.rs` `KEPT`); the Store keeps its own (`pic_waits`). The Library's tick asks and takes in
+  (`app_icons_step`, `tick_pictures`); nothing is asked for in a session in which a sandbox step already failed.
+- **The job, `BgKind::PackagePictures = 12`**: one picture a job, its path
+  `<form>.<size>.<mtime>:<the file's path from Grimoire's folder>` (form `a` an app's icon, `i` a Store icon,
+  `s` a screenshot), at most 4 queued or running at a time (`PICTURES_AT_ONCE`; the queue holds 16), dropped at
+  exit. It ranks with Files' previews (`bgjob.rs` `rank`): never a job the user waits on by name. No existing
+  kind fits: `FilePreviews` is a file as Files' Covers view listed it, made into a 300 x 400 page. The child
+  (`bg_package_picture`) takes only a path its form may have, opens the file from Grimoire's folder one part at a
+  time and never through a link (`open_below`), checks it is still the size and time asked for, makes none
+  under the storage's free floor, and has ONE run of the picture worker make the picture (`PicPool::for_preview`
+  and `small`: never in the writer, no second worker, held to a picture preview's 6 s): an `.ico` alone for an
+  app's icon (256 KiB, 256 px a side, the largest entry of at most 64 px, else the smallest: the limits
+  `appicon.rs` had), an `.ico` or a picture for a Store icon (256 px a side), a picture for a screenshot (a file of
+  at most 8 MiB, kept at most 2,560 px a side: a Scribe page's screenshot is kept as it is).
+- **What a job ends with**, by previews' rule for a try: a picture; a "no picture" mark at once when the worker
+  refuses the bytes; a try on record (`once`) the first time a worker ends, lies or runs out of time, and the
+  mark only the second time; or nothing at all when no worker can be had, memory or room is short, or the file
+  changed or is gone. It ends 0 or 1 only.
+- **The cache**, `grimoire/.cache/packages/icons/` and `grimoire/.cache/packages/shots/` (docs/FORMAT.md),
+  `<key>.pgm` and `<key>.info`, `<key>` the FNV-1a 64 hash of the file's path, size and time, so a changed file
+  has an entry of its own (no trust rides on this cache, unlike a font's verdict, so it is tied to the file's
+  identity as previews are, not to a digest). Written by the job alone, atomically, the picture first and then
+  the `.info`, never through a link. **The UI takes an entry only as checked plain pixels**: the `.info` by the
+  plain-file read with a size limit, parsed strictly and held to the file asked for (its path, size, time and
+  form), and the picture by the plain-file read, its header exactly `P5\n<w> <h>\n255\n` for the `.info`'s
+  size, which is within the form's side, and its length exactly header and w x h bytes; a cache folder reached
+  through a link is not read. Anything else is nothing there, and the entry is made again. Icons and screenshots
+  have a folder each because their sizes differ by three orders: past 1,200 files or 24 MiB of icons, or 32
+  files or 48 MiB of screenshots, a folder loses its oldest entries, down to three quarters (`prune_plan`),
+  after a job that wrote. An app's entry goes when the app is removed or updated (`apppkg.rs`); a Store
+  picture's goes with the prune. Deleting the folder loses nothing.
+- **What a screen shows meanwhile**, and for good when the worker refuses the picture, no worker can be had or
+  the session's sandbox is broken: what it shows for a picture that is missing. The launcher draws the
+  manifest's built-in icon name (or the grid); a Store card, the detail page and an Updates row the package
+  glyph; the screenshot's frame its glyph, with "Loading screenshot..." only while a screenshot is still to
+  come. Nothing falls back to decoding in the main process.
+- **How the panel is refreshed**: a picture that came draws the screen in front again and refreshes only the
+  rectangle in which the new frame differs from the old (`library::redraw_filling`, `canvas_changed_rect`), as a
+  refresh that fills in by itself (`app_invalidate_filling`). Under a press it waits for the lift; behind
+  another sheet nothing is drawn, and the sheet's close draws what is under it whole.
+- **Logs** (docs/KINDLE.md): `bg: package pictures of a file (pid N)`, then `package pictures: app-icon|icon|screenshot
+  made in T ms`, `... has no picture (refused|slow|ended), marked`, `... gave no picture (slow|ended) ...; one more
+  try at another look`, `nothing made (<why>)`, and `the cache of icons|shots pruned: ...`; never a name.
+- **Tests**: `rust/tests/test_picwork_small.rs` (the worker's `T`: an `.ico` with a BMP entry and one with a PNG
+  entry, a PNG, a JPEG, one over the side, the refused ones, a worker that ends or hangs, stand-in workers whose
+  answers the writer must not take); `test_picwork_fallback.rs` (no pool decodes a small picture in the writer);
+  `test_package_pictures.rs` (the job: every form made, refused files marked, a try and then the mark, a changed
+  file, a file through a link or outside its folder never read, a cache entry that does not read, the prune,
+  four jobs at a time, no worker writing nothing); `test_app_icons.rs` (the launcher: the built-in icon at once
+  and no worker started by a draw, the picture after the tick's job, an app's entry gone with the app);
+  `test_sec_invariants.rs` (no decoder named in the launcher's and the Store's files; these sentences against
+  the code); `picwork/icofile.rs`, `pkgpics.rs` and `canvas.rs` unit tests; the scenarios `z_apps`, `z_apps_icon`,
+  `z_package_store`, `z_package_store_pictures`, `z_package_store_refused`, `z_pictures_no_worker` and
+  `u_update_4_packages`. The Linux sandbox's steps for a picture worker are CI's (`test_sandbox_linux.rs`); `T`
+  has not run under them or on a Scribe (docs/TESTING.md).
 
 ## Shared building blocks (2.1, lane L0)
 

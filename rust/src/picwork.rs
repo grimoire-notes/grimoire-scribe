@@ -26,8 +26,8 @@
 //!                                   `file_len` bytes)
 //!   `D <flags> <pw> <ph> <len>`     decode, turn upright when flags & 1, fit onto a pw x ph page
 //!   `T <what> <max> <len>`          a small gray picture (2.3, issue #236: a package's icon, a Package Store
-//!                                   picture): `what` 1 an `.ico` (icofile.rs: its directory and its PNG and BMP
-//!                                   entries), 2 a picture as `D` decodes one, 3 either, the `.ico` first; one
+//!                                   picture): `what` 1 an `.ico` (picwork/icofile.rs: its directory and its PNG and
+//!                                   BMP entries), 2 a picture as `D` decodes one, 3 either, the `.ico` first; one
 //!                                   over `max` px a side is made smaller, fitted inside max x max, its aspect kept
 //!   `H <hook> <n>`                  a test hook (headless and test builds only: `crash`, `hang`, `trap`; the
 //!                                   n-th request of this worker)
@@ -45,6 +45,10 @@
 use crate::prelude::*;
 use crate::sandbox::*;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+// The `.ico` container's reader: private to this file, and called by the worker's side alone (`small_one`).
+mod icofile;
+pub use icofile::{ICO_FILE_MAX, ICO_SIDE_MAX, ICO_TARGET};
 
 /// What the worker says when a picture is at fault, as numbers (the writer maps them back to these texts and
 /// never logs a worker's own words).
@@ -206,7 +210,7 @@ fn decode_one(data: &[u8], orient: bool, pw: i32, ph: i32) -> Result<(BgPicture,
     Ok((fit, sw, sh))
 }
 
-/// `T`'s `what`: an `.ico` is tried (its directory and entries, icofile.rs) ...
+/// `T`'s `what`: an `.ico` is tried (its directory and entries, picwork/icofile.rs) ...
 pub const SMALL_ICO: usize = 1;
 /// ... and a picture as `D` decodes one (bgimage.rs). 3 is both, the `.ico` first.
 pub const SMALL_PICTURE: usize = 2;
@@ -214,12 +218,12 @@ pub const SMALL_PICTURE: usize = 2;
 pub const SMALL_SIDE_MAX: usize = 4096;
 
 /// The small gray picture one `T` asks for: its pixels (w * h bytes, top row first), its size, and the source's.
-/// An `.ico`'s entry as icofile.rs reads it (256 KiB, 256 px a side, the entry nearest 64 px); a picture decoded
+/// An `.ico`'s entry as picwork/icofile.rs reads it (256 KiB, 256 px a side, the entry nearest 64 px); a picture decoded
 /// as `D`'s (the same header check and budget), its luma, and when it is over `max` px a side fitted inside
 /// max x max by the page fit's area filter, its aspect kept. Err is the record to send.
 fn small_one(data: &[u8], what: usize, max: i32) -> Result<(Vec<u8>, i32, i32, i32, i32), String> {
     if what & SMALL_ICO != 0 {
-        match crate::icofile::ico_gray(data) {
+        match icofile::ico_gray(data) {
             Some(i) if i.w as i32 <= max && i.h as i32 <= max => return Ok((i.gray, i.w as i32, i.h as i32, i.w as i32, i.h as i32)),
             Some(_) => return Err("E bad 0\n".to_string()),
             None if what & SMALL_PICTURE == 0 => return Err("E bad 0\n".to_string()),

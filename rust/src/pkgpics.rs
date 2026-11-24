@@ -46,7 +46,7 @@ pub const INFO_NUMBER: u32 = 1;
 const REL_MAX: usize = 540;
 /// A `.info` file is at most this long: four short lines and the path.
 const INFO_MAX: usize = 160 + REL_MAX;
-/// An icon is at most this many pixels a side (icofile.rs's entry limit, and the Store's icons').
+/// An icon is at most this many pixels a side (the `.ico` reader's entry limit, and the Store's icons').
 pub const ICON_SIDE: i32 = 256;
 /// A screenshot is kept at most this many pixels a side (a Scribe page, 1860 x 2480, is within it).
 pub const SHOT_SIDE: i32 = 2560;
@@ -108,7 +108,7 @@ impl PicForm {
     /// The largest file of it that is read.
     pub fn file_max(self) -> usize {
         match self {
-            PicForm::AppIcon | PicForm::StoreIcon => crate::icofile::ICO_FILE_MAX,
+            PicForm::AppIcon | PicForm::StoreIcon => crate::picwork::ICO_FILE_MAX,
             PicForm::Screenshot => SHOT_FILE_MAX,
         }
     }
@@ -724,7 +724,7 @@ mod tests {
     // is within a screenshot's side; and each cache folder's limits hold at least a few of its largest pictures.
     #[test]
     fn the_forms_figures() {
-        assert_eq!((ICON_SIDE as usize, PicForm::AppIcon.file_max()), (crate::icofile::ICO_SIDE_MAX, crate::apppkg::APP_ICON_MAX));
+        assert_eq!((ICON_SIDE as usize, PicForm::AppIcon.file_max()), (crate::picwork::ICO_SIDE_MAX, crate::apppkg::APP_ICON_MAX));
         assert_eq!(PicForm::StoreIcon.file_max(), crate::apppkg::APP_ICON_MAX);
         assert!(SHOT_SIDE >= 2480 && SHOT_SIDE as usize <= crate::picwork::SMALL_SIDE_MAX);
         for form in PicForm::ALL {
