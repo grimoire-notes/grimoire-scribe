@@ -90,31 +90,57 @@ const HTTP_HEADER_LINES_MAX: usize = 32;
 const HTTP_HEADER_LINE_MAX: usize = 2048;
 const HTTP_REDIRECTS_MAX: u32 = 5;
 
+/// One request's files under the app's `state/http` folder, named by their common start: the
+/// answer (`.body`), curl's status code (`.status`) and error text (`.err`), and the upload
+/// (`.request`). They are removed when this is dropped, so no way out of a request keeps them.
+struct HttpFiles {
+    base: String,
+}
+
+impl HttpFiles {
+    fn path(&self, kind: &str) -> String {
+        format!("{}.{kind}", self.base)
+    }
+
+    fn remove(&self) {
+        for kind in ["body", "status", "err", "request"] {
+            let _ = std::fs::remove_file(self.path(kind));
+        }
+    }
+}
+
+impl Drop for HttpFiles {
+    fn drop(&mut self) {
+        self.remove();
+    }
+}
+
 /// One app HTTP request, run by curl in the background. The app polls it from
 /// `request_redraw` frames, so no network contact ever blocks drawing or touch.
 struct HttpJob {
     child: std::process::Child,
-    body_path: String,
-    status_path: String,
-    err_path: String,
+    files: HttpFiles,
     done: bool,
     code: i32,
     body: Vec<u8>,
     error: String,
 }
 
-impl Drop for HttpJob {
-    fn drop(&mut self) {
+impl HttpJob {
+    /// Ends a curl that still runs and reaps it.
+    fn stop(&mut self) {
         if !self.done {
             let _ = self.child.kill();
             let _ = self.child.wait();
+            self.done = true;
         }
-        let _ = std::fs::remove_file(&self.body_path);
-        let _ = std::fs::remove_file(&self.status_path);
-        let _ = std::fs::remove_file(&self.err_path);
-        if let Some(body) = self.body_path.strip_suffix(".body") {
-            let _ = std::fs::remove_file(format!("{body}.request"));
-        }
+    }
+}
+
+impl Drop for HttpJob {
+    fn drop(&mut self) {
+        // (curl ends first; `files` is dropped after this and removes what curl was writing)
+        self.stop();
     }
 }
 
@@ -854,7 +880,7 @@ fn install_imports(linker: &mut Linker<HostState>) -> Result<(), String> {
         write_mem(&mut caller, ptr, cap, text.as_bytes())
     }).map_err(e)?;
     linker.func_wrap(ABI, "http_cancel", |mut caller: Caller<'_, HostState>| {
-        caller.data_mut().http = None;
+        caller.data_mut().http_cancel();
     }).map_err(e)?;
     Ok(())
 }
@@ -938,26 +964,22 @@ impl HostState {
             return -1;
         }
         let tick = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
-        let base = format!("{dir}/http/{}-{tick}", std::process::id());
-        let body_path = format!("{base}.body");
-        let status_path = format!("{base}.status");
-        let err_path = format!("{base}.err");
-        let request_path = format!("{base}.request");
+        // (from here every return drops `files`, or the job that holds it: the files go with it)
+        let files = HttpFiles { base: format!("{dir}/http/{}-{tick}", std::process::id()) };
+        let request_path = files.path("request");
         if !body.is_empty() && std::fs::write(&request_path, body).is_err() {
             return -1;
         }
-        let Ok(status_file) = std::fs::File::create(&status_path) else { return -1 };
-        let Ok(err_file) = std::fs::File::create(&err_path) else { return -1 };
-        let args = http_args(&method, url, &header_lines, &body_path, (!body.is_empty()).then_some(request_path.as_str()));
+        let Ok(status_file) = std::fs::File::create(files.path("status")) else { return -1 };
+        let Ok(err_file) = std::fs::File::create(files.path("err")) else { return -1 };
+        let args = http_args(&method, url, &header_lines, &files.path("body"), (!body.is_empty()).then_some(request_path.as_str()));
         let mut cmd = Command::new("curl");
         cmd.args(&args).stdin(std::process::Stdio::null()).stdout(status_file).stderr(err_file);
         match cmd.spawn() {
             Ok(child) => {
                 self.http = Some(HttpJob {
                     child,
-                    body_path,
-                    status_path,
-                    err_path,
+                    files,
                     done: false,
                     code: -1,
                     body: Vec::new(),
@@ -965,15 +987,7 @@ impl HostState {
                 });
                 0
             }
-            Err(e) => {
-                let _ = std::fs::remove_file(&body_path);
-                let _ = std::fs::remove_file(&status_path);
-                let _ = std::fs::remove_file(&err_path);
-                let _ = std::fs::remove_file(&request_path);
-                self.http = None;
-                let _ = e;
-                -1
-            }
+            Err(_) => -1,
         }
     }
 
@@ -985,17 +999,19 @@ impl HostState {
         match job.child.try_wait() {
             Ok(Some(status)) => {
                 job.done = true;
-                job.code = read_file_max(&job.status_path, 32)
+                job.code = read_file_max(&job.files.path("status"), 32)
                     .and_then(|v| String::from_utf8_lossy(&v).trim().parse::<i32>().ok())
                     .unwrap_or(-1);
-                job.body = read_file_max(&job.body_path, 8 * 1024 * 1024).unwrap_or_default();
+                job.body = read_file_max(&job.files.path("body"), 8 * 1024 * 1024).unwrap_or_default();
                 if !status.success() && job.body.is_empty() {
-                    let detail = read_file_max(&job.err_path, 4096)
+                    let detail = read_file_max(&job.files.path("err"), 4096)
                         .map(|v| String::from_utf8_lossy(&v).split_whitespace().collect::<Vec<_>>().join(" "))
                         .unwrap_or_default();
                     job.error = if detail.is_empty() { format!("curl exited {:?}", status.code()) } else { detail };
                     job.code = -1;
                 }
+                // The answer is in memory now: its files are not kept until the next request.
+                job.files.remove();
                 1
             }
             Ok(None) => 0,
@@ -1003,9 +1019,14 @@ impl HostState {
                 job.done = true;
                 job.error = format!("Could not wait for curl: {e}");
                 job.code = -1;
+                job.files.remove();
                 1
             }
         }
+    }
+
+    fn http_cancel(&mut self) {
+        self.http = None;
     }
 }
 
@@ -1195,6 +1216,54 @@ mod tests {
         names
     }
 
+    /// The kinds (the names' endings) of the files in the app's request folder.
+    fn request_kinds(dir: &str) -> Vec<String> {
+        request_files(dir).iter().map(|n| n.rsplit('.').next().unwrap_or("").to_string()).collect()
+    }
+
+    /// True when no process has this id any more: the child was ended and reaped.
+    fn gone(pid: u32) -> bool {
+        // SAFETY: signal 0 sends nothing: it asks whether the process is there.
+        let r = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        r == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    }
+
+    fn child_pid(st: &HostState) -> u32 {
+        st.http.as_ref().unwrap().child.id()
+    }
+
+    /// Polls a request until it has ended, as an app does from its redraws.
+    fn poll_to_end(st: &mut HostState) {
+        let end = Instant::now() + Duration::from_secs(45);
+        while st.http_poll() == 0 {
+            assert!(Instant::now() < end, "the request did not end");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(st.http_poll(), 1);
+    }
+
+    /// What an app reads of an ended request: its status code, its answer and its error text.
+    fn outcome(st: &HostState) -> (i32, Vec<u8>, String) {
+        let job = st.http.as_ref().unwrap();
+        (job.code, job.body.clone(), job.error.clone())
+    }
+
+    /// A local address that takes a connection and never answers it: a request to it stays in
+    /// flight. (The listener is returned to be kept: the address is its.)
+    fn silent_address() -> (std::net::TcpListener, String) {
+        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let url = format!("http://127.0.0.1:{}/", l.local_addr().unwrap().port());
+        (l, url)
+    }
+
+    /// A local address nothing listens on.
+    fn closed_address() -> String {
+        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        format!("http://127.0.0.1:{}/", l.local_addr().unwrap().port())
+    }
+
+    const NEEDS_CURL: &str = "this test starts curl: it must be on the PATH";
+
     // A refused request starts nothing and makes no file: every case here is one line that is not a
     // header line, a line over the length limit, or more lines than the limit.
     #[test]
@@ -1218,6 +1287,65 @@ mod tests {
             assert_eq!(request_files(&dir), Vec::<String>::new(), "{headers:?}");
         }
         assert_eq!(st.http_poll(), -1);
+    }
+
+    // Every way out of a request leaves none of its files and no child: a start that failed, a
+    // cancel, the host dropped while curl runs (the app stopped), an answer read, a new request.
+    #[test]
+    fn a_request_leaves_no_file_and_no_child_on_any_way_out() {
+        let dir = scratch("ways-out");
+        let none = Vec::<String>::new();
+
+        // A start that fails after the request's files were made: an address with a NUL byte is
+        // an argument no program can be started with.
+        let mut st = host(&dir);
+        assert_eq!(st.http_start("POST", "http://127.0.0.1:9/\0", "X-A: 1", b"upload"), -1);
+        assert!(st.http.is_none());
+        assert_eq!(request_files(&dir), none);
+
+        // A request in flight has its files; another start is refused and changes nothing.
+        let (_listener, silent) = silent_address();
+        assert_eq!(st.http_start("POST", &silent, "X-A: 1", b"upload"), 0, "{NEEDS_CURL}");
+        let pid = child_pid(&st);
+        assert_eq!(st.http_poll(), 0);
+        assert_eq!(request_kinds(&dir), ["err", "request", "status"]);
+        assert_eq!(st.http_start("GET", &silent, "", b""), -3);
+        assert_eq!(child_pid(&st), pid);
+        assert_eq!(request_kinds(&dir), ["err", "request", "status"]);
+
+        // http_cancel.
+        st.http_cancel();
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), none);
+        assert_eq!(st.http_poll(), -1);
+
+        // The host dropped while curl runs.
+        assert_eq!(st.http_start("POST", &silent, "", b"upload"), 0);
+        let pid = child_pid(&st);
+        assert_eq!(request_kinds(&dir), ["err", "request", "status"]);
+        drop(st);
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), none);
+
+        // An answer read (here curl's failure to connect): the files are gone once http_poll has
+        // said so, and what was read stays until the next request or a cancel.
+        let mut st = host(&dir);
+        assert_eq!(st.http_start("POST", &closed_address(), "", b"upload"), 0);
+        let pid = child_pid(&st);
+        poll_to_end(&mut st);
+        let (code, body, error) = outcome(&st);
+        assert_eq!((code, body), (-1, Vec::new()));
+        assert!(!error.is_empty());
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), none);
+
+        // A new request after it: only the new one's files are there.
+        assert_eq!(st.http_start("GET", &silent, "", b""), 0);
+        let pid = child_pid(&st);
+        assert_eq!(request_kinds(&dir), ["err", "status"]);
+        drop(st);
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), none);
     }
 }
 
