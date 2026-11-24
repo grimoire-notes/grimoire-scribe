@@ -88,6 +88,7 @@ struct HostState {
 /// The limits of one app HTTP request (docs/APPS.md, HTTP).
 const HTTP_HEADER_LINES_MAX: usize = 32;
 const HTTP_HEADER_LINE_MAX: usize = 2048;
+const HTTP_REDIRECTS_MAX: u32 = 5;
 
 /// One app HTTP request, run by curl in the background. The app polls it from
 /// `request_redraw` frames, so no network contact ever blocks drawing or touch.
@@ -887,6 +888,30 @@ fn http_header_lines(headers: &str) -> Option<Vec<&str>> {
     Some(lines)
 }
 
+/// The arguments curl is started with for one request. `-q` is first, so no configuration file
+/// is read. The address and every redirect are http or https, at most HTTP_REDIRECTS_MAX
+/// redirects are followed, and the address is taken as written (`-g`). Each header line is one
+/// `-H`; the address is last.
+fn http_args(method: &str, url: &str, header_lines: &[&str], body_path: &str, request_path: Option<&str>) -> Vec<String> {
+    let redirects = HTTP_REDIRECTS_MAX.to_string();
+    let mut args: Vec<String> = [
+        "-q", "-sS", "-g",
+        "--proto", "=http,https", "--proto-redir", "=http,https",
+        "-L", "--max-redirs", &redirects,
+        "--max-time", "30",
+        "-X", method, "-o", body_path, "-w", "%{http_code}",
+        "-H", "User-Agent: Grimoire-App/2.3",
+    ].map(String::from).to_vec();
+    for line in header_lines {
+        args.extend(["-H".to_string(), line.to_string()]);
+    }
+    if let Some(request) = request_path {
+        args.extend(["--data-binary".to_string(), format!("@{request}")]);
+    }
+    args.push(url.to_string());
+    args
+}
+
 impl HostState {
     fn http_start(&mut self, method: &str, url: &str, headers: &str, body: &[u8]) -> i32 {
         if !self.network_http {
@@ -923,19 +948,9 @@ impl HostState {
         }
         let Ok(status_file) = std::fs::File::create(&status_path) else { return -1 };
         let Ok(err_file) = std::fs::File::create(&err_path) else { return -1 };
+        let args = http_args(&method, url, &header_lines, &body_path, (!body.is_empty()).then_some(request_path.as_str()));
         let mut cmd = Command::new("curl");
-        cmd.arg("-q").arg("-sS").arg("-L").arg("--max-time").arg("30")
-            .arg("-X").arg(&method)
-            .arg("-o").arg(&body_path)
-            .arg("-w").arg("%{http_code}")
-            .arg("-H").arg("User-Agent: Grimoire-App/2.3");
-        for line in &header_lines {
-            cmd.arg("-H").arg(line);
-        }
-        if !body.is_empty() {
-            cmd.arg("--data-binary").arg(format!("@{request_path}"));
-        }
-        cmd.arg(url).stdin(std::process::Stdio::null()).stdout(status_file).stderr(err_file);
+        cmd.args(&args).stdin(std::process::Stdio::null()).stdout(status_file).stderr(err_file);
         match cmd.spawn() {
             Ok(child) => {
                 self.http = Some(HttpJob {
@@ -1107,6 +1122,36 @@ mod tests {
         let longest = format!("X-Long: {}", "a".repeat(HTTP_HEADER_LINE_MAX - 8));
         assert_eq!(http_header_lines(&format!("  {longest}  \r\n")), Some(vec![longest.as_str()]));
         assert_eq!(http_header_lines(&format!("{longest}a")), None);
+    }
+
+    // The whole list curl is started with: -q first, each rule's option, each header line behind
+    // its own -H, and the address last.
+    #[test]
+    fn curl_is_started_with_the_rules_of_a_request_and_the_address_last() {
+        let url = "https://example.org/a?b=[1]&c={x,y}";
+        let args = http_args("POST", url, &["Accept: text/plain", "X-A: 1"], "/s/http/1.body", Some("/s/http/1.request"));
+        assert_eq!(args, [
+            "-q", "-sS", "-g",
+            "--proto", "=http,https", "--proto-redir", "=http,https",
+            "-L", "--max-redirs", "5",
+            "--max-time", "30",
+            "-X", "POST", "-o", "/s/http/1.body", "-w", "%{http_code}",
+            "-H", "User-Agent: Grimoire-App/2.3",
+            "-H", "Accept: text/plain",
+            "-H", "X-A: 1",
+            "--data-binary", "@/s/http/1.request",
+            url,
+        ]);
+        let plain = http_args("GET", "http://example.org/", &[], "/s/http/2.body", None);
+        assert_eq!(plain, [
+            "-q", "-sS", "-g",
+            "--proto", "=http,https", "--proto-redir", "=http,https",
+            "-L", "--max-redirs", "5",
+            "--max-time", "30",
+            "-X", "GET", "-o", "/s/http/2.body", "-w", "%{http_code}",
+            "-H", "User-Agent: Grimoire-App/2.3",
+            "http://example.org/",
+        ]);
     }
 
     /// A scratch folder of one test's own (under GRIMOIRE_TEST_TMP when the Makefile sets it).

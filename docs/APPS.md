@@ -215,6 +215,11 @@ http_cancel()
 manifest lacks `network:http`, and -3 while another request is in flight. The method is
 `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` or another uppercase token.
 
+The address begins with `http://` or `https://`, is at most 4096 bytes, and is taken as written:
+brackets and braces in it are part of the address. Redirects are followed, at most 5 of them, and
+only to `http` and `https` addresses; a request that is redirected further, or elsewhere, ends as
+a failure.
+
 Headers are one `Name: value` per line, at most 32 lines of at most 2048 bytes each (and 32 KiB
 together). A header line is a name, a colon and a value: the name is one or more HTTP token
 characters (letters, digits and ``! # $ % & ' * + - . ^ _ ` | ~``), the colon follows the name
