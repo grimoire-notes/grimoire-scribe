@@ -5,6 +5,9 @@
 # across notebooks its edges. In each of lib000, lib001 and lib002 page 1 links to its page 2 and to the next
 # notebook's page 2, and page 3 to its Index. There is no Notebook choice (the owner's ruling of 2026-11-03,
 # "remove it": the chip is gone); a node of another notebook opens it there, and Back comes back.
+# (the status bar's clock held still: a new minute between a drawing and a look at editor.screen_composed
+# would make the two differ)
+clock 1700000000
 wait 300
 tap library folder.Library
 tap library notebook.lib000

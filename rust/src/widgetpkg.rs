@@ -1390,13 +1390,41 @@ pub struct WidgetFetch {
 /// some Kindles' curl rejects timeout options, and an install must not hang on one.)
 const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 
+/// The redirects curl follows for one fetch; an answer that sends one more is a failed fetch.
+const FETCH_REDIRECTS_MAX: u32 = 5;
+
+/// Whether the fetcher takes an address: `https://`, at most WIDGET_PKG_URL_MAX bytes, and no space or
+/// control character in it.
+fn fetch_address_ok(url: &str) -> bool {
+    url.len() <= WIDGET_PKG_URL_MAX && url.starts_with("https://") && !url.chars().any(|c| c.is_control() || c == ' ')
+}
+
+/// The arguments curl is started with for one fetch, after its own name. `-q` is first, so no
+/// configuration file is read (one might name an option this build does not have), and `-fsSL` is older
+/// than every curl on a Kindle or a computer. The address and every redirect are https (`--proto`,
+/// `--proto-redir`), at most FETCH_REDIRECTS_MAX redirects are followed, and the address is taken as
+/// written (`-g`: braces and brackets are part of the one address). The address is last.
+/// No timeout option: the parent kills the child after FETCH_TIMEOUT instead, because some Kindles'
+/// curl rejects the options real curl uses for one.
+fn fetch_args(url: &str) -> Vec<String> {
+    let redirects = FETCH_REDIRECTS_MAX.to_string();
+    ["-q", "-fsSL", "-g", "--proto", "=https", "--proto-redir", "=https", "--max-redirs", &redirects, url].map(String::from).to_vec()
+}
+
 impl WidgetFetch {
     pub fn start(url: &str, cap: usize) -> Result<WidgetFetch, String> {
-        if url.len() > WIDGET_PKG_URL_MAX || !url.starts_with("https://") {
+        if !fetch_address_ok(url) {
             return Err("Only https addresses can be fetched.".into());
         }
         let Ok(curl) = std::ffi::CString::new("curl") else { return Err("Could not start the fetcher.".into()) };
-        let Ok(c_url) = std::ffi::CString::new(url) else { return Err("That address has a NUL byte.".into()) };
+        // (the list is made here, before the fork: the child only sets up its descriptors and execs)
+        let Ok(c_args) = fetch_args(url).into_iter().map(std::ffi::CString::new).collect::<Result<Vec<_>, _>>() else {
+            return Err("That address has a NUL byte.".into());
+        };
+        let mut argv: Vec<*const libc::c_char> = Vec::with_capacity(c_args.len() + 2);
+        argv.push(curl.as_ptr());
+        argv.extend(c_args.iter().map(|arg| arg.as_ptr()));
+        argv.push(std::ptr::null());
         let mut p = [0i32; 2];
         // SAFETY: pipe writes the two descriptors into our array.
         if unsafe { libc::pipe(p.as_mut_ptr()) } != 0 {
@@ -1440,19 +1468,9 @@ impl WidgetFetch {
                 for fd in 3..1024 {
                     libc::close(fd);
                 }
-                // The plainest invocation curl has: -q ignores a .curlrc that might name an option this
-                // build does not have, and -fsSL is older than every curl on a Kindle or a computer.
-                // No timeout option: the parent kills the child after FETCH_TIMEOUT instead, because
-                // some Kindles' curl rejects the options real curl uses for one.
-                // HTTPS is checked by start (and the artifact's SHA-256 by the install).
-                let args: [*const libc::c_char; 5] = [
-                    curl.as_ptr(),
-                    c"-q".as_ptr(),
-                    c"-fsSL".as_ptr(),
-                    c_url.as_ptr(),
-                    std::ptr::null(),
-                ];
-                libc::execvp(curl.as_ptr(), args.as_ptr());
+                // curl with fetch_args' list. HTTPS is checked by start and held by the list for every
+                // redirect (and the artifact's SHA-256 is checked by the install).
+                libc::execvp(curl.as_ptr(), argv.as_ptr());
                 libc::_exit(127);
             }
         }
@@ -1960,6 +1978,78 @@ spec:
         }
         assert_eq!(widget_github_repo_url("jane/widgets").as_deref(), Some("https://github.com/jane/widgets"));
         assert!(widget_github_repo_url("https://example.org/widgets").is_none());
+    }
+
+    // The whole list curl is started with: -q first, -fsSL, each rule's option, and the address last.
+    #[test]
+    fn curl_is_started_with_the_rules_of_a_fetch_and_the_address_last() {
+        let url = "https://example.org/w/package.yaml?a=[1-3]&b={x,y}";
+        assert_eq!(fetch_args(url), ["-q", "-fsSL", "-g", "--proto", "=https", "--proto-redir", "=https", "--max-redirs", "5", url]);
+        assert_eq!(FETCH_REDIRECTS_MAX, 5);
+    }
+
+    // The fetcher starts curl with that list: a stand-in named curl, first on PATH for the start,
+    // answers with the arguments it was given, one a line.
+    #[test]
+    fn the_fetcher_starts_curl_with_that_list() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("grimoire-widget-fetch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let stand_in = dir.join("curl");
+        std::fs::write(&stand_in, "#!/bin/sh\nfor arg in \"$@\"; do printf '%s\\n' \"$arg\"; done\n").unwrap();
+        std::fs::set_permissions(&stand_in, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut first = std::ffi::OsString::from(&dir);
+        first.push(":");
+        first.push(&path);
+        let url = "https://example.org/w/package.yaml?a=[1-3]&b={x,y}";
+        std::env::set_var("PATH", &first);
+        let started = WidgetFetch::start(url, 4096);
+        std::env::set_var("PATH", &path);
+        let mut fetch = started.unwrap_or_else(|e| panic!("{e}"));
+        let answer = loop {
+            if let Some(answer) = fetch.tick() {
+                break answer;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        let answer = String::from_utf8(answer.unwrap()).unwrap();
+        assert_eq!(answer.lines().collect::<Vec<_>>(), fetch_args(url));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // An address is https, no longer than WIDGET_PKG_URL_MAX, and has no space or control character:
+    // any other is refused with the one sentence before a fetcher is started.
+    #[test]
+    fn only_a_plain_https_address_is_fetched() {
+        let longest = format!("https://example.org/{}", "a".repeat(WIDGET_PKG_URL_MAX - 20));
+        assert_eq!(longest.len(), WIDGET_PKG_URL_MAX);
+        for url in ["https://example.org/package.yaml", "https://example.org/w/package.yaml?a=[1-3]&b={x,y}#c", "https://example.org/%20/p.yaml", longest.as_str()] {
+            assert!(fetch_address_ok(url), "{url}");
+        }
+        let too_long = format!("{longest}a");
+        for url in [
+            "",
+            "example.org/package.yaml",
+            "http://example.org/package.yaml",
+            "ftp://example.org/package.yaml",
+            "file:///mnt/us/package.yaml",
+            "HTTPS://example.org/package.yaml",
+            " https://example.org/package.yaml",
+            "https://example.org/my package.yaml",
+            "https://example.org/package.yaml ",
+            "https://example.org/a\tb.yaml",
+            "https://example.org/a\nb.yaml",
+            "https://example.org/a\r\nb.yaml",
+            "https://example.org/a\0b.yaml",
+            "https://example.org/a\u{7f}b.yaml",
+            "https://example.org/a\u{85}b.yaml",
+            too_long.as_str(),
+        ] {
+            assert!(!fetch_address_ok(url), "{url:?}");
+            assert_eq!(WidgetFetch::start(url, 1024).err().as_deref(), Some("Only https addresses can be fetched."), "{url:?}");
+        }
     }
 
     #[test]
