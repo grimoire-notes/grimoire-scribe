@@ -221,7 +221,9 @@ A visit with a network runs without one: tests/store-curl/curl stands in for cur
 scenario's `# env:` line puts its folder first in `PATH` and names a catalog at
 `https://store.test/index.json`; it answers from the folder `package-store-served` of the
 scenario's data root, which tests/store_many_packages.py fills, 0.3 s a download
-(tests/scenarios/z_package_store_first_visit.qs: a download's end refreshes nothing by itself).
+(tests/scenarios/z_package_store_first_visit.qs: a download's end refreshes nothing by itself). The
+`?v=<time>` query a catalog, manifest, artifact or license fetch adds, so that no cache's copy is
+read, is not part of the path it answers from.
 The same generator makes a saved catalog of any number of packages
 (z_package_store_page_first.qs).
 A disabled button

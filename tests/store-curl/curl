@@ -3,10 +3,11 @@
 # whose PATH has this folder first). "curl -q -fsSL -g --proto =https --proto-redir =https --max-redirs 5
 # https://store.test/PATH", the one form Grimoire runs (rust/src/widgetpkg.rs, fetch_args), answers from the files
 # of package-store-served in the scenario's data root (tests/store_many_packages.py makes them there) after a
-# short wait, as a download takes one: index.json is the catalog, any other path a file of assets/. Nothing
-# leaves the machine. Another form (an option left out, changed, moved or added, or an address that is not the
-# last of the ten arguments), another host, a path with ".." or a file that is not there fails with curl's status
-# for a failed request, 22.
+# short wait, as a download takes one: index.json is the catalog, any other path a file of assets/. A "?v=..."
+# query (what a catalog, manifest, artifact or license fetch adds so that no cache's copy is read,
+# rust/src/packagestore.rs fresh_url) is not part of the path. Nothing leaves the machine. Another form (an
+# option left out, changed, moved or added, or an address that is not the last of the ten arguments), another
+# host, a path with ".." or a file that is not there fails with curl's status for a failed request, 22.
 [ $# -eq 10 ] || exit 22
 [ "$1" = -q ] && [ "$2" = -fsSL ] && [ "$3" = -g ] || exit 22
 [ "$4" = --proto ] && [ "$5" = =https ] && [ "$6" = --proto-redir ] && [ "$7" = =https ] || exit 22
@@ -15,6 +16,8 @@ url="${10}"
 rel="${url#https://store.test/}"
 [ "$rel" != "$url" ] && [ -n "${GRIMOIRE_ROOT:-}" ] || exit 22
 case "$rel" in *..*) exit 22 ;; esac
+query="${rel#*\?}"
+[ "$query" = "$rel" ] || rel="${rel%\?*}"
 served="$GRIMOIRE_ROOT/package-store-served"
 sleep 0.3
 if [ "$rel" = index.json ]; then f="$served/index.json"; else f="$served/assets/$rel"; fi

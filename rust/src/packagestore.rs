@@ -400,6 +400,23 @@ fn offline() -> bool {
     std::env::var_os("GRIMOIRE_PACKAGE_STORE_OFFLINE").is_some_and(|v| !v.is_empty())
 }
 
+/// The address a fetch asks when its answer must not be one a cache kept: the address with a query
+/// that is new every time. GitHub's raw host keeps a file it served for five minutes
+/// (`cache-control: max-age=300`) and its copies are keyed by the whole address, query included, so
+/// a catalog or a manifest pushed a moment ago is read only from an address it has not seen. An
+/// address with no room left for the query is fetched as it is (`fetch_address_ok` takes at most
+/// WIDGET_PKG_URL_MAX bytes).
+fn fresh_url(url: &str) -> String {
+    let mark = if url.contains('?') { '&' } else { '?' };
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let fresh = format!("{url}{mark}v={now}");
+    if fresh.len() <= WIDGET_PKG_URL_MAX && !fresh.chars().any(|c| c.is_control() || c == ' ') {
+        fresh
+    } else {
+        url.to_string()
+    }
+}
+
 fn store_id_ok(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 128
@@ -645,7 +662,7 @@ fn start_catalog(ui: &mut PackageStoreUi) {
         }
         return;
     }
-    match WidgetFetch::start(&ui.index_url, INDEX_MAX) {
+    match WidgetFetch::start(&fresh_url(&ui.index_url), INDEX_MAX) {
         Ok(fetch) => {
             ui.catalog_job = Some(FetchJob {
                 stage: FetchStage::Catalog,
@@ -1143,7 +1160,11 @@ enum FetchSlot {
 }
 
 fn begin_fetch(ui: &mut PackageStoreUi, slot: FetchSlot, stage: FetchStage, url: &str, cap: usize, key: &str) -> Result<(), String> {
-    let fetch = WidgetFetch::start(url, cap)?;
+    // A manifest, an artifact and a license are what an update reads, so they are asked for by an
+    // address no cache has seen: a copy kept a few minutes longer would name the version that was
+    // replaced. `job.url` stays the address as the catalog or the manifest wrote it.
+    let asked = if matches!(stage, FetchStage::Manifest | FetchStage::Artifact | FetchStage::License) { fresh_url(url) } else { url.to_string() };
+    let fetch = WidgetFetch::start(&asked, cap)?;
     let job = FetchJob {
         stage,
         fetch,
@@ -3679,6 +3700,19 @@ mod tests {
         import_development_for(&mut ui, 1860, 2400);
         assert!(ui.dev_note.is_empty(), "{}", ui.dev_note);
         assert_eq!(app_package_installed("com.example.dev").unwrap().version, "1.1.0");
+    }
+
+    #[test]
+    fn a_fresh_address_is_one_no_cache_has_seen() {
+        let a = fresh_url("https://example.org/store/index.json");
+        assert!(a.starts_with("https://example.org/store/index.json?v="), "{a}");
+        // an address that already names something (the GitHub API's `?ref=main`) gets another query
+        let b = fresh_url("https://api.example.org/repos/a/b/contents?ref=main");
+        assert!(b.starts_with("https://api.example.org/repos/a/b/contents?ref=main&v="), "{b}");
+        // an address with no room left for the query is fetched as it is
+        let long = format!("https://e.org/{}", "a".repeat(WIDGET_PKG_URL_MAX - "https://e.org/".len()));
+        assert_eq!(long.len(), WIDGET_PKG_URL_MAX);
+        assert_eq!(fresh_url(&long), long);
     }
 
     #[test]

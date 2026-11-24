@@ -33,6 +33,13 @@ catalog is [grimoire-notes/package-store-contents](https://github.com/grimoire-n
 repository's README documents the format, and `tools/check.py` validates a catalog before it is
 published. A mirror can be used with `GRIMOIRE_PACKAGE_STORE_URL`.
 
+Nothing is read from a cache on the way: each open and each Refresh asks the catalog's address
+with a query that is new every time (`?v=<time>`), and a manifest, an artifact and a license file
+are fetched the same way. GitHub's raw host keeps a file it served for five minutes
+(`cache-control: max-age=300`) and keys its copies by the whole address, so without that query a
+catalog replaced a moment ago would not be seen. Icons and screenshots are not asked for again:
+their files stay in `package-store/assets/` as they were first downloaded.
+
 ### Trying a package before it is published
 
 A package that is still being worked on need not be in the catalog, or installed by hand from its
