@@ -3645,8 +3645,9 @@ cache and checked (`pkgpics.rs`, `appicon.rs`, `packagestore.rs`).
   `appicon.rs` had), an `.ico` or a picture for a Store icon (256 px a side), a picture for a screenshot (a file of
   at most 8 MiB, kept at most 2,560 px a side: a Scribe page's screenshot is kept as it is).
 - **What a job ends with**, by previews' rule for a try: a picture; a "no picture" mark at once when the worker
-  refuses the bytes; a try on record (`once`) the first time a worker ends, lies or runs out of time, and the
-  mark only the second time; or nothing at all when no worker can be had, memory or room is short, or the file
+  refuses the bytes; a try on record (`once`) the first time a worker ends, answers something else or runs out
+  of time, and the mark only the second time; or nothing at all when no worker can be had, memory or room is
+  short, or the file
   changed or is gone. It ends 0 or 1, or 4 (`pkgpics::CODE_SANDBOX`, a template PDF's number for the same) when
   the sandbox refused its worker a step: the step failed in the job's child, whose session is broken, and
   `bgjob.rs` takes that exit status as it takes a template PDF's and marks the UI's session broken too

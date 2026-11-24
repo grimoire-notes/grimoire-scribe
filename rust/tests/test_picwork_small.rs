@@ -220,7 +220,7 @@ fn refused_pictures_are_bad_and_the_worker_goes_on() {
     let fixture = include_bytes!("../../tests/fixtures/apppkg/packages/apps/com.example.fixture/icon.ico");
     let png = png_bytes(&gradient(60, 50, 1), &dir);
     let bad = |pool: &mut PicPool, data: &[u8], what: usize, max: i32| matches!(pool.small(data, what, max), PicOut::Bad(_));
-    // cut short: an `.ico` whose entries lie past its end, one cut inside its entry, a PNG cut inside its pixels
+    // cut short: an `.ico` whose entries are past its end, one cut inside its entry, a PNG cut inside its pixels
     check!(bad(&mut pool, &fixture[..100], SMALL_ICO, 256));
     let one = ico_of(&[(20, 10, dib32(20, 10, |_, _| [1, 2, 3, 255]))]);
     check!(bad(&mut pool, &one[..one.len() - 30], SMALL_ICO, 256));

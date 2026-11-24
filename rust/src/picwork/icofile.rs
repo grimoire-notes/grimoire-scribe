@@ -429,7 +429,7 @@ mod tests {
         let mut long = data.to_vec();
         long.resize(ICO_FILE_MAX + 1, 0);
         assert!(ico_gray(&long).is_none());
-        // (the directory alone: every entry it names lies past the end)
+        // (the directory alone: every entry it names is past the end)
         assert!(ico_gray(&data[..100]).is_none());
         assert!(ico_gray(b"").is_none());
         assert!(ico_gray(&[0, 0, 1, 0, 0, 0]).is_none());

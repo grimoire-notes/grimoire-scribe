@@ -18,8 +18,8 @@
 //!   form's side fitted inside it. The writer checks the answer (`PicPool::small`) and writes the cache.
 //! - What a job ends with, by previews' rule for a try: a picture; a "no picture" mark at once when the worker
 //!   refuses the bytes (the same bytes give the same answer); a try on record (`once`) the first time a worker
-//!   ends, lies or runs out of time, and the mark only the second time; or nothing at all when no worker can be
-//!   had, memory or room is short, or the file changed or is gone.
+//!   ends, answers something else or runs out of time, and the mark only the second time; or nothing at all when
+//!   no worker can be had, memory or room is short, or the file changed or is gone.
 //! - The cache: grimoire/.cache/packages/icons/ and grimoire/.cache/packages/shots/, `<key>.pgm` and `<key>.info`
 //!   (docs/FORMAT.md), `<key>` the FNV-1a 64 hash of the file's path, size and time (`preview_key`). Written
 //!   atomically by the job alone, the picture first and then the `.info` that says it is whole; read by the UI
@@ -361,8 +361,8 @@ enum Outcome {
 enum Fail {
     /// the worker says the file is at fault: the mark at once (the same bytes give the same answer)
     Refused,
-    /// the worker ended, lied or ran out of time on it: a try. The first is put on record; the second in a row
-    /// is the mark
+    /// the worker ended, answered something else or ran out of time on it: a try. The first is put on record; the
+    /// second in a row is the mark
     Strike(NoPreview),
     /// not the file's: nothing is written, and a later look asks again
     Later(&'static str),
@@ -465,7 +465,7 @@ fn make(path: &str) -> Result<(PicForm, Outcome), String> {
     let form = src.form;
     let root = store_root();
     let dir = picture_cache_dir(form);
-    // (read and written as root: never through a planted link, and the folder made where it is missing)
+    // (read and written as root: never through a link, and the folder made where it is missing)
     if !no_link_below(&root, &dir) || mkdir_p(&dir) != 0 {
         return Err("the cache folder cannot be made".into());
     }
