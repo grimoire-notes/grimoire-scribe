@@ -1095,8 +1095,12 @@ fn draw_base(a: &mut App) {
     hits_clear(&mut s.hits);
     canvas_fill(c, Rect::new(0, 0, aw, ah), 255);
 
-    // The status bar (2.3, issue #209): time and date, Wi-Fi and Bluetooth, the battery.
-    gui_status_bar(c, aw, sys_wall_clock());
+    // The status bar (2.3, issue #209): time and date, Wi-Fi and Bluetooth, the battery. The minute it
+    // is drawn with is the one library_tick compares: a tick draws the home again only once the
+    // bar's time has changed (a start with no minute recorded drew it twice).
+    let now = sys_wall_clock();
+    gui_status_bar(c, aw, now);
+    s.status_min = now / 60;
 
     let m = margin();
     let gap = gui_gap();
@@ -10642,6 +10646,39 @@ mod tests {
         let mut out = String::new();
         assert_eq!(library_probe(a, key, &mut out, 512), 0, "{key}");
         out
+    }
+
+    // The home is drawn with its bar's minute recorded, so a tick in that minute draws nothing again.
+    // Before, the first tick after a start found no minute recorded and drew and refreshed the whole
+    // home a second time with nothing on it changed.
+    #[test]
+    fn a_tick_in_the_minute_the_home_was_drawn_in_draws_nothing() {
+        let mut a = pen_record_app();
+        a.scr = ScreenId::Library;
+        lib(&mut a).modal = Modal::None;
+        lib(&mut a).items.clear();
+        // (the machine's minute can change between a draw and its tick: the next pair is inside one)
+        let mut quiet = false;
+        for _ in 0..2 {
+            lib(&mut a).status_min = 0;
+            redraw(&mut a, RefreshMode::Ui);
+            a.dirty = RECT_EMPTY;
+            library_tick(&mut a, 100);
+            if rect_is_empty(a.dirty) {
+                quiet = true;
+                break;
+            }
+        }
+        assert!(quiet, "a tick in the minute the home was drawn in asked for a refresh");
+        // A minute on by the clock, the tick draws it again, once.
+        lib(&mut a).status_min -= 1;
+        library_tick(&mut a, 200);
+        assert!(!rect_is_empty(a.dirty));
+        a.dirty = RECT_EMPTY;
+        library_tick(&mut a, 300);
+        assert!(rect_is_empty(a.dirty) || lib(&mut a).status_min != sys_wall_clock() / 60);
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
     }
 
     // The global popup menus close on a tap outside their rows; the page under them does not act.
