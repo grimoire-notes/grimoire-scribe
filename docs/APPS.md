@@ -215,10 +215,11 @@ http_cancel()
 manifest lacks `network:http`, and -3 while another request is in flight. The method is
 `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` or another uppercase token.
 
-The address begins with `http://` or `https://`, is at most 4096 bytes, and is taken as written:
-brackets and braces in it are part of the address. Redirects are followed, at most 5 of them, and
-only to `http` and `https` addresses; a request that is redirected further, or elsewhere, ends as
-a failure.
+The address begins with `http://` or `https://`, is at most 4096 bytes, has no space and no
+control character, and is taken as written: brackets and braces in it are part of the address.
+Any other address is a bad argument: `http_start` returns -1 and nothing is sent. A space in an
+address is written `%20`. Redirects are followed, at most 5 of them, and only to `http` and
+`https` addresses; a request that is redirected further, or elsewhere, ends as a failure.
 
 Headers are one `Name: value` per line, at most 32 lines of at most 2048 bytes each (and 32 KiB
 together). A header line is a name, a colon and a value: the name is one or more HTTP token
@@ -229,19 +230,23 @@ any other line, a longer line or more lines is refused whole: `http_start` retur
 is sent. A line with an empty value sends no header: curl then leaves out its own header of that
 name, if it has one.
 
+A request without a `User-Agent` line is sent with `User-Agent: Grimoire-App/2.3`. A request
+with a `User-Agent` line of its own is sent with that line in its place, never with both. An app
+should send its own.
+
 The upload is at most 2 MiB. The answer is at most 8 MiB (8,388,608 bytes). A longer answer ends
 the request: at once when the server states its length, and otherwise once it has grown past the
-limit (each `http_poll` checks its size so far, and curl 8.4 or later checks as it downloads).
-Such a request has no status code (`http_status` is -1), no answer, and its `http_error` is
-`The answer is too large.`
+limit, whether or not the app polls. Such a request has no status code (`http_status` is -1), no
+answer, and its `http_error` is `The answer is too large.`
 
 `http_poll` returns 0 while the request runs and 1 when it has finished; after that `http_status`
 is the HTTP status code (or -1 on a transport failure), `http_body` is the answer, and
 `http_error` is curl's one-line failure when there is one. Poll it after a `request_redraw`; none
-of these calls blocks drawing or touching the screen.
+of these calls blocks drawing or touching the screen. The host looks after a request between the
+app's polls: a request that has ended keeps its outcome for the next `http_poll`, until the next
+request or `http_cancel`.
 
-The host does not provide filesystem or shell access. An app should send a `User-Agent` header;
-the host adds `Grimoire-App/2.3` as a default.
+The host does not provide filesystem or shell access.
 
 ## Returning Home
 
