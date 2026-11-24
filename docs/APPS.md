@@ -116,6 +116,24 @@ An app's `state/` folder survives an update and a Remove that keeps state. `stat
 belongs to the host (the values of the manifest's `settings` rows); put the app's own data in
 another file under `state/`.
 
+## The module's file
+
+The installer checks the artifact's length and SHA-256 against the manifest, and only then writes
+anything. Each time an app is opened, before its module is loaded, its file is checked again:
+
+- the installed manifest's `artifact.path` is still a path the manifest check takes, and the index
+  (`packages/apps-index.json`) names the same file, `packages/apps/<id>/<artifact.path>`;
+- it is a plain file inside the app's own folder, with no link in its place or between the app's
+  folder and it;
+- it is no larger than 32 MiB, and its SHA-256 is the `sha` the index recorded when the app was
+  installed.
+
+A file that fails a check is not loaded: the app does not open, a toast says "The app's artifact
+could not be read.", and Grimoire's log says which check it was. The file is read and hashed once
+for each launch; drawing does not read it again. The check compares the installed module with the
+digest kept in `packages/apps-index.json`, a file of the same data folder: it finds a module that
+is no longer the file that was installed, and it is not a signature.
+
 ## Capabilities
 
 - `storage:app-local`: the app's own state and settings under its `state/` folder.

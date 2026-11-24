@@ -35,7 +35,7 @@ use std::process::Command;
 use wasmi::{Caller, Config, Engine, Extern, Linker, Module, Store, StoreLimits};
 
 const ABI: &str = "grimoire";
-const ARTIFACT_MAX: usize = 32 * 1024 * 1024;
+// (The module's file is at most WIDGET_PKG_ARTIFACT_MAX, widgetpkg.rs.)
 const STATE_MAX: usize = 256 * 1024;
 const STATE_FILE: &str = "state/runtime.bin";
 /// A call's instruction budget: every call of the module by the host (`app_draw`, `app_pointer`, `app_key`,
@@ -345,19 +345,19 @@ pub fn apphost_launch(a: &mut App, id: &str) -> bool {
     if a.app_view.open {
         apphost_close(a);
     }
-    let Some(m) = crate::apppkg::app_package_installed_manifest(id) else {
+    if crate::apppkg::app_package_installed_manifest(id).is_none() {
         app_toast(a, "That app is no longer installed.", 3000);
-        return false;
-    };
-    let Some(it) = crate::apppkg::app_package_installed(id) else {
-        app_toast(a, "That app is no longer installed.", 3000);
-        return false;
-    };
-    if m.type_ != "app" {
-        app_toast(a, "That package is not an app.", 3000);
         return false;
     }
-    match AppRuntime::new(&it, &m, a.w, a.h, a.settings.clock_12h) {
+    // (the app's module, once its file has been checked again: apppkg.rs)
+    let (it, m, module) = match crate::apppkg::app_package_artifact(id) {
+        Ok(loaded) => loaded,
+        Err(e) => {
+            app_toast(a, &e, 5000);
+            return false;
+        }
+    };
+    match AppRuntime::new(&it, &m, &module, a.w, a.h, a.settings.clock_12h) {
         Ok(r) => {
             let icon = if m.spec.icon.trim().is_empty() { IconKind::Grid } else { widget_icon(&m.spec.icon) };
             a.app_view = AppRun {
@@ -565,21 +565,20 @@ pub fn apphost_control_point(a: &App, name: &str) -> Option<(f32, f32)> {
 
 impl AppRuntime {
     /// Loads an installed app's module and starts it, for a screen of `screen_w` by `screen_h` pixels: what a
-    /// launch does, without the screen (the host's tests drive a module through this).
+    /// launch does, without the screen (the host's tests drive a module through this). The module's file is
+    /// checked again before it is loaded (`app_package_artifact`: a plain file inside the app's folder, with the
+    /// SHA-256 recorded at the install), once for each launch.
     pub fn open(id: &str, screen_w: i32, screen_h: i32, clock_12h: bool) -> Result<Self, String> {
-        let installed = || "That app is no longer installed.".to_string();
-        let m = crate::apppkg::app_package_installed_manifest(id).ok_or_else(installed)?;
-        let it = crate::apppkg::app_package_installed(id).ok_or_else(installed)?;
-        Self::new(&it, &m, screen_w, screen_h, clock_12h)
+        let (it, m, module) = crate::apppkg::app_package_artifact(id)?;
+        Self::new(&it, &m, &module, screen_w, screen_h, clock_12h)
     }
 
-    fn new(it: &WidgetInstall, m: &WidgetPackage, screen_w: i32, screen_h: i32, clock_12h: bool) -> Result<Self, String> {
-        let path = format!("{}/{}", crate::apppkg::app_package_dir(&it.id), m.artifact.path);
-        let bytes = read_file_max(&path, ARTIFACT_MAX).ok_or("The app's artifact could not be read.")?;
+    /// Compiles and instantiates an installed app's module, whose bytes `app_package_artifact` read.
+    fn new(it: &WidgetInstall, m: &WidgetPackage, bytes: &[u8], screen_w: i32, screen_h: i32, clock_12h: bool) -> Result<Self, String> {
         let mut config = Config::default();
         config.consume_fuel(true);
         let engine = Engine::new(&config);
-        let module = Module::new(&engine, &bytes[..]).map_err(|e| format!("The app's WebAssembly is invalid: {e}"))?;
+        let module = Module::new(&engine, bytes).map_err(|e| format!("The app's WebAssembly is invalid: {e}"))?;
         let state_path = format!("{}/{STATE_FILE}", crate::apppkg::app_package_dir(&it.id));
         let state = read_file_max(&state_path, STATE_MAX).unwrap_or_default();
         let settings = crate::apppkg::app_settings_load(&it.id, &m.settings);

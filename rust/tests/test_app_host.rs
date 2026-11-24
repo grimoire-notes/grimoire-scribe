@@ -309,3 +309,144 @@ fn a_module_has_one_memory_and_one_table_of_a_bounded_length() {
     assert_eq!(rt.status(), "1101101");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// What a launch says when the module's file fails the check before a load.
+const NOT_READ: &str = "The app's artifact could not be read.";
+
+/// The error of a load of the app, None when it loads.
+fn load(id: &str) -> Option<String> {
+    AppRuntime::open(id, SCREEN.0, SCREEN.1, false).err()
+}
+
+/// A file of the data root with `from` replaced by `to`, as a hand with an editor would.
+fn rewrite(path: &std::path::Path, from: &str, to: &str) {
+    let text = std::fs::read_to_string(path).unwrap();
+    assert!(text.contains(from), "{from} in {path:?}");
+    std::fs::write(path, text.replace(from, to)).unwrap();
+}
+
+#[test]
+fn a_module_is_checked_again_before_each_launch() {
+    use std::os::unix::fs::symlink;
+    let root = fresh_root("load");
+    let module = pass(&honest()).bytes();
+    let other = Wasm::new(call("fill_rect", &[0, 0, 10, 10, 0])).bytes();
+    install("test.load", &BOTH, &module);
+    let dir = root.join("packages/apps/test.load");
+    let (file, yaml, index) = (dir.join("app.wasm"), dir.join("package.yaml"), root.join("packages/apps-index.json"));
+    assert_eq!(load("test.load"), None);
+
+    // The file's bytes are not the ones installed: one bit changed, another module, nothing, no file.
+    let mut bit = module.clone();
+    *bit.last_mut().unwrap() ^= 1;
+    for bytes in [&bit[..], &other[..], &[][..]] {
+        std::fs::write(&file, bytes).unwrap();
+        assert_eq!(load("test.load").as_deref(), Some(NOT_READ));
+    }
+    std::fs::remove_file(&file).unwrap();
+    assert_eq!(load("test.load").as_deref(), Some(NOT_READ));
+
+    // A link in the file's place is not followed, whether it leads to the same bytes inside the folder or outside.
+    let (inside, outside) = (dir.join("copy.bin"), root.join("packages/apps/elsewhere.bin"));
+    std::fs::write(&inside, &module).unwrap();
+    std::fs::write(&outside, &module).unwrap();
+    for target in [std::path::Path::new("copy.bin"), &inside, &outside] {
+        symlink(target, &file).unwrap();
+        assert_eq!(load("test.load").as_deref(), Some(NOT_READ), "a link to {target:?}");
+        std::fs::remove_file(&file).unwrap();
+    }
+    std::fs::write(&file, &module).unwrap();
+    assert_eq!(load("test.load"), None);
+
+    // The installed manifest names another file: outside the folder, by an absolute path, the manifest, the state,
+    // a name the walk does not take, or a file of the folder that the index does not name.
+    std::fs::create_dir_all(dir.join("state")).unwrap();
+    std::fs::write(dir.join("state/runtime.bin"), &module).unwrap();
+    std::fs::write(dir.join(".app.wasm"), &module).unwrap();
+    let absolute = outside.to_str().unwrap().to_string();
+    for path in ["../elsewhere.bin", "./app.wasm", "x/../app.wasm", absolute.as_str(), "/app.wasm", "package.yaml", "state/runtime.bin", ".app.wasm", "copy.bin", ""] {
+        rewrite(&yaml, "path: app.wasm", &format!("path: {path}"));
+        assert_eq!(load("test.load").as_deref(), Some(NOT_READ), "artifact.path: {path}");
+        rewrite(&yaml, &format!("path: {path}"), "path: app.wasm");
+    }
+    // (the index and the manifest naming that file together, as an install writes them, load it)
+    rewrite(&yaml, "path: app.wasm", "path: copy.bin");
+    rewrite(&index, "test.load/app.wasm", "test.load/copy.bin");
+    assert_eq!(load("test.load"), None);
+    rewrite(&yaml, "path: copy.bin", "path: app.wasm");
+    assert_eq!(load("test.load").as_deref(), Some(NOT_READ), "the index names another file than the manifest");
+    rewrite(&index, "test.load/copy.bin", "test.load/app.wasm");
+    assert_eq!(load("test.load"), None);
+    // The index and the manifest agreeing on a file the rule for artifact.path does not take: the path is asked
+    // again at the load, whatever the index says. The state folder, in any case of its letters (a storage that
+    // ignores case finds it by each), with the module's own bytes there, and names the storage walk does not take.
+    for path in ["state/runtime.bin", "STATE/runtime.bin", "State/settings.json", "sTaTe/app.wasm", ".app.wasm", "dist./app.wasm", "notes.sdr/app.wasm"] {
+        let at = dir.join(path);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(&at, &module).unwrap();
+        rewrite(&yaml, "path: app.wasm", &format!("path: {path}"));
+        rewrite(&index, "test.load/app.wasm", &format!("test.load/{path}"));
+        assert_eq!(load("test.load").as_deref(), Some(NOT_READ), "artifact.path and the index: {path}");
+        rewrite(&yaml, &format!("path: {path}"), "path: app.wasm");
+        rewrite(&index, &format!("test.load/{path}"), "test.load/app.wasm");
+        std::fs::remove_file(&at).unwrap();
+    }
+    for folder in ["state", "STATE", "State", "sTaTe", "dist.", "notes.sdr"] {
+        let _ = std::fs::remove_dir_all(dir.join(folder));
+    }
+    // The manifest itself, in another case of its letters, with the index recording the manifest's own SHA-256:
+    // no file of that name is read as a module.
+    let recorded = grimoire::sha256::sha256_of(&module);
+    for path in ["Package.yaml", "PACKAGE.YAML"] {
+        rewrite(&yaml, "path: app.wasm", &format!("path: {path}"));
+        rewrite(&index, "test.load/app.wasm", &format!("test.load/{path}"));
+        let own = grimoire::sha256::sha256_of(&std::fs::read(&yaml).unwrap());
+        rewrite(&index, &format!("\"sha\":\"{recorded}\""), &format!("\"sha\":\"{own}\""));
+        assert_eq!(load("test.load").as_deref(), Some(NOT_READ), "artifact.path and the index: {path}");
+        rewrite(&index, &format!("\"sha\":\"{own}\""), &format!("\"sha\":\"{recorded}\""));
+        rewrite(&yaml, &format!("path: {path}"), "path: app.wasm");
+        rewrite(&index, &format!("test.load/{path}"), "test.load/app.wasm");
+    }
+    assert_eq!(load("test.load"), None);
+
+    // The index's record of the file: another digest, none, a short one, and the same one in capitals.
+    for (sha, loads) in [(grimoire::sha256::sha256_of(&other), false), (String::new(), false), (recorded[..63].to_string(), false), (recorded.to_uppercase(), true)] {
+        rewrite(&index, &format!("\"sha\":\"{recorded}\""), &format!("\"sha\":\"{sha}\""));
+        assert_eq!(load("test.load").is_none(), loads, "sha {sha}");
+        rewrite(&index, &format!("\"sha\":\"{sha}\""), &format!("\"sha\":\"{recorded}\""));
+    }
+
+    // A folder on the way to the file, and the app's own folder, replaced by a link to one with the same files.
+    let m = manifest("test.deep", "Test", &BOTH, false, &module).replace("path: app.wasm", "path: dist/app.wasm");
+    app_package_install(&m, &module, None, "", SCREEN.0, SCREEN.1).unwrap();
+    assert_eq!(load("test.deep"), None);
+    let deep = root.join("packages/apps/test.deep");
+    std::fs::rename(deep.join("dist"), deep.join("real")).unwrap();
+    symlink("real", deep.join("dist")).unwrap();
+    assert_eq!(load("test.deep").as_deref(), Some(NOT_READ), "a folder of the path is a link");
+    std::fs::remove_file(deep.join("dist")).unwrap();
+    std::fs::rename(deep.join("real"), deep.join("dist")).unwrap();
+    assert_eq!(load("test.deep"), None);
+    std::fs::rename(&deep, root.join("packages/apps/moved")).unwrap();
+    symlink("moved", &deep).unwrap();
+    assert!(load("test.deep").is_some(), "the app's folder is a link");
+    std::fs::remove_file(&deep).unwrap();
+    std::fs::rename(root.join("packages/apps/moved"), &deep).unwrap();
+    assert_eq!(load("test.deep"), None);
+
+    // An app that is not installed, and one whose manifest is another package's, are not there to launch.
+    assert_eq!(load("test.none").as_deref(), Some("That app is no longer installed."));
+    rewrite(&deep.join("package.yaml"), "id: test.deep", "id: test.other");
+    assert_eq!(load("test.deep").as_deref(), Some("That app is no longer installed."));
+
+    // The check is the launch's: an app that has loaded its module draws without reading the file again.
+    let mut rt = AppRuntime::open("test.load", SCREEN.0, SCREEN.1, false).unwrap();
+    std::fs::write(&file, &other).unwrap();
+    let mut c = patterned(SCREEN.0, SCREEN.1);
+    rt.draw(&mut c, WHOLE, 0);
+    rt.draw(&mut c, WHOLE, 0);
+    assert_eq!(rt.error(), None);
+    assert!(inked(&c, WHOLE) > 100_000);
+    assert_eq!(load("test.load").as_deref(), Some(NOT_READ), "the next launch checks it");
+    let _ = std::fs::remove_dir_all(&root);
+}

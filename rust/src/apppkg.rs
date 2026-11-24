@@ -343,6 +343,25 @@ pub fn app_package_installed_manifest(id: &str) -> Option<WidgetPackage> {
     parse_installed(&app_package_installed(id)?)
 }
 
+/// An installed app's index entry, its manifest and its module's bytes, for a launch (apphost.rs). The file is
+/// checked again here, each time the app is opened, by the check a widget's module has
+/// (`widgetpkg::package_artifact`): the installed manifest's `artifact.path` is one the manifest check takes and
+/// the index names the same file; it is a plain file inside the app's own folder, reached with no link on the
+/// way; it is no larger than an artifact may be, and its SHA-256 is the one the index recorded at the install.
+/// What failed goes to the log; the launch says that the artifact could not be read.
+pub fn app_package_artifact(id: &str) -> Result<(WidgetInstall, WidgetPackage, Vec<u8>), String> {
+    let installed = || "That app is no longer installed.".to_string();
+    let it = app_package_installed(id).ok_or_else(installed)?;
+    let m = parse_installed(&it).ok_or_else(installed)?;
+    match crate::widgetpkg::package_artifact(&app_package_dir(id), APP_PKG_DIR, &it, &m) {
+        Ok(bytes) => Ok((it, m, bytes)),
+        Err(why) => {
+            qlog!("app %s: its module is not loaded: %s", id, why);
+            Err("The app's artifact could not be read.".to_string())
+        }
+    }
+}
+
 pub fn app_package_list() -> Vec<WidgetInstall> {
     let mut v = app_package_index_load();
     v.retain(|p| parse_installed(p).is_some());
