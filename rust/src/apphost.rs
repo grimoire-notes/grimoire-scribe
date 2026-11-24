@@ -30,6 +30,7 @@
 use crate::globalui::{gui_app_tile, gui_chip, gui_fab, gui_select, gui_status_bar, gui_status_h, gui_surface, gui_text_field};
 use crate::prelude::*;
 use std::time::{Duration, Instant};
+use std::os::unix::process::CommandExt;
 use std::process::Command;
 use wasmi::{Caller, Config, Engine, Extern, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
 
@@ -83,6 +84,9 @@ struct HostState {
     network_http: bool,
     /// The one asynchronous curl request an app may have in flight.
     http: Option<HttpJob>,
+    /// Tests: the program started in curl's place and its first arguments (empty: curl itself).
+    #[cfg(test)]
+    http_stand_in: Vec<String>,
 }
 
 /// The limits of one app HTTP request (docs/APPS.md, HTTP). The answer's limit is given to curl,
@@ -92,6 +96,9 @@ const HTTP_HEADER_LINE_MAX: usize = 2048;
 const HTTP_REDIRECTS_MAX: u32 = 5;
 const HTTP_ANSWER_MAX: u64 = 8 * 1024 * 1024;
 const HTTP_TOO_LARGE: &str = "The answer is too large.";
+/// The address space a request's curl may take beyond Grimoire's own at the request's start
+/// (childcaps.rs): the margin a child with no number of its own has there.
+const HTTP_CHILD_MARGIN: u64 = 256 << 20;
 
 /// One request's files under the app's `state/http` folder, named by their common start: the
 /// answer (`.body`), curl's status code (`.status`) and error text (`.err`), and the upload
@@ -517,6 +524,8 @@ impl AppRuntime {
             clock_12h,
             network_http: m.capabilities.iter().any(|c| c == "network:http"),
             http: None,
+            #[cfg(test)]
+            http_stand_in: Vec::new(),
         });
         store.limiter(|st| &mut st.limits);
         let _ = store.set_fuel(FUEL_PER_CALL);
@@ -954,6 +963,75 @@ fn http_args(method: &str, url: &str, header_lines: &[&str], body_path: &str, re
     args
 }
 
+/// The rules a request's child starts under, set in the child between the fork and curl's start,
+/// as the tree's other children carry them (wifi.rs, sandbox.rs, childcaps.rs). Everything it uses
+/// was worked out before the fork: here there are only system calls, no allocation and no lock.
+///
+/// - None of Grimoire's descriptors: 0, 1 and 2 are the request's own by now, and every other one
+///   closes when curl starts.
+/// - curl ends when Grimoire does: the signal is asked for, then Grimoire is looked for, as it may
+///   have ended before the signal was asked for.
+/// - A background child's caps (`caps`, and `oom` its `oom_score_adj` as text): best effort, and
+///   of the address space the soft limit only, never above the hard one nor over a lower one
+///   already set, as child_caps_apply sets them.
+/// - No file curl writes is longer than the answer's limit and one byte, and a write past that is
+///   an error to curl, not a signal. `http_poll` reads an answer file of that length as too large.
+///
+/// An error here keeps curl from starting.
+fn http_child_rules(parent: libc::pid_t, caps: ChildCaps, oom: &[u8]) -> std::io::Result<()> {
+    // SAFETY: fcntl, prctl, getppid, open, write, close, getrlimit, setrlimit and signal are system
+    // calls here: they take plain numbers, a path that ends with its NUL, `oom`'s bytes and the
+    // rlimits this function owns.
+    unsafe {
+        for fd in 3..1024 {
+            let flags = libc::fcntl(fd, libc::F_GETFD);
+            if flags >= 0 {
+                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+            }
+        }
+        #[cfg(target_os = "linux")]
+        if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong, 0, 0, 0) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if libc::getppid() != parent {
+            return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let fd = libc::open(c"/proc/self/oom_score_adj".as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
+            if fd >= 0 {
+                libc::write(fd, oom.as_ptr().cast(), oom.len());
+                libc::close(fd);
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = oom; // (only Linux has the file)
+        if let Some(cap) = caps.as_bytes {
+            let cap = cap as libc::rlim_t;
+            let mut was = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+            if libc::getrlimit(libc::RLIMIT_AS, &mut was) == 0 {
+                let lower = was.rlim_cur != libc::RLIM_INFINITY && was.rlim_cur <= cap;
+                let over = was.rlim_max != libc::RLIM_INFINITY && cap > was.rlim_max;
+                if !lower && !over {
+                    libc::setrlimit(libc::RLIMIT_AS, &libc::rlimit { rlim_cur: cap, rlim_max: was.rlim_max });
+                }
+            }
+        }
+        libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
+        // (a lower limit already set stays as it is)
+        let most = (HTTP_ANSWER_MAX + 1) as libc::rlim_t;
+        let mut size = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        if libc::getrlimit(libc::RLIMIT_FSIZE, &mut size) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        size = libc::rlimit { rlim_cur: size.rlim_cur.min(most), rlim_max: size.rlim_max.min(most) };
+        if libc::setrlimit(libc::RLIMIT_FSIZE, &size) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
 impl HostState {
     fn http_start(&mut self, method: &str, url: &str, headers: &str, body: &[u8]) -> i32 {
         if !self.network_http {
@@ -990,7 +1068,21 @@ impl HostState {
         let Ok(err_file) = std::fs::File::create(files.path("err")) else { return -1 };
         let args = http_args(&method, url, &header_lines, &files.path("body"), (!body.is_empty()).then_some(request_path.as_str()));
         let mut cmd = Command::new("curl");
+        #[cfg(test)]
+        if let Some((program, first)) = self.http_stand_in.split_first() {
+            cmd = Command::new(program);
+            cmd.args(first);
+        }
         cmd.args(&args).stdin(std::process::Stdio::null()).stdout(status_file).stderr(err_file);
+        let caps = child_caps_plan(child_vm_base(child_vm_bytes()), HTTP_CHILD_MARGIN);
+        let oom = caps.oom_adj.to_string();
+        // SAFETY: getpid has no preconditions.
+        let parent = unsafe { libc::getpid() };
+        // SAFETY: the closure runs in the child, between the fork and curl's start, and makes only
+        // system calls (http_child_rules) with what was made here, before the fork.
+        unsafe {
+            cmd.pre_exec(move || http_child_rules(parent, caps, oom.as_bytes()));
+        }
         match cmd.spawn() {
             Ok(child) => {
                 self.http = Some(HttpJob {
@@ -1018,7 +1110,9 @@ impl HostState {
                 job.code = read_file_max(&job.files.path("status"), 32)
                     .and_then(|v| String::from_utf8_lossy(&v).trim().parse::<i32>().ok())
                     .unwrap_or(-1);
-                // (63 is curl's exit code for an answer over --max-filesize)
+                // (63 is curl's exit code for an answer over --max-filesize. A curl that the size
+                // limit of its start stopped ended with a write error, or by that limit's signal,
+                // and left an answer file one byte over the limit.)
                 if status.code() == Some(63) || job.answer_len() > HTTP_ANSWER_MAX {
                     job.too_large();
                 } else {
@@ -1233,6 +1327,34 @@ mod tests {
             clock_12h: false,
             network_http: true,
             http: None,
+            http_stand_in: Vec::new(),
+        }
+    }
+
+    /// At the head of a stand-in's script: puts the answer file's path, which follows `-o` among
+    /// curl's arguments, in `$out`.
+    const FIND_ANSWER: &str = "while [ $# -gt 1 ]; do [ \"$1\" = -o ] && out=$2; shift; done; ";
+
+    /// A host whose requests start `sh -c script` in curl's place, by the same start and with
+    /// curl's arguments as the script's.
+    fn host_standing_in(dir: &str, script: &str) -> HostState {
+        let mut st = host(dir);
+        st.http_stand_in = ["sh", "-c", script, "curl"].map(String::from).to_vec();
+        st
+    }
+
+    /// Waits until the child has ended and leaves it unreaped, as an app that does not poll does.
+    fn wait_unreaped(pid: u32) {
+        loop {
+            // SAFETY: waitid fills the siginfo this owns; WNOWAIT leaves the child to be reaped.
+            let r = unsafe {
+                let mut info: libc::siginfo_t = std::mem::zeroed();
+                libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, libc::WEXITED | libc::WNOWAIT)
+            };
+            if r == 0 {
+                return;
+            }
+            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EINTR));
         }
     }
 
@@ -1386,14 +1508,115 @@ mod tests {
         assert_eq!((code, body.len() as u64, error), (200, HTTP_ANSWER_MAX, String::new()));
         assert_eq!(request_files(&dir), Vec::<String>::new());
 
-        // A curl that failed with no answer gives its error text, as before.
-        let pid = stand_in(&mut st, &dir, "exit 7", "000", None);
-        let err = st.http.as_ref().unwrap().files.path("err");
-        std::fs::write(err, "curl: (7) Failed to connect\n").unwrap();
+        // A curl that the size limit of its start stopped, by a write error or by the limit's
+        // signal, left its answer file one byte over the limit.
+        stand_in(&mut st, &dir, "exit 23", "200", Some(HTTP_ANSWER_MAX + 1));
         poll_to_end(&mut st);
-        assert_eq!(outcome(&st), (-1, Vec::new(), "curl: (7) Failed to connect".to_string()));
+        assert_eq!(outcome(&st), too_large);
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+
+        let pid = stand_in(&mut st, &dir, "kill -s XFSZ $$", "200", Some(HTTP_ANSWER_MAX + 1));
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), too_large);
         assert_eq!(request_files(&dir), Vec::<String>::new());
         assert!(gone(pid));
+
+        // A curl that failed with no answer gives its error text, as before: a failed connection,
+        // and a write error that is not the limit's.
+        for (script, text) in [("exit 7", "curl: (7) Failed to connect"), ("exit 23", "curl: (23) Failure writing output to destination")] {
+            let pid = stand_in(&mut st, &dir, script, "000", None);
+            let err = st.http.as_ref().unwrap().files.path("err");
+            std::fs::write(err, format!("{text}\n")).unwrap();
+            poll_to_end(&mut st);
+            assert_eq!(outcome(&st), (-1, Vec::new(), text.to_string()));
+            assert_eq!(request_files(&dir), Vec::<String>::new());
+            assert!(gone(pid));
+        }
+    }
+
+    // The child of a request keeps none of the host's descriptors: one that a child started plainly
+    // lists among its own is not among those of a request's child.
+    #[test]
+    fn the_child_of_a_request_has_none_of_the_hosts_descriptors() {
+        use std::os::fd::AsRawFd;
+        let dir = scratch("descriptors");
+        // A descriptor that is not close-on-exec, numbered above the few a child opens itself.
+        let folder = std::fs::File::open(&dir).unwrap();
+        // SAFETY: fcntl makes a second descriptor of one this test owns; it is closed below.
+        let kept = unsafe { libc::fcntl(folder.as_raw_fd(), libc::F_DUPFD, 64) };
+        assert!((64..1024).contains(&kept), "{kept}");
+        let lists = |text: &str, fd: i32| text.lines().any(|l| l.trim() == fd.to_string());
+        let script = format!("{FIND_ANSWER}ls /dev/fd > \"$out\"; printf 200");
+
+        // Started plainly, the stand-in lists that descriptor among its own.
+        let plain = format!("{dir}/plain");
+        assert!(Command::new("sh").args(["-c", &script, "curl", "-o", &plain]).stdout(std::process::Stdio::null()).status().unwrap().success());
+        let listed = std::fs::read_to_string(&plain).unwrap();
+        assert!(lists(&listed, 0) && lists(&listed, kept), "{listed}");
+
+        // Started as a request's child, it lists its own 0, 1 and 2 and not that one.
+        let mut st = host_standing_in(&dir, &script);
+        assert_eq!(st.http_start("GET", "http://127.0.0.1:9/", "X-A: 1", b"upload"), 0);
+        let pid = child_pid(&st);
+        poll_to_end(&mut st);
+        let (code, body, error) = outcome(&st);
+        let listed = String::from_utf8(body).unwrap();
+        assert_eq!((code, error), (200, String::new()), "{listed}");
+        assert!(lists(&listed, 0) && lists(&listed, 1) && lists(&listed, 2), "{listed}");
+        assert!(!lists(&listed, kept), "{listed}");
+        assert!(gone(pid));
+        // SAFETY: closes the descriptor this test made.
+        unsafe { libc::close(kept) };
+    }
+
+    // The size limit a request's child starts under holds with no poll at all: the answer file of a
+    // child that writes without end stops one byte past the answer's limit, and the request ends
+    // as too large. A real answer of exactly the limit still comes back whole.
+    #[test]
+    fn the_answer_file_stops_a_byte_past_the_limit_without_a_poll() {
+        let dir = scratch("unpolled");
+        let too_large = (-1, Vec::new(), "The answer is too large.".to_string());
+
+        // A stand-in that writes 10 MiB to its answer file, were nothing to stop it, and then
+        // tells how its writer ended: with an error of its own (1), not by a signal.
+        let script = format!("{FIND_ANSWER}dd if=/dev/zero of=\"$out\" bs=65536 count=160; printf %s $?");
+        let mut st = host_standing_in(&dir, &script);
+        assert_eq!(st.http_start("GET", "http://127.0.0.1:9/", "", b""), 0);
+        let pid = child_pid(&st);
+        wait_unreaped(pid);
+        let job = st.http.as_ref().unwrap();
+        assert_eq!(job.answer_len(), HTTP_ANSWER_MAX + 1);
+        assert_eq!(std::fs::read_to_string(job.files.path("status")).unwrap(), "1");
+        assert_eq!(st.http_poll(), 1);
+        assert_eq!(outcome(&st), too_large);
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+
+        // The host's curl and a real answer with no stated length, one byte over the limit.
+        let mut st = host(&dir);
+        let mut grows = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_vec();
+        grows.resize(grows.len() + HTTP_ANSWER_MAX as usize + 1, b'a');
+        let (at, served) = serve_once(grows);
+        assert_eq!(st.http_start("GET", &format!("{at}/"), "", b""), 0, "{NEEDS_CURL}");
+        let pid = child_pid(&st);
+        wait_unreaped(pid);
+        assert!(st.http.as_ref().unwrap().answer_len() <= HTTP_ANSWER_MAX + 1);
+        assert_eq!(st.http_poll(), 1);
+        assert_eq!(outcome(&st), too_large);
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+        served.join().unwrap();
+
+        // A real answer of exactly the limit is under every limit: it comes back whole.
+        let mut whole = format!("HTTP/1.1 200 OK\r\nContent-Length: {HTTP_ANSWER_MAX}\r\nConnection: close\r\n\r\n").into_bytes();
+        whole.resize(whole.len() + HTTP_ANSWER_MAX as usize, b'a');
+        let (at, served) = serve_once(whole);
+        assert_eq!(st.http_start("GET", &format!("{at}/"), "", b""), 0);
+        poll_to_end(&mut st);
+        let (code, body, error) = outcome(&st);
+        assert_eq!((code, body.len() as u64, error), (200, HTTP_ANSWER_MAX, String::new()));
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+        served.join().unwrap();
     }
 
     // Every way out of a request leaves none of its files and no child: a start that failed, a
