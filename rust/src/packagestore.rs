@@ -13,7 +13,7 @@
 //! until then, and when the worker refuses it or none can be had, a card or a page shows what it
 //! shows for a picture that is missing.
 
-use crate::globalui::{gui_button, gui_chip, gui_gap, gui_header, gui_icon_button, gui_margin, gui_radius};
+use crate::globalui::{gui_button, gui_button_row, gui_chip, gui_gap, gui_header, gui_icon_button, gui_margin, gui_radius};
 use crate::pkgpics::{picture_cached, picture_request, Ask, Cached, PicForm, PicSrc};
 use crate::prelude::*;
 use crate::sha256::sha256_of;
@@ -1946,12 +1946,14 @@ fn tapped(a: &mut App, h: Hit) {
         H_SEARCH => {
             a.store.kb_for = KbFor::Search;
             keyboard_open(&mut a.store.kb, tr("Search packages"), a.store.query.as_bytes());
+            redraw(a);
         }
         H_REPO => {
             a.store.view = StoreView::InstallRepo;
             a.store.kb_for = KbFor::Repo;
             a.store.error.clear();
             keyboard_open(&mut a.store.kb, tr("GitHub repository"), b"");
+            redraw(a);
         }
         H_QUERY_CLEAR => {
             a.store.query.clear();
@@ -2418,9 +2420,9 @@ fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let action_h = ui_px(96.0);
     let action_gap = ui_px(12.0);
     let action_w = if wide { area.w * 43 / 100 } else { area.w };
-    let widths: Vec<i32> = actions
+    let mut widths: Vec<i32> = actions
         .iter()
-        .map(|(label, _, _, _)| (font_measure(FontFace::Bold, ui_text_size(), label) + ui_px(104.0)).min(action_w))
+        .map(|(label, _, _, _)| (font_measure(FontFace::Bold, ui_text_size(), label) + ui_px(150.0)).min(action_w))
         .collect();
     let mut action_rows: Vec<Vec<usize>> = Vec::new();
     let mut row: Vec<usize> = Vec::new();
@@ -2435,6 +2437,19 @@ fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     }
     if !row.is_empty() {
         action_rows.push(row);
+    }
+    // Every row fills the width it has: the buttons share what their labels leave, so the row ends
+    // flush with the page's right edge instead of stopping short of it.
+    for row in &action_rows {
+        let n = row.len() as i32;
+        if n == 0 {
+            continue;
+        }
+        let used: i32 = row.iter().map(|&i| widths[i]).sum::<i32>() + action_gap * (n - 1);
+        let extra = (action_w - used).max(0);
+        for (k, &i) in row.iter().enumerate() {
+            widths[i] += if (k as i32) + 1 == n { extra - (extra / n) * (n - 1) } else { extra / n };
+        }
     }
     let rows_n = action_rows.len().max(1) as i32;
     let actions_h = rows_n * action_h + (rows_n - 1) * action_gap;
@@ -2489,7 +2504,7 @@ fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
         for &i in row {
             let (label, icon, id, style) = &actions[i];
             let r = Rect::new(bx, row_y, widths[i], action_h);
-            gui_button(c, r, *icon, label, *style);
+            gui_button_row(c, r, *icon, label, *style);
             hits_add(&mut ui.hits, r, *id, 0);
             bx += widths[i] + action_gap;
         }
@@ -2570,10 +2585,10 @@ fn draw_remove(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let gap = ui_px(14.0);
     let bw = (area.w - gap) / 2;
     let yes = Rect::new(area.x, area.y + area.h - bh, bw, bh);
-    gui_button(c, yes, IconKind::Close, tr("Uninstall"), ButtonStyle::Primary);
+    gui_button_row(c, yes, IconKind::Close, tr("Uninstall"), ButtonStyle::Primary);
     hits_add(&mut ui.hits, yes, H_UNINSTALL_YES, 0);
     let keep = Rect::new(area.x + bw + gap, yes.y, bw, bh);
-    gui_button(c, keep, IconKind::Back, tr("Keep it"), ButtonStyle::Plain);
+    gui_button_row(c, keep, IconKind::Back, tr("Keep it"), ButtonStyle::Plain);
     hits_add(&mut ui.hits, keep, H_BACK, 0);
 }
 
