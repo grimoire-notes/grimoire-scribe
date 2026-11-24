@@ -85,10 +85,13 @@ struct HostState {
     http: Option<HttpJob>,
 }
 
-/// The limits of one app HTTP request (docs/APPS.md, HTTP).
+/// The limits of one app HTTP request (docs/APPS.md, HTTP). The answer's limit is given to curl,
+/// watched by `http_poll` while curl runs, and held again when the answer is read.
 const HTTP_HEADER_LINES_MAX: usize = 32;
 const HTTP_HEADER_LINE_MAX: usize = 2048;
 const HTTP_REDIRECTS_MAX: u32 = 5;
+const HTTP_ANSWER_MAX: u64 = 8 * 1024 * 1024;
+const HTTP_TOO_LARGE: &str = "The answer is too large.";
 
 /// One request's files under the app's `state/http` folder, named by their common start: the
 /// answer (`.body`), curl's status code (`.status`) and error text (`.err`), and the upload
@@ -134,6 +137,18 @@ impl HttpJob {
             let _ = self.child.wait();
             self.done = true;
         }
+    }
+
+    /// The answer file's size so far: 0 until curl has made it.
+    fn answer_len(&self) -> u64 {
+        std::fs::symlink_metadata(self.files.path("body")).map_or(0, |m| m.len())
+    }
+
+    /// The outcome of an answer over HTTP_ANSWER_MAX: no body, no status code, and the reason.
+    fn too_large(&mut self) {
+        self.code = -1;
+        self.body = Vec::new();
+        self.error = HTTP_TOO_LARGE.to_string();
     }
 }
 
@@ -916,15 +931,16 @@ fn http_header_lines(headers: &str) -> Option<Vec<&str>> {
 
 /// The arguments curl is started with for one request. `-q` is first, so no configuration file
 /// is read. The address and every redirect are http or https, at most HTTP_REDIRECTS_MAX
-/// redirects are followed, and the address is taken as written (`-g`). Each header line is one
-/// `-H`; the address is last.
+/// redirects are followed, the address is taken as written (`-g`), and the answer is at most
+/// HTTP_ANSWER_MAX bytes. Each header line is one `-H`; the address is last.
 fn http_args(method: &str, url: &str, header_lines: &[&str], body_path: &str, request_path: Option<&str>) -> Vec<String> {
     let redirects = HTTP_REDIRECTS_MAX.to_string();
+    let answer = HTTP_ANSWER_MAX.to_string();
     let mut args: Vec<String> = [
         "-q", "-sS", "-g",
         "--proto", "=http,https", "--proto-redir", "=http,https",
         "-L", "--max-redirs", &redirects,
-        "--max-time", "30",
+        "--max-time", "30", "--max-filesize", &answer,
         "-X", method, "-o", body_path, "-w", "%{http_code}",
         "-H", "User-Agent: Grimoire-App/2.3",
     ].map(String::from).to_vec();
@@ -1002,15 +1018,27 @@ impl HostState {
                 job.code = read_file_max(&job.files.path("status"), 32)
                     .and_then(|v| String::from_utf8_lossy(&v).trim().parse::<i32>().ok())
                     .unwrap_or(-1);
-                job.body = read_file_max(&job.files.path("body"), 8 * 1024 * 1024).unwrap_or_default();
-                if !status.success() && job.body.is_empty() {
-                    let detail = read_file_max(&job.files.path("err"), 4096)
-                        .map(|v| String::from_utf8_lossy(&v).split_whitespace().collect::<Vec<_>>().join(" "))
-                        .unwrap_or_default();
-                    job.error = if detail.is_empty() { format!("curl exited {:?}", status.code()) } else { detail };
-                    job.code = -1;
+                // (63 is curl's exit code for an answer over --max-filesize)
+                if status.code() == Some(63) || job.answer_len() > HTTP_ANSWER_MAX {
+                    job.too_large();
+                } else {
+                    job.body = read_file_max(&job.files.path("body"), HTTP_ANSWER_MAX as usize).unwrap_or_default();
+                    if !status.success() && job.body.is_empty() {
+                        let detail = read_file_max(&job.files.path("err"), 4096)
+                            .map(|v| String::from_utf8_lossy(&v).split_whitespace().collect::<Vec<_>>().join(" "))
+                            .unwrap_or_default();
+                        job.error = if detail.is_empty() { format!("curl exited {:?}", status.code()) } else { detail };
+                        job.code = -1;
+                    }
                 }
                 // The answer is in memory now: its files are not kept until the next request.
+                job.files.remove();
+                1
+            }
+            // An answer whose length was not stated is watched as it grows.
+            Ok(None) if job.answer_len() > HTTP_ANSWER_MAX => {
+                job.stop();
+                job.too_large();
                 job.files.remove();
                 1
             }
@@ -1155,7 +1183,7 @@ mod tests {
             "-q", "-sS", "-g",
             "--proto", "=http,https", "--proto-redir", "=http,https",
             "-L", "--max-redirs", "5",
-            "--max-time", "30",
+            "--max-time", "30", "--max-filesize", "8388608",
             "-X", "POST", "-o", "/s/http/1.body", "-w", "%{http_code}",
             "-H", "User-Agent: Grimoire-App/2.3",
             "-H", "Accept: text/plain",
@@ -1168,11 +1196,12 @@ mod tests {
             "-q", "-sS", "-g",
             "--proto", "=http,https", "--proto-redir", "=http,https",
             "-L", "--max-redirs", "5",
-            "--max-time", "30",
+            "--max-time", "30", "--max-filesize", "8388608",
             "-X", "GET", "-o", "/s/http/2.body", "-w", "%{http_code}",
             "-H", "User-Agent: Grimoire-App/2.3",
             "http://example.org/",
         ]);
+        assert_eq!(HTTP_ANSWER_MAX, 8_388_608);
     }
 
     /// A scratch folder of one test's own (under GRIMOIRE_TEST_TMP when the Makefile sets it).
@@ -1287,6 +1316,84 @@ mod tests {
             assert_eq!(request_files(&dir), Vec::<String>::new(), "{headers:?}");
         }
         assert_eq!(st.http_poll(), -1);
+    }
+
+    /// Puts a request in flight whose child is `sh -c script`, standing in for curl, with the status
+    /// and answer files a curl would have written by then. Returns the child's process id.
+    fn stand_in(st: &mut HostState, dir: &str, script: &str, status: &str, answer_len: Option<u64>) -> u32 {
+        // (an earlier stand-in goes first: its files have the same names)
+        st.http_cancel();
+        std::fs::create_dir_all(format!("{dir}/state/http")).unwrap();
+        let files = HttpFiles { base: format!("{dir}/state/http/stand-in") };
+        std::fs::write(files.path("status"), status).unwrap();
+        std::fs::write(files.path("err"), "").unwrap();
+        std::fs::write(files.path("request"), "upload").unwrap();
+        if let Some(len) = answer_len {
+            // (a file of that length without its bytes written: it reads as zeros)
+            std::fs::File::create(files.path("body")).unwrap().set_len(len).unwrap();
+        }
+        let child = Command::new("sh").arg("-c").arg(script).spawn().unwrap();
+        let pid = child.id();
+        st.http = Some(HttpJob { child, files, done: false, code: -1, body: Vec::new(), error: String::new() });
+        pid
+    }
+
+    // While curl runs, http_poll watches the answer file: at the limit the request goes on, one byte
+    // past it the child is ended and reaped and the request ends with the reason.
+    #[test]
+    fn an_answer_that_grows_past_the_limit_ends_the_request() {
+        let dir = scratch("grows");
+        let mut st = host(&dir);
+        let pid = stand_in(&mut st, &dir, "exec sleep 60", "", Some(HTTP_ANSWER_MAX));
+        assert_eq!(st.http_poll(), 0);
+        assert!(!gone(pid));
+        let answer = st.http.as_ref().unwrap().files.path("body");
+        std::fs::OpenOptions::new().write(true).open(&answer).unwrap().set_len(HTTP_ANSWER_MAX + 1).unwrap();
+        assert_eq!(st.http_poll(), 1);
+        assert_eq!(outcome(&st), (-1, Vec::new(), "The answer is too large.".to_string()));
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+        assert_eq!(st.http_poll(), 1);
+    }
+
+    // When curl has ended, the answer is read under the same limit: curl's own exit for an answer over
+    // it, or a file over it, ends with the reason; an answer at the limit is read whole. Either way
+    // the request's files are gone once http_poll has said the request ended.
+    #[test]
+    fn an_ended_request_is_read_under_the_limit_and_its_files_removed() {
+        let dir = scratch("ended");
+        let mut st = host(&dir);
+        let too_large = (-1, Vec::new(), "The answer is too large.".to_string());
+
+        stand_in(&mut st, &dir, "exit 0", "200", Some(5));
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (200, vec![0u8; 5], String::new()));
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+
+        stand_in(&mut st, &dir, "exit 63", "200", Some(5));
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), too_large);
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+
+        stand_in(&mut st, &dir, "exit 0", "200", Some(HTTP_ANSWER_MAX + 1));
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), too_large);
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+
+        stand_in(&mut st, &dir, "exit 0", "200", Some(HTTP_ANSWER_MAX));
+        poll_to_end(&mut st);
+        let (code, body, error) = outcome(&st);
+        assert_eq!((code, body.len() as u64, error), (200, HTTP_ANSWER_MAX, String::new()));
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+
+        // A curl that failed with no answer gives its error text, as before.
+        let pid = stand_in(&mut st, &dir, "exit 7", "000", None);
+        let err = st.http.as_ref().unwrap().files.path("err");
+        std::fs::write(err, "curl: (7) Failed to connect\n").unwrap();
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (-1, Vec::new(), "curl: (7) Failed to connect".to_string()));
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+        assert!(gone(pid));
     }
 
     // Every way out of a request leaves none of its files and no child: a start that failed, a
