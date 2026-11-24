@@ -446,6 +446,7 @@ jobs:
           cd rust
           sudo -E env "PATH=$RUST_BIN:$PATH" "HOME=$HOME" GRIMOIRE_SANDBOX=require \
             cargo test --locked --features sim --test test_sandbox_linux --test test_sec_spawn_fds --test test_sec_handshake --test test_sec_import_names --test test_sec_import_io --test test_fsview_writes -- --test-threads=1 --nocapture
+          sudo -E env "PATH=$RUST_BIN:$PATH" "HOME=$HOME" cargo test --locked --features sim --lib apphost::tests -- --test-threads=1 --nocapture
 
   gate:
     # The one required check: every job of this run passed (a docs-only pull request: the docs job).

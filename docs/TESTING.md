@@ -2656,7 +2656,9 @@ character; in `test_import_queue.rs` also the scan that imports a file which too
 imported); and the scenario
 `tests/scenarios/z_files_3_imports.qs` (the has-notes card, and Import as notebook on it). CI's `sandbox` job
 also runs `test_sec_import_names.rs` and `test_sec_import_io.rs`, on Linux as root, where the file system tells
-names apart by case; the unit jobs run on a file system that folds case.
+names apart by case; the unit jobs run on a file system that folds case. The same job runs the app host's
+module tests (`apphost.rs`, issue #235) on Linux as root: one of them runs only there, and reads back from the
+child a request starts its `oom_score_adj`, its file-size and address-space limits and its parent-death signal.
 
 **Not run on a Scribe.**
 
