@@ -38,13 +38,7 @@ Thank you for considering contributing to Grimoire! This is an open source proje
 - Docs are in the `docs/` directory and are written in Markdown
 - See the existing docs for style conventions
 - Documentation updates are checked via `make l10n-check`
-
-### Wiki for Developers
-- **This project has a wiki section for Developers who want to contribute code.**
-- The wiki contains deeper technical guides, architecture documents, and advanced tutorials that don't fit in the main contributing guide.
-- Topics include: building from source, the Rust crate structure, Kindle target compilation, the scenario runner, localization workflow, and CI/CD setup.
-- You can find the wiki at the GitHub repository's Wiki page.
-
+  
 ## Development Setup
 
 1. **Fork the repository** and clone your fork
