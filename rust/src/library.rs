@@ -1096,7 +1096,7 @@ fn draw_base(a: &mut App) {
     canvas_fill(c, Rect::new(0, 0, aw, ah), 255);
 
     // The status bar (2.3, issue #209): time and date, Wi-Fi and Bluetooth, the battery.
-    gui_status_bar(c, aw, wall_time());
+    gui_status_bar(c, aw, sys_wall_clock());
 
     let m = margin();
     let gap = gui_gap();
@@ -9621,9 +9621,10 @@ pub fn library_tick(a: &mut App, now: u32) {
     }
     crate::userfonts::userfonts_tick(a, now); // (a font check that ended with no verdict is queued again after its wait)
     // The home's status bar keeps the clock: one redraw when the minute changes (nothing behind a
-    // sheet or the keyboard is laying itself out again).
+    // sheet or the keyboard is laying itself out again). The minute is the platform's clock's, as
+    // the bar's own time is (gui_status_bar).
     if !files_shown(a) && !graph_shown(a) && lib(a).modal == Modal::None {
-        let min = wall_time() / 60;
+        let min = sys_wall_clock() / 60;
         if lib(a).status_min != min {
             lib(a).status_min = min;
             redraw(a, RefreshMode::Ui);
@@ -13220,7 +13221,7 @@ pub(crate) fn library_app_closed(a: &mut App) {
 
 /// Whether the status bar's minute changed while an app was up.
 pub(crate) fn library_app_minute(a: &mut App) -> bool {
-    let min = wall_time() / 60;
+    let min = sys_wall_clock() / 60;
     let Some(s) = a.lib.as_deref_mut() else { return false };
     if s.status_min == min {
         false
