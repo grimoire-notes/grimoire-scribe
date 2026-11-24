@@ -452,6 +452,113 @@ fn a_cache_entry_that_does_not_read_is_nothing_and_is_made_again() {
     again("a link at the .info's name");
 }
 
+// An entry is its form's: the Store's icons and its screenshots are files of one folder, and a `.info` that says
+// the other form is no entry of this one, whatever else of it fits the file asked for (its path, size and time, a
+// picture that reads). A screenshot's entry under an icon's key would otherwise be an icon of a screenshot's
+// size.
+fn an_entry_of_another_form_is_no_entry() {
+    clean_env();
+    let g = root();
+    let path = put(&g, "package-store/assets/p/icon.png", &png(120, 90));
+    let (icon, shot) = (src(&path, PicForm::StoreIcon), src(&path, PicForm::Screenshot));
+    let entry = |s: &PicSrc, form: PicForm, w: usize, h: usize| {
+        std::fs::create_dir_all(picture_cache_dir(s.form)).unwrap();
+        let mut pgm = format!("P5\n{w} {h}\n255\n").into_bytes();
+        pgm.resize(pgm.len() + w * h, 128);
+        std::fs::write(picture_file(s, "pgm"), &pgm).unwrap();
+        let info = PicInfo { size: s.size, mtime: s.mtime, form, made: Made::Preview(w as i32, h as i32), path: s.rel.clone() };
+        std::fs::write(picture_file(s, "info"), info.to_text()).unwrap();
+    };
+    // (the same entry written as the form's own is taken: what is refused below is the form alone)
+    entry(&icon, PicForm::StoreIcon, 200, 100);
+    check!(picture(&icon).is_some_and(|c| (c.w, c.h) == (200, 100)));
+    // a screenshot's entry, of a screenshot's size and of an icon's, under the icon's key: no entry
+    for (w, h) in [(300, 300), (200, 100)] {
+        entry(&icon, PicForm::Screenshot, w, h);
+        check!(PicInfo::parse(&std::fs::read(picture_file(&icon, "info")).unwrap()).is_some_and(|i| i.form == PicForm::Screenshot));
+        check!(picture_info(&icon).is_none() && matches!(picture_cached(&icon), Cached::Nothing));
+    }
+    // an icon's entry under the screenshot's key: no entry either
+    entry(&shot, PicForm::StoreIcon, 200, 100);
+    check!(picture_info(&shot).is_none() && matches!(picture_cached(&shot), Cached::Nothing));
+    entry(&shot, PicForm::Screenshot, 200, 100);
+    check!(picture(&shot).is_some());
+    // the job makes each again as its own
+    entry(&icon, PicForm::Screenshot, 300, 300);
+    check!(job(&icon) == 0 && picture(&icon).is_some_and(|c| (c.w, c.h) == (120, 90)));
+    check!(made(&icon) == Some(Made::Preview(120, 90)) && picture_info(&icon).is_some_and(|i| i.form == PicForm::StoreIcon));
+}
+
+// The job prunes its form's folder after it wrote, by the form's own limits: the screenshots' folder past its 32
+// files loses its oldest entries, down to three quarters, and keeps the picture just made.
+fn the_job_prunes_its_folder_after_it_wrote() {
+    clean_env();
+    let g = root();
+    let dir = picture_cache_dir(PicForm::Screenshot);
+    std::fs::create_dir_all(&dir).unwrap();
+    // twenty entries of other files, forty files, each older than the one before by a minute
+    for k in 0..20 {
+        for ext in ["pgm", "info"] {
+            let f = format!("{dir}/{:016x}.{ext}", 0x1000 + k as u64);
+            std::fs::write(&f, b"an entry of another file").unwrap();
+            check!(set_mtime(&f, 1_700_000_000 - 60 * k as i64));
+        }
+    }
+    check!(cache_names(PicForm::Screenshot).len() == 40);
+    let s = src(&put(&g, "package-store/assets/p/screens/1.jpg", JPEG), PicForm::Screenshot);
+    let (rc, log) = with_log("jobprune", || job(&s));
+    check!(rc == 0 && log.contains("package pictures: screenshot made"));
+    // 42 files are past 32: down to 24, the oldest nine entries gone (18 files), each whole
+    check!(log.contains("package pictures: the cache of shots pruned: 18 file(s) removed"));
+    let names = cache_names(PicForm::Screenshot);
+    check!(names.len() == 24 && picture(&s).is_some());
+    check!((0..11).all(|k| names.contains(&format!("{:016x}.pgm", 0x1000 + k as u64)) && names.contains(&format!("{:016x}.info", 0x1000 + k as u64))));
+    check!((11..20).all(|k| !names.iter().any(|n| n.starts_with(&format!("{:016x}.", 0x1000 + k as u64)))));
+    // a job that finds its picture there writes nothing and prunes nothing; nor does an icon's job touch this folder
+    for k in 0..4 {
+        std::fs::write(format!("{dir}/{:016x}.info", 0x2000 + k as u64), b"more").unwrap();
+        std::fs::write(format!("{dir}/{:016x}.pgm", 0x2000 + k as u64), b"more").unwrap();
+    }
+    let (rc, log) = with_log("jobprune2", || job(&s));
+    check!(rc == 0 && !log.contains("pruned") && cache_names(PicForm::Screenshot).len() == 32);
+    let icon = src(&put(&g, APP_ICON, ICO), PicForm::AppIcon);
+    std::fs::write(format!("{dir}/{:016x}.info", 0x3000u64), b"more").unwrap();
+    let (rc, log) = with_log("jobprune3", || job(&icon));
+    check!(rc == 0 && !log.contains("pruned") && cache_names(PicForm::Screenshot).len() == 33);
+}
+
+// Grimoire ending (bg_detach_rest): the pictures still queued are dropped, never handed to the child that finishes
+// the exports after Grimoire has gone; the one whose job runs is made. The next look at their screens asks again.
+fn the_pictures_queued_at_exit_are_dropped() {
+    clean_env();
+    let g = root();
+    let all: Vec<PicSrc> = (0..3).map(|k| src(&put(&g, &format!("packages/apps/app{k}/icon.ico"), ICO), PicForm::AppIcon)).collect();
+    std::env::set_var("GRIMOIRE_BG_DELAY_MS", "1500");
+    let (asked, log) = with_log("detach", || {
+        let asked: Vec<Ask> = all.iter().map(picture_request).collect();
+        let queued = bg_kind_count(BgKind::PackagePictures);
+        bg_detach_rest();
+        (asked, queued)
+    });
+    std::env::remove_var("GRIMOIRE_BG_DELAY_MS");
+    let (asked, queued) = asked;
+    check!(asked.iter().all(|a| matches!(a, Ask::Job(_))) && queued == 3);
+    check!(log.contains("bg: 2 package picture(s) dropped (Grimoire ends)") && !log.contains("left to a detached child"));
+    check!(bg_kind_count(BgKind::PackagePictures) == 1);
+    check!(matches!(&asked[0], Ask::Job(j) if bg_job_pending(BgKind::PackagePictures, "", j)));
+    check!(asked[1..].iter().all(|a| matches!(a, Ask::Job(j) if !bg_job_pending(BgKind::PackagePictures, "", j))));
+    settle();
+    // (long enough for a detached child to have made them, had one been given them)
+    sleep_ms(2000);
+    check!(picture(&all[0]).is_some());
+    check!(all[1..].iter().all(|s| matches!(picture_cached(s), Cached::Nothing)));
+    check!(cache_names(PicForm::AppIcon).len() == 2);
+    // asked for again at the next look
+    check!(all[1..].iter().all(|s| matches!(picture_request(s), Ask::Job(_))));
+    settle();
+    check!(all.iter().all(|s| picture(s).is_some()));
+}
+
 // The cache's bounds: past a folder's limit of files or of bytes its oldest entries go, both files of an entry
 // together, down to three quarters; within the limits nothing goes. The job prunes its form's folder after it wrote.
 fn the_cache_is_pruned_oldest_first() {
@@ -579,8 +686,11 @@ fn test_package_pictures() {
     run!(a_changed_file_gets_nothing_until_it_is_asked_for_again);
     run!(a_file_through_a_link_or_outside_its_folder_is_never_read);
     run!(a_cache_entry_that_does_not_read_is_nothing_and_is_made_again);
+    run!(an_entry_of_another_form_is_no_entry);
     run!(the_cache_is_pruned_oldest_first);
+    run!(the_job_prunes_its_folder_after_it_wrote);
     run!(the_request_queues_a_few_jobs_at_a_time);
+    run!(the_pictures_queued_at_exit_are_dropped);
     run!(no_worker_writes_nothing);
     done();
 }
