@@ -1980,6 +1980,63 @@ mod tests {
         assert!(given.iter().any(|n| n == "PATH"), "{given:?}");
     }
 
+    // On Linux the child of a request carries what the tree's children carry there, read back
+    // from the child itself: its oom_score_adj is 500; no file it writes is longer than the
+    // answer's limit and one byte; its address space has a soft limit, between this process's
+    // own size and that size with twice the margin; and its parent-death signal is the kill
+    // signal. CI's sandbox job runs this test (docs/TESTING.md).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn on_linux_the_child_of_a_request_carries_its_caps_and_its_parent_death_signal() {
+        let limits_of = |resource| {
+            let mut own = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+            // SAFETY: getrlimit writes one rlimit into `own`, which this owns.
+            assert_eq!(unsafe { libc::getrlimit(resource, &mut own) }, 0);
+            own
+        };
+        let shown = |limit: libc::rlim_t| if limit == libc::RLIM_INFINITY { "unlimited".to_string() } else { limit.to_string() };
+        let dir = scratch("linux-rules");
+        // The stand-in gives its oom_score_adj and its limits as the kernel tells them and then,
+        // as the same process, the parent-death signal it carries (PR_GET_PDEATHSIG is 2): the
+        // signal is a process's own and is not handed on to a child it makes.
+        let asks = "import ctypes; signal = ctypes.c_int(-1); print(ctypes.CDLL(None).prctl(2, ctypes.byref(signal)), signal.value)";
+        let script = format!("{FIND_ANSWER}cat /proc/self/oom_score_adj /proc/self/limits > \"$out\"; printf 200; exec python3 -I -c '{asks}' >> \"$out\"");
+        let mut st = host_standing_in(&dir, &script);
+        let before = child_vm_bytes().unwrap();
+        assert_eq!(st.http_start("GET", "http://127.0.0.1:9/", "", b""), 0);
+        let after = child_vm_bytes().unwrap();
+        let pid = child_pid(&st);
+        poll_to_end(&mut st);
+        let (code, body, error) = outcome(&st);
+        let text = String::from_utf8(body).unwrap();
+        assert_eq!((code, error.as_str()), (200, ""), "this test needs python3 on the PATH: {text}");
+        assert!(gone(pid));
+        let lines: Vec<&str> = text.lines().collect();
+        let limit = |name: &str| -> Vec<&str> { lines.iter().find_map(|l| l.strip_prefix(name)).unwrap_or_else(|| panic!("{name}: {text}")).split_whitespace().collect() };
+
+        assert_eq!(lines[0], CHILD_OOM_ADJ.to_string(), "{text}");
+        assert_eq!(CHILD_OOM_ADJ, 500);
+
+        let most = (HTTP_ANSWER_MAX + 1) as libc::rlim_t;
+        let own = limits_of(libc::RLIMIT_FSIZE);
+        assert_eq!(limit("Max file size"), [shown(own.rlim_cur.min(most)).as_str(), shown(own.rlim_max.min(most)).as_str(), "bytes"], "{text}");
+        assert_eq!(most, 8_388_609);
+
+        let own = limits_of(libc::RLIMIT_AS);
+        let space = limit("Max address space");
+        let soft: u64 = space[0].parse().unwrap_or_else(|_| panic!("the address space has no soft limit: {text}"));
+        if own.rlim_cur == libc::RLIM_INFINITY && own.rlim_max == libc::RLIM_INFINITY {
+            assert!(soft >= before.min(after) && soft <= before.max(after) + 2 * HTTP_CHILD_MARGIN, "{soft} for a process of {before} to {after} bytes: {text}");
+            assert_eq!(space[1..], ["unlimited", "bytes"], "{text}");
+        } else {
+            // (a limit this process already has is never raised)
+            assert!(own.rlim_cur == libc::RLIM_INFINITY || soft <= own.rlim_cur as u64, "{text}");
+            assert_eq!(space[1], shown(own.rlim_max), "{text}");
+        }
+
+        assert_eq!(lines.last(), Some(&format!("0 {}", libc::SIGKILL).as_str()), "{text}");
+    }
+
     // The size limit a request's child starts under holds with no poll at all: the answer file of a
     // child that writes without end stops one byte past the answer's limit, and the request ends
     // as too large. A real answer of exactly the limit still comes back whole.
