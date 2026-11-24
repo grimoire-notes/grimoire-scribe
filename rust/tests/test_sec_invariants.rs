@@ -1258,6 +1258,8 @@ fn packages_pictures_are_told_as_they_are() {
     told_on(&mut fails, DESIGN, "nothing is asked for in a session in which a sandbox step already failed", PKGPICS, broken);
     told_on(&mut fails, DESIGN, "at most 4 queued or running at a time (`PICTURES_AT_ONCE`; the queue holds 16)", PKGPICS, "if bg_kind_count(BgKind::PackagePictures) >= PICTURES_AT_ONCE { return Ask::Later; }");
     beside(&mut fails, DESIGN, "`PICTURES_AT_ONCE`", &grimoire::pkgpics::PICTURES_AT_ONCE.to_string());
+    told_on(&mut fails, DESIGN, "While the queue is full none is queued (`bg_queue_full`", PKGPICS, "if bg_queue_full() { return Ask::Later; }");
+    told_on(&mut fails, DESIGN, "While the queue is full none is queued (`bg_queue_full`", BGJOB, "pub fn bg_queue_full() -> bool { with(|s| s.q.len() >= BG_QUEUE) }");
     stands_on(&mut fails, DESIGN, "the queue holds 16", BGJOB, "const BG_QUEUE: usize = 16;");
     told_on(&mut fails, DESIGN, "It ranks with Files' previews (`bgjob.rs` `rank`)", BGJOB, "BgKind::PackagePictures => 4,");
     stands_on(&mut fails, DESIGN, "It ranks with Files' previews (`bgjob.rs` `rank`)", BGJOB, "BgKind::FilePreviews => 4,");

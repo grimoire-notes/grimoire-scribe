@@ -192,6 +192,11 @@ fn bg_job_queued(kind:BgKind,id:&str,path:&str)->bool {
 pub fn bg_kind_count(kind: BgKind) -> usize {
     with(|s| (s.pid > 0 && s.running.kind == kind) as usize + (s.extra_pid > 0 && s.extra.kind == kind) as usize + s.q.iter().filter(|j| j.kind == kind).count())
 }
+/// Whether the queue is full: one more job queued now would push another out (bg_queue). What asks for work
+/// nobody waits on by name looks first, and asks later (pkgpics.rs).
+pub fn bg_queue_full() -> bool {
+    with(|s| s.q.len() >= BG_QUEUE)
+}
 /// For the unit tests of what asks for jobs (pkgpics.rs, packagestore.rs): while it is on, the first child counts
 /// as busy (a pid that is no process, running a job of no kind those tests ask for), so every job asked for stays
 /// in the queue, in its order, and no child is forked. Off: the child is free again and the queue is emptied.

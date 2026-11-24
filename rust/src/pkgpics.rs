@@ -302,7 +302,7 @@ pub fn picture_cached(src: &PicSrc) -> Cached {
 pub enum Ask {
     /// its job is queued or running: its path (`bg_job_pending` says when it has ended)
     Job(String),
-    /// PICTURES_AT_ONCE are queued or running: ask again once one has ended
+    /// PICTURES_AT_ONCE are queued or running, or the job queue is full: ask again once one has ended
     Later,
     /// nothing is asked for: a path that does not fit a job, or a session in which a sandbox step already failed
     /// (no worker can be had: nothing is forked for it)
@@ -310,7 +310,8 @@ pub enum Ask {
 }
 
 /// Asks for the picture of `src`: one job, queued as work nobody waits on by name, unless that very job is queued
-/// or running.
+/// or running. A picture is asked for later when the job queue is full: its job never pushes another out of it
+/// (bg_queue lets the oldest job of the last rank go, whatever comes in).
 pub fn picture_request(src: &PicSrc) -> Ask {
     if crate::sandbox::session_broken() {
         return Ask::No;
@@ -320,6 +321,9 @@ pub fn picture_request(src: &PicSrc) -> Ask {
         return Ask::Job(jp);
     }
     if bg_kind_count(BgKind::PackagePictures) >= PICTURES_AT_ONCE {
+        return Ask::Later;
+    }
+    if bg_queue_full() {
         return Ask::Later;
     }
     bg_queue(BgKind::PackagePictures, None, Some(&jp), 0.0, false);
@@ -718,6 +722,39 @@ mod tests {
         let long = PicSrc { rel: format!("package-store/assets/{}", "k".repeat(REL_MAX - 21)), size: 9_999_999_999_999_999_999, mtime: i64::MIN + 1, form: PicForm::Screenshot };
         assert!(rel_ok(&long.rel, long.form) && long.job_path().is_some_and(|p| p.len() < 600 && PicSrc::job_parse(&p) == Some(long.clone())));
         assert!(!rel_ok(&format!("package-store/assets/{}", "k".repeat(REL_MAX - 20)), PicForm::Screenshot));
+    }
+
+    // A picture is asked for later while the job queue is full, and pushes no job out of it: sixteen exports wait
+    // (the queue's size) behind one that runs, a picture asked for then is not queued and every export still
+    // waits; with one place free it is queued, and asked for again it is that same job. Before, the request went
+    // to the full queue, which let its oldest export go for it. (No child runs: bgjob.rs bg_test_hold.)
+    #[test]
+    fn a_picture_waits_for_room_in_a_full_queue() {
+        let src = PicSrc { rel: "packages/apps/com.example.app/icon.ico".into(), size: 99678, mtime: 1_700_000_000, form: PicForm::AppIcon };
+        let jp = src.job_path().unwrap();
+        crate::bgjob::bg_test_hold(true);
+        let export = |k: usize| format!("full-queue-{k:02}");
+        for k in 0..16 {
+            bg_queue(BgKind::MirrorPdf, Some(&export(k)), Some("/nowhere/PDFs"), 150.0, false);
+        }
+        let waiting = || (0..16).filter(|&k| bg_job_pending(BgKind::MirrorPdf, &export(k), "/nowhere/PDFs")).count();
+        assert!(bg_queue_full() && waiting() == 16);
+        assert_eq!(picture_request(&src), Ask::Later);
+        assert_eq!(picture_request(&src), Ask::Later);
+        assert!(waiting() == 16 && !bg_job_pending(BgKind::PackagePictures, "", &jp) && bg_kind_count(BgKind::PackagePictures) == 0);
+        // one export leaves the queue: there is room for the picture's job
+        assert!(bg_unqueue(BgKind::MirrorPdf, &export(3), "/nowhere/PDFs") && !bg_queue_full());
+        assert_eq!(picture_request(&src), Ask::Job(jp.clone()));
+        assert!(waiting() == 15 && bg_job_pending(BgKind::PackagePictures, "", &jp) && bg_queue_full());
+        // (asked again while it is queued, the queue full again: the same job, and none pushed out)
+        assert_eq!(picture_request(&src), Ask::Job(jp.clone()));
+        assert!(waiting() == 15 && bg_kind_count(BgKind::PackagePictures) == 1);
+        // another picture: later
+        let other = PicSrc { rel: "packages/apps/com.example.other/icon.ico".into(), ..src.clone() };
+        assert_eq!(picture_request(&other), Ask::Later);
+        assert!(waiting() == 15 && bg_kind_count(BgKind::PackagePictures) == 1);
+        crate::bgjob::bg_test_hold(false);
+        assert!(!bg_busy());
     }
 
     // The forms' figures: an icon's side is the `.ico` reader's, its file's limit the bundled icon's; a Scribe page

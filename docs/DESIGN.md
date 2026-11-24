@@ -3633,7 +3633,9 @@ cache and checked (`pkgpics.rs`, `appicon.rs`, `packagestore.rs`).
 - **The job, `BgKind::PackagePictures = 12`**: one picture a job, its path
   `<form>.<size>.<mtime>:<the file's path from Grimoire's folder>` (form `a` an app's icon, `i` a Store icon,
   `s` a screenshot), at most 4 queued or running at a time (`PICTURES_AT_ONCE`; the queue holds 16), dropped at
-  exit. It ranks with Files' previews (`bgjob.rs` `rank`): never a job the user waits on by name. No existing
+  exit. While the queue is full none is queued (`bg_queue_full`: a picture is asked for again later, and its job
+  never pushes another job out). It ranks with Files' previews (`bgjob.rs` `rank`): never a job the user waits
+  on by name. No existing
   kind fits: `FilePreviews` is a file as Files' Covers view listed it, made into a 300 x 400 page. The child
   (`bg_package_picture`) takes only a path its form may have, opens the file from Grimoire's folder one part at a
   time and never through a link (`open_below`), checks it is still the size and time asked for, makes none
