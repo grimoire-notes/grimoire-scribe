@@ -1191,15 +1191,16 @@ impl HostState {
                 // and left an answer file one byte over the limit.)
                 if status.code() == Some(63) || job.answer_len() > HTTP_ANSWER_MAX {
                     job.too_large();
-                } else {
+                } else if status.success() {
                     job.body = read_file_max(&job.files.path("body"), HTTP_ANSWER_MAX as usize).unwrap_or_default();
-                    if !status.success() && job.body.is_empty() {
-                        let detail = read_file_max(&job.files.path("err"), 4096)
-                            .map(|v| String::from_utf8_lossy(&v).split_whitespace().collect::<Vec<_>>().join(" "))
-                            .unwrap_or_default();
-                        job.error = if detail.is_empty() { format!("curl exited {:?}", status.code()) } else { detail };
-                        job.code = -1;
-                    }
+                } else {
+                    // A curl that ended with a failure brought no answer, whatever part of one it
+                    // had written: the request has no status code, and curl's line is its error.
+                    let detail = read_file_max(&job.files.path("err"), 4096)
+                        .map(|v| String::from_utf8_lossy(&v).split_whitespace().collect::<Vec<_>>().join(" "))
+                        .unwrap_or_default();
+                    job.error = if detail.is_empty() { format!("curl exited {:?}", status.code()) } else { detail };
+                    job.code = -1;
                 }
                 // The answer is in memory now: its files are not kept until the next request.
                 job.files.remove();
@@ -1655,6 +1656,66 @@ mod tests {
             assert_eq!(request_files(&dir), Vec::<String>::new());
             assert!(gone(pid));
         }
+    }
+
+    /// The answer of a listener that states 100 bytes, sends 10 and closes the connection.
+    fn part_of_an_answer(_first_line: &str) -> Vec<u8> {
+        b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n0123456789".to_vec()
+    }
+
+    // A curl that ended with a failure is a failed request whatever it had written: no status
+    // code, no answer, and curl's line as the error. The part of an answer that arrived is not
+    // given.
+    #[test]
+    fn a_curl_that_ended_with_a_failure_brings_no_answer() {
+        let dir = scratch("failure");
+        let mut st = host(&dir);
+        let none = Vec::<String>::new();
+
+        // Stand-ins that end as curl does when the answer stops short (18), the time is up (28)
+        // and the connection fails while the answer arrives (56), each with ten bytes written.
+        for (code, text) in [
+            (18, "curl: (18) transfer closed with 90 bytes remaining to read"),
+            (28, "curl: (28) Operation timed out after 30004 milliseconds with 10 out of 100 bytes received"),
+            (56, "curl: (56) Recv failure: Connection reset by peer"),
+        ] {
+            let pid = stand_in(&mut st, &dir, &format!("exit {code}"), "200", Some(10));
+            let err = st.http.as_ref().unwrap().files.path("err");
+            std::fs::write(err, format!("{text}\n")).unwrap();
+            poll_to_end(&mut st);
+            assert_eq!(outcome(&st), (-1, Vec::new(), text.to_string()));
+            assert!(gone(pid));
+            assert_eq!(request_files(&dir), none);
+        }
+
+        // With no line of curl's, the error names how it ended: an exit status, or none when a
+        // signal ended it.
+        stand_in(&mut st, &dir, "exit 18", "200", Some(10));
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (-1, Vec::new(), "curl exited Some(18)".to_string()));
+        stand_in(&mut st, &dir, "kill -s TERM $$", "200", Some(10));
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (-1, Vec::new(), "curl exited None".to_string()));
+        assert_eq!(request_files(&dir), none);
+
+        // The same ten bytes from a curl that ended well are the answer.
+        stand_in(&mut st, &dir, "exit 0", "200", Some(10));
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (200, vec![0u8; 10], String::new()));
+
+        // The host's curl and a real answer that stops short of its stated length.
+        let mut st = host(&dir);
+        let (at, stop, served) = serve_each(part_of_an_answer);
+        assert_eq!(st.http_start("GET", &format!("{at}/"), "", b""), 0, "{NEEDS_CURL}");
+        let pid = child_pid(&st);
+        poll_to_end(&mut st);
+        let (code, body, error) = outcome(&st);
+        assert_eq!((code, body), (-1, Vec::new()), "{error}");
+        assert!(error.starts_with("curl: (18) "), "{error}");
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), none);
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(served.join().unwrap(), ["GET / HTTP/1.1"]);
     }
 
     // The child of a request keeps none of the host's descriptors: one that a child started plainly

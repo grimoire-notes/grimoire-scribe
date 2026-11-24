@@ -240,11 +240,13 @@ limit, whether or not the app polls. Such a request has no status code (`http_st
 answer, and its `http_error` is `The answer is too large.`
 
 `http_poll` returns 0 while the request runs and 1 when it has finished; after that `http_status`
-is the HTTP status code (or -1 on a transport failure), `http_body` is the answer, and
-`http_error` is curl's one-line failure when there is one. Poll it after a `request_redraw`; none
-of these calls blocks drawing or touching the screen. The host looks after a request between the
-app's polls: a request that has ended keeps its outcome for the next `http_poll`, until the next
-request or `http_cancel`.
+is the HTTP status code, `http_body` is the answer and `http_error` is empty. A request that curl
+ended with a failure (no connection, the time limit, a connection that closed before the whole
+answer had arrived) has no status code (`http_status` is -1) and no answer, and its `http_error`
+is curl's one-line failure: the part of an answer that had arrived is not given. Poll it after a
+`request_redraw`; none of these calls blocks drawing or touching the screen. The host looks after
+a request between the app's polls: a request that has ended keeps its outcome for the next
+`http_poll`, until the next request or `http_cancel`.
 
 The host does not provide filesystem or shell access.
 
