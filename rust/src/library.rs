@@ -549,9 +549,10 @@ pub struct LibraryState {
     home_pending: bool,
     home_deferred: bool,
     home_held: bool,
-    /// An installed app's bundled icon came from the worker (appicon.rs, 2.3, issue #236) and the launcher that
-    /// shows it has not been drawn again yet (a press was held: its lift comes first).
-    icons_due: bool,
+    /// A picture came from the worker (an installed app's bundled icon: appicon.rs; a Package Store picture:
+    /// packagestore.rs; 2.3, issue #236) and the screen that shows it has not been drawn again yet (a press was
+    /// held: its lift comes first).
+    pictures_due: bool,
 }
 
 /// The C's S (a->lib).
@@ -9628,30 +9629,38 @@ fn library_event_in(a: &mut App, ev: &InEvent) {
     }
 }
 
-/// An installed app's icon came from the worker (appicon.rs) while a launcher is in front: the home's app row, the
-/// All apps page, or the package manager's list or detail page. The screen is drawn again and only what changed on
-/// it is refreshed (redraw_filling). Under a press it waits for the lift; behind any other sheet nothing is drawn
-/// (the sheet's close draws the launcher whole).
-fn icons_due_draw(a: &mut App) {
-    if !std::mem::take(&mut lib(a).icons_due) {
+/// A picture came from the worker while a screen that shows it is in front: an installed app's icon (appicon.rs)
+/// on the home's app row, the All apps page or the package manager's list or detail page; a Package Store picture
+/// (packagestore.rs) in the Store or on Settings > Updates. The screen is drawn again and only what changed on it
+/// is refreshed (redraw_filling). Under a press it waits for the lift; behind any other sheet nothing is drawn (the
+/// sheet's close draws what is under it whole).
+fn pictures_due_draw(a: &mut App) {
+    if !std::mem::take(&mut lib(a).pictures_due) {
         return;
     }
-    if a.pkg.open {
-        if crate::widgetpkgui::packages_ui_at_rest(a) {
-            redraw_filling(a);
-        } else if !a.pkg.kb.open {
-            lib(a).icons_due = true;
+    let at_rest = if a.store.open {
+        crate::packagestore::store_at_rest(&a.store)
+    } else if a.pkg.open {
+        if a.pkg.kb.open {
+            return;
         }
+        crate::widgetpkgui::packages_ui_at_rest(a)
+    } else if a.scr != ScreenId::Library || files_shown(a) || graph_shown(a) || !matches!(lib(a).modal, Modal::None | Modal::Apps | Modal::Updates) {
         return;
+    } else {
+        lib(a).pressed.is_none()
+    };
+    if at_rest {
+        redraw_filling(a);
+    } else {
+        lib(a).pictures_due = true;
     }
-    if a.scr != ScreenId::Library || files_shown(a) || graph_shown(a) || !matches!(lib(a).modal, Modal::None | Modal::Apps) {
-        return;
-    }
-    if lib(a).pressed.is_some() {
-        lib(a).icons_due = true;
-        return;
-    }
-    redraw_filling(a);
+}
+
+/// A Package Store picture came from the worker (packagestore.rs): the screen that shows it is drawn again by the
+/// Library's tick (pictures_due_draw).
+pub(crate) fn picture_came(a: &mut App) {
+    lib(a).pictures_due = true;
 }
 
 pub fn library_tick(a: &mut App, now: u32) {
@@ -9661,19 +9670,20 @@ pub fn library_tick(a: &mut App, now: u32) {
     }
     if a.store.open {
         crate::packagestore::store_tick(a, now);
+        pictures_due_draw(a);
         return;
     }
     // (installed apps' bundled icons: the ones the cache had nothing for are asked of the worker's job, and one
     // that came is taken in: appicon.rs)
     if crate::appicon::app_icons_step() {
-        lib(a).icons_due = true;
+        lib(a).pictures_due = true;
     }
     if a.pkg.open {
         crate::widgetpkgui::packages_ui_tick(a, now);
-        icons_due_draw(a);
+        pictures_due_draw(a);
         return;
     }
-    icons_due_draw(a);
+    pictures_due_draw(a);
     crate::userfonts::userfonts_tick(a, now); // (a font check that ended with no verdict is queued again after its wait)
     // The home's status bar keeps the clock: one redraw when the minute changes (nothing behind a
     // sheet or the keyboard is laying itself out again).

@@ -5,8 +5,16 @@
 //! and store icons are cached the same way. Installing reuses the package manager's
 //! manifest validation and installers; the manifest and artifact are checked by those
 //! before anything is written.
+//!
+//! The catalog's icons and screenshots come from the network, so nothing here decodes them (issue
+//! #236): the safe loader's picture worker does (pkgpics.rs), and the screens draw the gray
+//! pictures it left in `.cache/packages/`, read back and checked. A picture is asked for once its
+//! file is in `package-store/assets/` and comes a moment later (`asset_picture`, `tick_pictures`);
+//! until then, and when the worker refuses it or none can be had, a card or a page shows what it
+//! shows for a picture that is missing.
 
 use crate::globalui::{gui_button, gui_chip, gui_gap, gui_header, gui_icon_button, gui_margin, gui_radius};
+use crate::pkgpics::{picture_cached, picture_request, Ask, Cached, PicForm, PicSrc};
 use crate::prelude::*;
 use crate::sha256::sha256_of;
 
@@ -31,7 +39,7 @@ const H_RETRY: i32 = 813;
 const INDEX_MAX: usize = 512 * 1024;
 const INDEX_TOKENS: usize = 32 * 1024;
 const PACKAGE_MAX: usize = 200;
-const SCREENSHOT_MAX: usize = 8 * 1024 * 1024;
+const SCREENSHOT_MAX: usize = crate::pkgpics::SHOT_FILE_MAX;
 const INSTALL_ICON_MAX: usize = crate::apppkg::APP_ICON_MAX;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -119,6 +127,28 @@ struct FetchJob {
     key: String,
 }
 
+/// A picture asked of the worker's job (pkgpics.rs) and not there yet: the slot it is for (`Icon`,
+/// `Screenshot` or `ListIcon`, with the asset's key), its file as it was asked for, and its job's
+/// path once the job is queued.
+struct PicWait {
+    stage: FetchStage,
+    key: String,
+    src: PicSrc,
+    job: Option<String>,
+}
+
+/// What the Store has of a cached asset's picture now.
+enum PicNow {
+    /// the worker's picture, from its cache
+    There(Canvas),
+    /// asked for: it comes with a later tick (`tick_pictures`)
+    Coming,
+    /// none to be had: the worker refused the file
+    None,
+    /// the asset is not in `package-store/assets/` (it is still to download)
+    NoFile,
+}
+
 #[derive(Default)]
 struct StoreIcon {
     glyph: IconKind,
@@ -175,6 +205,8 @@ pub struct PackageStoreUi {
     shot_for: String,
     shot_tried: bool,
     shot_index: i32,
+    /// the pictures asked of the worker and not there yet
+    pic_waits: Vec<PicWait>,
     pub refreshing: bool,
     /// The General > Updates page uses this catalog, its icons and its install machinery without
     /// opening the Store screen.
@@ -207,6 +239,7 @@ impl PackageStoreUi {
         self.shot_for.clear();
         self.shot_tried = false;
         self.shot_index = 0;
+        self.drop_waits(|stage| matches!(stage, FetchStage::Icon | FetchStage::Screenshot));
     }
 
     fn cancel_jobs(&mut self) {
@@ -214,6 +247,7 @@ impl PackageStoreUi {
         self.install_job = None;
         self.asset_job = None;
         self.refreshing = false;
+        self.drop_waits(|_| true);
     }
 
     fn reset_list_icons(&mut self) {
@@ -222,7 +256,27 @@ impl PackageStoreUi {
         }
         self.list_icons = vec![Canvas::default(); self.index.packages.len()];
         self.list_tried = vec![false; self.index.packages.len()];
+        self.drop_waits(|stage| stage == FetchStage::ListIcon);
     }
+
+    /// The pictures of these slots are no longer waited for (another package, another screenshot,
+    /// the Store closed): a job of theirs that is still queued leaves the queue, unless another
+    /// slot waits on that very job (a running one runs on: its picture is kept for the next look).
+    fn drop_waits(&mut self, which: impl Fn(FetchStage) -> bool) {
+        let (gone, kept): (Vec<PicWait>, Vec<PicWait>) = std::mem::take(&mut self.pic_waits).into_iter().partition(|w| which(w.stage));
+        self.pic_waits = kept;
+        for job in gone.iter().filter_map(|w| w.job.as_deref()) {
+            if !self.pic_waits.iter().any(|w| w.job.as_deref() == Some(job)) {
+                bg_unqueue(BgKind::PackagePictures, "", job);
+            }
+        }
+    }
+}
+
+/// Whether the Store can be drawn again by itself now (a picture that came from the worker): not
+/// under a press, whose lift draws.
+pub(crate) fn store_at_rest(ui: &PackageStoreUi) -> bool {
+    ui.pressed.is_none()
 }
 
 fn catalog_url() -> String {
@@ -605,8 +659,11 @@ pub fn updates_tick(a: &mut App, _now: u32) {
     changed |= tick_install(a);
     changed |= tick_asset(a);
     changed |= start_list_icons(a);
+    let came = tick_pictures(a);
     if changed {
         crate::library::store_redraw(a);
+    } else if came {
+        crate::library::picture_came(a);
     }
 }
 
@@ -885,6 +942,7 @@ fn start_selected_assets(a: &mut App) {
         a.store.icon.reset();
         a.store.icon_for = pkg.id.clone();
         a.store.icon_tried = false;
+        a.store.drop_waits(|stage| stage == FetchStage::Icon);
         if let StoreIconRef::Glyph(g) = pkg.icon.clone() {
             a.store.icon.glyph = g;
         }
@@ -894,18 +952,22 @@ fn start_selected_assets(a: &mut App) {
         a.store.shot_for = pkg.id.clone();
         a.store.shot_tried = false;
         a.store.shot_index = 0;
+        a.store.drop_waits(|stage| stage == FetchStage::Screenshot);
     }
     if a.store.asset_job.is_some() {
         return;
     }
     if !a.store.icon_tried {
         if let StoreIconRef::Image(asset) = pkg.icon.clone() {
-            if let Some(data) = read_cached_asset(&asset.key, INSTALL_ICON_MAX) {
-                apply_icon(&mut a.store, &data);
-                a.store.icon_tried = true;
-            } else {
-                start_asset_job(a, FetchStage::Icon, &asset.url, INSTALL_ICON_MAX, &asset.key);
-                return;
+            match asset_picture(&mut a.store, FetchStage::Icon, &asset.key) {
+                PicNow::NoFile => {
+                    start_asset_job(a, FetchStage::Icon, &asset.url, INSTALL_ICON_MAX, &asset.key);
+                    return;
+                }
+                now => {
+                    place_picture(&mut a.store, FetchStage::Icon, &asset.key, now);
+                    a.store.icon_tried = true;
+                }
             }
         } else {
             a.store.icon_tried = true;
@@ -913,12 +975,15 @@ fn start_selected_assets(a: &mut App) {
     }
     if !a.store.shot_tried {
         if let Some(asset) = pkg.screenshots.get(a.store.shot_index as usize).cloned() {
-            if let Some(data) = read_cached_asset(&asset.key, SCREENSHOT_MAX) {
-                apply_screenshot(&mut a.store, &data);
-                a.store.shot_tried = true;
-            } else {
-                start_asset_job(a, FetchStage::Screenshot, &asset.url, SCREENSHOT_MAX, &asset.key);
-                return;
+            match asset_picture(&mut a.store, FetchStage::Screenshot, &asset.key) {
+                PicNow::NoFile => {
+                    start_asset_job(a, FetchStage::Screenshot, &asset.url, SCREENSHOT_MAX, &asset.key);
+                    return;
+                }
+                now => {
+                    place_picture(&mut a.store, FetchStage::Screenshot, &asset.key, now);
+                    a.store.shot_tried = true;
+                }
             }
         } else {
             a.store.shot_tried = true;
@@ -938,8 +1003,10 @@ fn start_asset_job(a: &mut App, stage: FetchStage, url: &str, cap: usize, key: &
     }
 }
 
-/// Load the catalog cards' own icons, one cached image at a time and one download at a time.
-/// Returns whether an image was loaded without waiting on the network.
+/// Load the catalog cards' own icons, one cached image at a time and one download at a time. An
+/// icon whose file is cached shows the worker's picture of it: at once when that is in its cache,
+/// else once its job has made it (`tick_pictures`).
+/// Returns whether an image was loaded without waiting on the network or the worker.
 fn start_list_icons(a: &mut App) -> bool {
     let showing = a.store.updates_center || (a.store.open && a.store.view == StoreView::List);
     if !showing || a.store.asset_job.is_some() {
@@ -960,75 +1027,103 @@ fn start_list_icons(a: &mut App) -> bool {
         }) else {
             continue;
         };
-        if let Some(data) = read_cached_asset(&key, INSTALL_ICON_MAX) {
-            if apply_list_icon_at(&mut a.store, i, &data) {
-                loaded = true;
-            } else {
+        match asset_picture(&mut a.store, FetchStage::ListIcon, &key) {
+            PicNow::NoFile => {
+                start_asset_job(a, FetchStage::ListIcon, &url, INSTALL_ICON_MAX, &key);
+                return loaded;
+            }
+            now => {
+                loaded |= place_picture(&mut a.store, FetchStage::ListIcon, &key, now);
                 a.store.list_tried[i] = true;
             }
-        } else {
-            start_asset_job(a, FetchStage::ListIcon, &url, INSTALL_ICON_MAX, &key);
-            return loaded;
         }
     }
     loaded
 }
 
-fn store_image(data: &[u8]) -> Option<Canvas> {
-    if let Some(img) = crate::icofile::ico_gray(data) {
-        let mut out = Canvas::default();
-        if canvas_init(&mut out, img.w as i32, img.h as i32) != 0 {
-            return None;
-        }
-        for y in 0..img.h as i32 {
-            for x in 0..img.w as i32 {
-                let px = img.gray[(y * img.w as i32 + x) as usize];
-                canvas_fill(&mut out, Rect::new(x, y, 1, 1), px);
+/// The picture of the cached asset `key` for `stage`'s slot (`Icon` and `ListIcon`: a catalog icon;
+/// `Screenshot`). The asset's file is looked at, never read (one stat); its picture is the one the
+/// sandboxed worker made, read from the worker's cache and checked (`pkgpics::picture_cached`).
+/// With nothing there the picture is asked for (`tick_pictures` queues its job and takes it in).
+fn asset_picture(ui: &mut PackageStoreUi, stage: FetchStage, key: &str) -> PicNow {
+    if safe_key(key).as_deref() != Some(key) {
+        return PicNow::NoFile;
+    }
+    let form = if stage == FetchStage::Screenshot { PicForm::Screenshot } else { PicForm::StoreIcon };
+    let Some(src) = PicSrc::of(&asset_cache_path(key), form) else { return PicNow::NoFile };
+    match picture_cached(&src) {
+        Cached::Picture(c) => PicNow::There(c),
+        Cached::None => PicNow::None,
+        Cached::Nothing => {
+            if !ui.pic_waits.iter().any(|w| w.stage == stage && w.key == key) {
+                ui.pic_waits.push(PicWait { stage, key: key.to_string(), src, job: None });
             }
+            PicNow::Coming
         }
-        return Some(out);
     }
-    let mut pic = BgPicture::default();
-    let mut why = "";
-    if bgimage_decode(data, &mut pic, &mut why) != 0 {
-        return None;
-    }
-    let mut out = Canvas::default();
-    if bgimage_luma(&pic, &mut out) != 0 {
-        canvas_free(&mut out);
-        return None;
-    }
-    // Keep the decoded icon small enough for the detail header and the cards.
-    if out.w > 256 || out.h > 256 {
-        let mut small = Canvas::default();
-        if canvas_init(&mut small, 256, 256) == 0 {
-            canvas_blit_fit(&mut small, &out, Rect::new(0, 0, 256, 256));
-            canvas_free(&mut out);
-            return Some(small);
+}
+
+/// A picture that is there goes to the slot it was asked for, if that slot still shows the asset
+/// `key`: a card's icon, the detail page's icon, or its screenshot. True when it was placed.
+fn place_picture(ui: &mut PackageStoreUi, stage: FetchStage, key: &str, now: PicNow) -> bool {
+    let PicNow::There(image) = now else { return false };
+    match stage {
+        FetchStage::ListIcon => {
+            let index = ui.index.packages.iter().position(|p| matches!(&p.icon, StoreIconRef::Image(a) if a.key == key));
+            let Some(slot) = index.and_then(|i| ui.list_icons.get_mut(i)) else { return false };
+            *slot = image;
+            true
         }
-        canvas_free(&mut small);
+        FetchStage::Icon => {
+            let shows = ui.selected_package().is_some_and(|p| p.id == ui.icon_for && matches!(&p.icon, StoreIconRef::Image(a) if a.key == key));
+            if shows {
+                ui.icon.image = image;
+            }
+            shows
+        }
+        FetchStage::Screenshot => {
+            let shows = ui.selected_package().is_some_and(|p| p.id == ui.shot_for && p.screenshots.get(ui.shot_index as usize).is_some_and(|a| a.key == key));
+            if shows {
+                ui.shot = image;
+            }
+            shows
+        }
+        _ => false,
     }
-    Some(out)
 }
 
-fn apply_icon(ui: &mut PackageStoreUi, data: &[u8]) {
-    if let Some(image) = store_image(data) {
-        canvas_free(&mut ui.icon.image);
-        ui.icon.image = image;
+/// One round, at each tick: the pictures still to ask for are asked of the worker's job (a few
+/// jobs at a time: `picture_request`), and those whose job has ended are looked up again and go to
+/// their slots. A job that ended with nothing (a refused file, no worker) leaves the slot as it is.
+/// True when a picture came, or a screenshot's job ended without one (its frame is drawn again).
+fn tick_pictures(a: &mut App) -> bool {
+    let ui = &mut a.store;
+    let mut came = false;
+    let mut i = 0;
+    while i < ui.pic_waits.len() {
+        match ui.pic_waits[i].job.as_deref() {
+            None => match picture_request(&ui.pic_waits[i].src) {
+                Ask::Job(job) => ui.pic_waits[i].job = Some(job),
+                Ask::Later => {}
+                Ask::No => {
+                    came |= ui.pic_waits.remove(i).stage == FetchStage::Screenshot;
+                    continue;
+                }
+            },
+            Some(job) if !bg_job_pending(BgKind::PackagePictures, "", job) => {
+                let w = ui.pic_waits.remove(i);
+                match picture_cached(&w.src) {
+                    Cached::Picture(c) => came |= place_picture(ui, w.stage, &w.key, PicNow::There(c)),
+                    // (no screenshot comes: its frame no longer says one is loading)
+                    _ => came |= w.stage == FetchStage::Screenshot,
+                }
+                continue;
+            }
+            Some(_) => {}
+        }
+        i += 1;
     }
-}
-
-fn apply_list_icon_at(ui: &mut PackageStoreUi, index: usize, data: &[u8]) -> bool {
-    let Some(image) = store_image(data) else { return false };
-    let Some(slot) = ui.list_icons.get_mut(index) else { return false };
-    canvas_free(slot);
-    *slot = image;
-    true
-}
-
-fn apply_list_icon(ui: &mut PackageStoreUi, key: &str, data: &[u8]) -> bool {
-    let index = ui.index.packages.iter().position(|p| matches!(&p.icon, StoreIconRef::Image(a) if a.key == key));
-    index.is_some_and(|i| apply_list_icon_at(ui, i, data))
+    came
 }
 
 fn mark_list_icon_tried(ui: &mut PackageStoreUi, key: &str) {
@@ -1040,19 +1135,6 @@ fn mark_list_icon_tried(ui: &mut PackageStoreUi, key: &str) {
                 }
             }
         }
-    }
-}
-
-fn apply_screenshot(ui: &mut PackageStoreUi, data: &[u8]) {
-    let mut pic = BgPicture::default();
-    let mut why = "";
-    if bgimage_decode(data, &mut pic, &mut why) != 0 {
-        qlog!("package store: screenshot refused: %s", why);
-        return;
-    }
-    canvas_free(&mut ui.shot);
-    if bgimage_luma(&pic, &mut ui.shot) != 0 {
-        qlog!("package store: screenshot has no memory for its canvas");
     }
 }
 
@@ -1273,20 +1355,15 @@ fn tick_asset(a: &mut App) -> bool {
             if !job.key.is_empty() {
                 write_cached_asset(&job.key, &data);
             }
+            // (the bytes went to `package-store/assets/`: their picture is asked of the worker, never made here)
+            if matches!(job.stage, FetchStage::Icon | FetchStage::Screenshot | FetchStage::ListIcon) {
+                let now = asset_picture(&mut a.store, job.stage, &job.key);
+                place_picture(&mut a.store, job.stage, &job.key, now);
+            }
             match job.stage {
-                FetchStage::Icon => {
-                    apply_icon(&mut a.store, &data);
-                    a.store.icon_tried = true;
-                }
-                FetchStage::Screenshot => {
-                    apply_screenshot(&mut a.store, &data);
-                    a.store.shot_tried = true;
-                }
-                FetchStage::ListIcon => {
-                    if !apply_list_icon(&mut a.store, &job.key, &data) {
-                        mark_list_icon_tried(&mut a.store, &job.key);
-                    }
-                }
+                FetchStage::Icon => a.store.icon_tried = true,
+                FetchStage::Screenshot => a.store.shot_tried = true,
+                FetchStage::ListIcon => mark_list_icon_tried(&mut a.store, &job.key),
                 _ => {}
             }
         }
@@ -1318,8 +1395,12 @@ pub fn store_tick(a: &mut App, _now: u32) {
     if a.store.view == StoreView::List {
         changed |= start_list_icons(a);
     }
+    // (a picture the worker made: the page is drawn again and only its place refreshed)
+    let came = tick_pictures(a);
     if changed {
         redraw(a);
+    } else if came {
+        crate::library::picture_came(a);
     }
 }
 
@@ -1358,6 +1439,7 @@ fn shot_move(a: &mut App, step: i32) {
     a.store.shot_tried = false;
     canvas_free(&mut a.store.shot);
     a.store.asset_job = None;
+    a.store.drop_waits(|stage| stage == FetchStage::Screenshot);
     start_selected_assets(a);
 }
 
@@ -1666,6 +1748,14 @@ fn draw_list(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     }
 }
 
+/// Whether the detail page's screenshot is still to come: not asked for yet, downloading, or asked of the
+/// worker's job.
+fn shot_coming(ui: &PackageStoreUi) -> bool {
+    !ui.shot_tried
+        || ui.asset_job.as_ref().is_some_and(|job| job.stage == FetchStage::Screenshot)
+        || ui.pic_waits.iter().any(|w| w.stage == FetchStage::Screenshot)
+}
+
 fn draw_shot(c: &mut Canvas, ui: &mut PackageStoreUi, r: Rect, p: &StorePackage) {
     ui_frame(c, r, gui_radius(), 255, true, 0);
     ui_frame(c, r, gui_radius(), 0, false, ui_px(3.0));
@@ -1681,8 +1771,12 @@ fn draw_shot(c: &mut Canvas, ui: &mut PackageStoreUi, r: Rect, p: &StorePackage)
     if !ui.shot.px.is_empty() {
         canvas_blit_fit(c, &ui.shot, image_r);
     } else {
+        // (the frame with its glyph; it says a screenshot is loading only while one is still to come: not once
+        // its download failed, the worker refused it, or no worker could be had)
         ui_icon(c, IconKind::Image, rect_inflate(image_r, -ui_px(100.0)), 155);
-        font_draw_centered(c, FontFace::Regular, ui_text_size(), image_r, tr("Loading screenshot..."), 100);
+        if shot_coming(ui) {
+            font_draw_centered(c, FontFace::Regular, ui_text_size(), image_r, tr("Loading screenshot..."), 100);
+        }
     }
     let y = image_r.y + image_r.h + ui_px(10.0);
     let label = format!("{} {}/{}", tr("Screenshot"), ui.shot_index + 1, n);
@@ -1940,6 +2034,7 @@ pub fn store_probe(ui: &PackageStoreUi, key: &str) -> Option<String> {
             .to_string(),
         "shot" => ui.shot_index.to_string(),
         "shot.loaded" => (!ui.shot.px.is_empty() as i32).to_string(),
+        "shot.coming" => ((ui.shot.px.is_empty() && shot_coming(ui)) as i32).to_string(),
         "icon.loaded" => (!ui.icon.image.px.is_empty() as i32).to_string(),
         "list.icons" => ui.list_icons.iter().filter(|icon| !icon.px.is_empty()).count().to_string(),
         "status" => ui.status.clone(),
