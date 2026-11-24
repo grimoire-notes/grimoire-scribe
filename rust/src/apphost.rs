@@ -421,7 +421,7 @@ pub fn apphost_draw(a: &mut App) {
     let App { screen: c, app_view, .. } = a;
     canvas_fill(c, Rect::new(0, 0, aw, ah), 255);
     if app_view.status_bar {
-        gui_status_bar(c, aw, wall_time());
+        gui_status_bar(c, aw, sys_wall_clock());
     }
     if !rect_is_empty(body) {
         app_view.body = body;

@@ -7,7 +7,7 @@
 # rust-only
 wait 300
 expect screen is library
-tap 326 608
+tap library card.1
 wait 600
 expect screen is editor
 expect editor.page is 2
@@ -51,7 +51,8 @@ expect editor.modal is none
 pentap panel library
 wait 600
 expect screen is library
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 200
 tap library paper.more
 wait 300
