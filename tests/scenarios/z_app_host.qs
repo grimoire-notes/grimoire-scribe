@@ -1,0 +1,49 @@
+# settings: status_mode=1
+# rust-only
+# env: GRIMOIRE_SIM_CLOCK=script
+# copy: tests/fixtures/apphost .
+# The app host's rules for a module (issue #247), with the packages of tests/fixtures/apphost (written by
+# rust/tests/appfix: `make app-fixtures`). App time is the script's (GRIMOIRE_SIM_CLOCK=script): each `wait`
+# moves it on by exactly its milliseconds, so what comes due in a stretch is the same on any machine.
+# (the status bar's clock held still: its minute's refresh would land among the counted ones)
+clock 1700000000
+wait 3600
+expect library.apps is test.app.counts test.app.loop
+# Loop's drawing pass never ends. The call is ended when its instructions are used up: the app is closed, a
+# toast says that it stopped, and Home is back. No app is left open with nothing drawn.
+tap library apps
+wait 300
+tap library app.test.app.loop
+wait 400
+expect library.app.open is 0
+expect toast is The app stopped: all fuel consumed by WebAssembly
+expect screen is library
+expect library.sheet is none
+shot 01-loop-stopped
+# The host and the main loop go on: another app opens, draws, is drawn again for a touch, and leaves by the
+# system swipe; and Loop, opened again, stops again.
+wait 5200
+expect toast is
+tap library apps
+wait 300
+tap library app.test.app.counts
+wait 400
+expect library.app.open is 1
+expect library.app.id is test.app.counts
+expect library.app.error is
+expect library.app.status is 000001
+expect display.dark.40.40.200.100 is 20000
+tap 930 1300
+wait 300
+expect library.app.status is 000003
+shot 02-counts
+swipe 2 930 2200 0 -1000
+wait 300
+expect library.app.open is 0
+tap library apps
+wait 300
+tap library app.test.app.loop
+wait 400
+expect library.app.open is 0
+expect toast is The app stopped: all fuel consumed by WebAssembly
+quit

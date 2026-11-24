@@ -457,6 +457,13 @@ font-fixtures:
 widget-fixtures:
 	$(call RCARGO,GRIMOIRE_WRITE_WIDGET_FIXTURES="$(abspath tests/fixtures)") test --test test_widget_fixtures
 
+# The installed app packages the scenarios copy (tests/fixtures/apphost/), made by the fixture writer in
+# rust/tests/appfix, never edited by hand; rust/tests/test_app_fixtures.rs checks the committed bytes are what
+# it makes now.
+.PHONY: app-fixtures
+app-fixtures:
+	$(call RCARGO,GRIMOIRE_WRITE_APP_FIXTURES="$(abspath tests/fixtures)") test --test test_app_fixtures
+
 # The C tree's unit tests (core + ui only; no platform).
 TESTS := $(patsubst tests/%.c,$(CBUILD)/test/%,$(wildcard tests/test_*.c))
 # Contraction (fused multiply-add) on, as clang does by default: tests/test_golden.c's renders

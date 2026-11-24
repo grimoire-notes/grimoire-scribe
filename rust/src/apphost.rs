@@ -394,6 +394,10 @@ pub fn apphost_launch(a: &mut App, id: &str) -> bool {
             a.app_view.last_draw = Some(Instant::now());
             let App { screen: c, app_view, .. } = a;
             app_view.draw(c, app_view.body);
+            // (a first drawing pass that stopped the module: the app is not left open with nothing drawn)
+            if apphost_failed(a) {
+                return false;
+            }
             app_invalidate_all(a, RefreshMode::Full);
             true
         }
@@ -523,10 +527,7 @@ fn apphost_after_call(a: &mut App) -> bool {
     if let Some((text, ms)) = toast {
         app_toast(a, &text, ms.max(500) as i32);
     }
-    if let Some(e) = error {
-        a.app_view.error = e;
-        app_toast(a, &a.app_view.error.clone(), 5000);
-        apphost_close(a);
+    if error.is_some() && apphost_failed(a) {
         return true;
     }
     if close {
@@ -539,12 +540,27 @@ fn apphost_after_call(a: &mut App) -> bool {
     false
 }
 
+/// An app whose module was stopped (a call that failed, used up its budget or went past a limit) is closed,
+/// and a toast says why. After a touch or a key that is at once; for a drawing pass, which nothing waits for,
+/// the launch and the tick ask this. Returns whether the app was closed.
+fn apphost_failed(a: &mut App) -> bool {
+    let Some(e) = a.app_view.last_error() else { return false };
+    a.app_view.error = e;
+    app_toast(a, &a.app_view.error.clone(), 5000);
+    apphost_close(a);
+    true
+}
+
 /// Ticks an app's timers and its requested redraws. Called from the Library tick.
 pub fn apphost_tick(a: &mut App, now: u32) {
     if !a.app_view.open {
         return;
     }
     a.app_view.tick();
+    // (a drawing pass stopped the module since the last tick)
+    if apphost_failed(a) {
+        return;
+    }
     let due = a.app_view.runtime.as_ref().is_some_and(|r| r.redraw_due(Instant::now()));
     if due {
         apphost_draw(a);

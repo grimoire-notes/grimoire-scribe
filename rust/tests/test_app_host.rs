@@ -520,3 +520,77 @@ fn an_app_without_the_storage_capability_has_no_saved_state() {
     }
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// What an app says once a drawing pass of its module used up its instructions: the host's words, then the
+/// interpreter's for its out-of-fuel trap.
+const STOPPED: &str = "The app stopped: all fuel consumed by WebAssembly";
+
+/// Whether the last call used its budget up. (A call the interpreter ends by itself leaves what the instructions
+/// it was about to run cost less one, a few units of the thirty million.)
+fn used_up(rt: &AppRuntime) -> bool {
+    rt.fuel_used() <= APP_CALL_FUEL && rt.fuel_used() + 64 > APP_CALL_FUEL
+}
+
+#[test]
+fn a_module_that_loops_for_ever_stops_when_its_instructions_are_used_up() {
+    let root = fresh_root("loops");
+    let before = patterned(SCREEN.0, SCREEN.1);
+    // A drawing pass that never ends: the call is ended when its instructions are used up, the app says so,
+    // nothing is drawn and the module is not called again.
+    let mut rt = installed("test.loop.draw", &BOTH, &Wasm::new(forever(&[])));
+    let mut c = before.clone();
+    rt.draw(&mut c, WHOLE, 0);
+    assert_eq!(rt.error(), Some(STOPPED));
+    assert!(used_up(&rt), "{}", rt.fuel_used());
+    assert_eq!(changed_outside(&before, &c, RECT_EMPTY), 0);
+    rt.draw(&mut c, WHOLE, 0);
+    rt.pointer(0, 4, 4, 0);
+    rt.key(30, 0, true);
+    rt.stop();
+    assert_eq!(rt.error(), Some(STOPPED));
+    assert_eq!(changed_outside(&before, &c, RECT_EMPTY), 0);
+    // The same for a loop that calls an import on every turn, and for a touch and a key that never end.
+    let mut rt = installed("test.loop.calls", &BOTH, &Wasm::new(forever(&call("now", &[]))));
+    rt.draw(&mut c, WHOLE, 0);
+    assert_eq!(rt.error(), Some(STOPPED));
+    let mut touched = Wasm::new(call("fill_rect", &[0, 0, 8, 8, 0]));
+    touched.pointer = forever(&[]);
+    let mut rt = installed("test.loop.touch", &BOTH, &touched);
+    rt.draw(&mut c, WHOLE, 0);
+    assert_eq!(rt.error(), None);
+    rt.pointer(0, 4, 4, 0);
+    assert_eq!((rt.error(), used_up(&rt)), (Some("The app stopped while handling a touch."), true));
+    let mut keyed = Wasm::new(call("fill_rect", &[0, 0, 8, 8, 0]));
+    keyed.key = forever(&[]);
+    let mut rt = installed("test.loop.key", &BOTH, &keyed);
+    rt.draw(&mut c, WHOLE, 0);
+    rt.key(30, 0, true);
+    assert_eq!((rt.error(), used_up(&rt)), (Some("The app stopped while handling a key."), true));
+    // A stop that never ends is ended too, and the app has stopped either way.
+    let mut stops = Wasm::new(call("fill_rect", &[0, 0, 8, 8, 0]));
+    stops.stop = forever(&[]);
+    let mut rt = installed("test.loop.stop", &BOTH, &stops);
+    rt.draw(&mut c, WHOLE, 0);
+    rt.stop();
+    assert_eq!((rt.error(), used_up(&rt)), (None, true));
+    // A start function that never ends: the module does not start, and the launch says why.
+    let mut starts = Wasm::new(Vec::new());
+    starts.start = Some(forever(&[]));
+    install("test.loop.start", &BOTH, &starts.bytes());
+    assert_eq!(load("test.loop.start").as_deref(), Some("The app could not start: all fuel consumed by WebAssembly"));
+    // A function that calls itself for ever ends too: the interpreter's own call stack has a depth.
+    let mut deep = Wasm::new(vec![0x10, FIRST_EXTRA as u8]);
+    deep.extra = vec![vec![0x10, FIRST_EXTRA as u8]];
+    let mut rt = installed("test.loop.deep", &BOTH, &deep);
+    rt.draw(&mut c, WHOLE, 0);
+    assert!(rt.error().is_some_and(|e| e.starts_with("The app stopped: ")), "{:?}", rt.error());
+    // A long call that does end runs to its end: 20,000 calls of an import in a row, and a loop of 200,000 turns.
+    let mut rt = installed("test.loop.line", &BOTH, &Wasm::new(times(20_000, &call("now", &[]))));
+    rt.draw(&mut c, WHOLE, 0);
+    assert_eq!(rt.error(), None);
+    let mut rt = installed("test.loop.turns", &BOTH, &Wasm::new(seq(&[repeat(200_000, &[]), call("fill_rect", &[0, 0, 8, 8, 0])])));
+    rt.draw(&mut c, WHOLE, 0);
+    assert_eq!(rt.error(), None);
+    assert!(rt.fuel_used() > 1_000_000 && rt.fuel_used() < APP_CALL_FUEL);
+    let _ = std::fs::remove_dir_all(&root);
+}

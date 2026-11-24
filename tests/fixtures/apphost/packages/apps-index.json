@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "packages": [
+    {"id":"test.app.loop","name":"Loop","version":"1.0.0","author":"Grimoire tests","description":"A module of the app host's tests.","icon":"","path":"packages/apps/test.app.loop/app.wasm","sha":"c8357fa1b849c539a9bf8d98817afed1bfb73c627c02f72f9f79e0b1c460b8b3","installed_at":1,"source_url":""},
+    {"id":"test.app.counts","name":"Counts","version":"1.0.0","author":"Grimoire tests","description":"A module of the app host's tests.","icon":"","path":"packages/apps/test.app.counts/app.wasm","sha":"469c03a934a4ff0258ff602ad23246fb22895d64df2a5e42c063ef766ee5f860","installed_at":1,"source_url":""}
+  ]
+}

@@ -349,6 +349,11 @@ A module has one linear memory and at most one table. Memory past 48 MiB and tab
 `-1`), and the module runs on. A module that declares a second memory or a second table, or one that
 starts larger than its limit, is not started: the launch says that the app could not start.
 
+A call that needs more than its budget is stopped, and so is a call in which the module fails by
+itself: the app is closed, Home comes back, and a toast says why ("The app stopped: all fuel
+consumed by WebAssembly" for the budget). A module whose start does not end within the budget is not
+started. An `app_stop` that is stopped ends the app all the same.
+
 ## Returning Home
 
 The system gesture is **two fingers swiping up from the bottom of the screen to the middle**. It
@@ -358,6 +363,26 @@ with at most 22% horizontal drift.
 
 The app can also call `close()` at any time; both paths run `app_stop`, save state and return to
 the Library. Removing the package while it runs does the same before deleting its files.
+
+## Testing
+
+- `tests/fixtures/apppkg/` holds a small installed app, the fixture `tests/scenarios/z_apps.qs` opens
+  from the launcher, closes by its own `close()` and by the system swipe, and manages in
+  Settings → Packages → Apps.
+- `tests/fixtures/apphost/` holds small apps for the host's own rules. Their modules are written
+  byte by byte by `rust/tests/appfix` (`make app-fixtures` writes the folder, and
+  `rust/tests/test_app_fixtures.rs` checks it is what the writer makes), so each can pass the host
+  exactly the numbers its rule is about. `tests/scenarios/z_app_host.qs` opens them with app time on
+  the script's clock: one whose drawing pass never ends, which is stopped when its instruction
+  budget is used up, and one that counts its drawing passes.
+- `rust/tests/test_app_host.rs` holds the same rules as unit tests of the host, and compares a
+  drawing pass of one of every command with the kit's own drawing, pixel for pixel.
+
+A scenario can copy a fixture into a fresh data root:
+
+```
+# copy: tests/fixtures/apppkg .
+```
 
 ## Sharing a library
 

@@ -1,0 +1,15 @@
+name: Counts
+id: test.app.counts
+type: app
+version: 1.0.0
+author: Grimoire tests
+description: A module of the app host's tests.
+platforms: [all]
+artifact:
+  path: app.wasm
+  sha256: 469c03a934a4ff0258ff602ad23246fb22895d64df2a5e42c063ef766ee5f860
+  size: 1407
+capabilities: []
+spec:
+  runtime: wasm
+  status_bar: false

@@ -1,5 +1,7 @@
-// appfix: the WebAssembly modules the app host's tests run, written here byte by byte (no compiler, no file
-// from anywhere else).
+// appfix: the WebAssembly modules the app host's tests and scenarios run, written here byte by byte (no
+// compiler, no file from anywhere else), and the installed app packages the scenarios copy
+// (tests/fixtures/apphost/: `make app-fixtures` writes it; test_app_fixtures.rs checks the committed bytes are
+// what this makes now).
 //
 // Every module here imports every function of the `grimoire` ABI an app has (docs/APPS.md) and exports its
 // memory, `app_draw`, `app_pointer`, `app_key` and `app_stop`. A function is given as the bytes of its body
@@ -561,4 +563,78 @@ pub fn keeps() -> Wasm {
     w.stop = call("state_set", &[WORD_AT + 24, 4]);
     w.data = vec![(WORD_AT as u32, b"hello\0\0\0touch\0\0\0key\0\0\0\0\0stop".to_vec())];
     w
+}
+
+// ---- the modules of the scenarios ----
+
+/// Where `counted` keeps its count (an i32), and the six digits it says it in.
+pub const COUNT_AT: i32 = 128;
+pub const DIGITS_AT: i32 = 136;
+
+/// The code that counts a call: one more in the count at COUNT_AT, written as six decimal digits at DIGITS_AT.
+pub fn counted() -> Vec<u8> {
+    // i32.load and i32.store of a whole word, i32.store8 of a byte, at the address on the stack
+    const LOAD: [u8; 3] = [0x28, 0x02, 0x00];
+    const STORE: [u8; 3] = [0x36, 0x02, 0x00];
+    const STORE8: [u8; 3] = [0x3a, 0x00, 0x00];
+    let mut o = seq(&[i(COUNT_AT), i(COUNT_AT), LOAD.to_vec(), i(1), vec![0x6a], STORE.to_vec()]);
+    for (place, tens) in [100_000, 10_000, 1000, 100, 10, 1].into_iter().enumerate() {
+        // (the count over this power of ten, its last digit, as a character)
+        o.extend(seq(&[i(DIGITS_AT + place as i32), i(COUNT_AT), LOAD.to_vec(), i(tens), vec![0x6e], i(10), vec![0x70], i(48), vec![0x6a], STORE8.to_vec()]));
+    }
+    o
+}
+
+/// A module that counts its drawing passes: each `app_draw` says the count in the status line (six digits,
+/// "000001" after the first) and fills a black rectangle of 200x100 at 40,40.
+pub fn counts() -> Vec<u8> {
+    Wasm::new(seq(&[counted(), call("status", &[DIGITS_AT, 6]), call("fill_rect", &[40, 40, 200, 100, 0])])).bytes()
+}
+
+/// A module whose `app_draw` never ends: a loop with no way out.
+pub fn loops() -> Vec<u8> {
+    Wasm::new(forever(&[])).bytes()
+}
+
+/// A package of the scenarios' data root: its id, name, manifest and module.
+pub struct Package {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub manifest: String,
+    pub module: Vec<u8>,
+}
+
+fn package(id: &'static str, name: &'static str, capabilities: &[&str], status_bar: bool, module: Vec<u8>) -> Package {
+    Package { id, name, manifest: manifest(id, name, capabilities, status_bar, &module), module }
+}
+
+/// The packages of tests/fixtures/apphost, in the order of its index.
+pub fn packages() -> Vec<Package> {
+    vec![
+        // (its drawing pass never ends)
+        package("test.app.loop", "Loop", &[], false, loops()),
+        // (it counts its drawing passes)
+        package("test.app.counts", "Counts", &[], false, counts()),
+    ]
+}
+
+/// An installed data root's `packages` folder with these app packages in it, each file's path and bytes.
+pub fn scenario_files(packages: &[Package]) -> Vec<(String, Vec<u8>)> {
+    let mut files = Vec::new();
+    let mut index = String::from("{\n  \"version\": 1,\n  \"packages\": [");
+    for (i, p) in packages.iter().enumerate() {
+        let dir = format!("packages/apps/{}", p.id);
+        index.push_str(if i > 0 { ",\n    " } else { "\n    " });
+        index.push_str(&format!(
+            "{{\"id\":\"{}\",\"name\":\"{}\",\"version\":\"1.0.0\",\"author\":\"Grimoire tests\",\"description\":\"A module of the app host's tests.\",\"icon\":\"\",\"path\":\"{dir}/app.wasm\",\"sha\":\"{}\",\"installed_at\":1,\"source_url\":\"\"}}",
+            p.id,
+            p.name,
+            sha256_of(&p.module),
+        ));
+        files.push((format!("{dir}/package.yaml"), p.manifest.clone().into_bytes()));
+        files.push((format!("{dir}/app.wasm"), p.module.clone()));
+    }
+    index.push_str("\n  ]\n}\n");
+    files.push(("packages/apps-index.json".to_string(), index.into_bytes()));
+    files
 }

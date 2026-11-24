@@ -1,0 +1,15 @@
+name: Loop
+id: test.app.loop
+type: app
+version: 1.0.0
+author: Grimoire tests
+description: A module of the app host's tests.
+platforms: [all]
+artifact:
+  path: app.wasm
+  sha256: c8357fa1b849c539a9bf8d98817afed1bfb73c627c02f72f9f79e0b1c460b8b3
+  size: 1242
+capabilities: []
+spec:
+  runtime: wasm
+  status_bar: false
