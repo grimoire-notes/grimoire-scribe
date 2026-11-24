@@ -9,10 +9,15 @@
 //! the 12-hour clock, and whether a notebook hides the bar (its background there is transparent).
 //!
 //! The functions here that app.rs, editor.rs and the shortcuts still call are kept as no-ops
-//! (status_pen, status_touch, status_cover and friends) so the editor's event and flush paths do not
-//! need a second flag for a feature that no longer exists.
+//! (status_cover and friends) so the editor's event and flush paths do not need a second flag for a
+//! feature that no longer exists.
+//!
+//! One rule of the corner's is the bar's too: in a notebook the minute's refresh waits for the pen
+//! (status_busy, which editor_tick asks). status_pen, status_touch and status_reset keep "the pen is
+//! near" for it, as they did for the corner.
 
 use crate::prelude::*;
+use std::cell::Cell;
 
 /// How many status bar sizes there are: settings.ini status_size 0 small, 1 medium, 2 large.
 pub const STATUS_SIZES: i32 = 3;
@@ -189,18 +194,64 @@ pub fn status_tapped() -> bool {
     false
 }
 
-/// Every pen event, for the retired corner: nothing to watch.
-pub fn status_pen(_ev: &InEvent) {}
+thread_local! {
+    /// The pen is in range: from its first event of any kind until it leaves (the main thread's alone).
+    static PEN_NEAR: Cell<bool> = const { Cell::new(false) };
+}
 
-/// A finger's events, for the retired corner: nothing to take.
-pub fn status_touch(_a: &mut App, _ev: &InEvent) {}
+/// Every pen event, for "the pen is near": in range from its first event until it leaves.
+pub fn status_pen(ev: &InEvent) {
+    match ev.type_ {
+        InType::PenDown | InType::PenMove | InType::PenHover | InType::PenUp => PEN_NEAR.with(|n| n.set(true)),
+        InType::PenLeave => PEN_NEAR.with(|n| n.set(false)),
+        _ => {}
+    }
+}
+
+/// A finger's events: one the touch panel let through is never the pen's hand, so a finger coming down
+/// takes back a "near" that the pen's leaving left behind. Nothing on the page takes a tap for the
+/// retired corner.
+pub fn status_touch(_a: &mut App, ev: &InEvent) {
+    if ev.type_ == InType::TouchDown {
+        PEN_NEAR.with(|n| n.set(false));
+    }
+}
+
+/// Whether a notebook's bar holds its minute's refresh back (editor_tick): the pen is near, a stroke
+/// or another gesture is in progress, or the driver is in pen mode. A grayscale refresh would end that
+/// mode and wait for the pen's last frame (display_fbink.rs pen_leave), so the bar waits for the pen
+/// to leave, as the clock corner it replaced did.
+pub fn status_busy(a: &App) -> bool {
+    PEN_NEAR.with(|n| n.get()) || editor_busy(a) || display_pen_mode_on()
+}
+
+thread_local! {
+    /// The time a notebook's page last drew its whole bar with (0 before the first).
+    static BAR_TIME: Cell<i64> = const { Cell::new(0) };
+}
+
+/// The time a notebook's page draws its bar with (editor.rs compose). A draw of the whole strip takes
+/// the clock's and keeps it; a draw of part of the strip (a stroke's frame under the bar, its settle)
+/// repeats the kept one. So while the minute's refresh waits for the pen (status_busy), a refresh of
+/// the page under the bar never puts part of the next minute on the panel.
+pub fn status_bar_time(whole: bool) -> i64 {
+    BAR_TIME.with(|t| {
+        if whole || t.get() == 0 {
+            t.set(sys_wall_clock());
+        }
+        t.get()
+    })
+}
 
 /// A status setting changed: the shared bar redraws with the next composition; there is no overlay to
 /// refresh.
 pub(crate) fn ask_change(_a: &App) {}
 
-/// The Kindle went to sleep or woke: the retired overlay held nothing.
-pub fn status_reset() {}
+/// The Kindle went to sleep or woke: the pen's leaving may have gone unseen meanwhile. The retired
+/// overlay held nothing else.
+pub fn status_reset() {
+    PEN_NEAR.with(|n| n.set(false));
+}
 
 /// A setting waits to be saved: nothing waits here now.
 pub fn status_save_now(_a: &App) {}
@@ -361,6 +412,64 @@ mod tests {
         std::fs::remove_file(root.join("c_bat").join("status")).ok();
         assert_eq!(battery_from_sysfs(r), Some(Battery { percent: 30, charging: false }));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_pen_holds_the_bar_s_refresh_back() {
+        status_reset();
+        let mut a = App::default();
+        let ev = |t| InEvent { type_: t, ..Default::default() };
+        assert!(!status_busy(&a));
+        // near from its first event of any kind, until it leaves
+        for t in [InType::PenHover, InType::PenDown, InType::PenMove, InType::PenUp] {
+            status_pen(&ev(t));
+            assert!(status_busy(&a), "{t:?}");
+            status_pen(&ev(InType::PenLeave));
+            assert!(!status_busy(&a), "{t:?}");
+        }
+        // a finger or a power key is not the pen
+        status_pen(&ev(InType::TouchDown));
+        status_pen(&ev(InType::Power));
+        assert!(!status_busy(&a));
+        // a finger coming down takes back a "near" that nothing ended; its moves and its lift do not
+        status_pen(&ev(InType::PenHover));
+        status_touch(&mut a, &ev(InType::TouchMove));
+        status_touch(&mut a, &ev(InType::TouchUp));
+        assert!(status_busy(&a));
+        status_touch(&mut a, &ev(InType::TouchDown));
+        assert!(!status_busy(&a));
+        // a pen that was near when the Kindle slept is not near after it
+        status_pen(&ev(InType::PenHover));
+        status_reset();
+        assert!(!status_busy(&a));
+        // the driver in pen mode holds it back too, where there is one that says so (the runner's)
+        #[cfg(feature = "sim")]
+        {
+            display_pen_mode(true);
+            assert!(status_busy(&a));
+            display_pen_mode(false);
+            assert!(!status_busy(&a));
+        }
+    }
+
+    #[test]
+    fn part_of_the_strip_is_drawn_with_the_time_the_whole_strip_was() {
+        // (the clock here is the machine's, or the runner's, which follows it until a script sets it)
+        let now = sys_wall_clock();
+        let whole = status_bar_time(true);
+        assert!((now..=now + 5).contains(&whole), "{now} {whole}");
+        // an earlier whole draw: its time is repeated for a part, however often
+        BAR_TIME.with(|t| t.set(now - 600));
+        assert_eq!(status_bar_time(false), now - 600);
+        assert_eq!(status_bar_time(false), now - 600);
+        // the next whole draw takes the clock's again, and parts follow it
+        let whole = status_bar_time(true);
+        assert!((now..=now + 5).contains(&whole), "{now} {whole}");
+        assert_eq!(status_bar_time(false), whole);
+        // with no whole draw before it, a part takes the clock's too
+        BAR_TIME.with(|t| t.set(0));
+        let first = status_bar_time(false);
+        assert!((now..=now + 5).contains(&first), "{now} {first}");
     }
 
     #[test]
