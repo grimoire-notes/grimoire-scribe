@@ -43,6 +43,7 @@
 //! does nothing. `status`, `setting` and `now` need none.
 
 use crate::prelude::*;
+use crate::wasmhost::{in_body as hit_in_body, on_screen};
 use crate::widgetpkg::{WIDGET_CAP_OVERLAY, WIDGET_CAP_STORAGE};
 use wasmi::{Caller, Config, Engine, Linker, Module, Store, StoreLimits, TrapCode};
 
@@ -121,10 +122,8 @@ pub const WIDGET_CHARGE_SQUARE_BYTES: u64 = 256;
 /// `status`, `setting`, `state_get`, `state_set`: each byte read from the module's memory or written to it.
 pub const WIDGET_CHARGE_BYTE: u64 = 4;
 
-/// How far outside the body, in pixels, an edge of a command's rectangle is still kept as given. A
-/// farther edge is moved in to this distance: what shows in the body is the same, and the sums the
-/// drawing makes with the rectangle stay small.
-const DRAW_REACH: i64 = 1 << 16;
+// (A command's rectangle is held near the body by `wasmhost::on_screen`, and a hit region is cut to it by
+// `wasmhost::in_body`: the two hosts share them.)
 
 /// A drawing command recorded by the module and rendered by the host. Coordinates are body-local.
 #[derive(Clone, Debug)]
@@ -514,27 +513,6 @@ impl WidgetRuntime {
             st.dirty = true;
         }
     }
-}
-
-/// A command's rectangle on the screen. A module passes any numbers: the edges are summed in 64
-/// bits and held within DRAW_REACH of the body, so no later sum overflows. A width or height that
-/// is not positive stays so (an empty rectangle draws nothing).
-fn on_screen(body: Rect, x: i32, y: i32, w: i32, h: i32) -> Rect {
-    fn edge(origin: i32, len: i32, at: i64) -> i32 {
-        (origin as i64 + at).clamp(origin as i64 - DRAW_REACH, origin as i64 + len.max(0) as i64 + DRAW_REACH) as i32
-    }
-    let (x0, x1) = (edge(body.x, body.w, x as i64), edge(body.x, body.w, x as i64 + w as i64));
-    let (y0, y1) = (edge(body.y, body.h, y as i64), edge(body.y, body.h, y as i64 + h as i64));
-    Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
-}
-
-/// The part of a hit region (body-local) that is inside the body, or None when no part is.
-fn hit_in_body(body: Rect, r: Rect) -> Option<Rect> {
-    let x0 = (r.x as i64).max(0);
-    let y0 = (r.y as i64).max(0);
-    let x1 = (r.x as i64 + r.w as i64).min(body.w as i64);
-    let y1 = (r.y as i64 + r.h as i64).min(body.h as i64);
-    (x1 > x0 && y1 > y0).then(|| Rect { x: x0 as i32, y: y0 as i32, w: (x1 - x0) as i32, h: (y1 - y0) as i32 })
 }
 
 /// Ends a call that went past a limit the way a call that used up its instructions ends: with the

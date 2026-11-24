@@ -38,6 +38,7 @@
 
 use crate::globalui::{gui_app_tile, gui_chip, gui_fab, gui_select, gui_status_bar, gui_status_h, gui_surface, gui_text_field};
 use crate::prelude::*;
+use crate::wasmhost::on_screen;
 use std::time::{Duration, Instant};
 use std::os::unix::process::CommandExt;
 use std::process::Command;
@@ -70,6 +71,9 @@ pub const APP_STATE_MAX: usize = 256 * 1024;
 /// The bytes `state_get` and `state_set` may move in one call, all their uses together: the whole state read
 /// and written several times over.
 pub const APP_CALL_STATE_MAX: usize = 16 * APP_STATE_MAX;
+/// The drawing commands of one call, of every kind together (the eighteen drawing calls, `clip` and
+/// `clip_clear` among them).
+pub const APP_CALL_COMMANDS_MAX: usize = 4096;
 /// The bytes of one text: a `text`'s, a `text_at`'s, what `text_width` measures, and each label, caption,
 /// value and hint of the kit's elements.
 pub const APP_TEXT_MAX: usize = 1024;
@@ -83,6 +87,18 @@ pub const APP_STATUS_MAX: usize = 256;
 pub const APP_TOAST_MAX: usize = 256;
 /// The bytes of the connected network's name that `wifi_ssid` writes: the longest a network's name is.
 pub const APP_SSID_MAX: usize = 32;
+/// A text is drawn and measured at most this many pixels high; a larger height is taken as this one. Five
+/// digits this high are as wide as the screen.
+pub const APP_TEXT_PX_MAX: i32 = 768;
+/// An icon is drawn at most this many pixels each way; in a larger rectangle it is this size, in the middle.
+/// (An icon's glyph is made as large as it is drawn.)
+pub const APP_ICON_PX_MAX: i32 = 1024;
+/// A line is drawn at most this many pixels wide, wider than any body; a wider one is drawn at this width.
+pub const APP_LINE_WIDTH_MAX: f32 = 4096.0;
+/// A thickness (an outline's, a round rectangle's, a surface's) is held within this of nothing: a line
+/// thicker than half of the largest rectangle `on_screen` gives fills it as this one does, and one less than
+/// nothing draws as nothing does.
+const THICK_REACH: i32 = 1 << 17;
 
 /// A drawing command recorded by the module and rendered by the host. Coordinates are body-local.
 #[derive(Clone, Debug)]
@@ -722,64 +738,73 @@ impl AppRuntime {
         let in_body = rect_intersect(saved_clip, body);
         canvas_set_clip(c, in_body);
         canvas_fill(c, body, 255);
-        for cmd in commands {
-            match cmd {
-                DrawCmd::Fill(r, gray) => canvas_fill(c, abs(body, r), gray),
-                DrawCmd::Outline(r, t, gray) => canvas_rect_outline(c, abs(body, r), t, gray),
-                DrawCmd::Round(r, radius, gray, filled, t) => {
-                    canvas_round_rect(c, abs(body, r), radius, gray, filled, t)
-                }
-                DrawCmd::Line(x0, y0, x1, y1, width, gray) => {
-                    canvas_line_aa(c, body.x as f32 + x0, body.y as f32 + y0, body.x as f32 + x1, body.y as f32 + y1, width, gray)
-                }
-                DrawCmd::Text(r, text, px, face, center, gray) => {
-                    let r = abs(body, r);
-                    ui_text(c, face, px, px, r, &text, 1, center, gray);
-                    self.texts.push(text);
-                }
-                DrawCmd::TextAt(x, y, text, px, face, gray) => {
-                    font_draw(c, face, px, body.x + x, body.y + y, &text, gray);
-                    self.texts.push(text);
-                }
-                DrawCmd::Icon(name, r, gray) => ui_icon(c, widget_icon(&name), abs(body, r), gray),
-                DrawCmd::Button(r, label, icon, style) => {
-                    ui_button(c, abs(body, r), if icon.is_empty() { IconKind::None } else { widget_icon(&icon) }, &label, button_style(style));
-                    self.texts.push(label);
-                }
-                DrawCmd::Chip(r, label, selected) => {
-                    gui_chip(c, abs(body, r), &label, selected);
-                    self.texts.push(label);
-                }
-                DrawCmd::Row(r, icon, label, style, switch) => {
-                    let mut row = Row::new(if icon.is_empty() { IconKind::None } else { widget_icon(&icon) }, &label);
-                    row.style = button_style(style);
-                    if switch >= 0 {
-                        row.switch = Some(switch != 0);
+        // A module passes any numbers. Each rectangle's edges are held within a reach of the body
+        // (`on_screen`), a place and a line's ends likewise, a thickness within THICK_REACH, a text's height
+        // and a line's width within their limits (when they were recorded), and no icon is made larger than
+        // APP_ICON_PX_MAX: no sum the drawing makes overflows, and nothing is drawn at a size without bound.
+        let at = |r: Rect| on_screen(body, r.x, r.y, r.w, r.h);
+        let thick = |t: i32| t.clamp(-THICK_REACH, THICK_REACH);
+        let texts = &mut self.texts;
+        font_with_icon_side_max(APP_ICON_PX_MAX, || {
+            for cmd in commands {
+                match cmd {
+                    DrawCmd::Fill(r, gray) => canvas_fill(c, at(r), gray),
+                    DrawCmd::Outline(r, t, gray) => canvas_rect_outline(c, at(r), thick(t), gray),
+                    DrawCmd::Round(r, radius, gray, filled, t) => canvas_round_rect(c, at(r), radius, gray, filled, thick(t)),
+                    DrawCmd::Line(x0, y0, x1, y1, width, gray) => {
+                        if let Some((x0, y0, x1, y1)) = line_in_reach(body, x0, y0, x1, y1) {
+                            canvas_line_aa(c, body.x as f32 + x0, body.y as f32 + y0, body.x as f32 + x1, body.y as f32 + y1, width, gray)
+                        }
                     }
-                    ui_row(c, abs(body, r), &row);
-                    self.texts.push(label);
+                    DrawCmd::Text(r, text, px, face, center, gray) => {
+                        ui_text(c, face, px, px, at(r), &text, 1, center, gray);
+                        texts.push(text);
+                    }
+                    DrawCmd::TextAt(x, y, text, px, face, gray) => {
+                        let p = at(Rect::new(x, y, 0, 0));
+                        font_draw(c, face, px, p.x, p.y, &text, gray);
+                        texts.push(text);
+                    }
+                    DrawCmd::Icon(name, r, gray) => ui_icon(c, widget_icon(&name), at(r), gray),
+                    DrawCmd::Button(r, label, icon, style) => {
+                        ui_button(c, at(r), if icon.is_empty() { IconKind::None } else { widget_icon(&icon) }, &label, button_style(style));
+                        texts.push(label);
+                    }
+                    DrawCmd::Chip(r, label, selected) => {
+                        gui_chip(c, at(r), &label, selected);
+                        texts.push(label);
+                    }
+                    DrawCmd::Row(r, icon, label, style, switch) => {
+                        let mut row = Row::new(if icon.is_empty() { IconKind::None } else { widget_icon(&icon) }, &label);
+                        row.style = button_style(style);
+                        if switch >= 0 {
+                            row.switch = Some(switch != 0);
+                        }
+                        ui_row(c, at(r), &row);
+                        texts.push(label);
+                    }
+                    DrawCmd::Surface(r, filled, t) => gui_surface(c, at(r), filled, thick(t)),
+                    DrawCmd::Select(r, caption, value) => {
+                        gui_select(c, at(r), &caption, &value);
+                        texts.push(value);
+                    }
+                    DrawCmd::AppTile(r, icon, label, selected) => {
+                        let icon = AppIcon::glyph(widget_icon(&icon));
+                        gui_app_tile(c, at(r), &icon, &label, selected);
+                        texts.push(label);
+                    }
+                    DrawCmd::Fab(r, icon) => gui_fab(c, at(r), widget_icon(&icon)),
+                    DrawCmd::Card(r, style) => ui_card(c, at(r), button_style(style)),
+                    DrawCmd::TextField(r, icon, text, hint) => {
+                        gui_text_field(c, at(r), if icon.is_empty() { IconKind::None } else { widget_icon(&icon) }, &text, &hint);
+                        texts.push(text);
+                        texts.push(hint);
+                    }
+                    DrawCmd::Clip(r) => canvas_set_clip(c, rect_intersect(at(r), in_body)),
+                    DrawCmd::ClipClear => canvas_set_clip(c, in_body),
                 }
-                DrawCmd::Surface(r, filled, thick) => gui_surface(c, abs(body, r), filled, thick),
-                DrawCmd::Select(r, caption, value) => {
-                    gui_select(c, abs(body, r), &caption, &value);
-                    self.texts.push(value);
-                }
-                DrawCmd::AppTile(r, icon, label, selected) => {
-                    let icon = AppIcon::glyph(widget_icon(&icon));
-                    gui_app_tile(c, abs(body, r), &icon, &label, selected);
-                    self.texts.push(label);
-                }
-                DrawCmd::Fab(r, icon) => gui_fab(c, abs(body, r), widget_icon(&icon)),
-                DrawCmd::Card(r, style) => ui_card(c, abs(body, r), button_style(style)),
-                DrawCmd::TextField(r, icon, text, hint) => {
-                    gui_text_field(c, abs(body, r), if icon.is_empty() { IconKind::None } else { widget_icon(&icon) }, &text, &hint);
-                    self.texts.push(text);
-                    self.texts.push(hint);
-                }
-                DrawCmd::Clip(r) => canvas_set_clip(c, rect_intersect(abs(body, r), in_body)),
-                DrawCmd::ClipClear => canvas_set_clip(c, in_body),
             }
-        }
+        });
         c.clip = saved_clip;
     }
 
@@ -909,8 +934,52 @@ impl AppRuntime {
     }
 }
 
-fn abs(body: Rect, r: Rect) -> Rect {
-    Rect { x: body.x + r.x, y: body.y + r.y, w: r.w, h: r.h }
+/// The height a text is drawn and measured at, in pixels, from the thousandths a module passes: from one
+/// thousandth to APP_TEXT_PX_MAX, a value outside taken as the nearer end.
+fn text_px(px_milli: i32) -> f32 {
+    px_milli.clamp(1, APP_TEXT_PX_MAX * 1000) as f32 / 1000.0
+}
+
+/// An end of a line farther from the body than this, each way by itself, is first taken at this distance: the
+/// cut below is then worked out to a small part of a pixel, whatever numbers the module passed.
+const LINE_FAR: f64 = (1u64 << 30) as f64;
+
+/// A line's ends, relative to the body's top left, held within DRAW_REACH of the body: a line inside that reach
+/// is kept as given, and one that reaches farther is cut where it leaves the reach, on the line it is on, so
+/// what shows in the body is the same. None for a line with no part in that reach, or with an end that is not a
+/// number.
+fn line_in_reach(body: Rect, x0: f32, y0: f32, x1: f32, y1: f32) -> Option<(f32, f32, f32, f32)> {
+    if !(x0.is_finite() && y0.is_finite() && x1.is_finite() && y1.is_finite()) {
+        return None;
+    }
+    let reach = crate::wasmhost::DRAW_REACH as f64;
+    let (far_x, far_y) = (body.w.max(0) as f64 + reach, body.h.max(0) as f64 + reach);
+    let within = |x: f32, y: f32| (-reach..=far_x).contains(&(x as f64)) && (-reach..=far_y).contains(&(y as f64));
+    if within(x0, y0) && within(x1, y1) {
+        return Some((x0, y0, x1, y1));
+    }
+    // (the part of the line between its ends that lies in the reach: from t0 to t1 of the way along it)
+    let near = |v: f32| (v as f64).clamp(-LINE_FAR, LINE_FAR);
+    let (ax, ay, bx, by) = (near(x0), near(y0), near(x1), near(y1));
+    let (dx, dy) = (bx - ax, by - ay);
+    let (mut t0, mut t1) = (0.0f64, 1.0f64);
+    for (step, room) in [(-dx, ax + reach), (dx, far_x - ax), (-dy, ay + reach), (dy, far_y - ay)] {
+        if step == 0.0 {
+            if room < 0.0 {
+                return None;
+            }
+        } else if step < 0.0 {
+            t0 = t0.max(room / step);
+        } else {
+            t1 = t1.min(room / step);
+        }
+    }
+    // (an end that is in the reach stays the number it is)
+    let at = |t: f64| if t <= 0.0 { (ax as f32, ay as f32) } else if t >= 1.0 { (bx as f32, by as f32) } else { ((ax + t * dx) as f32, (ay + t * dy) as f32) };
+    (t0 <= t1).then(|| {
+        let ((x0, y0), (x1, y1)) = (at(t0), at(t1));
+        (x0, y0, x1, y1)
+    })
 }
 
 fn button_style(v: i32) -> ButtonStyle {
@@ -937,91 +1006,120 @@ fn install_imports(linker: &mut Linker<HostState>) -> Result<(), String> {
     let e = |x: wasmi::errors::LinkerError| x.to_string();
 
     // ---- drawing ----
-    linker.func_wrap(ABI, "fill_rect", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, gray: i32| {
+    // (each records one command, when the call has room for one more: `room_for_command`)
+    linker.func_wrap(ABI, "fill_rect", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, gray: i32| -> Result<(), wasmi::Error> {
+        room_for_command(caller.data())?;
         caller.data_mut().commands.push(DrawCmd::Fill(Rect::new(x, y, w, h), gray.clamp(0, 255) as u8));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "outline_rect", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, t: i32, gray: i32| {
+    linker.func_wrap(ABI, "outline_rect", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, t: i32, gray: i32| -> Result<(), wasmi::Error> {
+        room_for_command(caller.data())?;
         caller.data_mut().commands.push(DrawCmd::Outline(Rect::new(x, y, w, h), t, gray.clamp(0, 255) as u8));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "round_rect", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, radius: i32, gray: i32, filled: i32, t: i32| {
+    linker.func_wrap(ABI, "round_rect", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, radius: i32, gray: i32, filled: i32, t: i32| -> Result<(), wasmi::Error> {
+        room_for_command(caller.data())?;
         caller.data_mut().commands.push(DrawCmd::Round(Rect::new(x, y, w, h), radius, gray.clamp(0, 255) as u8, filled != 0, t));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "line", |mut caller: Caller<'_, HostState>, x0: f32, y0: f32, x1: f32, y1: f32, width: f32, gray: i32| {
-        caller.data_mut().commands.push(DrawCmd::Line(x0, y0, x1, y1, width.max(0.1), gray.clamp(0, 255) as u8));
+    linker.func_wrap(ABI, "line", |mut caller: Caller<'_, HostState>, x0: f32, y0: f32, x1: f32, y1: f32, width: f32, gray: i32| -> Result<(), wasmi::Error> {
+        room_for_command(caller.data())?;
+        caller.data_mut().commands.push(DrawCmd::Line(x0, y0, x1, y1, width.max(0.1).min(APP_LINE_WIDTH_MAX), gray.clamp(0, 255) as u8));
+        Ok(())
     }).map_err(e)?;
     linker.func_wrap(ABI, "text", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, ptr: i32, len: i32, px_milli: i32, face_: i32, center: i32, gray: i32| -> Result<(), wasmi::Error> {
+        room_for_command(caller.data())?;
         let text = call_text(&mut caller, ptr, len)?;
-        caller.data_mut().commands.push(DrawCmd::Text(Rect::new(x, y, w, h), text, (px_milli.max(1) as f32) / 1000.0, face(face_), center != 0, gray.clamp(0, 255) as u8));
+        caller.data_mut().commands.push(DrawCmd::Text(Rect::new(x, y, w, h), text, text_px(px_milli), face(face_), center != 0, gray.clamp(0, 255) as u8));
         Ok(())
     }).map_err(e)?;
     linker.func_wrap(ABI, "text_at", |mut caller: Caller<'_, HostState>, x: i32, baseline: i32, ptr: i32, len: i32, px_milli: i32, face_: i32, gray: i32| -> Result<(), wasmi::Error> {
+        room_for_command(caller.data())?;
         let text = call_text(&mut caller, ptr, len)?;
-        caller.data_mut().commands.push(DrawCmd::TextAt(x, baseline, text, (px_milli.max(1) as f32) / 1000.0, face(face_), gray.clamp(0, 255) as u8));
+        caller.data_mut().commands.push(DrawCmd::TextAt(x, baseline, text, text_px(px_milli), face(face_), gray.clamp(0, 255) as u8));
         Ok(())
     }).map_err(e)?;
     linker.func_wrap(ABI, "text_width", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, px_milli: i32, face_: i32| -> Result<i32, wasmi::Error> {
         let text = call_text(&mut caller, ptr, len)?;
-        Ok(font_measure(face(face_), (px_milli.max(1) as f32) / 1000.0, &text))
+        Ok(font_measure(face(face_), text_px(px_milli), &text))
     }).map_err(e)?;
     linker.func_wrap(ABI, "text_height", |_caller: Caller<'_, HostState>, px_milli: i32, face_: i32| -> i32 {
-        let px = (px_milli.max(1) as f32) / 1000.0;
+        let px = text_px(px_milli);
         font_ascent(face(face_), px) + font_descent(face(face_), px)
     }).map_err(e)?;
-    linker.func_wrap(ABI, "icon", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, x: i32, y: i32, w: i32, h: i32, gray: i32| {
+    linker.func_wrap(ABI, "icon", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, x: i32, y: i32, w: i32, h: i32, gray: i32| -> Result<(), wasmi::Error> {
+        room_for_command(caller.data())?;
         let name = icon_name(&mut caller, ptr, len);
         caller.data_mut().commands.push(DrawCmd::Icon(name, Rect::new(x, y, w, h), gray.clamp(0, 255) as u8));
+        Ok(())
     }).map_err(e)?;
     linker.func_wrap(ABI, "button", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, label_ptr: i32, label_len: i32, icon_ptr: i32, icon_len: i32, style: i32| -> Result<(), wasmi::Error> {
+        room_for_command(caller.data())?;
         let label = call_text(&mut caller, label_ptr, label_len)?;
         let icon = icon_name(&mut caller, icon_ptr, icon_len);
         caller.data_mut().commands.push(DrawCmd::Button(Rect::new(x, y, w, h), label, icon, style));
         Ok(())
     }).map_err(e)?;
     linker.func_wrap(ABI, "chip", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, ptr: i32, len: i32, selected: i32| -> Result<(), wasmi::Error> {
+        room_for_command(caller.data())?;
         let label = call_text(&mut caller, ptr, len)?;
         caller.data_mut().commands.push(DrawCmd::Chip(Rect::new(x, y, w, h), label, selected != 0));
         Ok(())
     }).map_err(e)?;
     linker.func_wrap(ABI, "row", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, icon_ptr: i32, icon_len: i32, label_ptr: i32, label_len: i32, style: i32, switch: i32| -> Result<(), wasmi::Error> {
+        room_for_command(caller.data())?;
         let icon = icon_name(&mut caller, icon_ptr, icon_len);
         let label = call_text(&mut caller, label_ptr, label_len)?;
         caller.data_mut().commands.push(DrawCmd::Row(Rect::new(x, y, w, h), icon, label, style, switch));
         Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "surface", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, filled: i32, thick: i32| {
+    linker.func_wrap(ABI, "surface", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, filled: i32, thick: i32| -> Result<(), wasmi::Error> {
+        room_for_command(caller.data())?;
         caller.data_mut().commands.push(DrawCmd::Surface(Rect::new(x, y, w, h), filled != 0, thick));
+        Ok(())
     }).map_err(e)?;
     linker.func_wrap(ABI, "select", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, cap_ptr: i32, cap_len: i32, val_ptr: i32, val_len: i32| -> Result<(), wasmi::Error> {
+        room_for_command(caller.data())?;
         let caption = call_text(&mut caller, cap_ptr, cap_len)?;
         let value = call_text(&mut caller, val_ptr, val_len)?;
         caller.data_mut().commands.push(DrawCmd::Select(Rect::new(x, y, w, h), caption, value));
         Ok(())
     }).map_err(e)?;
     linker.func_wrap(ABI, "app_tile", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, icon_ptr: i32, icon_len: i32, label_ptr: i32, label_len: i32, selected: i32| -> Result<(), wasmi::Error> {
+        room_for_command(caller.data())?;
         let icon = icon_name(&mut caller, icon_ptr, icon_len);
         let label = call_text(&mut caller, label_ptr, label_len)?;
         caller.data_mut().commands.push(DrawCmd::AppTile(Rect::new(x, y, w, h), icon, label, selected != 0));
         Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "fab", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, icon_ptr: i32, icon_len: i32| {
+    linker.func_wrap(ABI, "fab", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, icon_ptr: i32, icon_len: i32| -> Result<(), wasmi::Error> {
+        room_for_command(caller.data())?;
         let icon = icon_name(&mut caller, icon_ptr, icon_len);
         caller.data_mut().commands.push(DrawCmd::Fab(Rect::new(x, y, w, h), icon));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "card", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, style: i32| {
+    linker.func_wrap(ABI, "card", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, style: i32| -> Result<(), wasmi::Error> {
+        room_for_command(caller.data())?;
         caller.data_mut().commands.push(DrawCmd::Card(Rect::new(x, y, w, h), style));
+        Ok(())
     }).map_err(e)?;
     linker.func_wrap(ABI, "text_field", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, icon_ptr: i32, icon_len: i32, text_ptr: i32, text_len: i32, hint_ptr: i32, hint_len: i32| -> Result<(), wasmi::Error> {
+        room_for_command(caller.data())?;
         let icon = icon_name(&mut caller, icon_ptr, icon_len);
         let text = call_text(&mut caller, text_ptr, text_len)?;
         let hint = call_text(&mut caller, hint_ptr, hint_len)?;
         caller.data_mut().commands.push(DrawCmd::TextField(Rect::new(x, y, w, h), icon, text, hint));
         Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "clip", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32| {
+    linker.func_wrap(ABI, "clip", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32| -> Result<(), wasmi::Error> {
+        room_for_command(caller.data())?;
         caller.data_mut().commands.push(DrawCmd::Clip(Rect::new(x, y, w, h)));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "clip_clear", |mut caller: Caller<'_, HostState>| {
+    linker.func_wrap(ABI, "clip_clear", |mut caller: Caller<'_, HostState>| -> Result<(), wasmi::Error> {
+        room_for_command(caller.data())?;
         caller.data_mut().commands.push(DrawCmd::ClipClear);
+        Ok(())
     }).map_err(e)?;
 
     // ---- state, settings, system ----
@@ -1495,6 +1593,14 @@ fn icon_name(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32) -> String {
     String::from_utf8_lossy(&read_mem(caller, ptr, len)).into_owned()
 }
 
+/// Whether the call may record one more drawing command.
+fn room_for_command(st: &HostState) -> Result<(), wasmi::Error> {
+    if st.commands.len() >= APP_CALL_COMMANDS_MAX {
+        return Err(past(st, "the drawing commands of a call", APP_CALL_COMMANDS_MAX));
+    }
+    Ok(())
+}
+
 /// Counts `n` bytes of state about to be copied in this call.
 fn state_moved(st: &mut HostState, n: usize) -> Result<(), wasmi::Error> {
     if st.state_bytes + n > APP_CALL_STATE_MAX {
@@ -1525,6 +1631,45 @@ mod tests {
         assert!(gesture_matches(900.0, 2300.0, 930.0, 1200.0, 1860, 2480));
         assert!(!gesture_matches(900.0, 1500.0, 930.0, 1200.0, 1860, 2480));
         assert!(!gesture_matches(900.0, 2300.0, 1700.0, 1200.0, 1860, 2480));
+    }
+
+    // A line's ends are held within DRAW_REACH of the body: a line inside that reach is kept as given, bit for
+    // bit; one that reaches farther is cut where it leaves the reach, on the line it is on; one with no part
+    // there, or with an end that is not a number, is no line.
+    #[test]
+    fn a_line_is_cut_where_it_leaves_the_reach_of_the_body() {
+        let body = Rect::new(0, 78, 1860, 2402);
+        let reach = crate::wasmhost::DRAW_REACH as f32;
+        assert_eq!(reach, 65_536.0);
+        let (far_x, far_y) = (1860.0 + reach, 2402.0 + reach);
+        for line in [(40.5, 200.25, 800.0, 260.0), (0.0, 0.0, 0.0, 0.0), (-reach, -reach, far_x, far_y), (far_x, 0.0, -reach, far_y), (-5000.0, 3000.0, 9000.0, -70.5)] {
+            assert_eq!(line_in_reach(body, line.0, line.1, line.2, line.3), Some(line), "{line:?} is kept as given");
+        }
+        // Level, upright and at a slant: each end outside the reach is moved to its edge, along the line.
+        assert_eq!(line_in_reach(body, -1e9, 500.0, 1e9, 500.0), Some((-reach, 500.0, far_x, 500.0)));
+        assert_eq!(line_in_reach(body, 700.0, 1e9, 700.0, -1e9), Some((700.0, far_y, 700.0, -reach)));
+        assert_eq!(line_in_reach(body, 100.0, 100.0, 100.0 + 2e6, 100.0 + 1e6), Some((100.0, 100.0, far_x, 100.0 + (far_x - 100.0) / 2.0)));
+        let (x0, y0, x1, y1) = line_in_reach(body, -3e6, -3e6, 3e6, 3e6).unwrap();
+        assert_eq!((x0, y0, x1, y1), (-reach, -reach, far_x, far_x), "a diagonal ends where it first leaves the reach, each way");
+        for v in [f32::MAX, f32::MIN, 1e30, -1e30] {
+            let cut = line_in_reach(body, v, 300.0, 900.0, 300.0).unwrap();
+            assert_eq!((cut.1, cut.2, cut.3), (300.0, 900.0, 300.0), "{v}");
+            assert_eq!(cut.0, if v > 0.0 { far_x } else { -reach }, "{v}");
+        }
+        // No part in the reach: beside it, and passing it by at a slant.
+        assert_eq!(line_in_reach(body, -1e9, 500.0, -reach - 1.0, 500.0), None);
+        assert_eq!(line_in_reach(body, 0.0, far_y + 1.0, 1860.0, far_y + 9.0), None);
+        assert_eq!(line_in_reach(body, -reach - 10.0, -reach + 5.0, -reach + 5.0, -reach - 10.0), None);
+        // (and one that crosses a corner of the reach is the part of it there)
+        assert_eq!(line_in_reach(body, -reach - 10.0, 0.0, 0.0, -reach - 10.0), Some((-reach, -10.0, -10.0, -reach)));
+        // An end that is not a number.
+        for v in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            for at in 0..4 {
+                let mut ends = [100.0, 100.0, 900.0, 800.0];
+                ends[at] = v;
+                assert_eq!(line_in_reach(body, ends[0], ends[1], ends[2], ends[3]), None, "{v} as number {at}");
+            }
+        }
     }
 
     // ---- HTTP ----

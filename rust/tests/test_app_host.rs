@@ -746,6 +746,30 @@ fn texts_of(len: i32) -> Vec<(&'static str, Vec<u8>)> {
     ]
 }
 
+/// One call of each drawing command there is, small: its name, and the call.
+fn last_commands() -> Vec<(&'static str, Vec<u8>)> {
+    vec![
+        ("fill_rect", call("fill_rect", &[0, 0, 8, 8, 0])),
+        ("outline_rect", call("outline_rect", &[0, 0, 40, 40, 2, 0])),
+        ("round_rect", call("round_rect", &[0, 0, 40, 40, 8, 0, 1, 0])),
+        ("line", line(0.0, 0.0, 40.0, 30.0, 2.0, 0)),
+        ("text", call("text", &[0, 0, 400, 60, 0, 4, 34_000, 0, 0, 0])),
+        ("text_at", call("text_at", &[0, 60, 0, 4, 34_000, 0, 0])),
+        ("icon", call("icon", &[0, 4, 0, 0, 60, 60, 0])),
+        ("button", call("button", &[0, 0, 300, 100, 0, 4, 0, 0, 0])),
+        ("chip", call("chip", &[0, 0, 200, 80, 0, 4, 0])),
+        ("row", call("row", &[0, 0, 600, 100, 0, 0, 0, 4, 0, 1])),
+        ("surface", call("surface", &[0, 0, 200, 100, 0, 3])),
+        ("select", call("select", &[0, 0, 500, 100, 0, 4, 0, 4])),
+        ("app_tile", call("app_tile", &[0, 0, 200, 240, 0, 0, 0, 4, 0])),
+        ("fab", call("fab", &[0, 0, 120, 120, 0, 0])),
+        ("card", call("card", &[0, 0, 200, 100, 0])),
+        ("text_field", call("text_field", &[0, 0, 600, 100, 0, 0, 0, 4, 0, 4])),
+        ("clip", call("clip", &[0, 0, 100, 100])),
+        ("clip_clear", call("clip_clear", &[])),
+    ]
+}
+
 #[test]
 fn a_call_at_a_limit_runs_and_one_past_it_stops_as_out_of_instructions() {
     let root = fresh_root("limits");
@@ -767,6 +791,14 @@ fn a_call_at_a_limit_runs_and_one_past_it_stops_as_out_of_instructions() {
     let most: Vec<u8> = (0..APP_CALL_TEXT_MAX / APP_TEXT_MAX).flat_map(|k| kinds[k % kinds.len()].1.clone()).collect();
     for (name, more) in texts_of(1) {
         cases.push((format!("all the texts of a call, the last {name}"), most.clone(), seq(&[most.clone(), more])));
+    }
+    // The drawing commands of a call: 4,096 of them, and one more; and each kind of command as the last.
+    let commands = APP_CALL_COMMANDS_MAX;
+    assert_eq!(commands, 4096);
+    let small = call("fill_rect", &[0, 0, 8, 8, 0]);
+    cases.push(("drawing commands".into(), times(commands, &small), times(commands + 1, &small)));
+    for (name, last) in last_commands() {
+        cases.push((format!("{name} as the last command"), seq(&[times(commands - 1, &small), last.clone()]), seq(&[times(commands, &small), last])));
     }
     cases.push(("the status line".into(), call("status", &[0, line]), call("status", &[0, line + 1])));
     cases.push(("a status line of every length".into(), call("status", &[0, -1]), call("status", &[0, MAX])));
@@ -935,5 +967,246 @@ fn an_icon_name_longer_than_any_icons_names_no_icon() {
     assert!(drawn("test.names.padded", 64).px == gear.px, "a name of 64 bytes is read");
     assert!(drawn("test.names.longer", 65).px == unknown.px, "a name of 65 bytes names no icon");
     assert!(drawn("test.names.most", MAX).px == unknown.px);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A sequence of numbers that is the same on every run (xorshift), for passes of numbers nobody chose.
+struct Dice(u64);
+
+impl Dice {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+    fn of<T: Copy>(&mut self, pool: &[T]) -> T {
+        pool[(self.next() % pool.len() as u64) as usize]
+    }
+    /// A place or a size: one of the numbers at which a sum overflows or a reach ends, or any number near a body.
+    fn n(&mut self) -> i32 {
+        const EDGES: [i32; 26] = [
+            MIN, MIN + 1, -1_073_741_824, -131_073, -131_072, -70_000, -65_537, -65_536, -65_535, -5000, -1, 0, 1, 7, 100, 1860, 2480, 5000, 65_535, 65_536, 65_537, 131_072,
+            131_073, 1_073_741_824, MAX - 1, MAX,
+        ];
+        match self.next() % 3 {
+            0 => self.of(&EDGES),
+            _ => (self.next() % 4000) as i32 - 1000,
+        }
+    }
+    fn f(&mut self) -> f32 {
+        const EDGES: [f32; 14] = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, f32::MAX, f32::MIN, 1e30, -1e30, 1e9, -1e9, 70_000.0, -70_000.0, 0.0, -0.0, f32::MIN_POSITIVE];
+        match self.next() % 3 {
+            0 => self.of(&EDGES),
+            _ => (self.next() % 400_000) as f32 / 100.0 - 1000.0,
+        }
+    }
+    fn text(&mut self) -> &'static str {
+        const LONG: &str = "many words in a row that go on for longer than any line of any body has room for, so that the line is cut short and, where the element takes two lines, broken into two at one of its spaces";
+        self.of(&["", "x", "12:34", "A label", "two words", LONG, "a\0b", "tab\tand\nline", "\u{65e5}\u{672c}\u{8a9e}", "caf\u{e9} \u{1f600}", "   "])
+    }
+    fn icon(&mut self) -> &'static str {
+        self.of(&["", "gear", "md-clock", "no such icon", "files", "search", "  download  "])
+    }
+    fn cmd(&mut self) -> Cmd {
+        let (x, y, w, h) = (self.n(), self.n(), self.n(), self.n());
+        let (a, b, c) = (self.n(), self.n(), self.n());
+        match self.next() % 18 {
+            0 => Cmd::Fill(x, y, w, h, a),
+            1 => Cmd::Outline(x, y, w, h, a, b),
+            2 => Cmd::Round(x, y, w, h, a, b, c & 1, self.n()),
+            3 => Cmd::Line(self.f(), self.f(), self.f(), self.f(), self.f(), a),
+            4 => Cmd::Text(x, y, w, h, self.text(), a, b, c & 1, self.n()),
+            5 => Cmd::TextAt(x, y, self.text(), a, b, c),
+            6 => Cmd::Icon(self.icon(), x, y, w, h, a),
+            7 => Cmd::Button(x, y, w, h, self.text(), self.icon(), a),
+            8 => Cmd::Chip(x, y, w, h, self.text(), a),
+            9 => Cmd::Row(x, y, w, h, self.icon(), self.text(), a, b),
+            10 => Cmd::Surface(x, y, w, h, a & 1, b),
+            11 => Cmd::Select(x, y, w, h, self.text(), self.text()),
+            12 => Cmd::AppTile(x, y, w, h, self.icon(), self.text(), a),
+            13 => Cmd::Fab(x, y, w, h, self.icon()),
+            14 => Cmd::Card(x, y, w, h, a),
+            15 => Cmd::TextField(x, y, w, h, self.icon(), self.text(), self.text()),
+            16 => Cmd::Clip(x, y, w, h),
+            _ => Cmd::ClipClear,
+        }
+    }
+}
+
+#[test]
+fn no_number_an_app_passes_overflows_a_sum_or_draws_outside_its_body() {
+    let root = fresh_root("numbers");
+    // Every command with the numbers at which a sum of two of them overflows, each once, by name.
+    let mut edges = Vec::new();
+    for (x, y, w, h) in [(MIN, MIN, MAX, MAX), (MAX, MAX, MAX, MAX), (MIN, MIN, MIN, MIN), (-1, -1, MAX, MAX), (MAX, 0, 10, 10), (0, MAX, 10, 10), (MIN, 0, MAX, 40), (0, 0, -50, -50), (0, 0, 0, 0), (-65_536, -65_536, 131_072, 131_072)] {
+        for t in [MIN, -1, 0, 3, MAX] {
+            edges.push(Cmd::Fill(x, y, w, h, t));
+            edges.push(Cmd::Outline(x, y, w, h, t, 0));
+            edges.push(Cmd::Round(x, y, w, h, t, 0, 1, t));
+            edges.push(Cmd::Round(x, y, w, h, MAX, 0, 0, t));
+            edges.push(Cmd::Surface(x, y, w, h, 0, t));
+            edges.push(Cmd::Text(x, y, w, h, "12:34", t, t, 0, 0));
+            edges.push(Cmd::TextAt(x, y, "12:34", t, 1, 0));
+        }
+        edges.push(Cmd::Icon("gear", x, y, w, h, 0));
+        edges.push(Cmd::Button(x, y, w, h, "A label", "gear", 0));
+        edges.push(Cmd::Chip(x, y, w, h, "A chip", 1));
+        edges.push(Cmd::Row(x, y, w, h, "gear", "A row", 0, 1));
+        edges.push(Cmd::Select(x, y, w, h, "Sort", "Name"));
+        edges.push(Cmd::AppTile(x, y, w, h, "clock", "Clock", 0));
+        edges.push(Cmd::Fab(x, y, w, h, "download"));
+        edges.push(Cmd::Card(x, y, w, h, 2));
+        edges.push(Cmd::TextField(x, y, w, h, "search", "typed", "hint"));
+        edges.push(Cmd::Clip(x, y, w, h));
+        edges.push(Cmd::Fill(-5000, -5000, 20_000, 20_000, 128));
+        edges.push(Cmd::ClipClear);
+    }
+    for v in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, f32::MAX, f32::MIN, 1e30, -1e30] {
+        edges.push(Cmd::Line(v, 100.0, 900.0, 800.0, 6.0, 0));
+        edges.push(Cmd::Line(100.0, v, 900.0, 800.0, 6.0, 0));
+        edges.push(Cmd::Line(100.0, 100.0, v, 800.0, 6.0, 0));
+        edges.push(Cmd::Line(100.0, 100.0, 900.0, v, 6.0, 0));
+        edges.push(Cmd::Line(100.0, 100.0, 900.0, 800.0, v, 0));
+        edges.push(Cmd::Line(v, v, v, v, v, 0));
+        edges.push(Cmd::Line(v, v, -v, -v, 3.0, 0));
+    }
+    // Then passes of numbers nobody chose: sixty commands each, of any kind, on bodies of several shapes (the
+    // screen under the bar, a part of it, one of a single pixel, one with no width, one that is partly off the
+    // canvas on two sides), in both themes, with the whole canvas and with a part of it as the caller's clip.
+    let mut dice = Dice(0x2545_F491_4F6C_DD1D);
+    let mut passes: Vec<Vec<Cmd>> = vec![edges];
+    passes.extend((0..59).map(|_| (0..60).map(|_| dice.cmd()).collect()));
+    let bodies = [
+        Rect { x: 300, y: 200, w: 700, h: 900 },
+        body_under_the_bar(),
+        Rect { x: 500, y: 500, w: 1, h: 1 },
+        Rect { x: 500, y: 500, w: 0, h: 300 },
+        Rect { x: -200, y: -100, w: 600, h: 500 },
+        Rect { x: 1600, y: 2200, w: 600, h: 500 },
+    ];
+    for (i, cmds) in passes.iter().enumerate() {
+        let mut rt = loaded(&format!("test.numbers.{i}"), &BOTH, &pass(cmds));
+        for (b, body) in [bodies[0], bodies[1 + i % 5]].into_iter().enumerate() {
+            let theme = if (i + b) % 2 == 0 { UiTheme::Gothic } else { UiTheme::Classic };
+            ui_set_theme(theme);
+            let before = patterned(SCREEN.0, SCREEN.1);
+            let mut c = before.clone();
+            let part = Rect { x: 100, y: 100, w: 1500, h: 2000 };
+            if i % 3 == 2 {
+                canvas_set_clip(&mut c, part);
+            }
+            let clip = c.clip;
+            rt.draw(&mut c, body, 0);
+            assert_eq!(rt.error(), None, "pass {i}");
+            assert_eq!(changed_outside(&before, &c, rect_intersect(body, clip)), 0, "pass {i} in {theme:?}, a body at {},{} of {}x{}: pixels outside it changed", body.x, body.y, body.w, body.h);
+            assert_eq!(c.clip, clip, "pass {i}: the canvas keeps its clip");
+        }
+    }
+    ui_set_theme(UiTheme::Gothic);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The canvas after one pass, on the whole screen, of these commands.
+fn drawn(id: &str, cmds: &[Cmd]) -> Canvas {
+    let mut rt = loaded(id, &BOTH, &pass(cmds));
+    let mut c = patterned(SCREEN.0, SCREEN.1);
+    rt.draw(&mut c, WHOLE, 0);
+    assert_eq!(rt.error(), None, "{id}");
+    c
+}
+
+#[test]
+fn a_text_is_drawn_and_measured_at_most_768_px_high() {
+    let root = fresh_root("px");
+    assert_eq!(APP_TEXT_PX_MAX, 768);
+    for theme in [UiTheme::Gothic, UiTheme::Classic] {
+        ui_set_theme(theme);
+        let t = if theme == UiTheme::Gothic { "g" } else { "c" };
+        for (kind, face) in [("text", 0), ("text", 1), ("at", 4)] {
+            let letter = |px_milli: i32| -> Vec<Cmd> {
+                if kind == "text" {
+                    vec![Cmd::Text(0, 0, SCREEN.0, SCREEN.1, "W", px_milli, face, 0, 0)]
+                } else {
+                    vec![Cmd::TextAt(40, 1400, "W", px_milli, face, 0)]
+                }
+            };
+            let id = |what: &str| format!("test.px.{t}.{kind}{face}.{what}");
+            let (at, under) = (drawn(&id("at"), &letter(768_000)), drawn(&id("under"), &letter(767_000 - 20_000)));
+            assert!(inked(&at, WHOLE) > 10_000, "{kind} in {theme:?}: a letter 768 px high is drawn");
+            assert!(at.px != under.px, "{kind} in {theme:?}: a lower height is another size");
+            // One thousandth past the height, and any height past it, is drawn as 768 px is, pixel for pixel.
+            for (what, px_milli) in [("past", 768_001), ("double", 1_536_000), ("far", 100_000_000), ("most", MAX)] {
+                assert!(drawn(&id(what), &letter(px_milli)).px == at.px, "{kind} in {theme:?}: a text of {px_milli} thousandths is drawn as one 768 px high");
+            }
+            // The least height is one thousandth of a pixel: nothing under it is another size.
+            let least = drawn(&id("least"), &letter(1));
+            for (what, px_milli) in [("zero", 0), ("minus", -40_000), ("min", MIN)] {
+                assert!(drawn(&id(what), &letter(px_milli)).px == least.px, "{kind} in {theme:?}: {px_milli}");
+            }
+        }
+    }
+    ui_set_theme(UiTheme::Gothic);
+    // What text_width and text_height answer for a height past the limit is what they answer at it. (The module
+    // writes each answer as four bytes at 512 and says them in the status line.)
+    let asked = |id: &str, px_milli: i32| -> Vec<u8> {
+        let store = vec![0x36, 0x02, 0x00];
+        let w = seq(&[i(512), i(0), i(5), i(px_milli), i(0), invoke("text_width"), store.clone()]);
+        let h = seq(&[i(516), i(px_milli), i(0), invoke("text_height"), store]);
+        let mut rt = loaded(id, &BOTH, &Wasm::with(seq(&[w, h, call("status", &[512, 8])]), b"12:34"));
+        let mut c = patterned(SCREEN.0, SCREEN.1);
+        rt.draw(&mut c, WHOLE, 0);
+        assert_eq!(rt.error(), None);
+        rt.status().as_bytes().to_vec()
+    };
+    let at = asked("test.px.asked.at", 768_000);
+    assert_ne!(at, asked("test.px.asked.under", 700_000));
+    for (what, px_milli) in [("past", 768_001), ("far", 100_000_000), ("most", MAX)] {
+        assert_eq!(asked(&format!("test.px.asked.{what}"), px_milli), at, "{px_milli}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_icon_is_drawn_at_most_1024_px_each_way() {
+    let root = fresh_root("icon-size");
+    assert_eq!(APP_ICON_PX_MAX, 1024);
+    // An icon is drawn a tenth of its rectangle's smaller side inside it, so the icon of a square of 1,280 px is
+    // 1,024 px. In a larger rectangle with the same middle the icon is that same one, pixel for pixel.
+    let (cx, cy) = (930, 1240);
+    let icon = |side: i32| vec![Cmd::Icon("gear", cx - side / 2, cy - side / 2, side, side, 0)];
+    let (at, under) = (drawn("test.icon.at", &icon(1280)), drawn("test.icon.under", &icon(1200)));
+    assert!(inked(&at, WHOLE) > 100_000);
+    assert!(at.px != under.px, "a smaller rectangle has a smaller icon");
+    for (what, side) in [("past", 1282), ("large", 4000), ("reach", 100_000), ("most", MAX - 1)] {
+        assert!(drawn(&format!("test.icon.{what}"), &icon(side)).px == at.px, "an icon in a square of {side} px is the largest icon, in its middle");
+    }
+    // The icons the kit's elements draw are no larger either. Each of these elements, larger than the screen,
+    // is the kit's own drawing of it with no icon over 1,024 px, pixel for pixel, in both themes; with an icon
+    // as large as the element makes it, the kit's drawing is another.
+    for theme in [UiTheme::Gothic, UiTheme::Classic] {
+        ui_set_theme(theme);
+        let t = if theme == UiTheme::Gothic { "g" } else { "c" };
+        for (k, element) in [
+            Cmd::Button(-200, -200, 3000, 3600, "", "gear", 0),
+            Cmd::Button(-200, -200, 3000, 3600, "A label", "gear", 0),
+            Cmd::Fab(-800, -800, 3400, 4000, "gear"),
+            Cmd::AppTile(-200, -200, 2400, 3000, "gear", "Gear", 0),
+            Cmd::TextField(-100, -300, 2200, 3000, "gear", "", "hint"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let cmds = [element];
+            let c = drawn(&format!("test.icon.{t}.{k}"), &cmds);
+            let mut held = patterned(SCREEN.0, SCREEN.1);
+            font_with_icon_side_max(APP_ICON_PX_MAX, || kit(&mut held, WHOLE, &cmds));
+            assert!(c.px == held.px, "{:?} in {theme:?}: its icon is 1,024 px at most", cmds[0]);
+            let mut free = patterned(SCREEN.0, SCREEN.1);
+            kit(&mut free, WHOLE, &cmds);
+            assert!(c.px != free.px, "{:?} in {theme:?}: the element alone would make its icon larger", cmds[0]);
+        }
+    }
+    ui_set_theme(UiTheme::Gothic);
     let _ = std::fs::remove_dir_all(&root);
 }

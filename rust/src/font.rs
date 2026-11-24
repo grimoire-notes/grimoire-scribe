@@ -276,6 +276,9 @@ struct State {
     own_sets: usize,
     /// the one buffer custom faces' outlines are read into (256 KB, there from the first custom glyph on)
     own_out: Option<Outliner>,
+    /// the largest an icon is drawn, each way, in pixels (font_with_icon_side_max; i32::MAX: as large as
+    /// its rectangle)
+    icon_side_max: i32,
 }
 
 impl State {
@@ -297,6 +300,7 @@ impl State {
             own_drawn: 0,
             own_sets: 0,
             own_out: None,
+            icon_side_max: i32::MAX,
         }
     }
 }
@@ -722,7 +726,9 @@ fn make_pixel_glyph(st: &State, ttf: usize, k: i32, cp: u32) -> (Vec<u8>, i32, i
 
 /// The cache slot of the glyph, made on first use.
 fn glyph_get(st: &mut State, ttf: usize, px: f32, cp: u32) -> usize {
-    let size4 = if k_unit(ttf) != 0 { -pixel_k(st, ttf, px) } else { (px * 4.0).round_ties_even() as i32 };
+    // (an outline face's size in quarter pixels, never under nothing: a negative number here is a pixel face's,
+    // below, and a text drawn at a size under nothing has no glyphs to show)
+    let size4 = if k_unit(ttf) != 0 { -pixel_k(st, ttf, px) } else { (px.max(0.0) * 4.0).round_ties_even() as i32 };
     let hsh = cp.wrapping_mul(2654435761) ^ (size4 as u32).wrapping_mul(40503) ^ (ttf as u32).wrapping_mul(977);
     for probe in 0..16u32 {
         let slot = (hsh.wrapping_add(probe) % CACHE_SLOTS as u32) as usize;
@@ -1700,11 +1706,29 @@ pub fn font_fit_px(f: FontFace, px: f32, min_px: f32, utf8: &str, maxw: i32) -> 
     lo
 }
 
+/// f run with no icon drawn larger than `side` pixels each way, and the size as it was again after it. An icon
+/// whose rectangle is larger is drawn at that size in the middle of the rectangle (font_draw_icon). For a
+/// caller that draws rectangles of someone else's choosing: an icon's glyph is made as large as its rectangle.
+pub fn font_with_icon_side_max<R>(side: i32, f: impl FnOnce() -> R) -> R {
+    let was = with(|st| std::mem::replace(&mut st.icon_side_max, side.max(1)));
+    let r = f();
+    with(|st| st.icon_side_max = was);
+    r
+}
+
 /// Draws one glyph (e.g. a Nerd Font icon code point) scaled so its ink box fits r, centered.
 pub fn font_draw_icon(c: &mut Canvas, f: FontFace, cp: u32, r: Rect, gray: u8) {
     if !with(|st| st.ready) || rect_is_empty(r) {
         return;
     }
+    // (no larger than the caller's largest, in the middle of r: font_with_icon_side_max)
+    let side = with(|st| st.icon_side_max);
+    let r = if r.w > side || r.h > side {
+        let (w, h) = (r.w.min(side), r.h.min(side));
+        Rect { x: r.x + (r.w - w) / 2, y: r.y + (r.h - h) / 2, w, h }
+    } else {
+        r
+    };
     // Icons are Terminess Nerd Font glyphs in every theme.
     let ttf = if f == FontFace::Bold || f == FontFace::FixedBold { TTF_TERM_BOLD } else { TTF_TERM };
     with(|st| {
@@ -1742,6 +1766,62 @@ mod tests {
     }
     fn hear(text: &str, need: i32, have: i32) {
         SEEN.with(|s| s.borrow_mut().push((text.to_string(), need, have)));
+    }
+
+    // font_with_icon_side_max: within it an icon in a rectangle larger than the size is the icon of a square
+    // of that size in the rectangle's middle, pixel for pixel; one in a smaller rectangle is as ever; and after
+    // it an icon is as large as its rectangle again.
+    #[test]
+    fn an_icon_is_no_larger_than_the_callers_largest() {
+        up();
+        let cp = 0xF0493; // md-cog
+        let icon = |r: Rect, side: Option<i32>| {
+            let mut c = Canvas::default();
+            assert_eq!(canvas_init(&mut c, 900, 900), 0);
+            match side {
+                Some(side) => font_with_icon_side_max(side, || font_draw_icon(&mut c, FontFace::Regular, cp, r, 0)),
+                None => font_draw_icon(&mut c, FontFace::Regular, cp, r, 0),
+            }
+            c.px
+        };
+        let large = Rect { x: 50, y: 100, w: 800, h: 700 };
+        let middle = Rect { x: 50 + (800 - 200) / 2, y: 100 + (700 - 200) / 2, w: 200, h: 200 };
+        let small = Rect { x: 300, y: 300, w: 120, h: 90 };
+        assert!(icon(large, Some(200)) == icon(middle, None));
+        assert!(icon(large, Some(200)) != icon(large, None));
+        assert!(icon(small, Some(200)) == icon(small, None), "a smaller icon is drawn as ever");
+        assert!(icon(Rect { x: 0, y: 0, w: 2_000_000, h: 2_000_000 }, Some(200)) == icon(Rect { x: 999_900, y: 999_900, w: 200, h: 200 }, None));
+        // (one way larger: the size is each way's)
+        assert!(icon(Rect { x: 50, y: 100, w: 800, h: 90 }, Some(200)) == icon(Rect { x: 350, y: 100, w: 200, h: 90 }, None));
+        // The size is the one before again after the run, also when runs are inside one another.
+        let nested = font_with_icon_side_max(300, || {
+            let inner = font_with_icon_side_max(200, || icon(large, None));
+            (inner, icon(large, None))
+        });
+        assert!(nested.0 == icon(middle, None));
+        assert!(nested.1 == icon(Rect { x: 50 + 250, y: 100 + 200, w: 300, h: 300 }, None));
+        assert!(icon(large, None) != nested.1, "after the run an icon is as large as its rectangle");
+    }
+
+    // An outline face at a size under nothing has no glyphs to show: the text draws nothing, in every face of
+    // Classic, at every such size a caller reaches that works a label's size out from its rectangle's height
+    // (globalui.rs's chip and select, ui.rs's button: a rectangle a few pixels high, or one whose height is far
+    // under nothing).
+    #[test]
+    fn an_outline_face_at_a_size_under_nothing_draws_nothing() {
+        up();
+        let mut c = Canvas::default();
+        assert_eq!(canvas_init(&mut c, 600, 200), 0);
+        for f in [FontFace::Regular, FontFace::Bold, FontFace::Title, FontFace::Caps, FontFace::Fixed, FontFace::FixedBold] {
+            for px in [-0.25, -0.46, -1.0, -30.0, -60_000.0, -80_000.0, 0.0] {
+                font_draw(&mut c, f, px, 20, 120, "Label 12:34", 0);
+                font_draw_centered(&mut c, f, px, Rect { x: 0, y: 0, w: 600, h: 200 }, "Label 12:34", 0);
+                assert!(c.px.iter().all(|p| *p == 255), "{f:?} at {px}");
+            }
+            font_draw(&mut c, f, 30.0, 20, 120, "Label 12:34", 0);
+            assert!(c.px.iter().any(|p| *p != 255), "{f:?} at 30 px draws");
+            c.px.fill(255);
+        }
     }
 
     #[test]

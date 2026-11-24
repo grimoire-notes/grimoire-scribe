@@ -220,7 +220,8 @@ clip(x, y, w, h)
 clip_clear()
 ```
 
-Gray is `0` (black) to `255` (paper white). `face` is 0 regular, 1 bold, 2 title, 3 caps, 4 fixed,
+Gray is `0` (black) to `255` (paper white). `px_milli` is a text's height in thousandths of a pixel
+(`34000` is 34 px; [Limits](#limits) has the range). `face` is 0 regular, 1 bold, 2 title, 3 caps, 4 fixed,
 5 fixed bold. `style` is 0 plain, 1 selected, 2 disabled, 3 primary. `switch` is `-1` for no switch,
 0 off or 1 on. The UI calls draw the same themed elements Settings, the Library and the editor use,
 so an app follows the owner's Gothic/Classic theme, fonts and scale.
@@ -348,6 +349,7 @@ The host calls a module's `app_draw` (a drawing pass), `app_pointer`, `app_key`,
 | a call's budget | 30,000,000, counted in instructions |
 | the module's memories | 1, of at most 48 MiB (768 pages) |
 | the module's tables | 1, of at most 65,536 entries |
+| drawing commands in one call (the eighteen calls from `fill_rect` to `clip_clear`, all kinds together; `text_width` and `text_height` draw nothing and are not counted) | 4,096 |
 | bytes of one text (a `text`'s, a `text_at`'s, what `text_width` measures, and each label, caption, value, text and hint of `button`, `chip`, `row`, `select`, `app_tile` and `text_field`) | 1,024 |
 | bytes of all those texts of one call | 65,536 (64 KiB) |
 | bytes of the status line | 256 |
@@ -357,11 +359,19 @@ The host calls a module's `app_draw` (a drawing pass), `app_pointer`, `app_key`,
 | an icon's name | 64 bytes, longer than any icon's; a longer one is not read and names no icon, so the grid is drawn, as for any name Grimoire does not know |
 | a key passed to `setting` | 64 bytes, the longest a setting's key can be; a longer one is no setting's and returns `0` |
 | what `wifi_ssid` writes | 32 bytes at most, the longest a network's name is |
+| a text's height, `px_milli` | 1 to 768,000 (768 px); a value outside is taken as the nearer end, by `text`, `text_at`, `text_width` and `text_height` alike |
+| an icon | 1,024 px each way; in a larger rectangle it is drawn at that size, in the middle. The icons of `button`, `row`, `app_tile`, `fab` and `text_field` are held to it too |
+| a line's width | 0.1 to 4,096 px; a value outside is taken as the nearer end |
+| a place or a size | any number: an edge of a rectangle and a text's place farther than 65,536 px outside the body are taken at that distance; a line is cut where it leaves that distance, and one with an end that is not a number (a NaN, an infinity) is not drawn; a thickness is taken within 131,072 px of nothing |
 
 A length is compared with its limit before the host reads the module's memory. A call that goes
-past the text, status line or state limit is stopped the way a call that runs past its instruction
-budget is (below), and Grimoire's log names the limit. What a call records is its own: the drawing
-commands of a touch or a key are not kept for the next drawing pass.
+past the command, text, status line or state limit is stopped the way a call that runs past its
+instruction budget is (below), and Grimoire's log names the limit. What a call records is its own:
+the drawing commands of a touch or a key are not kept for the next drawing pass.
+
+A module may pass any numbers as places and sizes. What it draws with numbers near its body is
+drawn exactly as given; the bounds of the last four rows lie far outside what a screen holds, and
+are there so that no sum the drawing makes overflows and nothing is drawn at a size without bound.
 
 A module has one linear memory and at most one table. Memory past 48 MiB and table entries past
 65,536 are not given: `memory.grow` and `table.grow` fail, as WebAssembly defines it (they return
