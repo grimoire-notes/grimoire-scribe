@@ -1121,13 +1121,6 @@ jumbled"):
   blank "Newer paper".
 - **Smart-shape snapping to geometry.** A snapped shape's corners, ends and edges stick to other
   shapes, lines and points already on the page.
-- **Open Amazon's own Scribe notebooks in Grimoire.** Native notebooks are folders in
-  `/mnt/us/.notebooks/` holding an unencrypted SQLite file `nbk` (tables `fragments`,
-  `fragment_properties`, `local_delta_fragments`, `local_action_fragments`, `capabilities`; the
-  stroke data likely Amazon Ion). Verify against real notebooks on the device before trusting any
-  format notes; the etienneunai fork's converter assumes a 1024-byte header these files do not
-  have. Credit the fork if any of its findings hold.
-
 ## Exact-area lasso and the live preview (beta.2 lane B3): deferred
 
 Decided by the lane B3 design (docs/beta2/PIXEL-LASSO.md, 2026-11-03) and its builder, owner to confirm:
