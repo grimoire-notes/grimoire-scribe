@@ -946,13 +946,23 @@ fn install_imports(linker: &mut Linker<HostState>) -> Result<(), String> {
     linker.func_wrap(ABI, "http_body_len", |caller: Caller<'_, HostState>| -> i32 {
         caller.data().http.as_ref().map_or(0, |j| j.body.len() as i32)
     }).map_err(e)?;
+    // The answer and the error text are written from where the host holds them: each is lent to
+    // the write and put back, and is not copied for the call.
     linker.func_wrap(ABI, "http_body", |mut caller: Caller<'_, HostState>, ptr: i32, cap: i32| -> i32 {
-        let body = caller.data().http.as_ref().map_or_else(Vec::new, |j| j.body.clone());
-        write_mem(&mut caller, ptr, cap, &body)
+        let Some(body) = caller.data_mut().http.as_mut().map(|j| std::mem::take(&mut j.body)) else { return 0 };
+        let n = write_mem(&mut caller, ptr, cap, &body);
+        if let Some(j) = caller.data_mut().http.as_mut() {
+            j.body = body;
+        }
+        n
     }).map_err(e)?;
     linker.func_wrap(ABI, "http_error", |mut caller: Caller<'_, HostState>, ptr: i32, cap: i32| -> i32 {
-        let text = caller.data().http.as_ref().map_or_else(String::new, |j| j.error.clone());
-        write_mem(&mut caller, ptr, cap, text.as_bytes())
+        let Some(text) = caller.data_mut().http.as_mut().map(|j| std::mem::take(&mut j.error)) else { return 0 };
+        let n = write_mem(&mut caller, ptr, cap, text.as_bytes());
+        if let Some(j) = caller.data_mut().http.as_mut() {
+            j.error = text;
+        }
+        n
     }).map_err(e)?;
     linker.func_wrap(ABI, "http_cancel", |mut caller: Caller<'_, HostState>| {
         caller.data_mut().http_cancel();
@@ -2344,6 +2354,73 @@ mod tests {
             })
             .min()
             .unwrap()
+    }
+
+    // http_body and http_error write what the host holds of an ended request into the module's
+    // memory: as much as the room given and the memory take, and nothing with no request. What
+    // the host holds stays where it was, and http_body does not copy the answer for a call: with
+    // an answer of the limit's size, the quickest call that asks for one byte takes less than an
+    // eighth of the time of the quickest single copy of that answer.
+    #[test]
+    fn the_answer_and_the_error_are_written_from_what_the_host_holds() {
+        type Write = wasmi::TypedFunc<(i32, i32), i32>;
+        let dir = scratch("written");
+        let pages = (HTTP_ANSWER_MAX >> 16) as u16 + 1;
+        let size = pages as usize * 65536;
+        let answer: Vec<u8> = (0..HTTP_ANSWER_MAX as usize).map(|i| (i % 251) as u8 + 1).collect();
+        let text = "curl: (7) Failed to connect";
+        let mut st = host(&dir);
+        stand_in(&mut st, &dir, "exit 0", "200", None);
+        poll_to_end(&mut st);
+        let job = st.http.as_mut().unwrap();
+        job.body = answer.clone();
+        job.error = text.to_string();
+
+        // Each call's answer and what it wrote, for the rooms an app may give.
+        let written = |rt: &mut AppRuntime, write: &Write, held: &[u8]| {
+            let len = held.len();
+            let rooms = [(16, len + 100, len), (16, len, len), (16, 10, 10), (16, 1, 1), (size - 3, 10, 3)];
+            for (at, room, n) in rooms {
+                memory_of(rt).fill(0);
+                assert_eq!(write.call(&mut rt.store, (at as i32, room as i32)).unwrap(), n as i32, "{at} {room}");
+                let memory = memory_of(rt);
+                assert!(memory[at..at + n] == held[..n], "{at} {room}");
+                assert!(memory[..at].iter().chain(&memory[at + n..]).all(|b| *b == 0), "{at} {room}");
+            }
+            memory_of(rt).fill(0);
+            for (at, room) in [(0, 0), (0, -1), (-1, 10), (size as i32, 10), (i32::MAX, 10)] {
+                assert_eq!(write.call(&mut rt.store, (at, room)).unwrap(), 0, "{at} {room}");
+            }
+            assert!(memory_of(rt).iter().all(|b| *b == 0));
+        };
+        let held = |st: &HostState| {
+            let job = st.http.as_ref().unwrap();
+            (job.body.as_ptr(), job.body.len(), job.error.as_ptr(), job.error.clone())
+        };
+        let before = held(&st);
+
+        let mut rt = runtime_of(st, &module_calling("http_body", 2, pages));
+        let body: Write = rt.instance.get_typed_func(&rt.store, "call").unwrap();
+        written(&mut rt, &body, &answer);
+        let a_copy = quickest(3, || drop(std::hint::black_box(answer.clone())));
+        let took = quickest(20, || assert_eq!(body.call(&mut rt.store, (0, 1)).unwrap(), 1));
+        assert!(took * 8 < a_copy, "a call for one byte took {took:?}, one copy of the answer {a_copy:?}");
+        assert_eq!(held(rt.store.data()), before);
+        assert!(rt.store.data().http.as_ref().unwrap().body == answer);
+
+        let mut rt = runtime_of(rt.store.into_data(), &module_calling("http_error", 2, pages));
+        let error: Write = rt.instance.get_typed_func(&rt.store, "call").unwrap();
+        written(&mut rt, &error, text.as_bytes());
+        assert_eq!(held(rt.store.data()), before);
+
+        // With no request there is nothing to write.
+        rt.store.data_mut().http_cancel();
+        memory_of(&mut rt).fill(0);
+        assert_eq!(error.call(&mut rt.store, (16, 100)).unwrap(), 0);
+        let mut rt = runtime_of(rt.store.into_data(), &module_calling("http_body", 2, pages));
+        let body: Write = rt.instance.get_typed_func(&rt.store, "call").unwrap();
+        assert_eq!(body.call(&mut rt.store, (16, 100)).unwrap(), 0);
+        assert!(memory_of(&mut rt).iter().all(|b| *b == 0));
     }
 
     // The http_start import answers from the capability, the request in flight and the request's
