@@ -78,6 +78,8 @@ struct State {
     g_fblen: usize,
     /// last logical frame, in physical order: +4.6 MB on the 2024 Scribe
     g_previous: Canvas,
+    /// RAM shadow of the physical byte last written to g_fb, so fast (DU) copies never read uncached /dev/fb0
+    g_shown: Canvas,
     g_frame_known: bool,
     /// the mapping covers the whole panel at 8 or 32 bpp: the guards can read it
     g_readback: bool,
@@ -165,6 +167,7 @@ impl State {
             g_fb: &mut [],
             g_fblen: 0,
             g_previous: Canvas::default(),
+            g_shown: Canvas::default(),
             g_frame_known: false,
             g_readback: false,
             g_pen_cfg: PenCfg::Off,
@@ -544,7 +547,7 @@ fn lat_reset(s: &mut State) {
 // follow it.
 fn panel_temp(out: &mut String, cap: usize) {
     csnprintf!(out, cap, "?");
-    let Some(data) = read_file("/proc/hwtcon/temp") else { return };
+    let Some(data) = read_system_file("/proc/hwtcon/temp") else { return };
     // fgets: the first line, newline included, at most cap - 1 bytes; nothing read leaves "?"
     let mut line = &data[..data.len().min(cap.saturating_sub(1))];
     if let Some(nl) = line.iter().position(|&b| b == b'\n') {
@@ -912,6 +915,8 @@ pub fn display_open(w: &mut i32, h: &mut i32, dpi: &mut f32) -> i32 {
         s.g_frame_known = false;
         if canvas_init(&mut s.g_previous, s.PW, s.PH) != 0 {
             qlog!("display: no memory for the live pixel cache; dithering whole fast rectangles");
+        } else if canvas_init(&mut s.g_shown, s.PW, s.PH) != 0 {
+            qlog!("display: no memory for the framebuffer shadow; fast copies will read the framebuffer");
         }
         *w = s.PW;
         *h = s.PH;
@@ -999,17 +1004,28 @@ pub fn display_set_invert(on: bool) {
     })
 }
 
-// A full-screen copy takes 45-100 ms on the Kindle (fbpack_row, 20-40 ns a pixel): the pens are read
-// every 64 rows of it (work_pump, common.h), which a stroke's small frames never reach.
+// A full-screen copy pumps input every 64 rows (work_pump, common.h), which a stroke's small frames
+// never reach. Each strip runs under one state borrow and releases it for the pump.
 fn copy_rect(s: &Canvas, r: Rect) {
-    for y in r.y..r.y + r.h {
-        // (one row under the state's borrow; the pump runs outside it)
-        if !with(|st| copy_row(st, s, r, y)) {
+    let mut y = r.y;
+    let y_end = r.y + r.h;
+    while y < y_end {
+        let strip_end = (y + 64).min(y_end);
+        let ok = with(|st| {
+            for row in y..strip_end {
+                if !copy_row(st, s, r, row) {
+                    return false;
+                }
+            }
+            true
+        });
+        if !ok {
             return;
         }
-        if ((y - r.y) & 63) == 63 {
+        if strip_end - y == 64 {
             work_pump();
         }
+        y = strip_end;
     }
 }
 
@@ -1033,7 +1049,24 @@ fn copy_row(st: &mut State, s: &Canvas, r: Rect, y: i32) -> bool {
     let flip_px = if st.g_st.bpp == 8 { st.g_st.inverted_grayscale != st.g_invert } else { st.g_invert };
     let (bpp, live, known) = (st.g_st.bpp as i32, st.g_live, st.g_frame_known);
     let previous = if st.g_previous.px.is_empty() { None } else { Some(&mut st.g_previous.px[..]) };
-    fbpack_row(&mut st.g_fb[..], off as usize, step, previous, previous_at, previous_step, src, r.w, r.x, y, bpp, flip_px, live, known);
+    let shown = if st.g_shown.px.is_empty() { None } else { Some(&mut st.g_shown.px[..]) };
+    fbpack_row_cached(
+        &mut st.g_fb[..],
+        off as usize,
+        step,
+        previous,
+        shown,
+        previous_at,
+        previous_step,
+        src,
+        r.w,
+        r.x,
+        y,
+        bpp,
+        flip_px,
+        live,
+        known,
+    );
     true
 }
 
@@ -1421,6 +1454,7 @@ pub fn display_close() {
         fbink_close(s.g_fd);
         s.g_fd = -1;
         canvas_free(&mut s.g_previous);
+        canvas_free(&mut s.g_shown);
         s.g_frame_known = false;
     })
 }

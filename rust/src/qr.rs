@@ -51,6 +51,18 @@ fn get_module(qr: &[u8; QR_BUF], x: i32, y: i32) -> bool {
 }
 
 
+/// Data modules across the symbol for text, without its quiet zone, or 0 when the text cannot be
+/// encoded. A shorter address has fewer data modules, so drawing two codes at the same module size
+/// would make them look different sizes.
+pub fn ui_qr_data_modules(text: &str) -> i32 {
+    let mut qr = [0u8; QR_BUF];
+    if encode(text, &mut qr) {
+        get_size(&qr)
+    } else {
+        0
+    }
+}
+
 /// Modules across the symbol for text, its quiet zone included (37 for every share address), or
 /// 0 when the text cannot be encoded. A box of that many times m pixels gets modules of m pixels.
 pub fn ui_qr_modules(text: &str) -> i32 {
@@ -60,6 +72,35 @@ pub fn ui_qr_modules(text: &str) -> i32 {
     } else {
         0
     }
+}
+
+/// Whether the symbol rect `sym` of canvas c (what ui_qr returned) holds, module for module, the code ui_qr makes
+/// of text (quiet zone included, read at each module's centre), drawn as its negative when `negative`. False for a
+/// text that cannot be encoded, a rect that is not a whole symbol, or one off the canvas. The runner's check that a
+/// card's code is its address's (editor.link_card.qr).
+pub fn ui_qr_matches(c: &Canvas, sym: Rect, text: &str, negative: bool) -> bool {
+    let mut qr = [0u8; QR_BUF];
+    if !encode(text, &mut qr) {
+        return false;
+    }
+    let n = get_size(&qr);
+    let across = n + 2 * QR_QUIET;
+    if sym.w != sym.h || sym.w < across || sym.w % across != 0 || sym.x < 0 || sym.y < 0 || sym.x + sym.w > c.w || sym.y + sym.h > c.h {
+        return false;
+    }
+    let m = sym.w / across;
+    let (light, dark): (u8, u8) = if negative { (0, 255) } else { (255, 0) };
+    for my in 0..across {
+        for mx in 0..across {
+            let (qx, qy) = (mx - QR_QUIET, my - QR_QUIET);
+            let on = qx >= 0 && qy >= 0 && qx < n && qy < n && get_module(&qr, qx, qy);
+            let (px, py) = (sym.x + mx * m + m / 2, sym.y + my * m + m / 2);
+            if c.px[(py * c.stride + px) as usize] != if on { dark } else { light } {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Draws text as a QR code centered in box: square modules of the largest whole number of pixels

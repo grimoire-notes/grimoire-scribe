@@ -14,10 +14,23 @@
 //! a byte of the source is read): oom_score_adj 1000; unshare(CLONE_NEWNET | CLONE_NEWIPC); chroot to the
 //! writer's empty directory on /tmp; setgroups(0), setgid and setuid to a uid of its own; no_new_privs and not
 //! dumpable; the parent-death signal (set after the uid change, then getppid checked); rlimits (NOFILE 0,
-//! NPROC 0, FSIZE 0, CORE 0, AS, CPU); a seccomp allow-list whose violation traps into a reporter.
+//! NPROC 0, FSIZE 0, CORE 0, AS, CPU); a seccomp allow-list in which futex passes only as a private wait, wake or
+//! wait-bitset and mmap and mprotect only for a mapping not asked executable; a call outside it traps into a
+//! reporter, but for the few that answer ENOSYS. The worker then makes one allowed call of each of those three
+//! kinds before it says `S 1`.
 //!
-//! Off the Kindle (the simulator, CI, the Mac, not root) the steps that need root or Linux are skipped with
-//! one log line (plain process isolation); the Linux CI job runs the real ones as root.
+//! Off the Kindle a failed step refuses nothing unless the writer requires the sandbox (GRIMOIRE_SANDBOX=require:
+//! it then makes the worker's jail, and a worker given a jail holds every step): macOS has none of the steps
+//! (plain process isolation), and a Linux build takes the ones that work without root (no new privileges, the
+//! limits, the allow-list) and has no chroot. The Linux CI job runs them all as root, required.
+//!
+//! A platform kept in another crate whose target gives its system another name than Linux, but which runs a Linux
+//! kernel, builds the steps with the `linux-kernel` feature (PORTING.md). Its worker always holds the steps that need
+//! no root (oom_score_adj, no new privileges, the parent-death signal, the limits, the allow-list), as a required
+//! sandbox holds its steps, and leaves out the ones that need root (namespaces, chroot, uid) unless its writer
+//! requires the whole sandbox and makes the jail. Its handshake then says `S 2`, never `S 1`: `S 1` stays the word of
+//! the whole set of steps, and only a build with the feature takes `S 2`, and only where its writer does not require
+//! the whole sandbox (where it does, the writers take only `S 1`, as everywhere).
 
 use crate::prelude::*;
 use std::ffi::CString;
@@ -87,6 +100,10 @@ pub mod s1 {
     /// A font worker's address space beyond its image and the file's bytes: skrifa's draw memory, the glyph
     /// bitmaps at the largest size, stb's edges. (set by S1)
     pub const FONT_AS_MARGIN: u64 = 64 << 20;
+    /// The CPU time one glyph's draw may take in the check, at the largest size the UI draws (fontcheck.rs,
+    /// FONT_TIME_PX): milliseconds. A placeholder, not yet measured on the Scribe (docs/TESTING.md). It is one
+    /// of the check's rules: the verdict's number (fontcheck.rs, VERDICT_NUMBER) moves whenever it does.
+    pub const FONT_GLYPH_CPU_MS: u64 = 20;
     /// D12's trigger: if the median planner page takes longer than this whole on the Scribe, a PDFium helper is
     /// weighed before this goes on. Nothing in the code reads it. (S1 measured 90 ms: not triggered.)
     pub const D12_TRIGGER_PAGE_MS: u32 = 2_000;
@@ -103,7 +120,7 @@ pub mod s1 {
 pub const WORKER_ID: u32 = 62001;
 
 /// The record protocol's number: the worker and the writer must agree (the handshake's build line).
-pub const WORK_PROTOCOL: u32 = 1;
+pub const WORK_PROTOCOL: u32 = 2;
 
 /// The build the handshake names: the version and the protocol. (A worker is always a fresh exec of the
 /// writer's own binary, /proc/self/exe; a different build can only turn up where that path is not used.)
@@ -147,7 +164,7 @@ pub const FD_SOURCE: i32 = 3;
 pub const FD_OUT: i32 = 4;
 pub const FD_IN: i32 = 5;
 
-// ---- the seccomp allow-list (classic BPF over the calls' numbers) ----
+// ---- the seccomp allow-list (classic BPF over the calls' numbers and, for three of them, one argument) ----
 
 pub const SECCOMP_RET_TRAP: u32 = 0x0003_0000;
 pub const SECCOMP_RET_ERRNO: u32 = 0x0005_0000;
@@ -172,8 +189,9 @@ pub struct SysNums {
     pub exit: u32,
     pub exit_group: u32,
     /// calls that answer ENOSYS instead of trapping: the time64 calls musl tries first on the 32-bit ARM, and
-    /// gettid, which only a panic's message asks for (S1 saw it trap there), so a worker that panics still
-    /// reports "E panic" and ends by its own `_exit`
+    /// gettid, which only a panic's message asks for (S1 saw it trap there): with it answered, a build that
+    /// unwinds (the simulator, tests) says "E panic" and ends by its own `_exit`, and the Kindle's build, which
+    /// aborts on a panic, is seen as its abort (KINDLE.md, call 175) and not as a call to add
     pub enosys: &'static [u32],
     /// calls that reach out, which no worker may make (the tests check they trap): socket, execve, kill,
     /// ptrace, mount, chroot
@@ -257,9 +275,11 @@ pub fn this_arch() -> &'static SysNums {
     }
 }
 
-/// The design's allow-list (3.7 step 9): read, write, the mmap family (musl's allocator also needs mprotect and
-/// madvise), brk, futex, clock_gettime, rt_sigreturn and exit. exit_group is on it too: musl's `_exit` ends the
-/// process through it, and it only ever ends the worker itself.
+/// The allow-list: read, write, the mmap family with mprotect and madvise, brk, futex, clock_gettime,
+/// rt_sigreturn, exit and exit_group (the C library's `_exit` ends the process through it, and it only ever
+/// ends the worker itself). Which of mprotect, madvise and brk the allocator uses differs between the Kindle's
+/// build and the Linux test build; the list holds them all. futex, mmap and mprotect are also judged by an
+/// argument (`build_filter`).
 pub fn allow_list_for(n: &SysNums) -> Vec<u32> {
     vec![n.read, n.write, n.mmap, n.munmap, n.mremap, n.madvise, n.mprotect, n.brk, n.futex, n.clock_gettime, n.rt_sigreturn, n.exit, n.exit_group]
 }
@@ -267,9 +287,25 @@ pub fn allow_list() -> Vec<u32> {
     allow_list_for(this_arch())
 }
 
-/// "The time64 calls musl tries first answer ENOSYS" (the 32-bit ARM only).
+/// The calls that answer ENOSYS in place of a trap: the architecture's own (the time64 calls musl tries first on the
+/// 32-bit ARM, and gettid), and in a build with the `linux-kernel` feature prctl as well (`LINUX_KERNEL_ENOSYS`).
 pub fn enosys_calls() -> Vec<u32> {
-    this_arch().enosys.to_vec()
+    let mut v = this_arch().enosys.to_vec();
+    if LINUX_KERNEL {
+        v.extend(linux_kernel_enosys(this_arch()));
+    }
+    v
+}
+
+/// What a build with the `linux-kernel` feature also answers ENOSYS, by architecture: prctl. Its C library's
+/// allocator names each region it maps with prctl(PR_SET_VMA) and goes on when that fails; trapped, the first
+/// region it mapped after the filter ended the worker before its sandbox line (such a device, 2026-11-16:
+/// `E sigsys 167`). The call does nothing then; nothing is allowed that was not.
+pub const LINUX_KERNEL_ENOSYS: [(u32, u32); 3] = [(ARM.audit_arch, 172), (X86_64.audit_arch, 157), (AARCH64.audit_arch, 167)];
+
+/// LINUX_KERNEL_ENOSYS's calls for an architecture.
+pub fn linux_kernel_enosys(n: &SysNums) -> Vec<u32> {
+    LINUX_KERNEL_ENOSYS.iter().filter(|(arch, _)| *arch == n.audit_arch).map(|(_, nr)| *nr).collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -282,51 +318,148 @@ pub struct BpfIns {
 
 const BPF_LD_W_ABS: u16 = 0x20;
 const BPF_JEQ_K: u16 = 0x15;
+const BPF_JSET_K: u16 = 0x45;
 const BPF_RET_K: u16 = 0x06;
 
-/// An arch check (another arch: trap), then one jump per allowed number to ALLOW, one per ENOSYS number to
-/// ERRNO(ENOSYS), and everything else TRAPs.
-pub fn build_filter(arch: u32, allow: &[u32], enosys: &[u32]) -> Vec<BpfIns> {
-    let n = allow.len() + enosys.len();
-    assert!(n < 240, "a jump is one byte");
+/// The futex operations one thread of Rust and a C library issues, as the words of the call's second argument:
+/// a wait, a wake and a wait-bitset, each on a private futex (128, 129, 137). The standard library waits with
+/// 137 and wakes with 129; a C library's locks wait with 128 and wake with 129; the other words belong to waits
+/// and wakes that need a second thread, which a worker has no way to make. Typed by hand, as the tables are
+/// (macOS's libc has none of them; a test on Linux holds them to libc's).
+pub const FUTEX_WAIT: u32 = 0;
+pub const FUTEX_WAKE: u32 = 1;
+pub const FUTEX_WAIT_BITSET: u32 = 9;
+pub const FUTEX_PRIVATE_FLAG: u32 = 128;
+pub const FUTEX_ALLOWED: [u32; 3] = [FUTEX_WAIT | FUTEX_PRIVATE_FLAG, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG];
+
+/// The bit of a mapping's protection (the third argument of mmap and of mprotect) that asks for it executable.
+pub const PROT_EXEC: u32 = 4;
+
+/// Where the kernel's `seccomp_data` holds the low 32 bits of a call's argument `i` (0 to 5): the call's number
+/// is at 0, the architecture at 4, the instruction pointer at 8, then six 64-bit slots. Every architecture
+/// named here is little-endian (the arch check runs first), so the low half of a slot comes first; on the
+/// 32-bit one it is the whole argument. The filter never reads a high half.
+pub const fn arg_lo(i: u32) -> u32 {
+    16 + 8 * i
+}
+
+/// Where a jump of the filter leads: the block that returns ALLOW, the one that returns ERRNO(ENOSYS), the one
+/// that judges futex by its operation, or the one that judges mmap and mprotect by the protection asked.
+#[derive(Clone, Copy)]
+enum To {
+    Allow,
+    Errno,
+    Futex,
+    Prot,
+}
+
+/// The filter for the table `n`: an arch check (another arch: trap), then one jump per number of `allow`, in
+/// its order (read and write first: the calls a worker makes most), to ALLOW, one per number of `enosys` to
+/// ERRNO(ENOSYS), and everything else TRAPs. A number that is not in `allow` is never allowed. The table says
+/// which numbers are judged by an argument too: futex goes to block F, which allows the call only when the low
+/// 32 bits of its second argument are one of `FUTEX_ALLOWED`; mmap (mmap2 on the 32-bit ARM) and mprotect go to
+/// block P, which allows the call only when `PROT_EXEC` is clear in the low 32 bits of its third. Either traps
+/// otherwise, as any call outside the list. Every jump goes forward and is taken on a match only (`jf` is 0
+/// everywhere), resolved from the blocks' places once they are known.
+///
+/// ```text
+/// LD [4]; JEQ arch (jt 1); RET TRAP; LD [0]
+/// JEQ <each number of allow, in order>  -> A, or F for futex, or P for mmap and mprotect
+/// JEQ <each number of enosys>           -> E
+/// RET TRAP
+/// E: RET ERRNO|38
+/// P: LD [32]; JSET 4 (jt 1); RET ALLOW; RET TRAP
+/// F: LD [24]; JEQ 128 -> A; JEQ 129 -> A; JEQ 137 -> A; RET TRAP
+/// A: RET ALLOW
+/// ```
+pub fn build_filter(n: &SysNums, allow: &[u32], enosys: &[u32]) -> Vec<BpfIns> {
+    let ld = |k: u32| BpfIns { code: BPF_LD_W_ABS, jt: 0, jf: 0, k };
+    let ret = |k: u32| BpfIns { code: BPF_RET_K, jt: 0, jf: 0, k };
     let mut v = vec![
-        BpfIns { code: BPF_LD_W_ABS, jt: 0, jf: 0, k: 4 }, // seccomp_data.arch
-        BpfIns { code: BPF_JEQ_K, jt: 1, jf: 0, k: arch },
-        BpfIns { code: BPF_RET_K, jt: 0, jf: 0, k: SECCOMP_RET_TRAP },
-        BpfIns { code: BPF_LD_W_ABS, jt: 0, jf: 0, k: 0 }, // seccomp_data.nr
+        ld(4), // seccomp_data.arch
+        BpfIns { code: BPF_JEQ_K, jt: 1, jf: 0, k: n.audit_arch },
+        ret(SECCOMP_RET_TRAP),
+        ld(0), // seccomp_data.nr
     ];
-    let first = v.len();
-    let trap_at = first + n;
-    let allow_at = trap_at + 1;
-    let errno_at = trap_at + 2;
-    for (i, &s) in allow.iter().enumerate() {
-        let here = first + i;
-        v.push(BpfIns { code: BPF_JEQ_K, jt: (allow_at - (here + 1)) as u8, jf: 0, k: s });
+    // the compares, each with the block it jumps to (its offset is written below)
+    let mut jumps: Vec<(usize, To)> = Vec::new();
+    let mut jeq = |v: &mut Vec<BpfIns>, k: u32, to: To| {
+        jumps.push((v.len(), to));
+        v.push(BpfIns { code: BPF_JEQ_K, jt: 0, jf: 0, k });
+    };
+    for &s in allow {
+        let to = if s == n.futex {
+            To::Futex
+        } else if s == n.mmap || s == n.mprotect {
+            To::Prot
+        } else {
+            To::Allow
+        };
+        jeq(&mut v, s, to);
     }
-    for (i, &s) in enosys.iter().enumerate() {
-        let here = first + allow.len() + i;
-        v.push(BpfIns { code: BPF_JEQ_K, jt: (errno_at - (here + 1)) as u8, jf: 0, k: s });
+    for &s in enosys {
+        jeq(&mut v, s, To::Errno);
     }
-    v.push(BpfIns { code: BPF_RET_K, jt: 0, jf: 0, k: SECCOMP_RET_TRAP });
-    v.push(BpfIns { code: BPF_RET_K, jt: 0, jf: 0, k: SECCOMP_RET_ALLOW });
-    v.push(BpfIns { code: BPF_RET_K, jt: 0, jf: 0, k: SECCOMP_RET_ERRNO | 38 }); // ENOSYS
+    v.push(ret(SECCOMP_RET_TRAP));
+    let errno_at = v.len();
+    v.push(ret(SECCOMP_RET_ERRNO | 38)); // ENOSYS
+    let prot_at = v.len();
+    v.push(ld(arg_lo(2))); // the protection asked
+    v.push(BpfIns { code: BPF_JSET_K, jt: 1, jf: 0, k: PROT_EXEC });
+    v.push(ret(SECCOMP_RET_ALLOW));
+    v.push(ret(SECCOMP_RET_TRAP));
+    let futex_at = v.len();
+    v.push(ld(arg_lo(1))); // the operation
+    for op in FUTEX_ALLOWED {
+        jeq(&mut v, op, To::Allow);
+    }
+    v.push(ret(SECCOMP_RET_TRAP));
+    let allow_at = v.len();
+    v.push(ret(SECCOMP_RET_ALLOW));
+    for (at, to) in jumps {
+        let target = match to {
+            To::Allow => allow_at,
+            To::Errno => errno_at,
+            To::Futex => futex_at,
+            To::Prot => prot_at,
+        };
+        let off = target - (at + 1);
+        assert!(off < 256, "a jump is one byte");
+        v[at].jt = off as u8;
+    }
     v
 }
 
-/// A tiny classic-BPF interpreter for the three instruction kinds above, so the filter's verdicts are tested
-/// on any host.
-pub fn eval_filter(f: &[BpfIns], arch: u32, nr: u32) -> u32 {
+/// A tiny classic-BPF interpreter for the instruction kinds above, over the call as the kernel shows it to a
+/// filter (`seccomp_data`: the architecture, the number and the six arguments), so the filter's verdicts are
+/// tested on any host. A load at 16 to 60 reads half of an argument (the low half of `args[i]` at `arg_lo(i)`,
+/// the high half 4 further on); the instruction pointer (8 and 12) reads as 0.
+pub fn eval_filter_args(f: &[BpfIns], arch: u32, nr: u32, args: &[u64; 6]) -> u32 {
     let (mut pc, mut a) = (0usize, 0u32);
     loop {
         let i = f[pc];
         pc += 1;
         match i.code {
-            BPF_LD_W_ABS => a = if i.k == 4 { arch } else { nr },
+            BPF_LD_W_ABS => {
+                a = match i.k {
+                    0 => nr,
+                    4 => arch,
+                    8 | 12 => 0,
+                    k @ 16..=60 if k % 4 == 0 => (args[((k - 16) / 8) as usize] >> (8 * (k % 8))) as u32,
+                    k => panic!("a load outside seccomp_data: {k}"),
+                }
+            }
             BPF_JEQ_K => pc += if a == i.k { i.jt as usize } else { i.jf as usize },
+            BPF_JSET_K => pc += if a & i.k != 0 { i.jt as usize } else { i.jf as usize },
             BPF_RET_K => return i.k,
             c => panic!("bad BPF op {c}"),
         }
     }
+}
+
+/// The same for a call whose arguments are all 0.
+pub fn eval_filter(f: &[BpfIns], arch: u32, nr: u32) -> u32 {
+    eval_filter_args(f, arch, nr, &[0; 6])
 }
 
 // ---- the steps, and the fail-closed rule ----
@@ -335,6 +468,28 @@ pub fn eval_filter(f: &[BpfIns], arch: u32, nr: u32) -> u32 {
 pub struct Step<'a> {
     pub name: &'static str,
     pub run: Box<dyn FnMut() -> Result<String, i32> + 'a>,
+}
+
+/// A build for a platform whose system runs a Linux kernel under another name (the `linux-kernel` feature, PORTING.md):
+/// its workers hold at least the steps that need no root, and say so with `S 2` (the module's notes).
+pub const LINUX_KERNEL: bool = cfg!(feature = "linux-kernel");
+
+/// Whether a worker takes only the steps that need no root: in a build with the `linux-kernel` feature, when its writer
+/// made no jail (the writer makes one only where it requires the whole sandbox).
+pub fn takes_no_root_steps(linux_kernel: bool, jail_given: bool) -> bool {
+    linux_kernel && !jail_given
+}
+
+/// The handshake's sandbox word: 1 the whole set of steps (each held where the sandbox is required), 2 the steps that
+/// need no root, each held (a build with the `linux-kernel` feature, without a jail), 0 a build without the steps.
+pub fn sandbox_word(sandboxed: bool, no_root: bool) -> i32 {
+    if !sandboxed {
+        0
+    } else if no_root {
+        2
+    } else {
+        1
+    }
 }
 
 /// Whether a failed step refuses the work: always on the Kindle. Elsewhere (the simulator, CI, the Mac) only
@@ -348,9 +503,63 @@ pub fn sandbox_required() -> bool {
     required_for(cfg!(feature = "kindle"), ask.as_deref())
 }
 
+/// Whether a writer must never parse untrusted bytes itself when no worker can be had (the pictures' fallback,
+/// picwork.rs): where the sandbox is required, and in a build with the `linux-kernel` feature, whose workers always
+/// hold at least the steps that need no root.
+pub fn writer_never_parses() -> bool {
+    writer_never_parses_for(sandbox_required(), LINUX_KERNEL)
+}
+
+/// The rule itself.
+pub fn writer_never_parses_for(required: bool, linux_kernel: bool) -> bool {
+    required || linux_kernel
+}
+
 /// The rule itself: the Kindle always, any other build only when asked.
 pub fn required_for(kindle: bool, ask: Option<&str>) -> bool {
     kindle || ask == Some("require")
+}
+
+/// Whether this worker must hold every step: where this build requires the sandbox, when a test injects a
+/// failure, and whenever the writer made it a jail (the writer does so only where it requires the sandbox; a
+/// worker's own environment is empty).
+pub fn worker_holds_every_step(required_here: bool, injected: bool, jail_given: bool) -> bool {
+    required_here || injected || jail_given
+}
+
+/// What a writer takes as the sandbox line of a worker's handshake: `S 1` (the steps are in place) anywhere,
+/// `S 0` (a build without the steps) only where the sandbox is not required. (`S 2` is a word only a build with the
+/// `linux-kernel` feature reads, and its writers never take `S 0`: `sandbox_line_ok`.)
+pub fn sandbox_line_ok_for(sandboxed: bool, required: bool) -> bool {
+    sandboxed || !required
+}
+
+/// The same, for this process: where `sandbox_required` says so, and in a build with the `linux-kernel` feature, whose
+/// workers always hold at least the steps that need no root.
+pub fn sandbox_line_ok(sandboxed: bool) -> bool {
+    sandbox_line_ok_for(sandboxed, sandbox_required() || LINUX_KERNEL)
+}
+
+/// Whether this build's writers take a worker's `S 2`: only with the `linux-kernel` feature, and only where the whole
+/// sandbox is not required (where it is, the writers take only `S 1`: DESIGN.md 3.7).
+pub fn sandbox_line_two_ok() -> bool {
+    // (in this order: without the feature nothing else is asked, and the writers' code is what it was)
+    LINUX_KERNEL && !sandbox_required()
+}
+
+/// The rule itself.
+pub fn sandbox_line_two_ok_for(linux_kernel: bool, required: bool) -> bool {
+    linux_kernel && !required
+}
+
+/// The filter's report as a worker's line, read strictly: `E sigsys ` followed by the call's number in one to
+/// six digits and nothing else.
+pub fn sigsys_line(line: &[u8]) -> Option<u32> {
+    let d = line.strip_prefix(b"E sigsys ")?;
+    if d.is_empty() || d.len() > 6 || !d.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    std::str::from_utf8(d).ok()?.parse().ok()
 }
 
 /// Runs the steps in order. A step that fails stops the run with its name when `required` (the worker then
@@ -380,6 +589,20 @@ pub struct Limits {
     pub mapped: bool,
     /// the PDF's length (the worker can no longer fstat once the sandbox is on)
     pub file_len: u64,
+}
+
+/// The address-space limit a worker sets: `as_bytes` (the writer's, `worker_as_bytes`), with the address space
+/// it holds already (`held`, 0 for not measured) in place of the image that assumes, when that is larger. Only a
+/// build with the `linux-kernel` feature measures; everywhere else this is `as_bytes`.
+pub fn as_limit(as_bytes: u64, held: u64) -> u64 {
+    as_bytes + held.saturating_sub(s1::WORKER_IMAGE)
+}
+
+/// `as_limit` as a limit of `max` (the largest value the target's limits hold) takes it: a target whose limits are 32
+/// bits wide caps the sum there. Only a build with the `linux-kernel` feature caps; elsewhere the figure never comes
+/// near.
+pub fn as_capped(as_bytes: u64, held: u64, max: u64) -> u64 {
+    as_limit(as_bytes, held).min(max)
 }
 
 /// The worker's address space for a file of `file_len` bytes (4.3): its image, the file, and the margin.
@@ -427,7 +650,7 @@ pub fn parse_work_args(args: &[String]) -> Option<WorkArgs> {
 
 // ---- the steps on Linux ----
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", feature = "linux-kernel"))]
 mod linux {
     use super::*;
 
@@ -516,13 +739,19 @@ mod linux {
     /// NOFILE 0 (the descriptors it holds keep working; no new one can be made, whatever it closes), NPROC 0,
     /// FSIZE 0, CORE 0, AS and CPU; then proves NOFILE: no new descriptor of any kind.
     pub fn rlimits(l: &Limits) -> Result<String, i32> {
+        // A build with the `linux-kernel` feature: the address space the worker holds already takes the place of
+        // the image the limit assumes, when it is larger. Its C library's allocator may reserve gigabytes of
+        // address space at the start, before any step, and a limit under what is held already lets no mapping be
+        // made and no stack grow (`as_limit`). Measured before the first step (`standard_steps`): after a chroot
+        // /proc/self cannot be read.
+        let held = if LINUX_KERNEL { HELD.load(std::sync::atomic::Ordering::Relaxed) } else { 0 };
         // SAFETY: signal() with SIG_IGN, so a write past FSIZE 0 is an error and not a signal.
         unsafe { libc::signal(libc::SIGXFSZ, libc::SIG_IGN) };
         set_limit!(libc::RLIMIT_NOFILE, 0, 0);
         set_limit!(libc::RLIMIT_NPROC, 0, 0);
         set_limit!(libc::RLIMIT_FSIZE, 0, 0);
         set_limit!(libc::RLIMIT_CORE, 0, 0);
-        set_limit!(libc::RLIMIT_AS, l.as_bytes, l.as_bytes);
+        set_limit!(libc::RLIMIT_AS, as_set(l.as_bytes, held), as_set(l.as_bytes, held));
         set_limit!(libc::RLIMIT_CPU, l.cpu_secs, l.cpu_secs + 5);
         // SAFETY: dup, socket and open only take plain arguments; none may succeed.
         let (d, s, o) = unsafe {
@@ -531,7 +760,29 @@ mod linux {
         if d >= 0 || s >= 0 || o >= 0 {
             return Err(libc::EMFILE ^ 0x4000);
         }
-        Ok(format!("NOFILE 0, NPROC 0, FSIZE 0, CORE 0, AS {} MiB, CPU {} s", l.as_bytes >> 20, l.cpu_secs))
+        Ok(format!("NOFILE 0, NPROC 0, FSIZE 0, CORE 0, AS {} MiB, CPU {} s", as_set(l.as_bytes, held) >> 20, l.cpu_secs))
+    }
+
+    /// The address-space limit the rlimits step sets: `as_limit`, and in a build with the `linux-kernel` feature
+    /// capped at what this target's limits hold (`as_capped`).
+    fn as_set(as_bytes: u64, held: u64) -> u64 {
+        if LINUX_KERNEL {
+            as_capped(as_bytes, held, libc::rlim_t::MAX as u64)
+        } else {
+            as_limit(as_bytes, held)
+        }
+    }
+
+    /// The address space the worker held before its first step (a build with the `linux-kernel` feature only:
+    /// `standard_steps` measures it, the rlimits step reads it).
+    pub static HELD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    /// The address space this process holds (bytes), from /proc/self/statm; 0 when it cannot be read.
+    pub fn address_space_held() -> u64 {
+        // SAFETY: sysconf takes a plain name.
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(0) as u64;
+        let pages = std::fs::read_to_string("/proc/self/statm").ok().and_then(|s| s.split(' ').next().and_then(|n| n.parse::<u64>().ok()));
+        pages.unwrap_or(0) * page
     }
 
     // The SIGSYS reporter: a call outside the allow-list ends the worker, telling the writer which call (one
@@ -582,7 +833,7 @@ mod linux {
             libc::sigaddset(&mut set, libc::SIGSYS);
             libc::sigprocmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
         }
-        let f = build_filter(this_arch().audit_arch, &s1::allow(), &enosys_calls());
+        let f = build_filter(this_arch(), &s1::allow(), &enosys_calls());
         let mut raw: Vec<libc::sock_filter> = f.iter().map(|i| libc::sock_filter { code: i.code, jt: i.jt, jf: i.jf, k: i.k }).collect();
         let prog = libc::sock_fprog { len: raw.len() as u16, filter: raw.as_mut_ptr() };
         // SAFETY: the kernel copies the program at this call; prog and raw live until it returns.
@@ -590,7 +841,32 @@ mod linux {
         if r != 0 {
             return Err(errno());
         }
+        filter_self_check()?;
         Ok(format!("seccomp allow-list, {} instructions", raw.len()))
+    }
+
+    /// The filter's own check, on every start, once the kernel has taken the program: one futex wake on a local
+    /// word (nobody waits, so it returns 0), and one anonymous private page mapped to read and write, set to
+    /// read only with mprotect, and unmapped (4096 bytes; the kernel rounds it to its page). Each returns as it
+    /// would with no filter, and a result that is not success fails the step. On a kernel that does not show the
+    /// filter an argument where the filter reads it, the call traps instead, and the reporter's line comes in
+    /// place of the worker's `S` line: the writers take that as no worker, before a byte of any file is read.
+    fn filter_self_check() -> Result<(), i32> {
+        let word: u32 = 0;
+        // SAFETY: a futex wake on a word of our own that nobody waits on.
+        let r = unsafe { libc::syscall(libc::SYS_futex, &word as *const u32, (FUTEX_WAKE | FUTEX_PRIVATE_FLAG) as libc::c_long, 1 as libc::c_long) };
+        if r != 0 {
+            return Err(errno());
+        }
+        // SAFETY: an anonymous private page of our own, which nothing else points into, mapped, set to read
+        // only and unmapped.
+        unsafe {
+            let p = libc::mmap(std::ptr::null_mut(), 4096, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANONYMOUS, -1, 0);
+            if p == libc::MAP_FAILED || libc::mprotect(p, 4096, libc::PROT_READ) != 0 || libc::munmap(p, 4096) != 0 {
+                return Err(errno());
+            }
+        }
+        Ok(())
     }
 
     /// Whether /etc/passwd and /etc/group list no entry with this id (the writer checks it once).
@@ -631,16 +907,24 @@ mod linux {
 }
 
 /// The worker's steps for this build, in the design's order (3.7, 2 to 9). Off Linux there are none (plain
-/// process isolation).
-#[cfg(target_os = "linux")]
+/// process isolation). A build with the `linux-kernel` feature whose writer made no jail leaves out the ones that
+/// need root (the module's notes).
+#[cfg(any(target_os = "linux", feature = "linux-kernel"))]
 pub fn standard_steps<'a>(a: &'a WorkArgs) -> Vec<Step<'a>> {
     use linux::*;
-    let mut v: Vec<Step> = vec![Step { name: "oom", run: Box::new(|| oom_score_adj(1000)) }];
-    v.push(Step { name: "namespaces", run: Box::new(unshare_net_ipc) });
-    if let Some(j) = a.jail.as_deref() {
-        v.push(Step { name: "chroot", run: Box::new(move || chroot_to(j)) });
+    if LINUX_KERNEL {
+        // (before any step: the rlimits step's address-space limit starts from it, and after a chroot /proc/self
+        // cannot be read)
+        HELD.store(address_space_held(), std::sync::atomic::Ordering::Relaxed);
     }
-    v.push(Step { name: "uid", run: Box::new(|| drop_ids(WORKER_ID)) });
+    let mut v: Vec<Step> = vec![Step { name: "oom", run: Box::new(|| oom_score_adj(1000)) }];
+    if !takes_no_root_steps(LINUX_KERNEL, a.jail.is_some()) {
+        v.push(Step { name: "namespaces", run: Box::new(unshare_net_ipc) });
+        if let Some(j) = a.jail.as_deref() {
+            v.push(Step { name: "chroot", run: Box::new(move || chroot_to(j)) });
+        }
+        v.push(Step { name: "uid", run: Box::new(|| drop_ids(WORKER_ID)) });
+    }
     v.push(Step { name: "privileges", run: Box::new(no_new_privs) });
     let writer = a.writer_pid;
     v.push(Step { name: "pdeathsig", run: Box::new(move || pdeathsig(writer)) });
@@ -649,13 +933,13 @@ pub fn standard_steps<'a>(a: &'a WorkArgs) -> Vec<Step<'a>> {
     v.push(Step { name: "seccomp", run: Box::new(seccomp) });
     v
 }
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", feature = "linux-kernel")))]
 pub fn standard_steps<'a>(_a: &'a WorkArgs) -> Vec<Step<'a>> {
     Vec::new()
 }
 
 /// The CPU and core limits the OS honours off Linux too (macOS ignores RLIMIT_AS).
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", feature = "linux-kernel")))]
 fn soft_limits(l: &Limits) {
     let lim = libc::rlimit { rlim_cur: l.cpu_secs as libc::rlim_t, rlim_max: (l.cpu_secs + 5) as libc::rlim_t };
     let core = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
@@ -717,7 +1001,8 @@ pub fn work_main(args: &[String]) -> i32 {
     }
     out_line(&format!("B {}\n", build_id()));
     let fail = injected_failure(&a);
-    let required = sandbox_required() || fail.is_some();
+    // (a build with the `linux-kernel` feature holds the steps it takes as a required sandbox does)
+    let required = worker_holds_every_step(sandbox_required() || LINUX_KERNEL, fail.is_some(), a.jail.is_some());
     let mut steps = standard_steps(&a);
     if let Some(name) = fail.as_deref() {
         // an injected failure takes the place of the named step (or comes first in a build with none)
@@ -730,7 +1015,7 @@ pub fn work_main(args: &[String]) -> i32 {
         }
     }
     let r = apply_steps(&mut steps, required, |_name, _ok, _detail| {});
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", feature = "linux-kernel")))]
     soft_limits(&a.limits);
     if let Err(step) = r {
         out_line(&format!("E sandbox {step}\n"));
@@ -738,7 +1023,7 @@ pub fn work_main(args: &[String]) -> i32 {
         unsafe { libc::_exit(3) };
     }
     let sandboxed = !steps.is_empty();
-    out_line(&format!("S {}\n", if sandboxed { 1 } else { 0 }));
+    out_line(&format!("S {}\n", sandbox_word(sandboxed, takes_no_root_steps(LINUX_KERNEL, a.jail.is_some()))));
     // 10. parses on one thread, writes only records and pixels to fd 4
     let rc = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match a.kind {
         WorkKind::Pdf => crate::pdfwork::worker_run(&a.limits),
@@ -808,11 +1093,41 @@ fn work_exe() -> String {
     }
 }
 
+/// In the child between fork and exec: a close-on-exec copy of `fd` at 10 or above, so the numbers 0 to 5 are
+/// free to be taken. A copy that cannot be made ends the child (status 127): no worker is exec'd.
+///
+/// # Safety
+/// Only in a forked child before its exec: it ends the process on a failure.
+unsafe fn park_or_exit(fd: i32) -> i32 {
+    let r = libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10);
+    if r < 0 {
+        libc::_exit(127);
+    }
+    r
+}
+
+/// In the child between fork and exec: `from` on the number `to` (dup2 leaves the copy without the close-on-exec
+/// flag). Tried until it returns its target, at most 8 times (an interrupted call; errno is not read here), then
+/// the child ends (status 127): no worker is exec'd.
+///
+/// # Safety
+/// Only in a forked child before its exec: it ends the process on a failure.
+unsafe fn dup2_or_exit(from: i32, to: i32) {
+    for _ in 0..8 {
+        if libc::dup2(from, to) == to {
+            return;
+        }
+    }
+    libc::_exit(127);
+}
+
 impl Worker {
-    /// Starts a worker: a fresh exec of this binary with descriptors 0 to 5 only. `source` is the PDF
-    /// (read only), None for kinds that take none.
+    /// Starts a worker: a fresh exec of this binary with descriptors 0 to 5 only, each put in place by a checked
+    /// step whatever descriptors the writer itself holds; when one cannot be, no worker is exec'd (the writer
+    /// reads the end of the pipe at the handshake). `source` is the PDF (read only), None for kinds that take
+    /// none.
     pub fn spawn(kind: WorkKind, source: Option<i32>, limits: &Limits) -> Result<Worker, SpawnErr> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", feature = "linux-kernel"))]
         let jail = if sandbox_required() {
             if !linux::id_unused(WORKER_ID) {
                 qlog!("work: uid %d is listed in /etc/passwd or /etc/group; no worker", WORKER_ID as i32);
@@ -828,26 +1143,8 @@ impl Worker {
         } else {
             None
         };
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", feature = "linux-kernel")))]
         let jail: Option<String> = None;
-        let mut p4 = [0i32; 2];
-        let mut p5 = [0i32; 2];
-        // SAFETY: pipe2 fills the two-int arrays we own.
-        #[cfg(target_os = "linux")]
-        let ok = unsafe { libc::pipe2(p4.as_mut_ptr(), libc::O_CLOEXEC) == 0 && libc::pipe2(p5.as_mut_ptr(), libc::O_CLOEXEC) == 0 };
-        #[cfg(not(target_os = "linux"))]
-        let ok = unsafe {
-            let r = libc::pipe(p4.as_mut_ptr()) == 0 && libc::pipe(p5.as_mut_ptr()) == 0;
-            if r {
-                for fd in [p4[0], p4[1], p5[0], p5[1]] {
-                    libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
-                }
-            }
-            r
-        };
-        if !ok {
-            return Err(SpawnErr::Start);
-        }
         let exe = work_exe();
         let mut argv_s = vec![
             "grimoire".to_string(),
@@ -862,44 +1159,74 @@ impl Worker {
             jail.clone().unwrap_or_else(|| "-".to_string()),
         ];
         argv_s.extend(injected_arg());
+        // (the command line first: when it cannot be built nothing is open yet)
         let (Ok(cexe), Ok(cargs)) = (CString::new(exe), argv_s.iter().map(|s| CString::new(s.as_str())).collect::<Result<Vec<_>, _>>()) else {
             return Err(SpawnErr::Start);
         };
         let mut argv: Vec<*const libc::c_char> = cargs.iter().map(|c| c.as_ptr()).collect();
         argv.push(std::ptr::null());
         let envp: [*const libc::c_char; 1] = [std::ptr::null()];
+        // /dev/null for the worker's 0 to 2, opened here, before the pipes: the child opens nothing.
+        // SAFETY: open reads a NUL-terminated literal.
+        let dn = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
+        if dn < 0 {
+            return Err(SpawnErr::Start);
+        }
+        let mut p4 = [-1i32; 2];
+        let mut p5 = [-1i32; 2];
+        // SAFETY: pipe2 fills the two-int arrays we own.
+        #[cfg(any(target_os = "linux", feature = "linux-kernel"))]
+        let ok = unsafe { libc::pipe2(p4.as_mut_ptr(), libc::O_CLOEXEC) == 0 && libc::pipe2(p5.as_mut_ptr(), libc::O_CLOEXEC) == 0 };
+        #[cfg(not(any(target_os = "linux", feature = "linux-kernel")))]
+        let ok = unsafe {
+            let r = libc::pipe(p4.as_mut_ptr()) == 0 && libc::pipe(p5.as_mut_ptr()) == 0;
+            if r {
+                for fd in [p4[0], p4[1], p5[0], p5[1]] {
+                    libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+                }
+            }
+            r
+        };
+        // what this function opened, closed again when the start goes no further (an end never made is -1)
+        let close_all = |fds: &[i32]| {
+            for &fd in fds {
+                if fd >= 0 {
+                    // SAFETY: closing descriptors this function opened.
+                    unsafe { libc::close(fd) };
+                }
+            }
+        };
+        if !ok {
+            close_all(&[dn, p4[0], p4[1], p5[0], p5[1]]);
+            return Err(SpawnErr::Start);
+        }
         // SAFETY: fork, as PORTING.md's process model has it. The child only rearranges descriptors and execs
         // (or _exits); every pointer it uses was made before the fork.
         let pid = unsafe { libc::fork() };
         if pid < 0 {
-            for fd in [p4[0], p4[1], p5[0], p5[1]] {
-                // SAFETY: closing descriptors this function opened.
-                unsafe { libc::close(fd) };
-            }
+            close_all(&[dn, p4[0], p4[1], p5[0], p5[1]]);
             return Err(SpawnErr::Start);
         }
         if pid == 0 {
-            // SAFETY: in the child after fork: only async-signal-safe calls, on descriptors we own.
+            // SAFETY: in the child after fork: only async-signal-safe calls, on descriptors this function opened or
+            // was given. Every step is checked: a worker is exec'd with all six descriptors in place or not at all.
             unsafe {
-                let dn = libc::open(c"/dev/null".as_ptr(), libc::O_RDWR);
-                // park what must survive above the numbers it will take
-                let src = source.map(|s| libc::fcntl(s, libc::F_DUPFD, 10));
-                let w4 = libc::fcntl(p4[1], libc::F_DUPFD, 10);
-                let r5 = libc::fcntl(p5[0], libc::F_DUPFD, 10);
+                // park what must survive above the numbers it will take (close-on-exec: no copy crosses the exec)
+                let dn = park_or_exit(dn);
+                let src = source.map(|s| park_or_exit(s));
+                let w4 = park_or_exit(p4[1]);
+                let r5 = park_or_exit(p5[0]);
                 for fd in 0..3 {
-                    libc::dup2(dn, fd);
+                    dup2_or_exit(dn, fd);
                 }
-                if let Some(s) = src {
-                    libc::dup2(s, FD_SOURCE);
-                    libc::close(s);
-                } else {
-                    libc::close(FD_SOURCE);
+                match src {
+                    Some(s) => dup2_or_exit(s, FD_SOURCE),
+                    None => {
+                        libc::close(FD_SOURCE);
+                    }
                 }
-                libc::dup2(w4, FD_OUT);
-                libc::dup2(r5, FD_IN);
-                libc::close(w4);
-                libc::close(r5);
-                libc::close(dn);
+                dup2_or_exit(w4, FD_OUT);
+                dup2_or_exit(r5, FD_IN);
                 let mut max = libc::sysconf(libc::_SC_OPEN_MAX);
                 if !(0..=4096).contains(&max) {
                     max = 4096;
@@ -911,11 +1238,8 @@ impl Worker {
                 libc::_exit(127);
             }
         }
-        // SAFETY: closing the child's ends in the parent.
-        unsafe {
-            libc::close(p4[1]);
-            libc::close(p5[0]);
-        }
+        // the child's ends, and /dev/null, in the parent
+        close_all(&[dn, p4[1], p5[0]]);
         Ok(Worker { pid, rx: p4[0], tx: p5[1], jail, reaped: false, rbuf: Vec::new() })
     }
 
@@ -941,9 +1265,9 @@ impl Worker {
     /// gone) can never block the writer: each write follows a poll for room and is at most PIPE_BUF, which
     /// then cannot block.
     pub fn send_bytes(&mut self, b: &[u8], deadline_ms: u64) -> bool {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", feature = "linux-kernel"))]
         const CHUNK: usize = 4096;
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", feature = "linux-kernel")))]
         const CHUNK: usize = 512;
         let mut off = 0;
         while off < b.len() {
@@ -1158,7 +1482,7 @@ pub fn mono_ms() -> u64 {
 
 /// The line the device log gets at the first worker of a session (3.7, The device log).
 pub fn sandboxed_line() -> String {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", feature = "linux-kernel"))]
     {
         if sandbox_required() {
             return format!(
@@ -1166,6 +1490,9 @@ pub fn sandboxed_line() -> String {
                 WORKER_ID,
                 linux::selinux()
             );
+        }
+        if LINUX_KERNEL {
+            return "work: sandboxed without root (oom_score_adj, no new privileges, dies with the writer, limits, seccomp; no namespaces, chroot or uid of its own)".to_string();
         }
     }
     "work: not sandboxed (plain process isolation: the steps need the Kindle or GRIMOIRE_SANDBOX=require as root on Linux)".to_string()
@@ -1176,13 +1503,25 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
+    /// A call of the allow-list as a worker makes it: futex as a private wake, mmap and mprotect for a mapping
+    /// to read and write, any other with arguments of 0 (it is judged by its number alone).
+    fn plain_args(n: &SysNums, nr: u32) -> [u64; 6] {
+        let mut a = [0u64; 6];
+        if nr == n.futex {
+            a[1] = (FUTEX_WAKE | FUTEX_PRIVATE_FLAG) as u64;
+        } else if nr == n.mmap || nr == n.mprotect {
+            a[2] = 3;
+        }
+        a
+    }
+
     #[test]
     fn filter_verdicts() {
         for n in [&ARM, &X86_64, &AARCH64] {
             let (al, en) = (allow_list_for(n), n.enosys.to_vec());
-            let f = build_filter(n.audit_arch, &al, &en);
+            let f = build_filter(n, &al, &en);
             for &s in &al {
-                assert_eq!(eval_filter(&f, n.audit_arch, s), SECCOMP_RET_ALLOW, "{s}");
+                assert_eq!(eval_filter_args(&f, n.audit_arch, s, &plain_args(n, s)), SECCOMP_RET_ALLOW, "{s}");
             }
             for &s in &en {
                 assert_eq!(eval_filter(&f, n.audit_arch, s), SECCOMP_RET_ERRNO | 38, "{s}");
@@ -1194,20 +1533,148 @@ mod tests {
             }
             // another architecture's call numbers are never taken for ours
             assert_eq!(eval_filter(&f, n.audit_arch ^ 1, al[0]), SECCOMP_RET_TRAP);
+            // a number that is not in the list given is never allowed, whatever the table says of it
+            let short: Vec<u32> = al.iter().copied().filter(|&s| s != n.futex && s != n.mmap).collect();
+            let g = build_filter(n, &short, &en);
+            for s in [n.futex, n.mmap] {
+                assert_eq!(eval_filter_args(&g, n.audit_arch, s, &plain_args(n, s)), SECCOMP_RET_TRAP, "{s}");
+            }
+        }
+    }
+
+    // futex passes only as a private wait (128), wake (129) or wait-bitset (137): the low 32 bits of the call's
+    // second argument, whatever the high half and the other arguments hold. Any other word traps.
+    #[test]
+    fn futex_passes_only_as_a_private_wait_or_wake() {
+        for n in [&ARM, &X86_64, &AARCH64] {
+            let f = build_filter(n, &allow_list_for(n), n.enosys);
+            let verdict = |args: [u64; 6]| eval_filter_args(&f, n.audit_arch, n.futex, &args);
+            for cmd in 0..=13u64 {
+                // (no flag, the private flag, the realtime-clock flag, both)
+                for flags in [0u64, 128, 256, 384] {
+                    let op = cmd | flags;
+                    let want = if [128, 129, 137].contains(&op) { SECCOMP_RET_ALLOW } else { SECCOMP_RET_TRAP };
+                    assert_eq!(verdict([0, op, 0, 0, 0, 0]), want, "operation word {op}");
+                }
+            }
+            for op in [129 | 0x1_0000, 129 | 512, 0x8000_0081, 0xffff_ffff] {
+                assert_eq!(verdict([0, op, 0, 0, 0, 0]), SECCOMP_RET_TRAP, "operation word {op:#x}");
+            }
+            // the high half of the argument is not read
+            assert_eq!(verdict([0, 0xdead_beef_0000_0081, 0, 0, 0, 0]), SECCOMP_RET_ALLOW);
+            assert_eq!(verdict([0, 0x0000_0081_0000_0006, 0, 0, 0, 0]), SECCOMP_RET_TRAP);
+            // nor any other argument
+            assert_eq!(verdict([129, 3, 0, 0, 0, 0]), SECCOMP_RET_TRAP);
+            assert_eq!(verdict([0, 3, 129, 0, 0, 0]), SECCOMP_RET_TRAP);
+            assert_eq!(verdict([u64::MAX, 137, u64::MAX, u64::MAX, u64::MAX, u64::MAX]), SECCOMP_RET_ALLOW);
+            assert_eq!(FUTEX_ALLOWED, [128, 129, 137]);
+        }
+        // the 32-bit ARM's futex_time64 answers ENOSYS whatever its arguments, as the other time64 calls do
+        let f = build_filter(&ARM, &allow_list_for(&ARM), ARM.enosys);
+        for args in [[0u64; 6], [0, 129, 0, 0, 0, 0], [0, 3, 0, 0, 0, 0]] {
+            assert_eq!(eval_filter_args(&f, ARM.audit_arch, 422, &args), SECCOMP_RET_ERRNO | 38);
+        }
+    }
+
+    // mmap (mmap2 on the 32-bit ARM) and mprotect pass only for a mapping not asked executable: bit 2 of the low
+    // 32 bits of the call's third argument. The calls judged by number alone do not look at theirs.
+    #[test]
+    fn a_mapping_asked_executable_traps() {
+        for n in [&ARM, &X86_64, &AARCH64] {
+            let f = build_filter(n, &allow_list_for(n), n.enosys);
+            let verdict = |nr: u32, third: u64| eval_filter_args(&f, n.audit_arch, nr, &[0, 4096, third, 0x22, u64::MAX, 0]);
+            for nr in [n.mmap, n.mprotect] {
+                for prot in 0..=3u64 {
+                    assert_eq!(verdict(nr, prot), SECCOMP_RET_ALLOW, "call {nr}, protection {prot}");
+                }
+                for prot in [4u64, 5, 6, 7, 0x0100_0004, 0xffff_ffff] {
+                    assert_eq!(verdict(nr, prot), SECCOMP_RET_TRAP, "call {nr}, protection {prot:#x}");
+                }
+                // the high half of the argument is not read
+                assert_eq!(verdict(nr, 0xffff_ffff_0000_0003), SECCOMP_RET_ALLOW, "call {nr}");
+                assert_eq!(verdict(nr, 0x0000_0003_0000_0004), SECCOMP_RET_TRAP, "call {nr}");
+            }
+            // read's and write's third argument is a count
+            for nr in [n.read, n.write] {
+                assert_eq!(verdict(nr, 4), SECCOMP_RET_ALLOW, "call {nr}");
+            }
+            for nr in [n.munmap, n.mremap, n.madvise, n.brk] {
+                for third in [0u64, 4, 7, u64::MAX] {
+                    assert_eq!(verdict(nr, third), SECCOMP_RET_ALLOW, "call {nr}, third argument {third:#x}");
+                }
+            }
+            assert_eq!(PROT_EXEC, 4);
+        }
+    }
+
+    // The program is one the kernel's checker takes (Linux 4.9, seccomp_check_filter): only the four opcodes
+    // (a 32-bit load at a fixed offset, a jump on equal, a jump on a set bit, a return), every load at the
+    // number, the architecture or the low half of the second or third argument, every jump forward and inside
+    // the program, taken on a match only, and a return at the end. And the calls the worker itself makes right
+    // after the filter is on (a private futex wake; a page mapped to read and write, set to read only, and
+    // unmapped) pass it.
+    #[test]
+    fn the_filter_is_one_the_kernel_takes() {
+        for n in [&ARM, &X86_64, &AARCH64] {
+            let f = build_filter(n, &allow_list_for(n), n.enosys);
+            assert!(f.len() <= 4096);
+            for (at, i) in f.iter().enumerate() {
+                assert!([0x20u16, 0x15, 0x45, 0x06].contains(&i.code), "opcode {:#x} at {at}", i.code);
+                if i.code == 0x20 {
+                    assert!([0, 4, arg_lo(1), arg_lo(2)].contains(&i.k), "a load at {} (instruction {at})", i.k);
+                }
+                if i.code == 0x15 || i.code == 0x45 {
+                    assert_eq!(i.jf, 0, "instruction {at}");
+                    assert!(at + 1 + (i.jt as usize) < f.len(), "the jump at {at} leaves the program");
+                }
+            }
+            assert_eq!(f.last().map(|i| i.code), Some(0x06));
+            // (its size: the head, a compare a number, a trap, the two returns and the two blocks)
+            assert_eq!(f.len(), if n.audit_arch == ARM.audit_arch { 35 } else { 30 });
+            assert_eq!((arg_lo(1), arg_lo(2)), (24, 32));
+            for (nr, args) in [(n.futex, [0, 129, 1, 0, 0, 0]), (n.mmap, [0, 4096, 3, 0x22, u64::MAX, 0]), (n.mprotect, [0, 4096, 1, 0, 0, 0]), (n.munmap, [0, 4096, 0, 0, 0, 0])] {
+                assert_eq!(eval_filter_args(&f, n.audit_arch, nr, &args), SECCOMP_RET_ALLOW, "{nr}");
+            }
         }
     }
 
     // A panic's message asks for gettid (S1 saw it trap on the Scribe): it answers ENOSYS on every architecture,
-    // so a worker that panics reports "E panic" instead of dying of SIGSYS.
+    // so a worker that panics is reported as a panic ("E panic" where the build unwinds, its abort on the Kindle)
+    // and never as a missing call.
     #[test]
     fn gettid_answers_enosys() {
         for (n, gettid) in [(&ARM, 224u32), (&X86_64, 186), (&AARCH64, 178)] {
             assert!(n.enosys.contains(&gettid), "{gettid}");
-            let f = build_filter(n.audit_arch, &allow_list_for(n), n.enosys);
+            let f = build_filter(n, &allow_list_for(n), n.enosys);
             assert_eq!(eval_filter(&f, n.audit_arch, gettid), SECCOMP_RET_ERRNO | 38);
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", feature = "linux-kernel"))]
         assert!(this_arch().enosys.contains(&(libc::SYS_gettid as u32)));
+    }
+
+    // A build with the `linux-kernel` feature answers prctl ENOSYS on each architecture; every other build traps it.
+    // The table's numbers are each architecture's prctl.
+    #[test]
+    fn a_linux_kernel_build_answers_prctl_enosys() {
+        for (n, prctl) in [(&ARM, 172u32), (&X86_64, 157), (&AARCH64, 167)] {
+            assert_eq!(linux_kernel_enosys(n), vec![prctl]);
+            assert!(!allow_list_for(n).contains(&prctl) && !n.enosys.contains(&prctl) && !n.reach_out.contains(&prctl));
+            let plain = build_filter(n, &allow_list_for(n), n.enosys);
+            assert_eq!(eval_filter(&plain, n.audit_arch, prctl), SECCOMP_RET_TRAP, "{prctl}");
+            let with = build_filter(n, &allow_list_for(n), &[n.enosys, &linux_kernel_enosys(n)[..]].concat());
+            assert_eq!(eval_filter(&with, n.audit_arch, prctl), SECCOMP_RET_ERRNO | 38, "{prctl}");
+            for nr in n.reach_out {
+                assert_eq!(eval_filter(&with, n.audit_arch, nr), SECCOMP_RET_TRAP, "{nr}");
+            }
+        }
+        // (this build's list: the architecture's own, and prctl with the feature)
+        let mut want = this_arch().enosys.to_vec();
+        if LINUX_KERNEL {
+            want.extend(linux_kernel_enosys(this_arch()));
+        }
+        assert_eq!(enosys_calls(), want);
+        #[cfg(any(target_os = "linux", feature = "linux-kernel"))]
+        assert_eq!(libc::SYS_prctl as u32, linux_kernel_enosys(this_arch())[0]);
     }
 
     // The calls a worker must never make (socket, execve, kill, ptrace, mount, chroot) are not on any
@@ -1215,7 +1682,7 @@ mod tests {
     #[test]
     fn the_calls_that_reach_out_are_trapped() {
         for n in [&ARM, &X86_64, &AARCH64] {
-            let f = build_filter(n.audit_arch, &allow_list_for(n), n.enosys);
+            let f = build_filter(n, &allow_list_for(n), n.enosys);
             for nr in n.reach_out {
                 assert!(!allow_list_for(n).contains(&nr), "{nr}");
                 assert_eq!(eval_filter(&f, n.audit_arch, nr), SECCOMP_RET_TRAP, "{nr}");
@@ -1224,7 +1691,7 @@ mod tests {
     }
 
     // The tables are typed by hand: on Linux they are checked against libc's.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", feature = "linux-kernel"))]
     #[test]
     fn the_host_table_matches_libc() {
         let n = this_arch();
@@ -1260,6 +1727,11 @@ mod tests {
                 libc::SYS_chroot as u32
             ]
         );
+        assert_eq!(
+            [FUTEX_WAIT, FUTEX_WAKE, FUTEX_WAIT_BITSET, FUTEX_PRIVATE_FLAG, PROT_EXEC],
+            [libc::FUTEX_WAIT as u32, libc::FUTEX_WAKE as u32, libc::FUTEX_WAIT_BITSET as u32, libc::FUTEX_PRIVATE_FLAG as u32, libc::PROT_EXEC as u32]
+        );
+        assert_eq!(arg_lo(0) as usize, std::mem::offset_of!(libc::seccomp_data, args));
     }
 
     // The fail-closed rule, with no Linux needed: a step that fails stops a required run at that step (nothing
@@ -1311,6 +1783,82 @@ mod tests {
         assert!(!required_for(false, None));
         assert!(!required_for(false, Some("off")));
         assert!(required_for(false, Some("require")));
+    }
+
+    // The sandbox line of a handshake: `S 1` is taken anywhere, `S 0` only where the sandbox is not required.
+    #[test]
+    fn the_sandbox_line_must_be_s1_where_required() {
+        assert!(sandbox_line_ok_for(true, true));
+        assert!(sandbox_line_ok_for(true, false));
+        assert!(sandbox_line_ok_for(false, false));
+        assert!(!sandbox_line_ok_for(false, true));
+    }
+
+    // The address-space limit: the writer's, and with what a worker holds already in place of the image when that
+    // is larger (a build with the `linux-kernel` feature measures it; no other build does). Capped where a target's
+    // limits are 32 bits wide.
+    #[test]
+    fn the_address_space_limit_starts_from_what_is_held_when_that_is_larger() {
+        let a = worker_as_bytes(1 << 20, false);
+        assert_eq!(as_limit(a, 0), a, "not measured");
+        assert_eq!(as_limit(a, s1::WORKER_IMAGE - 4096), a, "less than the image");
+        assert_eq!(as_limit(a, s1::WORKER_IMAGE), a);
+        assert_eq!(as_limit(a, 8 << 30), a - s1::WORKER_IMAGE + (8 << 30), "an allocator's reserve of 8 GiB");
+        assert_eq!(as_capped(a, 8 << 30, u32::MAX as u64), u32::MAX as u64, "32-bit limits");
+        assert_eq!(as_capped(a, 8 << 30, u64::MAX), as_limit(a, 8 << 30));
+        assert_eq!(as_capped(a, 0, u32::MAX as u64), a);
+    }
+
+    // A build with the `linux-kernel` feature: its worker takes only the steps that need no root when its writer made
+    // no jail, and says `S 2` for them; `S 1` stays the word of the whole set of steps, and every other build says
+    // what it said.
+    #[test]
+    fn the_steps_that_need_no_root_have_a_word_of_their_own() {
+        assert!(takes_no_root_steps(true, false));
+        assert!(!takes_no_root_steps(true, true), "a writer that made a jail requires the whole sandbox");
+        assert!(!takes_no_root_steps(false, false) && !takes_no_root_steps(false, true));
+        assert_eq!((sandbox_word(true, false), sandbox_word(true, true), sandbox_word(false, false), sandbox_word(false, true)), (1, 2, 0, 0));
+        // `S 2` is taken only by a build with the feature, and only where the whole sandbox is not required
+        assert!(sandbox_line_two_ok_for(true, false));
+        assert!(!sandbox_line_two_ok_for(true, true), "where the whole sandbox is required the writers take only `S 1`");
+        assert!(!sandbox_line_two_ok_for(false, false) && !sandbox_line_two_ok_for(false, true));
+        // this build, whatever it is: a build without the feature neither takes `S 2` nor loosens what it takes of
+        // `S 0`; a build with it never takes `S 0`
+        assert_eq!(sandbox_line_two_ok(), sandbox_line_two_ok_for(LINUX_KERNEL, sandbox_required()));
+        assert_eq!(sandbox_line_ok(false), !sandbox_required() && !LINUX_KERNEL);
+        // and a writer of a build with the feature never parses untrusted bytes itself, required or not
+        assert!(writer_never_parses_for(false, true) && writer_never_parses_for(true, false) && writer_never_parses_for(true, true));
+        assert!(!writer_never_parses_for(false, false));
+        assert_eq!(writer_never_parses(), sandbox_required() || LINUX_KERNEL);
+    }
+
+    #[test]
+    fn a_filter_report_line_is_read_strictly() {
+        assert_eq!(sigsys_line(b"E sigsys 0"), Some(0));
+        assert_eq!(sigsys_line(b"E sigsys 240"), Some(240));
+        assert_eq!(sigsys_line(b"E sigsys 123456"), Some(123456));
+        for bad in ["E sigsys", "E sigsys ", "E sigsys x", "E sigsys 1 2", "E sigsys 1234567", "S 1", "E sigsys 240 ", "E sigsys -1", "E sigsys +1", " E sigsys 1"] {
+            assert_eq!(sigsys_line(bad.as_bytes()), None, "{bad:?}");
+        }
+    }
+
+    // A worker holds every step where its build requires the sandbox, when a failure is injected, and whenever
+    // the writer gave it a jail; only a worker with none of the three goes on past a failed step.
+    #[test]
+    fn the_worker_holds_every_step_where_the_writer_requires_it() {
+        // (required here, a failure injected, a jail given) and whether every step is held
+        for (required_here, injected, jail_given, want) in [
+            (false, false, false, false),
+            (true, false, false, true),
+            (false, true, false, true),
+            (false, false, true, true),
+            (true, true, false, true),
+            (true, false, true, true),
+            (false, true, true, true),
+            (true, true, true, true),
+        ] {
+            assert_eq!(worker_holds_every_step(required_here, injected, jail_given), want, "{required_here} {injected} {jail_given}");
+        }
     }
 
     #[test]

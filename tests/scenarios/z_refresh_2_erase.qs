@@ -8,7 +8,8 @@
 # (the clock corner held still: its minute's refresh would land among the counted ones)
 clock 1700000000
 wait 300
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 1564 2254
 wait 200
@@ -54,7 +55,7 @@ expect editor.strokes is 1
 expect editor.wear is 8
 pen leave
 wait 400
-expect display.presents is ui 270 220 1562 1734
+expect display.presents is ui 270 220 1562 1842
 expect editor.wear is 8
 # The scribble erased: past a quarter, but the pen is still near, so no flash yet.
 eraser line 800 650 820 1750 20

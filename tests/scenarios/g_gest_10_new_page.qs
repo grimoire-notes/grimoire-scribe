@@ -7,7 +7,8 @@
 # gesture never adds one; the owner asked for the reverse). settings.ini gesture_new_page, a row of the Display
 # sheet under Sideways and the gesture-new-page action turn it off: then the swipe only says it is the last page.
 wait 300
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 1564 2254
 wait 200
@@ -26,17 +27,17 @@ expect editor.page is 3
 pentap panel display
 wait 300
 expect editor.modal is display
-tap 500 1076
+tap panel display.newpage
 wait 300
 expect settings.gesture_new_page is 0
 shot 01-display-row-off
-tap 500 1076
+tap panel display.newpage
 wait 300
 expect settings.gesture_new_page is 1
-tap 500 1076
+tap panel display.newpage
 wait 300
 expect settings.gesture_new_page is 0
-pentap panel display
+pentap panel display.done
 wait 300
 expect editor.modal is none
 # off: nothing is added, and nothing is said (the page stays)

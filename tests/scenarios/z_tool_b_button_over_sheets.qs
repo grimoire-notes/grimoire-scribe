@@ -10,7 +10,8 @@
 # settings: side_button=3
 # rust-only
 wait 300
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 510 460
 tap 1564 2254
@@ -79,7 +80,7 @@ wait 200
 expect editor.modal is display
 expect editor.strokes is 1
 expect toast is
-tap 1462 1950
+tap panel display.done
 wait 200
 expect editor.modal is none
 # Over the bare page: the hold clears it, and undo brings it back

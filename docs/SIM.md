@@ -20,9 +20,10 @@ build's, and never open a window.
 `GRIMOIRE_SIM_SIZE=WxH` changes the virtual panel (`1986x2648` is the Scribe 3's and the
 Colorsoft's); `GRIMOIRE_SIM_STATS=1` prints refresh counts.
 Two more slow the simulator down like a Kindle (simulator only): `GRIMOIRE_HTTPD_DELAY_MS` makes
-each share server render wait that long first, and `GRIMOIRE_BG_DELAY_MS` each background PDF
-export, so the next one queues behind it. `GRIMOIRE_SIM_DENSE_DRAW_MS` makes the page previews job's
-drawing of a dense page (a page file of 512 KB or more) take that many milliseconds longer, as a Kindle
+each share server render wait that long first, and `GRIMOIRE_BG_DELAY_MS` each background job (a PDF
+export, a batch of page previews), so the next one queues behind it. `GRIMOIRE_SIM_DENSE_DRAW_MS`
+makes the page previews job's drawing of a dense page (a page file of 512 KB or more) take that many
+milliseconds longer, as a Kindle
 takes seconds, and `GRIMOIRE_SIM_CORES` stands for the number of cores the background jobs see (under 3:
 no second job process beside the first). `GRIMOIRE_SIM_BACKLINKS_STEP_MS` (headless runner only) makes
 each idle tick of the backlinks cache's check take that many milliseconds longer (a tick with no check
@@ -55,13 +56,26 @@ timed a press or a finger shape by the real time between their lines failed ther
 while passing here. `make scenarios-late` runs those again with every wait 400 ms late (make check
 runs it after the scenarios). A script that times a contact keeps passing however late the machine
 is when it times it by the script's own clock: `touch` lines are stamped by their waits (below), and
-`finger`/`frame` lines by their frame offsets with no `wait` between the frames.
+`finger`/`frame` lines by their frame offsets with no `wait` between the frames (the frame after a `wait`
+is stamped when the wait really ended: tests/scenarios/z_pages_drag_hold.qs times its flick by `frame 300`,
+issue #184).
 
 `GRIMOIRE_SIM_CLOCK=script` holds app timers still while a script line is processed or a background
 job runs. Each `wait MS` advances those timers by exactly MS; host work and `GRIMOIRE_SIM_LATE_MS`
-still delay the runner, but do not advance app time. A `waitfor` advances them by what it idled, a
-round at a time, until its probe matches (tests/scenarios/z_waitfor_script_clock.qs waits so for a
-toast to go). `waitbg` keeps a real deadline and polls the jobs while app time stays still. This is
+still delay the runner, but do not advance app time. Inside a wait, app time moves on a round at a
+time by what that round idled, and what the machine took besides is made up in one step at the
+wait's end: two timers due inside one wait can then come due together in its last round, their
+refreshes in that round's order and not their own, so a check of their order gives each a wait of
+its own (tests/scenarios/files_12_covers_slow.qs, issue #169). A background job's child works by the
+real clock beside the app: a preview it writes while the app is still drawing the screen that asked for it
+shows at once, before a count that starts on the next line, so a check of the job's own refresh holds the
+job back with `GRIMOIRE_BG_DELAY_MS` (tests/scenarios/z_rc8_pages_refresh.qs, issue #184).
+A `waitfor` advances them by what it idled, a round at a time, until its probe matches
+(tests/scenarios/z_waitfor_script_clock.qs waits so for a
+toast to go). A `side click` advances them by its own time, its presses and the gaps between them
+(80 ms for one click), as its events come due: so a `wait` after it is that long after the release
+by the app's own timers, however late the machine ends it (tests/scenarios/v_gestures_4e_single.qs
+checks a single click's wait for a second one so). `waitbg` keeps a real deadline and polls the jobs while app time stays still. This is
 opt-in for exact toast and refresh checks; other scenarios keep the real monotonic clock. `clock
 SECONDS` still sets only the displayed wall time. With it, `GRIMOIRE_SIM_UPTIME_MS=N` starts app
 time at N ms in place of the host's time since it started, as on a machine up that long
@@ -100,7 +114,7 @@ GRIMOIRE_ROOT=/tmp/q GRIMOIRE_SCRIPT=tests/scenarios/a_notebook.qs GRIMOIRE_SHOT
 | `pen curve X Y R STEPS P [TURNS] [tx ty]` | cursive-like loops |
 | `eraser line X0 Y0 X1 Y1 STEPS` | the same with the eraser end |
 | `side on` / `side off` | hold/release the first side button; existing event sequence is unchanged |
-| `side click N [GAP_MS] [PRESS_MS]` | N hovering button clicks; defaults: 150 ms release-to-next-press gap, 80 ms press |
+| `side click N [GAP_MS] [PRESS_MS]` | N hovering button clicks; defaults: 150 ms release-to-next-press gap, 80 ms press. The next line is read once the last release is delivered: the runner sleeps up to each event's time, and with `GRIMOIRE_SIM_CLOCK=script` moves app time on by just that |
 | `side2 on` / `side2 off`, `side2 click N [GAP_MS] [PRESS_MS]` | the second button, enabled by `GRIMOIRE_SIM_PEN_BUTTON2=1` |
 | `mods N` | the modifier keys held from here on (KEYMOD_* bits: 1 Ctrl, 2 Shift, 4 Alt, 8 Meta; `mods 0` lets go), in order with the events before it: every pen and touch event carries them, as a paired keyboard's Shift held while tapping (z_pages_add_1_batch), and `hidkeys_mods_held` reads them, as Shift or Alt held as a lasso begins (z_lasso_14_exact_toggle) |
 | `key CODE MODS [PAD]` | a key press (Linux evdev code, KEYMOD_* bits), a controller's when PAD is 1. A modifier (29, 97 Ctrl; 42, 54 Shift; 56, 100 Alt; 125, 126 Meta) is held instead, no event of its own, as input_evdev.rs reads a keyboard: every key, pen and touch event carries it until its `keyup`; `hidkeys_mods_held` follows it too (z_lasso_16_exact_shift_key) |
@@ -119,6 +133,7 @@ GRIMOIRE_ROOT=/tmp/q GRIMOIRE_SCRIPT=tests/scenarios/a_notebook.qs GRIMOIRE_SHOT
 | `tapn N X Y [SEP] [MS]` | N fingers (fingers 1 to N) in a row centred on (X, Y), SEP px apart (default 150), each kept on the screen, landing one frame each 10 ms apart, still for MS (default 80), lifting one frame each 10 ms apart: `tapn 2 100 100` puts them at x 25 and 175, their midpoint at 100; one batch |
 | `rotate N` | the Kindle now turned N quarter turns clockwise (0..3) |
 | `sleep`, `wake` | the power service announcing the sleep screen, and its end |
+| `upload MODE FILE` | a browser on the Wi-Fi sends FILE (a path in the data root, the rest of the line) to the share server as the Share page's script does (2.2, issue #175): it loads the page for its token, then sends `POST /upload` with the file's bytes and its name percent-encoded, in a thread of its own while the main loop serves it. MODE `send` is the page's own send; `notoken`, `badtoken` and `othersite` send with no token, a wrong one, or another site's Origin. Its answer is `upload.reply.N` (below). Does not end a batch. Wait for each answer before anything forks (the Library's import, a render): the thread is gone once it has it |
 | `waitfor KEY OP VALUE` (`OP`: `is`, `has`, `not`) | let timers run as `wait` does until a probe matches, checking after each flush: the main loop idles its 30 ms a round, as in a `wait` or on the Kindle at rest, and with `GRIMOIRE_SIM_CLOCK=script` each round moves app time on by what it idled. Ends as soon as the condition holds (not later with `GRIMOIRE_SIM_LATE_MS`); fails after 60 seconds of real time, or at once for an unknown key, a malformed check, or a key whose check starts its count again (`display.presents`, `main.longest_unpumped_ms`, `pump.calls`, `keyboard.draws`, `fshape.fired`: each try would clear what it waits for), which it leaves unread for an `expect`: `expect failed (line N): waitfor cannot wait on KEY, which starts again when read` |
 | `wait MS` | let timers run (autosave, toasts, the share server); at least MS of real time (more on a busy machine, or with `GRIMOIRE_SIM_LATE_MS`) |
 | `hold [PATH]` | keep timers and the server running until the external test driver stops the process, or resumes the script by creating PATH (no spaces, at most 63 bytes); used to attach Live view's readers before drawing in tests |
@@ -131,9 +146,10 @@ GRIMOIRE_ROOT=/tmp/q GRIMOIRE_SCRIPT=tests/scenarios/a_notebook.qs GRIMOIRE_SHOT
 | `powerhold` | the press, the 4 s hold and the release at once, with no time passing: Grimoire saves and quits (check that with `expect running is 0`) |
 | `pdfimport PATH [NAME [FOLDER]]` | the picker's entry point without the picker (kept for tests; the picker, Library > New > From a file..., calls the same function): imports the PDF at PATH (from the storage root: `GRIMOIRE_STORAGE`, else the folder around the data root), read in place and never moved, named NAME and put in Library folder FOLDER (`_` stands for a space in each). `waitbg` waits for it |
 | `powerd STATE` | what the simulated power service reports from now on: `active` (the start), `screenSaver`, `readyToSuspend` or `suspended`; `unknown` or nothing reads as unreadable |
-| `clock SECONDS` | the time the clock and battery corner shows, in unix seconds (`clock 1700000000` is 2023-11-14 22:13:20 UTC), kept where the script puts it: it does not run on; `clock real` is the machine's clock again |
+| `clock SECONDS` | the time the status bar shows, in unix seconds (`clock 1700000000` is 2023-11-14 22:13:20 UTC), kept where the script puts it: it does not run on, so no screen refreshes for a new minute until the script sets one (tests/scenarios/y_status_bar_clock.qs); `clock real` is the machine's clock again |
 | `battery PERCENT [charging]` | the battery that corner shows (a pixel art battery with the percent beside it), 0 to 100, with the bolt over it when `charging` follows; `battery none` is a battery that cannot be read. The simulator starts at 100 and not charging |
 | `storage full`, `storage ok` | from now on every file write fails, as on a full userstore, or works again |
+| `storage move SRC DST` | on a `# storage: 1` run's storage root, the entry SRC renamed to DST (each a path from the root, `_` for a space), as a writer over USB would while Grimoire runs: nothing replaced (DST taken fails the line), the entry itself renamed (a link is moved, never followed); a path that is no storage path fails the line too (2.2, files_12_swap) |
 | `quit` | quit (end of script also quits) |
 
 The clock and battery corner (docs/KINDLE.md; src status.rs, the Rust build only) reads the simulated
@@ -158,7 +174,30 @@ v_storage_full.qs leaves with a page that cannot be saved.
 The editor panel's buttons, by the names `tap panel` and `editor.panel_at.X.Y` use: `grip`, `collapse` and
 `expand` (the collapsed panel is one `expand` button), `tool-picker` (the tool button, or the grid when its pen
 is pinned), `tool:NAME` (a pinned pen, NAME as `editor.tool` has it), `eraser`, `undo`, `redo`, `clear`,
-`previous`, `pages` (the page chip), `next`, `links` (the Links button), `paper`, `display`, `pen-feel` and `library`. A disabled button
+`previous`, `pages` (the page chip), `next`, `links` (the Links button), `widgets`, `paper`, `display`, `pen-feel` and `library`. The
+Widgets popup's rows are `widgets.ID` (`widgets.com.example.timer`), and an open frame's parts are
+`widget.ID.title`, `.close`, `.min` (or `.minimize`), `.resize` and `.body`. A frame can also be
+named by its index in the open list, which is how a scenario reaches the controls a package draws:
+`widget.0.hit.N` is the hit region with id N in the first frame's last draw, and
+`widget.0.hit.N` stays a valid name only while that region exists. A package's own status text is
+read with `editor.widget.0.status`. The Packages page is Settings → Packages
+→ Widgets: `settings.cat.5` picks the Packages category and `settings.packages` opens the Widgets
+page. Its controls are `packages.close` (the X, which closes Settings), `packages.back` (to
+Settings), `packages.row.ID` (or its index, `packages.row.0`), `packages.update-all`,
+`packages.install`, `packages.remove`, `packages.remove-yes`, `packages.update`, `packages.trust`,
+`packages.license-yes`, `packages.license-view`, `packages.license-prev`, `packages.license-next` and
+`packages.qr`; a settings row is `packages.setting.KEY` (or `packages.setting.N`); the repository
+address is typed on the regular keyboard (its Done installs, as Done answers every other keyboard).
+The Package Store is the home app row's fourth built-in app, `library app.store`. Its controls are
+`store.close`, `store.back`, `store.refresh`, `store.filter.N` (0 all, 1 apps, 2 widgets),
+`store.package.ID`, `store.prev`, `store.next`, `store.shot.prev`, `store.shot.next`,
+`store.install`, `store.trust`, `store.qr` and `store.retry`. Its state is read with
+`library.store.view` (`list`, `detail`, `trust`, `busy`, `error` or `qr`), `.open`, `.filter`,
+`.packages`, `.visible` (ids in catalog order), `.selected`, `.featured`, `.screenshots`, `.shot`,
+`.shot.loaded`, `.icon.loaded`, `.status`, `.error` and `.page`. `GRIMOIRE_PACKAGE_STORE_URL`
+points the Store at another catalog; `GRIMOIRE_PACKAGE_STORE_OFFLINE=1` reads only the saved
+catalog and its cached images (tests/scenarios/z_package_store.qs).
+A disabled button
 (Undo with nothing to undo, Clear on an empty page, Previous on page 1) has no hit and no name. A scenario
 that wants a panel button taps it by name, so that it does not break when the panel gains a button;
 `editor.panel_at.1768.594 is undo` upright with no pins (and the other coordinates of tests/scenarios/
@@ -225,24 +264,24 @@ taps them in each). Upright: the Library's top bar has New at 965 95, Folder 115
 Settings 1535 95. Its five buttons widen together for a longer word, up to 220 px each: New is at
 965 only while they are at most 191 px wide, Folder at 1155 up to 198 and Share at 1345 up to 212
 (the same sideways), so a language with wider top-bar words moves them (docs/TRANSLATING.md).
-Hosted by KOReader they move left, as Back to KOReader takes the room it needs. Settings' rows
-are at x 930: Pen sensitivity y 460, Calibrate 620, Display 780, Style 930, Mirror PDFs 1060, the
-pen button's row 1190, Turn with the Kindle 1320, Pinch 1450 and Language 1580. Upright from the
-Library, the Display sheet's "Sideways, show the whole page" row is 930 1032, its sleep screen row 930 1308, and its clock and battery size cell 472 1626 and corner cell 997 1626, beside its Done at 1460 1626 (in a notebook the sheet has the Pin this page row too, so they are 472 1720, 997 1720 and 1460 1720). The Language list
-has Automatic at 930 785, English 930 945, Español 930 1105, 日本語 930 1265 and Cancel 930 1425. Pen feel's tabs
-are at x = 130 + 177 n, y 289, in the order pencil, mechanical pencil, charcoal, ballpoint,
-fineliner, marker, fountain pen, calligraphy pen, highlighter, eraser. Sideways (2480x1860): the
-top bar has New at 1585 95, Share 1965 95 and Settings 2155 95; Settings' rows are at x 1240: Pen
-sensitivity y 260, Calibrate 425, Display 590, Language 1385; the Display sheet's sleep screen row
-is 1240 1099 and its Done 1770 1419; the Language list has 日本語 at 1240 1009 and Cancel
-1240 1169. The first card's menu button is 431 896 (a notebook's or a folder's menu rows are tapped
+Hosted by KOReader they move left, as Back to KOReader takes the room it needs. Settings is one
+page (the new Settings menu, #115): its categories are at x 329, y 286 + 136 n (n from 0: General,
+Display, Sleep & Clock, Pen, Controls, Packages, System), the open category's rows at x 1233, y 371 + 134 n,
+and its X at 1735 95; a submenu's Back is at 125 95 and its X at 1735 95. Tap Settings' rows, the
+Display, Sleep settings and Clock settings pages' rows (`display.NAME`) and the choice lists' rows
+by name (`library.ui_at.X.Y` lists the names), never by place. Pen feel's tabs are one strip, its
+segments' centres at x = 138 + 176 n, y 301, in the order pencil, mechanical pencil, charcoal,
+ballpoint, fineliner, marker, fountain pen, calligraphy pen, highlighter, eraser; its Reset tool is
+at the page's foot, left (150 2390 is on it). Sideways (2480x1860): the top bar has New at 1585 95,
+Share 1965 95 and Settings 2155 95; Settings' categories are at x 330, y 286 + 136 n, its rows at x
+1544, y 371 + 134 n, and its X at 2355 95. The first card's menu button is 431 896 (a notebook's or a folder's menu rows are tapped
 by name, `tap library more.delete`, never by place: they move when the menu gains a row), Delete's
 Keep it 1240 845 and Move to's Cancel 1240 1055. Share's
 Done is 2160 1485. In New notebook, Rename is 1950 1424 and the Custom music tile 1800 1115 (its
 sheet's Cancel 598 1693); the keyboard's bottom row is at y 1745: Cancel 221, `-` 517, the
 symbols key 756, the accents key 995 (928 is on it too), space 1360, `'` 1723, `.` 1962 and Done
 2258 (Cancel's 279 is on it too). Pen feel's
-tabs are at x = 161 + 239 n, y 289 (the calligraphy pen's 1834). Calibration's corners are 298 223,
+tabs are at x = 169 + 238 n, y 301 (the calligraphy pen's 1835). Calibration's corners are 298 223,
 2182 223, 2182 1637 and 298 1637, its center 1240 930, touch's skip 1240 1475 and the check's
 Cancel 1240 1675. The editor's tool button is 2388 358.
 
@@ -251,7 +290,9 @@ Cancel 1240 1675. The editor's tool button is 2388 358.
 `side click 2` is a double-click with 80 ms presses and 150 ms release-to-next-press gaps.
 With a double or triple slot bound, follow the final release with `wait 400` before checking
 dispatch: the recognizer waits 350 ms. Without either multi-click slot a single click acts at
-release. Triple-click requires each next press within 350 ms of the preceding release (the old
+release. A check that the click has NOT acted yet (a `wait` shorter than the 350 ms, then the check)
+holds on any machine only with `GRIMOIRE_SIM_CLOCK=script`: by the real clock a wait that ends late,
+as on a loaded machine, ends after the click acted (v_gestures_4e_single, issue #86). Triple-click requires each next press within 350 ms of the preceding release (the old
 three-clicks-within-1.2-seconds rule is retired). `side on`, `wait 1200`, `side off` records a
 hovering hold; `side on`, `pen down`, `pen move`, `pen up`, `side off` records a drag. Existing
 `side on/off` scripts retain their event sequence; the helper additionally establishes hover.
@@ -286,6 +327,11 @@ services to its system (`wifi`, `pairing`, `updates`, `koreader`, `calibration`:
 `Services`), so Settings can be run without their rows. The scenario harness clears it between runs.
 `GRIMOIRE_SIM_NO_LIGHT=1` makes it a device without a front light: the Display sheet says so where
 its sliders would be, and Settings calls the row Display. The scenario harness clears it between runs.
+`GRIMOIRE_SIM_LIGHT_SENSOR=1` makes it a Kindle with an ambient-light sensor (the Scribe's two are in
+its wide bezel): the Display page has its Auto brightness row, and `light.auto` follows it (0 off,
+1 on). Ticking it also sets the simulated front light to 18, as the power service would from its
+sensor. Without the hook the simulator has no sensor, as a Kindle without one. The scenario harness
+clears it between runs.
 `GRIMOIRE_SIM_DEVICE_NAME=NAME` makes the simulator a platform whose device is called NAME: every
 text that is looked up says NAME where it says Kindle (i18n.rs, the device's name). The scenario
 harness clears it between runs.
@@ -294,18 +340,23 @@ the provisional `TG_TUNE`. The scenario harness clears both hooks between runs. 
 shapes and `tests/fixtures/touch/synthetic.txt` are regression inputs, not owner evidence.
 The trace contains no pen coordinates: replay cannot measure hover-distance acceptance.
 
-The Settings bottom row is KOReader | Pair | Wi-Fi | Gestures | Updates | Done, in either
-orientation (Pair in Controller's place since 2.0.0-beta.2, Wi-Fi since 2.1.0-beta.2: Gestures moved from
-x = 890, now a gap, to 1000). These interior tap points were checked with `library.ui_at` in English,
-Spanish and Japanese, Gothic and Classic, on the 1860 x 2480 panel (2480 x 1860 sideways):
+Settings' Controls category (since the new Settings menu, #115) lists Shortcuts, Pair and Gestures, and
+General lists Language, Updates and Wi-Fi; a submenu has Back at its top left and X at its top right (in a
+Gestures or Buttons group the Back is `done`, back to the list of groups). These interior tap points were
+checked with `library.ui_at` in English on the 1860 x 2480 panel (2480 x 1860 sideways); the page lays them
+out the same in every language and style (library.rs, `draw_settings`):
 
 | Target | Upright | Sideways |
 |---|---|---|
-| Pair | 580, 1930 | 863, 1695 |
-| Wi-Fi | 770, 1930 | 1070, 1695 |
-| Gestures | 1000, 1930 | 1320, 1695 |
-| Updates | 1200, 1930 | 1560, 1695 |
-| Settings Done | 1550, 1930 | 1820, 1695 |
+| Controls (`settings.cat.4`) | 329, 830 | 330, 830 |
+| Shortcuts | 1233, 371 | 1544, 371 |
+| Pair | 1233, 505 | 1544, 505 |
+| Gestures | 1233, 639 | 1544, 639 |
+| Updates (General, `settings.cat.0`) | 1233, 505 | 1544, 505 |
+| Settings X (`done`) | 1735, 95 | 2355, 95 |
+| A submenu's Back (`settings.back`, a group's `done`) | 125, 95 | 125, 95 |
+| Gestures' groups: Editing, Tools, Pages, Index | 930, 608 / 764 / 920 / 1076 | |
+| A Gestures or Buttons group's row N | 930, 296 + 154 (N - 1) | |
 | Record Use (when enabled) | 430, 1645 | 740, 1335 |
 | Record Try again | 763, 1645 | 1073, 1335 |
 | Record Disable | 1096, 1645 | 1406, 1335 |
@@ -314,12 +365,12 @@ Spanish and Japanese, Gothic and Classic, on the 1860 x 2480 panel (2480 x 1860 
 The three sample slots have interior centres at x = 630 / 930 / 1230, y = 1110 upright,
 and x = 940 / 1240 / 1540, y = 800 sideways. They display samples and have no hit action.
 Use `library.ui_at.X.Y` to check a candidate hit before depending on it. Its
-values include `pair-menu` (Settings' Pair), `gestures`, `updates`, `done`, `gestures.master`,
+values include `pair-menu` (Settings' Pair), `gestures`, `updates`, `done`, `settings.back`, `gestures.master`,
 `gestures.group.NAME`, `gestures.row.N`, `gestures.reset`, `gestures.reset.confirm`,
 `gestures.reset.cancel`, `record.use`, `record.retry`, `record.disable` and `record.cancel`. This is a hit-test
 probe, not a coordinate locator; existing unrelated coordinates above remain as documented.
 
-**Recording a gesture in a scenario.** Open Settings > Gestures and a group; verify each
+**Recording a gesture in a scenario.** Open Settings > Controls > Gestures and a group; verify each
 candidate tap with `library.ui_at.X.Y`. Tap an action, expect `library.gestures.learning`
 to name it and `library.record` to be `wait`. A paired row continues with the second member
 after saving the first. Use `tapn`/`swipe` for a pattern; expect `pattern touch.2.tap` (for example), then tap
@@ -346,24 +397,52 @@ session measures and outcomes, intended-fire counts and wrong/negative fires. Ch
 before interpreting a report. `--blocks` supplies names in order. No coordinate or success-rate
 claim from synthetic replay establishes the owner study or the finger-shape freeze gate.
 
-### The file picker (`files.*`, 2.1.0-beta.2)
+### The file picker and Files (`files.*`, 2.1.0-beta.2; Files 2.2)
 
 A scenario with `# storage: 1` runs on a fixture storage root: the run's root is the storage (`GRIMOIRE_STORAGE`),
 Grimoire's data root its folder `grimoire`, and `# copy: DIR DEST` and `# generate:` work on the storage root
-(tests/files_hostile.py plants links, a FIFO and odd names). `tap library new` then `tap library new.file` opens
-the picker. Taps: `tap library files.back`, `files.prev`, `files.next`, `files.row.N` (the Nth row on the screen,
-from 1), `files.more.N` (its `...`), `files.item.NAME` (the row of that name, `_` for a space), and the open
-card's `files.card.import`, `files.card.open`, `files.card.pictures`, `files.card.notebook`, `files.card.cancel`.
+(tests/files_hostile.py plants links, a FIFO and odd names; tests/files_place_tree.py the tree the Files scenarios
+browse, files of known sizes and times among them). `tap library new` then `tap library new.file` opens the picker;
+`tap library files-card` opens Files (place mode) from its card in the Library (`# settings: files_card=1`), and
+`files-card-menu` that card's menu, whose rows are `files-card.open` and `files-card.hide` (Cancel is `done`).
+Taps: `tap library files.back`, `files.prev`, `files.next`, `files.row.N` (the Nth row on the screen, from 1),
+`files.more.N` (its `...`), `files.item.NAME` (the row of that name, `_` for a space; the root's rows by their
+English names: `Import`, `documents`, `Downloads`, `Templates`, `Photos`, `Fonts`, `Kindle_fonts`, `PDF_copies`,
+`Trash`, `All_storage`, `Show_Files_in_Library`), and the open card's `files.card.import`, `files.card.open`,
+`files.card.pictures`, `files.card.notebook`, `files.card.template` and `files.card.photo` (a picture's Use as template
+and Use as photo), `files.card.add` (a font's Add to fonts, 2.2, issue #161), `files.card.cancel`, and in Files `files.card.rename`,
+`files.card.trash` (Delete, which asks first), `files.card.delete` (the Delete question's Delete; its Keep it is
+`files.card.cancel`), `files.card.opener` (while that question is up: where the card's Delete that opened it was
+tapped, for a second tap at the place of the first) and `files.card.restore` (a trash entry's). The rename keyboard
+is the Library's: its keys are tapped where they are drawn (as for New folder's), and Esc (keys on) or Back is its
+Cancel. A Library notebook's Delete confirmation is `tap library delete.yes`. A Delete question takes its answer
+once it has been shown, 450 ms after its frame went to the panel (docs/DESIGN.md, "The question is seen before it is
+answered"): a script waits `wait 500` between the tap that opens one and its answer (Files' Delete, Keep it or a tap
+outside; the Library's `delete.yes`), and tests/scenarios/files_18_delete_twice.qs, which taps sooner on purpose,
+runs on the script's clock. In Files: `files.crumb.N` (the Nth part of the
+path bar, from 1: Files, the place, then each folder; the last opens the Go to sheet), `files.sort`,
+`files.show` and `files.view` (its chips), and `files.goto.N` (the Go to sheet's Nth folder or place). Home (2.2,
+issue #160): `files.goto.home` (the Go to sheet's first row, "Home: ..."), `files.card.sethome` and
+`files.card.resethome` (Set as home and Reset home to Notebooks, on the Go to sheet and on a folder's card), and in
+the Library `fmore.home` (a folder's menu's Set as home, or Reset home to Notebooks on the folder that is home). In
+the Covers view `files.row.N` and `files.item.NAME` tap a tile (it has no `...`).
 
 | key | value |
 |---|---|
-| `files.open` | `1` while the picker is up |
-| `files.place` | `root` at its four rows, else the folder's path from the storage root (`documents`, `grimoire/import`; empty for All storage) |
+| `files.open` | `1` while the picker (or Files) is up; `files.mode` `pick` or `place` |
+| `files.place` | `root` at its first rows, else the folder's path from the storage root (`documents`, `grimoire/import`; empty for All storage) |
 | `files.crumbs` | the path line ("Files > Documents > Books"), empty at the root |
 | `files.ready` | `1` once the folder is read; `files.rows` the rows in all, `files.page`, `files.pages`, `files.per_page` |
 | `files.hidden` | entries left out of the folder (links, refused folders, paths too long); `files.capped` `1` at 5,000 entries |
-| `files.row.N`, `files.item.NAME` | a row's name as drawn; `files.sub.N` its second line; `files.kind.N` (`place`, `folder`, `pdf`, `look`); `files.status.N` (`waiting`, `importing`, `failed`, `imported` or empty); `files.notes.N` (`1` with "has notes"); `files.pictures.N` (a folder's count, empty before it is counted) |
-| `files.card` | the open card: `pdf`, `folder` or empty; `files.card.details` its first line, `files.card.rows` its rows joined by `|` |
+| `files.row.N`, `files.item.NAME` | a row's name as drawn; `files.sub.N` its second line (`files.sub.NAME` the row of that name's: `files.sub.Trash` the root's Trash row, its path and, once the trash's walk is through, its size); `files.kind.N` (`place`, `folder`, `pdf`, `look`, `show` for "Show Files in Library", and in Files `picture`, `font`, `other`, `link`, `trashed`); `files.status.N` (`waiting`, `importing`, `failed`, `imported` or empty); `files.notes.N` (`1` with "has notes"); `files.keyed.N` (`1` once the PDF's book key was read, which an idle tick does for the rows on screen: `files.notes.N` is settled then); `files.pictures.N` (a folder's count, empty before it is counted) |
+| `files.card` | the open card: `pdf`, `folder`, in Files `picture`, `font`, `other`, `trashed` (a trash entry's), `delete` (the Delete question a card's Delete opens) or `goto` (the Go to sheet), or empty; `files.card.details` its first line (the Go to sheet's title, the question's `Delete "name"?`), `files.card.rows` its rows joined by `|` |
+| `files.keyboard`, `files.text` | `1` while Files' rename keyboard is up, else `0`; the name it holds (empty when it is not up) |
+| `files.sort`, `files.show` | Files' order (`name`, `newest`, `size`) and what it lists (`usable`, `all`), as settings.ini has them; `files.sorting` `1` while a new order's stats come in |
+| `files.order`, `files.drawn` | the rows' names in order, joined by `|`; the rows' names as last drawn on the screen (a new order shows there once, when ready) |
+| `files.view`, `files.tiles` | Files' view (`list`, `covers`), as settings.ini has it; in the Covers view what each tile on the screen was last drawn showing, a letter each in order: `p` its preview, `l` the hourglass (its preview to come), `i` its kind's icon (a folder, another file, one the worker refused or gave nothing for); empty in the list (2.2). The tiles that changed are drawn together (at once when the screen's set is complete, else every 2 s at most), so `files.tiles` follows `files.covers` |
+| `files.covers`, `files.says.N` | in the Covers view, what each tile on the screen would show now, drawn yet or not (the same letters); and what the Nth tile on the screen was last drawn saying under its name (the Import place's status, `Importing: page 3 of 12`), empty for none and in the list |
+| `files.home`, `files.at_home` | home as Files was told it, the settings.ini value (`files/documents/Sorted`, `notebooks/School`; empty for Notebooks), and `1` while the folder shown is the home folder (no Back button there), else `0` (2.2) |
+| `files.making`, `files.asked` | `1` while a preview the Covers screen asked for is queued or running ("Making previews..." stays while one is being made, after its first second); how many files were looked at since the folder was entered, a file the cache had included, one whose queued job was taken back not |
 | `storage.exists.PATH`, `storage.size.PATH`, `storage.names.DIR` | on the storage root: whether a path is there (a link counts as itself), a file's size (-1 without it), a folder's names sorted and joined by `|` |
 
 ### Checks
@@ -400,6 +479,7 @@ shows what the app holds.
 | `watching` | `1` while input_poll also watches the share server's socket, else `0` (the runner answers this one too) |
 | `power.pokes` | how many times the app told the power service someone is here: at most once a minute, for pen, touch, or a key while shortcuts are on (the runner answers this one too) |
 | `main.longest_unpumped_ms` | the longest stretch between two reads of input or pump calls since this key was last checked, presents and file saves left out: `ok` under the runner's bound of 250 ms (host time of a debug build: it catches a missing pump, not the Kindle's ~100 ms), else the stretch in ms. The check starts the count again, so `expect main.longest_unpumped_ms not -1` only starts it (the runner answers this one too) |
+| `libindex.complete`, `libindex.reads`, `libindex.books` | the library index (every notebook's pages, names and links, for the Graph of all notebooks; `libindex.rs`), whatever screen is up: `libindex.complete` is `1` once its check of every notebook is through (opening a notebook starts one), `0` before the first and while one runs; `libindex.reads` how many times it has read a notebook from its files since Grimoire started (one an idle tick, after the backlinks cache's own check: `0` until that is through); `libindex.books` the notebooks it holds read. `waitfor libindex.complete is 1` waits for the index itself, however slow the machine's idle ticks come (tests/scenarios/z_map_all_2_big.qs), where a fixed `wait` guesses (the runner answers these too) |
 | `bg.busy`, `bg.children` | `1` while a background job (an export, a compaction, page previews) runs or waits, else `0`; and how many background processes run now: `0`, `1`, or `2` while a second makes a view's page previews beside the first (2.0.0-beta.2; never two over the same pages) |
 | `touch.contacts` | contacts down now, as touchgest follows them (the contact lines' fingers; the runner answers the `touch.` keys) |
 | `touch.class` | what they are doing: `none`, `one` (one finger's stream), `landing` (two fingers, not committed yet), `zoom`, `pan`, `swipe`, `tap` (a two-finger tap waiting for its last finger), `suppressed` (every contact waits to lift, or the pen's hand is held) |
@@ -419,18 +499,22 @@ shows what the app holds.
 | `asleep.mode` | while asleep, which sleep screen is up, numbered as `settings.sleep_mode` after fallback/override (native PIN forces `2`; unavailable wallpaper uses `0`) (hosted by KOReader, mode 2 reads `0`); empty while awake |
 | `host` | `koreader` when started as KOReader's Grimoire plugin starts it (`GRIMOIRE_HOST=koreader`), else empty |
 | `wifi.open`, `wifi.busy`, `wifi.failed`, `wifi.state` | the Wi-Fi helper (`GRIMOIRE_WIFI_SCRIPT`; the scenarios' is `tests/fixtures/wifi/helper.sh`): `1` while the Share screen's Wi-Fi card is up, `1` while a helper job runs, `1` when the last one failed, and the radio as the last report had it: `off`, `on`, `connected` or `unknown` |
-| `wifi.current`, `wifi.saved`, `wifi.join` | Settings > Wi-Fi (2.1.0-beta.2): the network connected to, by name (empty for none or not known); how many saved networks the last read listed, `unread` when it could not (or has not yet); the last switch to a saved network: `pending`, `connected`, `failed`, empty for none |
+| `wifi.current`, `wifi.saved`, `wifi.join` | Settings > Wi-Fi (2.1.0-beta.2): the network connected to, by name (empty for none or not known); how many saved networks the last read listed, `unread` when it could not (or has not yet); the last switch (or add) to a network: `pending`, `connected`, `failed`, empty for none |
+| `wifi.near`, `wifi.scanning`, `wifi.scan.failed` | Settings > Wi-Fi's Nearby view (2.1.0-beta.2): how many nearby networks the last scan read (`none` for no scan), `1` while a scan is requested or running, and `1` when the last scan failed or its answer was not understood. Opening the sheet starts a scan once the radio is on |
 | `language` | the language in use, `en` or `es` |
 | `font` | Classic's font in use (2.1), by its settings.ini id: `terminess`, `atkinson`, `noto-sans` or `literata` (also while Gothic shows: the family Classic would use); `file:<path>` while a font of the owner's own draws (2.1.0-beta.2: the path under grimoire/fonts). `settings.font` is what settings.ini asks for, which stays `file:<path>` while that font cannot be used and Terminess draws; `settings.font_bold` its Bold file's path, if one is set |
 | `font.guard` | the crash guard's marks (2.1.0-beta.2), `<key> <strikes> <armed>` each, joined by commas; empty when there is none |
 | `font.own.bytes`, `font.own.drawn` | the bytes of custom font files the UI holds (0: none loaded), and `1` once a custom font has drawn a glyph in this run |
 | `rotation` | the quarter turns applied, 0..3 |
 | `size` | the screen, `1860x2480` or `2480x1860` (`1986x2648` or `2648x1986` under `GRIMOIRE_SIM_SIZE=1986x2648`) |
-| `settings.KEY` | the setting as settings.ini stores it, for `theme` (`gothic` or `classic`), `invert`, `mirror_pdf`, `follow_rotation`, `pinch_zoom`, `side_button` (0 nothing, 1 eraser, 2 highlighter, 3 white ink), `sleep_mode` (0 the page, 1 a pinned page, 2 the Kindle's screensaver, 3 KOReader wallpaper), `sleep_minutes`, `pen.valid` and `touch.valid` (1 once calibrated); `language` (`auto`, `en` or `es`, and `auto` for a value this version does not speak, which settings.ini keeps as it was); `font` (Classic's font, 2.1: `terminess`, `atkinson`, `noto-sans` or `literata`, and `terminess` for a value this version does not have, which settings.ini keeps as it was); `pen.panel` and `touch.panel` (the panel the calibration was made on, `WxH`, empty when not recorded) |
+| `settings.KEY` | the setting as settings.ini stores it, for `theme` (`gothic` or `classic`), `invert`, `mirror_pdf`, `follow_rotation`, `pinch_zoom`, `side_button` (0 nothing, 1 eraser, 2 highlighter, 3 white ink), `sleep_mode` (0 the page, 1 a pinned page, 2 the Kindle's screensaver, 3 KOReader wallpaper), `sleep_minutes`, `pen.valid` and `touch.valid` (1 once calibrated); `language` (`auto`, `en` or `es`, and `auto` for a value this version does not speak, which settings.ini keeps as it was); `font` (Classic's font, 2.1: `terminess`, `atkinson`, `noto-sans` or `literata`, and `terminess` for a value this version does not have, which settings.ini keeps as it was); `pen.panel` and `touch.panel` (the panel the calibration was made on, `WxH`, empty when not recorded); `home` (2.2: the home folder as settings.ini keeps it, `notebooks/<folder>` or `files/<path>`, empty for Notebooks and after a line that names no home); `pdf_gamma` (2.2: darker lines in imported PDFs, `1.0`, `1.5` or `2.0`, and `1.0` for a value this version does not have, which settings.ini keeps as it was) |
+| `settings.saved.home` | the `home=` line settings.ini has on disk now, empty without one: what a start would read, so a script sees that a change was saved when it was made, before `quit` saves the settings (2.2) |
 | `settings.kept.KEY` | the value settings.ini had for a known key that this version could not use as written and keeps to write back as it was (`settings.kept.font` is `comic-sans` for `font=comic-sans`); empty when there is none (2.1) |
 | `settings.TOOL.PARAM` | a tool's pen feel as settings.ini stores it, four decimals: TOOL as for `editor.tool`, PARAM a slider's settings.ini name (`size_min_mm`, `size_max_mm`, `opacity_min`, `opacity_max`, `pressure_floor`, `pressure_ceiling`, `pressure_gamma`, `tilt_min_deg`, `tilt_max_deg`, `tilt_size`, `tilt_opacity`, `grain`, `smoothing`), e.g. `settings.fountain.pressure_gamma` |
 | `light.intensity`, `light.warmth` | the front light (the simulator starts at 12 and 8) |
+| `light.auto` | the Kindle's own auto brightness (`com.lab126.powerd flAuto`): 1 on, 0 off, -1 without an ambient-light sensor (`GRIMOIRE_SIM_LIGHT_SENSOR=1` gives it one) |
 | `editor.page`, `editor.pages` | the open page (from 1) and the page count, 0 with no notebook open |
+| `editor.page_chip` | the panel's page chip as it draws it now: the page and the count (`12 / 40`), or the page alone (`1995`) on every page of a notebook where the page and the count would not fit it on some page (#119); empty with no notebook open |
 | `editor.tool` | the pen's tool by its settings.ini name: `pencil`, `mech`, `ballpoint`, `eraser`, `highlighter`, `fountain`, `fineliner`, `marker`, `charcoal` or `calligraphy` |
 | `editor.view` | the view: the zoom as `editor.zoom`, then the page point at the screen's top left, `2.25 517 667` (2.0.0-beta.2) |
 | `editor.notebook_back` | how many notebooks Back returns through (links followed into another notebook) and the newest one's id, `1 A`; `0` for none (2.0.0-beta.2) |
@@ -456,7 +540,7 @@ shows what the app holds.
 | `editor.stroke_start` | where the open page's newest stroke starts, in page px rounded, `x y`; empty with no stroke |
 | `editor.stroke_points` | sample count of the newest stored stroke, zero with no stroke |
 | `editor.stroke_tip` | the newest stroke's tip variant (src/brush.h: 0 its tool's first tip, 1 the vertical highlighter); empty with no stroke |
-| `editor.modal` | what is in front of the page: `none`, `add-pad` (the toolbar's count pad), `find` (the Find sheet), `card` (the long-press card, or Rename's keyboard over it), `linkto` (Link to..., or New page...'s keyboard over it), `links` (the Links bar), `tools` (the tool picker), `paper` (Paper for this page), `music` (Custom music), `display` (the Display sheet) or `pages` (the Pages view) |
+| `editor.modal` | what is in front of the page: `none`, `add-pad` (the toolbar's count pad), `find` (the Find sheet), `card` (the long-press card, or Rename's keyboard over it), `linkto` (Link to..., or New page...'s keyboard over it), `links` (the Links bar), `tools` (the tool picker), `paper` (Paper for this page), `music` (Custom music), `display` (the Display sheet), `templates` (the Templates or Photos sheet), `files` (the picture pick its From a file... tile opens, 2.2) or `pages` (the Pages view) |
 | `editor.layers` | whether the screen is what its layers make of it: `ok`, or `X Y`, the first pixel that differs from the screen composed again whole (the page, the panel and then each menu that is up in its order) by more than 64 gray levels (the edges of a frame drawn again over itself differ by a little). A panel drawn over a sheet, the Find sheet's keyboard or the Links bar shows here. The check leaves the screen as it composed it, so it says what was wrong once |
 | `editor.wear` | the DU wear not cleaned yet (display.rs `DuWear`, issue #11): the screen area fast refreshes turned back to paper (the erasers, a dragged selection), in thousandths of the screen, with ` owed` while a toolbar drag owes a clean; past 250 the next pause cleans it with one `clean` refresh, then `0` |
 | `editor.panel_at.X.Y` | the name of the panel's button at screen point (X, Y) (the panel's names, above; between two buttons or in the frame's margin beside one, the nearest, as a finger there takes it), empty for none (a greyed-out button), after settling a stale panel as a tap would: the way to check what a raw coordinate hits. Empty while no notebook is open |
@@ -494,6 +578,7 @@ shows what the app holds.
 | `editor.pages.cached`, `editor.destination.cached` | how many decoded page previews the Pages view, or Link to...'s notebook picker, keeps for the screenful on show (the Pages view also keeps the open page's, made from its canvas, on any screen: since 2.0.0-beta.2) |
 | `editor.pages.shows`, `editor.destination.shows` | what the screenful's page tiles show, one letter each in their order: `p` a preview, `l` the loading mark (an hourglass: its preview is being made), `n` the page's number alone (none to come); empty while no page grid shows (2.0.0-beta.2) |
 | `editor.pages.ink.N` | how many pixels of page N's (from 1) decoded preview in the Pages view are darker than mid-gray, `none` while none is decoded: the tile it draws, as decoded, so a tile of an old preview shows (2.1.0) |
+| `annotate.luma`, `annotate.gamma` | the open page as the editor holds it, its mean luma (255: white); the darker lines the open notebook was made at as its source.ini says it, `1.0` (no line), `1.5` or `2.0`, empty with no notebook open (2.2) |
 | `editor.screen_composed` | whether the current screen matches a fresh complete composition, without repairing stale pixels |
 | `editor.map.visible` | sorted page IDs actually shown in the current graph view |
 | `editor.map.view` | `all` or `around`, after `fit ` when a pan or pinch has moved the view (the next View press fits it again) |
@@ -503,12 +588,14 @@ shows what the app holds.
 | `editor.tile.N` | the label under page N in the open Pages view, with its book-page label separated by a vertical bar when present; empty while Pages is closed |
 | `editor.keyboard`, `editor.text`, `editor.caret` | the keyboard that is up over the page, the text it holds and that text with its caret and selection drawn in as `library.caret` draws them, all empty with none: the Pages view's (its title `Page name`, the Index's naming keyboard, as Name this page and the `name-page` shortcut open it; `Go to page` while a link's page is being picked, where Go to page... is still a number pad) the Find sheet's (`Page number or name`) or New page...'s (`Name the new page`) |
 | `live.on`, `live.viewers`, `live.pairing` | Live view: `1` while it is on, how many computers watch, `1` while its pairing card is the screen |
+| `share.ask`, `share.code`, `share.upload` | a PDF sent from the Share page (2.2, issue #175): the Kindle's question as drawn (`Import "2027 Planner.pdf" (4 KB)?`, empty with none), the send's code under it (`Code 4821`, empty with none), and where the server's upload is: `none`, `receiving` or `asking`. `tap share ask.import` and `tap share ask.cancel` tap its rows (the screen's other controls answer nothing while it is up); a tap counts only 450 ms after its frame went to the panel, so `wait 500` first |
+| `upload.reply.N`, `upload.count`, `upload.samecode.N` | the answer the Nth `upload` line's browser had, as `<status> <last line>` (`200 imported`, `200 declined on the Kindle` for a send the Kindle asked about, `409 another PDF is being sent` for a refusal), `error ...` when it could not connect, empty while it waits; how many `upload` lines ran; and `1` when the code the Nth browser was given is the one under the question the Kindle shows, `0` when it is another, empty while either has none |
 | `live.chip` | where Live view's chip is, `x y w h`, while it is on; else empty. On a notebook page it is beside the editor's panel (level with its header, on its left, or on its right at the screen's left edge) and moves with it; with a menu, sheet, bar or the Pages view in front it is empty; on the other screens it is the top right corner |
 | `live.panel` | Live view's toolbar layer as its shared frame holds it, what a browser is sent: `x y w h` (the editor's panel's rect) while it holds the panel, else empty. It stays while a menu, sheet or bar of the notebook is up beside the panel or over it, holding the screen there as the Kindle shows it, the menu's part over the panel too; it is empty off the notebook page, under the Pages view, the Graph or the notebooks' browser, and with Settings over the notebook, whose frame holds the whole screen (2.0.0, issue #16) |
 | `live.stale.X.Y.W.H` | how many pixels of that screen rect the browser's picture (the frame's tiles with the toolbar's and the clock corner's layers over them, and the toast's with its alpha: every layer switched on) shows more than a unit of gray off what the simulated panel shows there, the colors as drawn (Invert colors undone): `0` where a browser shows what the Kindle does; `none` while Live view is off or the rect is not inside the screen. The stream never holds the live chip, which the panel shows, so keep the rect clear of it, and of grays a fast refresh left dithered (the runner answers this one; tests/scenarios/y_live_toolbar_menus.qs checks the toolbar's rect with it) |
 | `live.toast` | Live view's toast layer as its shared frame holds it, what a browser is sent: `x y w h` while it holds a toast, else empty (no toast on the panel, the state not awake: the pairing card or asleep, or Live view off). After the present that shows a toast it is `toast.rect` (2.0.0-beta.2) |
 | `live.toast.stale` | how many pixels of that layer (gray and alpha), drawn over the app's screen as a browser draws it over its picture, differ by more than a unit of gray from what the simulated panel shows at its place, the colors as drawn (Invert colors undone): `0` when the browser shows the toast as the Kindle does; `none` while the layer is empty. The app's screen holds neither the live chip nor the clock corner, which the panel shows over it, so keep the toast clear of them; a toast a fast refresh carried is dithered on the panel (the runner answers this one) |
-| `live.frame.stale` | how many pixels of Live view's frame, what a browser is sent, differ from the app's screen, the editor's panel left out (the frame holds the page under it, the panel being a layer of its own): `0` when every change on the screen went out to the frame with its present (2.0.0: a dragged selection's strips, tests/scenarios/z_lasso_20_drag_live.qs); `none` while Live view is off (the runner answers this one) |
+| `live.frame.stale` | how many pixels of Live view's frame, what a browser is sent, differ from the app's screen, the editor's panel left out (the frame holds the page under it, the panel being a layer of its own) and a notebook's status bar taken off (a layer of its own too: the frame holds the screen as it was under the bar, and the count is against that): `0` when every change on the screen went out to the frame with its present (2.0.0: a dragged selection's strips, tests/scenarios/z_lasso_20_drag_live.qs); `none` while Live view is off (the runner answers this one) |
 | `editor.picking` | `new` while the Pages view picks where a new link goes (Link to...'s Choose from the pages...), else empty (it no longer reads `had`: a link held on opens the long-press card) |
 | `editor.link_mode` | `1` while the link-making strip is up (after Add a link: armed, or drawing the lasso), else `0` |
 | `editor.strip` | `new` while the strip is up for a new link (armed or drawing the lasso), `redraw` while it is up for the card's Redraw the area, else `0` |
@@ -534,14 +621,23 @@ shows what the app holds.
 | `editor.links_dirty` | `1` while migrated link areas wait to be written to links.ini (after a 2 s pause, or 2 s after a failed write), else `0` |
 | `editor.paper` | the page's paper as its number in src/paper.h (1 medium rule, 2 wide rule, 3 sheet music, 6 medium rule without a margin, 8 grand staff...), `custom` for a Custom music layout, `none` with no notebook open |
 | `editor.panel` | `expanded` or `collapsed` |
+| `editor.widgets` | the open widget frames: their count, then their ids (`0`, or `1 com.example.timer`) |
+| `editor.widgets.open` | `1` while the Widgets popup is up, else `0` |
+| `editor.packages`, `editor.packages.open` | the installed widget packages: their count, then their ids and versions (`0`, or `1 com.example.timer 1.0.0`), and `1` while the Packages page is up, else `0` |
+| `editor.widget.N.status`, `editor.widget.N.text` | the text the frame's package last passed to its `status` import, and the text it drew, joined by `\|`; empty until its first draw |
+| `editor.widget.N.hits`, `editor.widget.N.error` | how many hit regions its last draw registered, and the runtime error that stopped it, empty while it runs |
+| `editor.package.ID` | an installed package's version (`1.0.0`), or empty for an id that is not installed |
+| `editor.widget.ID.rect`, `editor.widget.ID.state` | an open frame's screen rect (`x y w h`, the minimized square while minimized) and `normal` or `minimized`; ID is its package id or its index in the open list; empty for a frame that is not open |
 | `editor.hold_eraser` | `1` while a controller's Erase while held is down (from its press to its release), else `0` |
 | `editor.music` | the Custom music layout on the Custom music sheet while it is open, else the page's if its paper is custom, else empty: the systems per page, a colon, then the parts top to bottom (`treble`, `bass`, `alto`, `tenor`, `drums`, `plain`, `tab4` to `tab7`, `lyrics`), e.g. `4: treble tab6 bass` |
 | `editor.music_max` | while the editor's Custom music sheet is open, the most systems its layout fits on the page it is for (that page's height), else empty |
-| `library.sheet` | what is open over the cards: `none`, `new` (New notebook), `settings`, `more` (a notebook's menu), `folder-more` (a folder's menu), `move` (Move to), `delete`, `keyboard`, `display`, `music`, `koreader`, `language` (Settings > Language's list), `shortcuts` (Settings > Shortcuts), `buttons` (its Buttons sheet), `pair-menu` (Settings > Pair, 2.0.0-beta.2), `pair` (its Pair a controller... sheet), `wifi` (Settings > Wi-Fi, 2.1.0-beta.2), `updates`, `gestures`, `about` (What's new, Rust only), `font` (Settings > Font, Classic only: 2.1), `merge` (a folder moved or renamed onto a name that is there: 2.1; hits `merge.into`, `merge.both`, Cancel is `done`) or `exit` (Exit Grimoire?, Esc at the top level: 2.0.0-beta.2) |
-| `library.font.pick` | the Font sheet's highlighted font, by its settings.ini value: a family's id, or `file:<path>` for one of the owner's own (the font in use as the sheet opens; a tap on a row moves it, Done applies it); empty while the sheet is not up (2.1) |
+| `library.sheet` | what is open over the cards: `none`, `new` (New notebook), `settings`, `more` (a notebook's menu), `folder-more` (a folder's menu), `move` (Move to), `delete`, `keyboard`, `display`, `music`, `koreader`, `language` (Settings > Language's list), `shortcuts` (Settings > Shortcuts), `buttons` (its Buttons sheet), `pair-menu` (Settings > Pair, 2.0.0-beta.2), `pair` (its Pair a controller... sheet), `wifi` (Settings > Wi-Fi, 2.1.0-beta.2), `updates`, `gestures`, `about` (What's new, Rust only), `font` (Settings > Font, Classic only: 2.1), `merge` (a folder moved or renamed onto a name that is there: 2.1; hits `merge.into`, `merge.both`, Cancel is `done`), `files-more` (the Files card's menu, 2.2) or `exit` (Exit Grimoire?, Esc at the top level: 2.0.0-beta.2) |
+| `templates.count`, `templates.ready` | the Templates (or Photos) sheet in front, over New notebook or the page: how many templates it offers, and how many of those have their previews; `templates.page`, `templates.pages` its pages of tiles (from 1), `templates.selected` the selected tile's name, `templates.names` the tiles' names in order joined by `\|`, `templates.copying` `1` while its From a file... tile waits for a copy (2.2), all empty while it is closed. `tap library templates.from_file` (over New notebook) and `tap panel templates.from_file` (over the page) tap that tile, `templates.from_notebook` the From a notebook... tile of either host's Templates sheet (2.2, #195), `templates.back` its Back. Over New notebook that tile's pick of a notebook and page is `library.picker` (`1` while it is up), tapped as `tap library elsewhere.book.ID`, `tap library elsewhere.page.N`, `elsewhere.back`, ... (the editor's names, under `library.`) Over the page the picture pick it opens is the editor's: its `files.*` keys and taps are the Library's, asked as `tap panel files.item.NAME` and so on |
+| `library.font.pick` | the Font sheet's highlighted font, by its settings.ini value: a family's id, or `file:<path>` for one of the owner's own (the font in use as the sheet opens; a tap on a row moves it and applies that font at once); empty while the sheet is not up (2.1) |
 | `library.font.rows`, `library.font.checking` | the Font sheet's own fonts (2.1.0-beta.2): how many files of grimoire/fonts it lists, and how many of them are still being checked |
 | `library.font.state.PATH`, `library.font.note.PATH` | an own font's row by its path under grimoire/fonts: `ready`, `checking`, `unreadable`, `toobig`, `nolatin`, `format`, `slow` or `missing` (empty for a file the sheet does not list), and what the row says under the name ("Unreadable font.", "Some letters come from Terminess.", empty) |
 | `library.font.shown`, `library.font.page` | the own fonts on the page of them shown, by their paths joined with `\|`, and `2/3` |
+| `library.font.copying` | `1` while the Font sheet's Add a font... row waits for a copy into grimoire/fonts to end (2.2, issue #161), `0` when it does not; empty while the sheet is not up. `library.font.page` counts the pages with that row, the last item after every font |
 | `library.font.sample` | how the sample card was drawn: `family`, `own` (by the owner's font itself, loaded) or `preview` (by the picture the check made, when it could not be loaded); empty while the sheet is not up |
 | `library.exit` | Exit Grimoire?'s highlighted answer, `yes` or `no`; empty while it is not up |
 | `library.learning` | the action the Buttons sheet waits for a press for (`undo`, `next-page`), else empty |
@@ -563,7 +659,7 @@ shows what the app holds.
 | `library.gestures.learning` | action being recorded, or `0` |
 | `library.record` | `0`, `wait`, `pattern touch.N.KIND`, `shape K` (sample count), `checking` or `ready` |
 | `library.record.line` | record card's progress/refusal line, empty without a card |
-| `library.ui_at.X.Y` | semantic name of the Library hit at screen pixel X,Y, empty for none; see recording workflow. The top bar has five buttons (`exit`, `settings`, `share`, `new-folder`, `new`; beta.2's Graph button was taken out again, the owner's ruling of 2026-11-03). A notebook's menu has `more.open`, `more.rename`, `more.move`, `more.pdf`, `more.graph` (Leave out of the Graph, or Show in the Graph) and `more.delete`; a folder's `fmore.rename`, `fmore.move`, `fmore.graph` and `fmore.remove` (Cancel is `done` in both); Move to `move.top`, `move.to.PATH` (a folder by its path, `move.to.School/Math`), `move.new`, `move.prev` and `move.next`. Settings' top rows are `display`, `pen-feel`, `shortcuts` and `calibrate` (in that order since 2.0.0-beta.2: tap them by name, never by place), its bottom row `ko`, `pair-menu`, `wifi`, `gestures`, `updates` and `done`, and in Classic the Style row's Font chip `font` (the rest of the row is `theme`; 2.1); the Font sheet has `font.terminess`, `font.atkinson`, `font.noto-sans` and `font.literata` (its rows), `font.cancel` and `font.done`; the Shortcuts sheet has `shortcuts.enable`, `shortcuts.device`, `shortcuts.own`, `buttons`, `shortcuts.reload` and `done`, the Pair sheet `bluetooth`, `pair` and `done`, the Wi-Fi sheet `wifi.radio` (Turn on, Turn off or Retry), `wifi.net.N` (the Nth saved network row on the page shown, from 1), `wifi.more` and `done` (a greyed-out row has no name) |
+| `library.ui_at.X.Y` | semantic name of the Library hit at screen pixel X,Y, empty for none; see recording workflow. The top bar has five buttons (`exit`, `settings`, `share`, `new-folder`, `new`; beta.2's Graph button was taken out again, the owner's ruling of 2026-11-03). A notebook's menu has `more.open`, `more.rename`, `more.move`, `more.pdf`, `more.graph` (Leave out of the Graph, or Show in the Graph) and `more.delete`; a folder's `fmore.rename`, `fmore.move`, `fmore.graph` and `fmore.remove` (Cancel is `done` in both); Move to `move.top`, `move.to.PATH` (a folder by its path, `move.to.School/Math`), `move.new`, `move.prev` and `move.next`. Settings is one page (the new Settings menu, #115): its categories down the left are `settings.cat.N` (0 General, 1 Display, 2 Sleep & Clock, 3 Pen, 4 Controls, 5 Packages, 6 System; the page keeps the one picked until Grimoire starts again, so a script taps the category before a row of it: `tap library settings.cat.4`, then `tap library gestures`), and its X is `done`. General's rows are `language`, `updates` and `wifi`; Display's `display`, `theme` (Style), `dark`, `font` (Classic only), `rotate` and `pinch`; Sleep & Clock's `sleep-clock` (Sleep settings) and `clock-settings`; Pen's `pen-feel`, `pen-button`, `eraser-mode` and `calibrate`; Controls' `shortcuts`, `pair-menu` and `gestures`; Packages' `packages` (Widgets); System's `ko`, `mirror`, `about-device` and `darker-lines` (Darker lines in imported PDFs, 2.2) (tap them by name, never by place). A submenu's Back is `settings.back` (to the page it was opened from) and its X `settings.close` (the whole of Settings closes); a Gestures or Buttons group's Back is `done` (to the list of groups). The Language list has `language.auto` and `language.CODE` (`language.en`, `language.es`, `language.ja`), the pen button's list `pen-button.N` and the eraser's `eraser-mode.N` (N as settings.ini numbers `side_button` and `eraser_mode`), Darker lines' `darker-lines.N` (0 Off, 1 Medium, 2 Strong), each with its Back (`language.back`, `pen-button.back`, `eraser-mode.back`, `darker-lines.back`); About's Back is `about-device.back`. The Display, Sleep settings and Clock settings pages are the Display sheet's (`display.NAME`: `display.back`, `display.done` for its X, `display.brightness`, `display.auto`, `display.warmth`, `display.fit`, `display.newpage`; `display.sleep`, `display.pin`, `display.sleep_after`; `display.time12`, `display.size`, `display.corner`). The Font sheet has `font.terminess`, `font.atkinson`, `font.noto-sans` and `font.literata` (its rows), `font.cancel` (its Back), `font.done` (its X) and `font.add` (Add a font..., 2.2: the font pick over the sheet; no name while it waits for a copy, nor over a notebook's page, where the sheet has no such row); the Shortcuts sheet has `shortcuts.enable`, `shortcuts.device`, `shortcuts.own`, `buttons` and `shortcuts.reload`, the Pair sheet `bluetooth` and `pair`, the Wi-Fi sheet `wifi.radio` (Turn on, Turn off or Retry), `wifi.tab.saved` (the Saved networks button; tapped again it returns to Nearby), `wifi.scan` (Rescan), `wifi.other` (Other..., a hidden network), `wifi.other.open` and `wifi.other.wpa` (its security, after the name), `wifi.other.cancel`, `wifi.net.N` (the Nth saved network row in the list, from 1; drag the list to scroll; the connected row disconnects when tapped), `wifi.delete.N` (that row's trash button), `wifi.near.N` (the Nth scan result row, from 1; its connected row disconnects too) and `done` (a greyed-out row has no name) |
 | `library.map`, `library.map.KEY` | the Graph opened from the Library (2.0.0-beta.2: two fingers down over it, or the `index-map` key): `graph` while it shows, else `0`, and every `editor.map.KEY` (below) of it. `library.map.no_notebook` is `1` for it (no notebook open), `library.map.tabs` the tabs drawn (`graph` alone here; `graph list pages` for the editor's). `library.map.picker` is `1` while its notebooks' browser (past the caps) is up, `library.map.keep` `1` while a notebook it opened is in front (Back there comes back to it). `tap library map.NAME` taps its controls (`map.back`, `map.open`, `map.view`), `tap library elsewhere.NAME` its browser's (`elsewhere.folder.PATH`, `elsewhere.book.ID`, `elsewhere.back`), and `tap map-node ID:PID` its nodes |
 | `library.graph.omitted` | the Library's notebooks the Graph of all notebooks leaves out (by their own Leave out of the Graph or a folder's), by id, sorted, space-separated (2.0.0-beta.2) |
 | `library.about.view` | What's new while it is open (else empty): `card` (the card hanging from the bat), `list` (Read all's list of every version's notes) or `note` (a version's notes on the sheet) (2.1.0) |
@@ -600,21 +696,23 @@ shows what the app holds.
 | `update.requested` | what Update now asked the launcher for (`preview` or `stable`), empty for nothing |
 | `library.hint` | `1` while the empty Library's (or an empty folder's) two lines show ("No notebooks yet" or "This folder is empty", then "Tap New to start one."), `0` when there are cards, and under every sheet but the keyboard |
 | `library.folder` | the open folder, empty at the top level |
+| `library.home.pending` | `1` while the main menu has not been used in this run (no contact, gesture or key action on it yet), so that it opens at home as it comes in front (2.2, issue #160), else `0` |
 | `library.folders` | every folder by its path, as Move to lists them, joined by `, ` (`Archive, Archive/School`); empty with none |
 | `library.mirror` | the mirror PDFs (`PDFs/`) by directory: `.` for the top and each directory in it, sorted, with how many PDFs it holds (`. 0, Archive_School 1`), so a directory left behind shows as `School 0` |
-| `library.items` | the cards in the open folder, on every page of cards: at the top level its folders and the notebooks in no folder |
+| `library.items` | the cards in the open folder, on every page of cards: at the top level its folders and the notebooks in no folder, and the Files card last when it is shown (2.2; `library.card.N` says `files` for it) |
 | `library.page`, `library.pages` | the page of cards (from 1) and how many there are |
 | `library.text` | the keyboard's text while it is open |
 | `library.caret` | the same with its caret drawn in as `\|` and a selection in `[` `]` (`ab\|cd`, `a[bc\|]d`), empty while no keyboard is open (2.1.0-beta.2) |
-| `library.paper` | the paper picked in New notebook, numbered as for `editor.paper` |
+| `library.paper` | the paper picked in New notebook, numbered as for `editor.paper`; `notebook` after a page picked with From a notebook... (2.2, #195), as `template` after a template picture |
 | `library.music` | as `editor.music`, for New notebook's Custom music sheet and its picked paper |
 | `display.ink` | `1` while a pen stroke is marked live ink (`display_live_ink`), else `0` |
 | `display.ink_frames` | fast refreshes submitted while a stroke was still active; used to check input backlogs |
 | `display.pen_mode` | `1` while the app asks for MTK pen mode (the editor's ink strokes only), else `0` |
 | `display.last_fast` | `ink` if the last fast refresh was live ink, `wait` if a color panel would have waited for the driver's read after it (docs/DESIGN.md), empty before any |
 | `display.last_fast_rect` | where the last fast refresh was, `x y w h` in screen pixels, empty before any |
-| `display.presents` | the refreshes sent since this key was last checked, in order, each its mode (`fast`, `ui`, `full`, or `clean`: a flash of that rect alone, display.rs) and `x y w h`, joined by `, ` (`fast 50 1510 1760 120, fast 138 1970 167 150`), with `, and N more` past the eighth; empty for none. The check starts the count again, so `expect display.presents not -1` only starts it |
+| `display.presents` | the refreshes sent since this key was last checked, in order, each its mode (`fast`, `ui`, `full`, or `clean`: a flash of that rect alone, display.rs) and `x y w h`, joined by `, ` (`fast 50 1510 1760 120, fast 138 1970 167 150`), with `, and N more` past the eighth; empty for none. The check starts the count again, so `expect display.presents not -1` only starts it. The launch's two repaints are among them, each a `ui` of the whole screen, 1.2 s and 3.5 s after the start (mainloop.rs): a scenario that checks a stretch with `is` begins with `wait 3600`, past both, or a slower machine reaches the second one inside the stretch (tests/scenarios/z_pages_find_over.qs, issue #93) |
 | `display.stale.X.Y.W.H` | how many pixels of that screen rect the simulated panel shows other than the app's screen holds them now: grays a fast refresh left dithered, or a change never sent. `0` where every change went out and settled. Keep the rect clear of the toast and the clock corner, which the panel shows over the screen |
+| `display.dark.X.Y.W.H` | how many pixels of that screen rect the simulated panel shows darker than mid-gray, the colors as drawn (Invert colors undone): what a person sees there, the page's ink and whatever is drawn over it (2.2: a selection's halo is never drawn over erased ink, tests/scenarios/z_lasso_23_erased_marks.qs). A fast refresh shows the paper's gray rules dark until a grays refresh settles them (the eraser's, the lasso's preview): keep the rect between rules then, or wait. Keep it clear of the toast and the clock corner. `-1` (unknown) for anything but exactly four numbers, and while the panel and the app's screen differ in size (turned sideways) |
 
 The `editor.` and `library.` keys answer on any screen: the editor's describe the open notebook,
 also while pen feel is in front. The `display.` keys are the simulated panel's (the runner answers
@@ -750,8 +848,9 @@ page area's GL16 rather than DU strips.
   y_all_screens.qs, shapes, hosted, templates, the Index scenarios, z_wifi and z_wifi_networks. Japanese takes its
   letters from DotGothic16 in every font, so it runs in Gothic and Classic only.
 - tests/l10n/fonts.qs (Rust only), in every language and in Classic with each font, Terminess too:
-  Settings with the Style row's Font chip, then the Font sheet with each family highlighted, sideways
-  then upright, and Cancel (shots in `build/shots/l10n/fonts-<lang>-<style>/`).
+  Settings' Display category with its Font row, then the Font sheet with each family tapped (applied at
+  once: the sheet is drawn in it), sideways then upright, and Back (shots in
+  `build/shots/l10n/fonts-<lang>-<style>/`).
 - In each language, tests/l10n/long_root.qs opens Settings from a data root whose path is longer
   than the sheet is wide (`build/scen/l10n/long-root/a-long-data-root-...<lang>`): its Data line, a
   path, is cut short as names are, and the check must not count it, or make check would fail in a
@@ -768,16 +867,19 @@ Under make check it runs after the scenarios, since both open the share server o
 The scenarios y_language (with `GRIMOIRE_LANG=es`: Automatic is Spanish, a pick applies at once
 and is saved, Cancel changes nothing) and z_language_kept (`# root: y_language`: the pick outlasts
 a restart, and Automatic hands the choice back) check Settings > Language, and tests/test_i18n.c
-what no scenario reaches. Settings > Font (2.1) has y_fonts (the chip opens the sheet on the font in
-use; a tap highlights and changes nothing; Cancel and Esc leave the font; Done applies and saves it;
-Gothic has no chip), z_fonts_kept (`# root: y_fonts`: the font outlasts a restart) and y_fonts_unknown
-(`font=comic-sans`: Terminess draws, the line stays through Cancel and other saves, a pick replaces it).
+what no scenario reaches. Settings > Font (2.1; the Display category's Font row since the new Settings
+menu, #115) has y_fonts (the row opens the sheet on the font in use; a tap applies the family at once and
+saves it, with a Full refresh; Back and Esc keep the font tapped; the X closes Settings with one ui refresh;
+Gothic has no Font row), z_fonts_kept (`# root: y_fonts`: the font outlasts a restart; y_fonts quits with
+the storage full after its last tap, so the tap is what saved it) and y_fonts_unknown (`font=comic-sans`:
+Terminess draws, the line stays through the sheet left with Back or the X and through other saves, a font
+tapped replaces it at once).
 Your own fonts (2.1.0-beta.2) have y_fonts_own_1_sheet (`# copy:` lines put tests/fixtures/fonts/good and
 refused into the data root's fonts/: the rows say "Checking..." under the notice "Checking 9 fonts..." while
 `GRIMOIRE_BG_DELAY_MS` holds the check back, then each shows its preview or why it is refused; the pages of
-them; a tap draws the sample in the font and applies nothing; Done saves `font=file:<path>`, redraws with one
-Full refresh and leaves no guard mark; the sheet over a font of the owner's own; a variable and a CFF font;
-Gothic holds none; a built-in font takes it away), z_fonts_own_kept (`# root: y_fonts_own_1_sheet`: the font is
+them; a tap applies the font at once: saves `font=file:<path>`, redraws with one Full refresh, draws the sample
+in it and leaves no guard mark; Back keeps it and holds no other font file; the sheet over a font of the owner's
+own; a variable and a CFF font; Gothic holds none; a built-in font tapped takes it away), z_fonts_own_kept (`# root: y_fonts_own_1_sheet`: the font is
 there at the first screen of the next start) and y_fonts_own_2_missing (`font=file:Gone.ttf`: Terminess draws,
 the row says "File missing.", the line stays through other saves, a pick replaces it and `font_bold`). A row of
 the owner's fonts is tapped by its path, `tap library font.file:GrimoireTest-Regular.ttf` (only a font that can
@@ -902,14 +1004,18 @@ PDF import hooks (headless and test builds; compiled out of the Kindle build, li
 `GRIMOIRE_IMPORT_STABLE=fast` (a file is taken at the first look: no 2 s and 5 s wait; `hold`: no PDF in `import/` is ever taken, it stays Waiting), `GRIMOIRE_PDF_SLICE_PAGES=N`
 (slices of N pages), `GRIMOIRE_PDF_BANDS=N` (N above 1: band mode), `GRIMOIRE_PDF_NO_MAP=1` (the device refuses the
 private mapping: the worker reads the file whole), `GRIMOIRE_PDF_FREE_BYTES=N` (free storage as N bytes),
-`GRIMOIRE_PDF_WATCHDOG_MS=N` (the page watchdog), `GRIMOIRE_PDF_TEST_CRASH_PAGE=N`, `..._HANG_PAGE=N`,
+`GRIMOIRE_PDF_WATCHDOG_MS=N` (the page watchdog), `GRIMOIRE_COPY_FREE_BYTES=N` (the copy job's free storage as N
+bytes: its floor is 100 MB after the copy, `FS_FREE_FLOOR`), `GRIMOIRE_COPY_FAIL_AFTER=N` (the copy job's writes fail as
+on a full storage once N bytes are written), `GRIMOIRE_PDF_TEST_CRASH_PAGE=N`, `..._HANG_PAGE=N`,
 `..._ALLOC_PAGE=N`, `..._TRAP_PAGE=N` (the worker aborts, spins, allocates without bound or makes a call outside
 its allow-list when it reaches page N), `GRIMOIRE_PDF_TEST_LINKS=N` (the worker aborts, N = 1, or spins, N = 2, when
 it walks the document's link annotations), `GRIMOIRE_PDF_TEST_WOKE=1` (every page's wait counts as one the Kindle
 slept through: a stall is "right after a wake", tried again once without a strike), `GRIMOIRE_PDF_JOB_CPU_SECS=N`
 (a job's CPU budget, in place of `sandbox::s1`'s),
 `GRIMOIRE_WORK_FAIL_STEP=<step>` (that sandbox step fails),
-`GRIMOIRE_SANDBOX=require` (the steps are required, as on the Kindle) and `GRIMOIRE_WORK_EXE=<path>` (the binary a
+`GRIMOIRE_SANDBOX=require` (the steps are required, as on the Kindle: a worker that says `S 0` is then refused, so
+on a host without the steps, macOS, no PDF is imported, pictures wait and no font is checked) and
+`GRIMOIRE_WORK_EXE=<path>` (the binary a
 worker execs: a test's own executable is a test harness).
 Picture hooks (same builds): `GRIMOIRE_PIC_WATCHDOG_MS=N` (the picture watchdog), `GRIMOIRE_PIC_TEST_CRASH=N`,
 `..._HANG=N`, `..._TRAP=N` (a picture worker aborts, spins or makes a call outside its allow-list on its N-th
@@ -921,6 +1027,22 @@ Font hooks (same builds): `GRIMOIRE_FONT_WATCHDOG_MS=N` (the font watchdog), `GR
 `GRIMOIRE_FONT_TEST_DRAW_CRASH=1` (the simulator's build only: the app ends at the first glyph a custom font
 draws, as a font that crashed its first screen would). `GRIMOIRE_IMPORT_STABLE=fast` takes a font file at the
 first look too, and `GRIMOIRE_WORK_FAIL_STEP` fails a font worker's step: no font is then checked.
+Files' previews (same builds): `GRIMOIRE_PREVIEW_MS=N` is the time one preview may take, every kind's (in place of
+3 s for a PDF's page and a font's sample, 6 s for a picture), and `GRIMOIRE_PREVIEWS_MAX=<files>,<bytes>` the
+limits its cache is pruned past; the PDF, picture and font hooks above reach a preview's worker too.
+`GRIMOIRE_FONT_GLYPH_US=N` is the CPU time one glyph's draw may take in the check, in microseconds (1 to
+999999999; anything else, or unset, is 5 s, which no real font reaches), and
+`GRIMOIRE_FONT_TEST_SLOW=<slow|once|bold|from>:<glyph>:<us>` is the test charge: the draw of glyph `<glyph>`
+is counted `<us>` microseconds dearer (`slow`: every draw of it; `once`: its first timed draw; `bold`: its
+draws by the bold through the weight axis; `from`: every glyph from that index on), so a test decides what is
+slow and none compares a real clock with a real limit.
+`GRIMOIRE_STATE=<absolute path>` (any build but the Kindle's, whose folder is fixed) names a folder of
+Grimoire's own outside the data root: the font check's verdicts are then kept there, in a folder for each
+data root, and read only while every folder on the way is this user's and no one else can write it; unset
+or empty, they stay in `fonts/.cache`. A value that is no absolute path names no folder and is not the
+cache either: it is a folder that cannot be made, and no font is checked (the job's status 6).
+`GRIMOIRE_STATE_FREE_BYTES=N` (same builds) is the room free there, as the check reads it before it checks
+a font.
 Child caps hooks (the simulator's build): `GRIMOIRE_CAPS_PROBE=<file>` (each background child appends the caps it
 took, `oom=N as=N`, for a test to read) and `GRIMOIRE_CAPS_NO_STATM=1` (a child cannot read its own size: on Linux
 it is capped at 1 GiB plus its margin).

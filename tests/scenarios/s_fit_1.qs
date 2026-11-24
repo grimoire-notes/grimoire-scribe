@@ -9,7 +9,8 @@
 # (the clock corner held still: its minute's refresh would land among the counted ones)
 clock 1700000000
 wait 300
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 1564 2254
 wait 200
@@ -67,7 +68,7 @@ pentap panel display
 wait 300
 expect editor.modal is display
 expect display.presents not clear
-tap 1240 779
+tap panel display.fit
 wait 400
 expect settings.landscape_fit is 0
 expect editor.zoom is 1.00
@@ -76,34 +77,35 @@ expect editor.zoomed is 0
 expect toast is
 expect display.presents has full
 # and the whole page again
-tap 1240 779
+tap panel display.fit
 wait 400
 expect settings.landscape_fit is 1
 expect editor.scale is 0.75
 expect editor.zoomed is 0
 expect toast is
 # off again, left off for the next run, which starts the app over
-tap 1240 779
+tap panel display.fit
 wait 400
 expect settings.landscape_fit is 0
-tap 1462 1950
+tap panel display.done
 wait 300
 expect editor.modal is none
 # upright the setting applies to a later turn only: the card's new checkbox (after the row's pressed
-# look), no toast, and no refresh of the page
+# look), no toast, and no refresh of the page (the sheet is a full page since #115: its redraw is a ui
+# refresh of the screen, never a full one)
 rotate 0
 wait 1200
 expect editor.scale is 1.00
 pentap panel display
 wait 300
 expect display.presents not clear
-tap 930 986
+tap panel display.fit
 wait 300
 expect settings.landscape_fit is 1
 expect toast is
-expect display.presents is fast 220 869 1420 140, ui 180 279 1500 1782
-tap 930 986
+expect display.presents is fast 80 550 1700 120, ui 0 0 1860 2480
+tap panel display.fit
 wait 300
 expect settings.landscape_fit is 0
 expect toast is
-expect display.presents is fast 220 869 1420 140, ui 180 279 1500 1782
+expect display.presents is fast 80 550 1700 120, ui 0 0 1860 2480

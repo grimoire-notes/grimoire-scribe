@@ -10,7 +10,8 @@ wait 300
 expect display.ink is 0
 expect display.pen_mode is 0
 # A new notebook (medium rule)
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 200
 expect library.sheet is new
 tap 510 460
@@ -50,16 +51,18 @@ expect display.last_fast is wait
 touch up 1768 1242
 wait 300
 expect editor.modal is pages
-tap 125 95
+tap 125 170
 wait 300
 expect editor.modal is none
 # Pen feel (Library, Settings, Pen feel): the test pad's stroke is live ink, without the pen mode
 pentap panel library
 wait 500
 expect screen is library
-tap 1535 95
+tap library settings
 wait 200
 expect library.sheet is settings
+tap library settings.cat.3
+wait 100
 tap library pen-feel
 wait 400
 expect screen is penset
@@ -80,12 +83,12 @@ expect display.last_fast is wait
 expect display.ink is 0
 touch up 1150 1789
 wait 200
-tap 125 95
+tap 125 170
 wait 300
 expect screen is library
 # Calibration: the check box's stroke is live ink, without the pen mode (plain DU, as before)
-tap 1535 95
-wait 200
+tap library settings.cat.3
+wait 100
 tap library calibrate
 wait 300
 expect screen is calib
@@ -101,13 +104,13 @@ tap 1637 2182
 tap 223 2182
 tap 930 1240
 wait 200
-pen down 300 1300 0.6
-pen move 600 1320 0.6
-pen move 900 1340 0.6
+pen down 300 1000 0.6
+pen move 600 1020 0.6
+pen move 900 1040 0.6
 expect display.ink is 1
 expect display.pen_mode is 0
 expect display.last_fast is ink
-pen up 900 1340
+pen up 900 1040
 wait 100
 expect display.ink is 0
 expect screen is calib

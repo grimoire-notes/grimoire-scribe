@@ -10,7 +10,8 @@
 # (the clock corner held still: its minute's refresh would land among the counted ones)
 clock 1700000000
 wait 300
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 1564 2254
 wait 200
@@ -151,7 +152,7 @@ pentap panel redo
 wait 100
 expect editor.strokes is 9
 expect editor.live_matches_render is 1
-expect display.presents is fast 1718 868 100 100, ui 428 220 1404 1734
+expect display.presents is fast 1718 868 100 100, ui 428 220 1404 1842
 # cut the pasted group: off the page, one step
 pen down 500 1300
 pen move 1000 1300

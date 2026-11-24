@@ -29,6 +29,11 @@ pub fn child_margin(kind: BgKind) -> u64 {
         // the font check's writer: one font file read whole (24 MB at most), a second copy of it beside the first
         // (48 MB), the preview, and room for the allocator. The worker it execs sets its own RLIMIT_AS (sandbox.rs).
         BgKind::FontCheck => 128 * MIB,
+        // a file copy: one buffer of 64 KiB (bgwork_copy.rs), nothing decoded
+        BgKind::CopyFile => 64 * MIB,
+        // a file's preview (bgwork_previews.rs): a picture read whole (64 MB at most) or a font (24 MB), handed to the
+        // worker, and a 300 x 400 picture back. The worker it execs sets its own RLIMIT_AS (sandbox.rs).
+        BgKind::FilePreviews => 128 * MIB,
         _ => 256 * MIB,
     }
 }

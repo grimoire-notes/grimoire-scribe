@@ -27,7 +27,6 @@ g_gest_4_pen 3.2
 g_gest_5_pinch_off 1.2
 g_gest_6_keyboard 1.0
 g_gest_7_asleep 1.4
-g_gest_8_corner 2.5
 g_gest_9_pen_over_link 1.0
 g_hint_1_first_open 11.1
 g_hint_2_not_again 2.0
@@ -126,13 +125,6 @@ y_menus_over_panel 12.4
 y_pagesize_1_ksc 16.7
 y_pagesize_2_back 7.1
 y_pump 2.4
-y_status_battery 11.1
-y_status_corner 17.8
-y_status_corner_default 3.2
-y_status_corner_legacy_shortcut 2.8
-y_status_corners 13.5
-y_status_press 22.5
-y_status_tap 13.6
 y_touch_selftest 1.7
 y_touch_selftest_pins 2.7
 z_1_precise_eraser 14.7
@@ -193,7 +185,6 @@ z_bar_6_leave 2.3
 z_bar_6b_reopen 0.7
 z_bar_7_prefetch 3.4
 z_bar_8_pager 4.3
-z_bar_9_corner 5.8
 z_book_1_new 3.2
 z_book_2_merge 1.3
 z_book_3_broken 0.7
@@ -236,7 +227,6 @@ z_link_4_undo 22.0
 z_link_5_card 22.8
 z_link_6_smallest 1.9
 z_link_7_not_ink 2.7
-z_link_8_corner 2.3
 z_link_areas_1 14.3
 z_links_1_backlinks 2.6
 z_links_2_broken 2.9
@@ -323,5 +313,7 @@ z_tpl_8_card_after_the_job 11.2
 z_tpl_9_white_caches 28.0
 z_tpl_a_restore_first_close 1.8
 z_tpl_b_previews_leave_cards 4.1
+z_tpl_h_from_notebook 9.0
 z_undo_patches 11.7
+z_widgets 8.0
 z_wifi 1.5

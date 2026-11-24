@@ -306,6 +306,121 @@ fn pen_refreshes_keep_coordinate_processing_at_every_edge() {
     check!(rect_is_empty(fbpack_pen_region(Rect { x: 0, y: 0, w: 1, h: 1 }, 0, 0)));
 }
 
+fn frame_cached(memory: &mut [u8], previous: &mut [u8], shown: &mut [u8], src: &[u8], bpp: i32, rotation: i32, flip: bool, invert: bool, fast: bool, known: bool) {
+    let w = if rotation & 1 != 0 { PH } else { PW };
+    let h = if rotation & 1 != 0 { PW } else { PH };
+    let bytes = bpp / 8;
+    let stride = PW * bytes + 8;
+    for y in 0..h {
+        let (fx, fy) = position(0, y, rotation, flip);
+        let (nx, ny) = position(1, y, rotation, flip);
+        let step = ((ny - fy) * stride + (nx - fx) * bytes) as isize;
+        let pstep = ((ny - fy) * PW + nx - fx) as isize;
+        fbpack_row_cached(
+            memory,
+            GUARD + (fy * stride + fx * bytes) as usize,
+            step,
+            Some(&mut *previous),
+            Some(&mut *shown),
+            (fy * PW + fx) as usize,
+            pstep,
+            &src[(y * w) as usize..],
+            w,
+            0,
+            y,
+            bpp,
+            invert,
+            fast,
+            known,
+        );
+    }
+}
+
+// fbpack_row_cached must match fbpack_row bit-for-bit across every rotation, flip, inversion and
+// bpp, while reading only from the RAM `shown` shadow (never from `dst`, the mmap'ed framebuffer).
+fn cached_shadow_matches_fbpack_row_without_reading_fb() {
+    for bpp in [8, 32] {
+        for rotation in 0..4 {
+            for flip in [false, true] {
+                for invert in [false, true] {
+                    let mut fb_ref = [0xCDu8; ROOM];
+                    let mut fb_cached = [0xCDu8; ROOM];
+                    let mut prev_ref = [0u8; (PW * PH) as usize];
+                    let mut prev_cached = [0u8; (PW * PH) as usize];
+                    let mut shown = [0u8; (PW * PH) as usize];
+                    let mut src = [0u8; (PW * PH) as usize];
+                    for i in 0..src.len() {
+                        src[i] = match i % 7 {
+                            0 => 0,
+                            1 => 255,
+                            _ => (30 + (i * 37) % 195) as u8,
+                        };
+                    }
+                    // Initial full grayscale frame populates both previous and shown.
+                    frame(&mut fb_ref, &mut prev_ref, &src, bpp, rotation, flip, invert, false, false);
+                    frame_cached(&mut fb_cached, &mut prev_cached, &mut shown, &src, bpp, rotation, flip, invert, false, false);
+                    check!(fb_ref == fb_cached);
+                    check!(prev_ref == prev_cached);
+
+                    // Multiple fast (DU) frames with black, white, unchanged, darkening and lightening grays.
+                    for step in 0..4 {
+                        for i in 0..src.len() {
+                            src[i] = match (i + step) % 6 {
+                                0 => 0,
+                                1 => 255,
+                                2 => src[i], // unchanged
+                                3 => src[i].saturating_sub(47),
+                                4 => src[i].saturating_add(53),
+                                _ => ((i * 59 + step * 31) % 256) as u8,
+                            };
+                        }
+                        frame(&mut fb_ref, &mut prev_ref, &src, bpp, rotation, flip, invert, true, true);
+                        frame_cached(&mut fb_cached, &mut prev_cached, &mut shown, &src, bpp, rotation, flip, invert, true, true);
+                        check!(fb_ref == fb_cached);
+                        check!(prev_ref == prev_cached);
+                    }
+
+                    // Prove fast path never reads dst: poison fb_cached with 0x5A while keeping `shown`
+                    // intact, then change every pixel to black or white or gray; every written pixel must
+                    // still match fb_ref (computed from the true pre-poison framebuffer).
+                    let bytes = (bpp / 8) as usize;
+                    let stride = (PW as usize) * bytes + 8;
+                    let mut fb_poison = fb_cached;
+                    for y in 0..PH as usize {
+                        for x in 0..PW as usize {
+                            let off = GUARD + y * stride + x * bytes;
+                            fb_poison[off] = 0x5A;
+                        }
+                    }
+                    let mut prev_poison = prev_cached;
+                    let mut shown_poison = shown;
+                    let before_ref = fb_ref;
+                    for i in 0..src.len() {
+                        src[i] = ((i * 73 + 19) % 256) as u8;
+                    }
+                    frame(&mut fb_ref, &mut prev_ref, &src, bpp, rotation, flip, invert, true, true);
+                    frame_cached(&mut fb_poison, &mut prev_poison, &mut shown_poison, &src, bpp, rotation, flip, invert, true, true);
+                    for y in 0..PH as usize {
+                        for x in 0..PW as usize {
+                            let off = GUARD + y * stride + x * bytes;
+                            check!(shown_poison[y * PW as usize + x] == fb_ref[off]);
+                            if fb_ref[off..off + bytes] != before_ref[off..off + bytes] {
+                                check!(fb_poison[off..off + bytes] == fb_ref[off..off + bytes]);
+                            }
+                        }
+                    }
+
+                    // Final grayscale settle matches bit-for-bit too.
+                    frame(&mut fb_ref, &mut prev_ref, &src, bpp, rotation, flip, invert, false, true);
+                    frame_cached(&mut fb_cached, &mut prev_cached, &mut shown, &src, bpp, rotation, flip, invert, false, true);
+                    check!(fb_ref == fb_cached);
+                    check!(prev_ref == prev_cached);
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn test_fbpack() {
     run!(gray_paper_survives_live_ink_and_overlap);
@@ -313,5 +428,6 @@ fn test_fbpack() {
     run!(black_and_white_pixels_keep_the_ordered_dither);
     run!(no_cache_falls_back_and_invalidating_repaints);
     run!(pen_refreshes_keep_coordinate_processing_at_every_edge);
+    run!(cached_shadow_matches_fbpack_row_without_reading_fb);
     done();
 }

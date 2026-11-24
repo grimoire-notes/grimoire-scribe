@@ -8,7 +8,20 @@
 //!
 //! A modal hosted by the editor (in the Paper sheet's place) and the library (over New notebook).
 //! It never shows or logs more of a template than its name on screen: names are the owner's.
+//!
+//! Its last tiles are From a file... (2.2, issue #146) and From a notebook... (2.2, issue #195): the host opens the
+//! picture pick over the first (browser.rs) and asks the copy job for the picture picked (bgwork_copy.rs); the tile
+//! waits while that copy runs, and when it ends the folder is read again, with the new picture's tile in view (never
+//! while a pen or finger is down on the sheet: after its lift). The second opens a pick of a notebook and one of its
+//! pages (notebookpicker.rs): the editor renders the page in the background as this page's template
+//! (bgwork_template.rs, BgKind::PageTemplate), and the library makes the new notebook on it.
+//!
+//! A PDF in the folder (2.2, issue #172) is a tile a page, named after the file and the page ("Planner p. 3", the
+//! page's number kept in view however long the name), each waiting until its job made the page's picture
+//! (bgwork_tplpdf.rs). Until the job has counted the pages the PDF is one waiting tile; once they are counted the
+//! folder is read again, as after a copy (after the lift, never under a contact), and its pages take its place.
 
+use crate::bgwork_copy::CopyTo;
 use crate::prelude::*;
 
 /// how often a sheet waiting for previews looks for them, while a job runs
@@ -18,7 +31,8 @@ const CHECK_MS: u32 = 1500;
 
 /// The paper pickers' tiles: the fixed papers in paper_at() order, then Custom music... More layouts...
 /// (this sheet) and, in the editor's Paper sheet, Photos... (this sheet on the photos) are buttons
-/// beside Cancel since rc.9, so the tiles keep the owner's three rows of six.
+/// beside Cancel since rc.9, so the tiles keep the owner's three rows of six. This sheet shares that grid
+/// exactly since issue #195.
 pub const PAPER_SHEET_TILES: i32 = PAPER_PICKER_COUNT;
 pub const PAPER_SHEET_EDITOR_TILES: i32 = PAPER_PICKER_COUNT;
 /// The pickers' columns: always six, so each row is one of the owner's rows (rc.9).
@@ -96,16 +110,17 @@ pub fn paper_sheet_rect(a: &App, g: &mut PaperGrid) -> Rect {
     let sheet_h = ui_px(120.0) + ui_px(72.0) + g.rows * g.cell_h + ui_px(190.0);
     Rect { x: m, y: (a.h - sheet_h) / 3, w: a.w - 2 * m, h: sheet_h }
 }
-/// The Templates (and Photos) sheet's place: as the Paper sheet's was before rc.9 (19 tiles: 24
-/// templates a page upright, 21 sideways), so the shorter three-row Paper sheet leaves it as big.
-fn templates_sheet_rect(a: &App, g: &mut PaperGrid) -> Rect {
-    let m = ui_px(70.0);
-    let gap = ui_px(30.0);
-    let avail_w = a.w - 2 * m - ui_px(72.0);
-    let avail_h = a.h - ui_px(120.0) - ui_px(72.0) - ui_px(190.0) - ui_px(80.0);
-    *g = paper_grid(19, avail_w, avail_h, gap, ui_px(100.0), a.w / 6, PAPER_GRID_MIN_COLS);
-    let sheet_h = ui_px(120.0) + ui_px(72.0) + g.rows * g.cell_h + ui_px(190.0);
-    Rect { x: m, y: (a.h - sheet_h) / 3, w: a.w - 2 * m, h: sheet_h }
+/// The Templates (and Photos) sheet's place: the paper picker's, and its rows exactly (issue #195: six columns,
+/// three rows, the same tiles), so More layouts... opens the paper picker's grid with the templates in it. Over the
+/// editor that is the Paper sheet's (tiles from the sheet's inside); over New notebook it is New notebook's card,
+/// the tiles where its Paper heading's are (a grid y of -1: the sheet's inside, below its title).
+fn templates_sheet_rect(a: &App, new_notebook: bool, g: &mut PaperGrid) -> (Rect, i32) {
+    if new_notebook {
+        let (card, ty) = crate::library::new_notebook_paper_place(a.w, a.h, g);
+        (card, ty)
+    } else {
+        (paper_sheet_rect(a, g), -1)
+    }
 }
 /// A paper tile's label, under the tile (tile: its rect; gap: the grid's): on one line, centred,
 /// or on two lines no wider than the tile when it is wider than the tile (a break after a comma
@@ -150,13 +165,19 @@ pub enum TsResult {
     Picked = 2,  // TS_PICKED
     Back = 3,  // TS_BACK
     Cancel = 4,  // TS_CANCEL
+    /// the From a file... tile (#146): the host opens the picture pick; the sheet stays open under it
+    FromFile = 5,
+    /// the From a notebook... tile (#195): the host opens the notebook and page pick; the sheet stays open under it
+    FromNotebook = 6,
 }
 /// The hits it registers as it draws (tests find its buttons by them): a tile (arg: the template, an
-/// index into shown), the page buttons, Back.
+/// index into shown), the page buttons, Back, the From a file... tile.
 pub const TS_HIT_TILE: i32 = 1;
 pub const TS_HIT_PREV: i32 = 2;
 pub const TS_HIT_NEXT: i32 = 3;
 pub const TS_HIT_BACK: i32 = 4;
+pub const TS_HIT_FROM_FILE: i32 = 5;
+pub const TS_HIT_FROM_NOTEBOOK: i32 = 6;
 
 #[derive(Clone, Debug, Default)]
 pub struct TplSheet {
@@ -198,24 +219,37 @@ pub struct TplSheet {
     pub current_path: FixedStr<TEMPLATE_PATH_MAX>,
     /// the button or tile pressed, shown pressed until the lift (app_press_feedback)
     pub pressed: Option<Rect>,
+    /// a copy into this folder was asked (the From a file... tile's, #146) or ran as the sheet opened, and has not
+    /// been seen to end: the tile waits, and the folder is read again when it ends
+    pub copying: bool,
+    /// a PDF's pages were counted while a contact was down on the sheet (#172): the folder is read again after its
+    /// lift
+    pub pdf_counted: bool,
 }
 
 // ---- the sheet ----
 
 // The templates the sheet offers as it opens (every one not bad), and whether any of them waits for
-// a preview.
+// a preview. A PDF's tile it cannot use (#172: the whole PDF's, refused or past the tiles PDFs may give, or a page's
+// that is marked) keeps its place, crossed out, at every opening: nothing else on the sheet tells of it while other
+// templates are offered. A picture it cannot use is left out, as before.
 fn rebuild_shown(s: &mut TplSheet) {
     s.shown.clear();
     s.pending = false;
     for i in 0..s.t.len() {
-        if s.t[i].bad {
+        if s.t[i].bad && !pdf_tile(&s.t[i]) {
             continue;
         }
         s.shown.push(i as i32);
-        if !s.t[i].ready {
+        if !s.t[i].ready && !s.t[i].bad {
             s.pending = true;
         }
     }
+}
+
+// Whether a template is a template PDF's tile: one of its pages, or the whole PDF (#172).
+fn pdf_tile(t: &Template) -> bool {
+    t.page > 0 || crate::bgwork_tplpdf::is_pdf_name(t.path.as_str().rsplit('/').next().unwrap_or(""))
 }
 
 // A shown template the previews job found it cannot use since the sheet opened keeps its tile, so
@@ -311,6 +345,57 @@ fn open_folder(s: &mut TplSheet, a: &mut App, nb: Option<&NotebookInfo>, current
     s.selected = find_selected(s);
     s.anchor = if s.selected > 0 { s.selected } else { 0 };
     s.next_check = now_ms().wrapping_add(CHECK_MS);
+    s.copying = bg_pending(BgKind::CopyFile, tplsheet_folder(s).folder());
+}
+
+/// The folder its pictures are in, and a From a file... copy goes into (#146).
+pub fn tplsheet_folder(s: &TplSheet) -> CopyTo {
+    if s.photos {
+        CopyTo::Photos
+    } else {
+        CopyTo::Templates
+    }
+}
+
+/// The host asked the copy job for a picture picked from the From a file... tile (#146): the tile waits until the
+/// job ends, and the folder is read again then (tplsheet_tick).
+pub fn tplsheet_copy_asked(s: &mut TplSheet) {
+    s.copying = true;
+}
+
+// A copy into the folder ended (it went in or not): the folder read again as the sheet opened on it, the same paper
+// selected, and in view the new picture (the first file not listed before), else the page that was.
+fn copy_ended(s: &mut TplSheet, a: &mut App) {
+    let new = read_again(s, a, true);
+    qlog!("templates: %s read again after a copy (%d files, %s new)", tplsheet_folder(s).folder(), s.t.len() as i32, if new { "one" } else { "none" });
+}
+
+// The folder read again as the sheet opened on it, the same paper selected; in view the first tile not listed before
+// when `to_new` (and there is one), else the page that was. Not `to_new` (a PDF's pages counted, #172), the tile the
+// page in view is anchored on is followed to its new place, so tiles taking a PDF's place before it do not turn the
+// sheet away from it (a tile no longer listed, the PDF's own, leaves its place to its pages). Whether there was a new
+// one.
+fn read_again(s: &mut TplSheet, a: &mut App, to_new: bool) -> bool {
+    let had: Vec<String> = s.t.iter().map(|t| t.path.as_str().to_string()).collect();
+    let anchor = s.anchor;
+    let anchored = usize::try_from(anchor).ok().and_then(|k| s.shown.get(k)).map(|&i| s.t[i as usize].path.as_str().to_string());
+    let nb = s.nb.take();
+    let (current, photos) = (s.current, s.photos);
+    let path = s.current_path.as_str().to_string();
+    open_folder(s, a, nb.as_deref(), current, (!path.is_empty()).then_some(path.as_str()), photos);
+    let new = s.shown.iter().position(|&i| !had.iter().any(|p| p.as_str() == s.t[i as usize].path.as_str()));
+    let followed = anchored.filter(|_| !to_new).and_then(|p| s.shown.iter().position(|&i| s.t[i as usize].path.as_str() == p));
+    s.anchor = new.filter(|_| to_new).or(followed).map_or(anchor, |k| k as i32);
+    new.is_some()
+}
+
+// A PDF's pages were counted since the folder was read (#172): it is read again, its pages in the PDF's place, the
+// tile the page in view was anchored on still in view.
+fn pdf_pages_counted(s: &mut TplSheet, a: &mut App) {
+    s.pdf_counted = false;
+    let had = s.t.len();
+    read_again(s, a, false);
+    qlog!("templates: read again after a PDF's pages were counted (%d tiles, %d before)", s.t.len() as i32, had as i32);
 }
 
 /// Opens it on the templates as they are now (the previews job queued for those that have none):
@@ -327,17 +412,84 @@ pub fn tplsheet_open_photos(s: &mut TplSheet, a: &mut App, nb: &NotebookInfo, cu
     open_folder(s, a, Some(nb), current, None, true);
 }
 
+/// The page's part of a template PDF's page tile name (#172, bgwork_tplpdf.rs): a space and its number as the Pages
+/// view writes a book's page (" p. 3").
+pub fn pdf_page_suffix(page: u32) -> String {
+    // TRANSLATORS: (also) after the name of a PDF in grimoire/templates, under a tile of the Templates sheet: which
+    // of the PDF's pages the tile is ("Planner p. 3"). %d is the page's number.
+    format!(" {}", cformat!(tr("p. %d"), page as i32))
+}
+
 // A template's name under its tile, on one line no wider than the tile: centred, or cut short as
-// names are (the fit check does not hear of a name, which is the owner's).
-fn tile_name(c: &mut Canvas, tr: Rect, name: &str, selected: bool) {
+// names are (the fit check does not hear of a name, which is the owner's). A PDF's page (#172) keeps its number in
+// view: the file's name is cut short before it.
+fn tile_name(c: &mut Canvas, tr: Rect, name: &str, page: u32, selected: bool) {
     let f = if selected && ui_theme() != UiTheme::Gothic { FontFace::Bold } else { FontFace::Regular }; // (as the cards' names)
     let px = ui_small_size() * 0.9;
     let mut lr = Rect { x: tr.x, y: tr.y + tr.h + ui_px(16.0), w: tr.w, h: ui_px(64.0) };
     let w = font_measure(f, px, name);
     if w < lr.w {
         lr = Rect { x: lr.x + (lr.w - w) / 2, y: lr.y, w: w + 1, h: lr.h };
+    } else if page > 0 {
+        let suffix = pdf_page_suffix(page);
+        let sw = font_measure(f, px, &suffix);
+        if let Some(base) = name.strip_suffix(suffix.as_str()).filter(|_| sw < lr.w / 2) {
+            font_draw_left_name(c, f, px, Rect { w: lr.w - sw, ..lr }, base, 0);
+            font_draw_left(c, f, px, Rect { x: lr.x + lr.w - sw, w: sw + 1, ..lr }, &suffix, 0);
+            return;
+        }
     }
     font_draw_left_name(c, f, px, lr, name, 0);
+}
+
+// The From a file... tile (#146): a blank page with Files' sign, or the hourglass while a copy it asked for runs.
+fn tile_from_file(c: &mut Canvas, tr: Rect, copying: bool) {
+    canvas_fill(c, tr, 255);
+    if copying {
+        ui_tile_loading(c, tr);
+        return;
+    }
+    let s = tr.w * 2 / 5;
+    ui_icon(c, IconKind::Files, Rect { x: tr.x + (tr.w - s) / 2, y: tr.y + (tr.h - s) / 2, w: s, h: s }, 0);
+}
+
+// The From a file... tile at r with its label, and its hit unless a copy runs.
+fn draw_from_file(s: &mut TplSheet, c: &mut Canvas, r: Rect, gap: i32) {
+    tile_from_file(c, r, s.copying);
+    ui_frame(c, r, ui_px(12.0), 0, false, ui_px(3.0));
+    // TRANSLATORS: (also) the last tile of the Templates and Photos sheets, under its picture (a tile of about 250
+    // px, on two lines if need be): it opens the file picker to copy a picture from anywhere on the Kindle into
+    // grimoire/templates or grimoire/photos.
+    paper_tile_label(c, r, gap, tr("From a file..."), false);
+    if !s.copying {
+        hits_add(&mut s.hits, Rect { x: r.x, y: r.y, w: r.w, h: r.h + ui_px(90.0) }, TS_HIT_FROM_FILE, 0);
+    }
+}
+
+// The From a notebook... tile (#195): a blank page with a notebook's sign. It opens a pick of a notebook and then
+// one of its pages, which becomes this page's template (the host renders that page in the background).
+fn tile_from_notebook(c: &mut Canvas, tr: Rect) {
+    canvas_fill(c, tr, 255);
+    let s = tr.w * 2 / 5;
+    ui_icon(c, IconKind::Notebook, Rect { x: tr.x + (tr.w - s) / 2, y: tr.y + (tr.h - s) / 2, w: s, h: s }, 0);
+}
+
+fn draw_from_notebook(s: &mut TplSheet, c: &mut Canvas, r: Rect, gap: i32) {
+    tile_from_notebook(c, r);
+    ui_frame(c, r, ui_px(12.0), 0, false, ui_px(3.0));
+    // TRANSLATORS: (also) the tile after From a file... on the Templates sheet, under its picture (a tile of about
+    // 250 px, on two lines if need be): it opens a pick of a notebook and one of its pages, to use that page as the
+    // open page's template.
+    paper_tile_label(c, r, gap, tr("From a notebook..."), false);
+    hits_add(&mut s.hits, Rect { x: r.x, y: r.y, w: r.w, h: r.h + ui_px(90.0) }, TS_HIT_FROM_NOTEBOOK, 0);
+}
+
+// Whether the sheet offers From a notebook... (#195): only the editor's Templates sheet has the open page it would
+// become the template of (New notebook's has none, and the Photos sheet's pages are its own pictures).
+fn offers_from_notebook(s: &TplSheet) -> bool {
+    // (a photo has no template, and the pick makes a page's template: a page the editor has open, or the new
+    // notebook's first one)
+    !s.photos
 }
 
 // A tile whose preview is not made yet: the sign for more, in gray, until it is.
@@ -424,7 +576,8 @@ pub fn tplsheet_draw(s: &mut TplSheet, a: &mut App) -> Rect {
     hits_clear(&mut s.hits);
     s.pressed = None;
     let mut g = PaperGrid::default();
-    s.rect = templates_sheet_rect(a, &mut g);
+    let (rect, grid_ty) = templates_sheet_rect(a, s.nb.is_none(), &mut g);
+    s.rect = rect;
     let c = &mut a.screen;
     // TRANSLATORS: the title of the sheet of templates (pictures copied into grimoire/templates, to
     // write on as paper), which More papers... opens (1560 px at 64 px).
@@ -435,11 +588,15 @@ pub fn tplsheet_draw(s: &mut TplSheet, a: &mut App) -> Rect {
         title = tr("Photos");
     }
     let in_ = ui_sheet(c, s.rect, title);
+    let ty = if grid_ty < 0 { in_.y } else { grid_ty };
     let gap = ui_px(30.0);
     let bh = ui_px(140.0);
     let offered = usable(s);
+    let from_notebook = offers_from_notebook(s);
     s.per = g.cols * g.rows;
-    s.pages = if offered != 0 { (s.shown.len() as i32 + s.per - 1) / s.per } else { 1 };
+    // (the From a file... and From a notebook... tiles after the last template's: a place each)
+    let extra = 1 + from_notebook as i32;
+    s.pages = if offered != 0 { (s.shown.len() as i32 + extra + s.per - 1) / s.per } else { 1 };
     s.page = clampi(s.anchor / s.per, 0, s.pages - 1);
     let back = Rect { x: in_.x, y: in_.y + in_.h - bh, w: ui_px(380.0), h: bh };
     // TRANSLATORS: the Templates sheet's button back to the papers, under its icon (348 px at
@@ -455,14 +612,25 @@ pub fn tplsheet_draw(s: &mut TplSheet, a: &mut App) -> Rect {
     }
     if offered == 0 {
         draw_empty(s, a, Rect { x: in_.x, y: in_.y, w: in_.w, h: back.y - in_.y });
+        // (From a file..., and From a notebook..., under the text, in the grid's last row, centred)
+        let n = extra;
+        let total = n * g.tw + (n - 1) * gap;
+        let mut x = in_.x + (in_.w - total) / 2;
+        let y = ty + (g.rows - 1) * g.cell_h;
+        draw_from_file(s, &mut a.screen, Rect { x, y, w: g.tw, h: g.th }, gap);
+        x += g.tw + gap;
+        if from_notebook {
+            draw_from_notebook(s, &mut a.screen, Rect { x, y, w: g.tw, h: g.th }, gap);
+        }
         return s.rect;
     }
     let gridw = g.cols * g.tw + (g.cols - 1) * gap;
+    let cell = |k: i32| Rect { x: in_.x + (in_.w - gridw) / 2 + (k % g.cols) * (g.tw + gap), y: ty + (k / g.cols) * g.cell_h, w: g.tw, h: g.th };
     let mut k = 0;
     while k < s.per && first + k < s.shown.len() as i32 {
         let i = first + k;
         let t = &mut s.t[s.shown[i as usize] as usize];
-        let tr = Rect { x: in_.x + (in_.w - gridw) / 2 + (k % g.cols) * (g.tw + gap), y: in_.y + (k / g.cols) * g.cell_h, w: g.tw, h: g.th };
+        let tr = cell(k);
         canvas_fill(c, tr, 255);
         let pv = if t.bad { None } else { template_thumb(t) };
         let have = pv.is_some();
@@ -476,11 +644,19 @@ pub fn tplsheet_draw(s: &mut TplSheet, a: &mut App) -> Rect {
         }
         let sel = i == s.selected;
         ui_frame(c, rect_inflate(tr, if sel { ui_px(10.0) } else { 0 }), ui_px(12.0), 0, false, if sel { ui_px(9.0) } else { ui_px(3.0) });
-        tile_name(c, tr, t.name.as_str(), sel);
+        tile_name(c, tr, t.name.as_str(), t.page, sel);
         if have {
             hits_add(&mut s.hits, Rect { x: tr.x, y: tr.y, w: tr.w, h: tr.h + ui_px(90.0) }, TS_HIT_TILE, i); // (none waiting, unusable)
         }
         k += 1;
+    }
+    // the From a file... tile, and From a notebook..., when this page holds their places
+    let last = s.shown.len() as i32;
+    if last >= first && last < first + s.per {
+        draw_from_file(s, c, cell(last - first), gap);
+    }
+    if from_notebook && last + 1 >= first && last + 1 < first + s.per {
+        draw_from_notebook(s, c, cell(last + 1 - first), gap);
     }
     if s.pages > 1 {
         let nr = Rect { x: in_.x + in_.w - ui_px(220.0), y: back.y, w: ui_px(220.0), h: bh };
@@ -523,6 +699,7 @@ pub fn tplsheet_pointer(s: &mut TplSheet, a: &mut App, phase: i32, x: f32, y: f3
     if phase != 2 {
         return TsResult::None;
     }
+    s.press.down = false; // (the contact is gone: a copy that ended under it is seen at the next tick)
     *dirty = app_press_release(a, &mut s.pressed);
     if !rect_contains(s.rect, s.press.x0 as i32, s.press.y0 as i32) {
         *dirty = s.rect; // a tap outside the sheet cancels
@@ -550,6 +727,9 @@ pub fn tplsheet_pointer(s: &mut TplSheet, a: &mut App, phase: i32, x: f32, y: f3
             *dirty = s.rect;
             TsResult::Picked
         }
+        // (the sheet stays open under the picker the host opens)
+        TS_HIT_FROM_FILE => TsResult::FromFile,
+        TS_HIT_FROM_NOTEBOOK => TsResult::FromNotebook,
         TS_HIT_PREV | TS_HIT_NEXT => {
             s.anchor = clampi(s.page + if h.id == TS_HIT_NEXT { 1 } else { -1 }, 0, s.pages - 1) * s.per;
             tplsheet_draw(s, a);
@@ -564,7 +744,27 @@ pub fn tplsheet_pointer(s: &mut TplSheet, a: &mut App, phase: i32, x: f32, y: f3
 /// background job runs, and when one ends) are drawn in their tiles. True with *dirty to refresh.
 pub fn tplsheet_tick(s: &mut TplSheet, a: &mut App, now: u32, dirty: &mut Rect) -> bool {
     *dirty = RECT_EMPTY;
-    if !s.open || !s.pending {
+    if !s.open {
+        return false;
+    }
+    // A copy into the folder (#146) no longer queued or running (reaped: it went in or not): the folder read again.
+    // Not while a pen or finger is down on the sheet: reading it makes the sheet anew, which would forget the press
+    // (its lift would then read as a tap outside, and close the sheet) and move the tiles under it; the lift comes
+    // first, as the sheet was drawn, and the folder is read at the tick after it.
+    if s.copying && !s.press.down && !bg_pending(BgKind::CopyFile, tplsheet_folder(s).folder()) {
+        copy_ended(s, a);
+        tplsheet_draw(s, a);
+        *dirty = s.rect;
+        return true;
+    }
+    // (a PDF's pages counted under a contact: read now, after its lift)
+    if s.pdf_counted && !s.press.down {
+        pdf_pages_counted(s, a);
+        tplsheet_draw(s, a);
+        *dirty = s.rect;
+        return true;
+    }
+    if !s.pending {
         return false;
     }
     // A background job that ended (the previews job among them) says so by bgimage_generation;
@@ -575,7 +775,20 @@ pub fn tplsheet_tick(s: &mut TplSheet, a: &mut App, now: u32, dirty: &mut Rect) 
     }
     s.gen = bgimage_generation();
     s.next_check = now.wrapping_add(CHECK_MS);
-    if template_refresh(&mut s.t) == 0 {
+    let changed = template_refresh(&mut s.t);
+    // A PDF whose pages its job has counted since (#172): the folder read again, as after a copy, its pages in its
+    // place (not under a contact: after the lift). (No PDF in the folder: nothing here is asked, nothing changes.)
+    if s.t.iter().any(|t| t.page == 0 && !t.bad && !t.ready) && crate::bgwork_tplpdf::pdf_pages_counted(&s.t) {
+        if s.press.down {
+            s.pdf_counted = true;
+        } else {
+            pdf_pages_counted(s, a);
+            tplsheet_draw(s, a);
+            *dirty = s.rect;
+            return true;
+        }
+    }
+    if changed == 0 {
         return false;
     }
     s.pending = waiting(s); // (a template found unusable keeps its tile: usable)
@@ -605,8 +818,9 @@ pub fn tplsheet_preview(s: &mut TplSheet) -> Option<&Canvas> {
 
 /// The headless runner's "templates.*" keys (key without the prefix; docs/SIM.md): count (the
 /// templates it offers), ready (how many of those have their previews), page and pages (of tiles,
-/// from 1), selected (the selected one's name). Empty values while it is closed. 0, -1 for a key
-/// it does not know.
+/// from 1), selected (the selected one's name), copying (1 while its From a file... tile waits for a
+/// copy), names (the tiles' names in order, joined by |). Empty values while it is closed. 0, -1 for a
+/// key it does not know.
 pub fn tplsheet_probe(s: &TplSheet, key: &str, out: &mut String, cap: usize) -> i32 {
     let open = s.open;
     let mut ready = 0;
@@ -647,7 +861,28 @@ pub fn tplsheet_probe(s: &TplSheet, key: &str, out: &mut String, cap: usize) -> 
         "selected" => {
             csnprintf!(out, cap, "%s", if open && s.selected >= 0 { s.t[s.shown[s.selected as usize] as usize].name.as_str() } else { "" });
         }
+        "copying" => {
+            csnprintf!(out, cap, "%s", if !open { "" } else if s.copying { "1" } else { "0" });
+        }
+        "names" => {
+            let names: Vec<&str> = if open { s.shown.iter().map(|&i| s.t[i as usize].name.as_str()).collect() } else { Vec::new() };
+            csnprintf!(out, cap, "%s", &names.join("|"));
+        }
         _ => return -1,
     }
     0
+}
+
+/// Where the runner's `templates.NAME` taps (docs/SIM.md): from_file, the From a file... tile while it can be tapped
+/// (not while a copy it asked for runs), from_notebook, that tile (both hosts' Templates sheet), and back; None for
+/// another name, or with the sheet closed.
+pub fn tplsheet_point(s: &TplSheet, name: &str) -> Option<(f32, f32)> {
+    let id = match name {
+        "from_file" => TS_HIT_FROM_FILE,
+        "from_notebook" => TS_HIT_FROM_NOTEBOOK,
+        "back" => TS_HIT_BACK,
+        _ => return None,
+    };
+    let h = s.hits.h.iter().find(|h| h.id == id).filter(|_| s.open)?;
+    Some(((h.r.x + h.r.w / 2) as f32, (h.r.y + h.r.h / 2) as f32))
 }

@@ -75,6 +75,17 @@ fn plural_one_other(n: i64) -> i32 {
 fn plural_zero(_n: i64) -> i32 {
     0
 }
+// Polish: one, then the few (2 to 4, but not 12 to 14 and their hundreds), then the many.
+fn plural_pl(n: i64) -> i32 {
+    let n = n.unsigned_abs();
+    if n == 1 {
+        0
+    } else if (2..=4).contains(&(n % 10)) && !(12..=14).contains(&(n % 100)) {
+        1
+    } else {
+        2
+    }
+}
 
 struct Lang {
     code: &'static str,
@@ -83,10 +94,11 @@ struct Lang {
     nforms: i32,
     plural: fn(i64) -> i32,
 }
-const K_LANGS: [Lang; 3] = [
+const K_LANGS: [Lang; 4] = [
     Lang { code: "en", name: "English", nforms: 2, plural: plural_one_other },
     Lang { code: "es", name: "Espa\u{f1}ol", nforms: 2, plural: plural_one_other },
     Lang { code: "ja", name: "\u{65e5}\u{672c}\u{8a9e}", nforms: 1, plural: plural_zero },
+    Lang { code: "pl", name: "Polski", nforms: 3, plural: plural_pl },
 ];
 const NLANGS: usize = K_LANGS.len();
 
@@ -266,7 +278,7 @@ fn sim_catalog(code: &str) -> Option<&'static [u8]> {
     }
     let mut path = String::new();
     csnprintf!(&mut path, 1024, "%s/%s.mo", &*dir.to_string_lossy(), code);
-    let d: Option<&'static [u8]> = read_file(&path).map(|v| {
+    let d: Option<&'static [u8]> = read_system_file(&path).map(|v| {
         // (a file of 4 GB or more reads as empty, as the C's uint32_t size does)
         let v: &'static [u8] = Box::leak(v.into_boxed_slice());
         if v.len() < u32::MAX as usize {
@@ -650,7 +662,7 @@ pub fn i18n_detect_from(kindle_locale: Option<&str>, why: &mut String, cap: usiz
 pub fn i18n_detect() {
     #[cfg(feature = "kindle")]
     let (text, missing) = {
-        let text = read_file("/var/local/system/locale");
+        let text = read_system_file("/var/local/system/locale");
         let missing = if text.is_none() { "; /var/local/system/locale cannot be read" } else { "" };
         (text, missing)
     };
@@ -832,12 +844,13 @@ mod tests {
     fn setting_the_language() {
         assert!(i18n_set("es_MX.UTF-8") && i18n_current() == "es");
         assert!(!i18n_set("fr_FR.UTF-8") && i18n_current() == "en" && tr("Done") == "Done");
-        assert_eq!(i18n_language_count(), 3);
+        assert_eq!(i18n_language_count(), 4);
         assert_eq!((i18n_language_code(1), i18n_language_name(1)), (Some("es"), Some("Espa\u{f1}ol")));
         assert_eq!((i18n_language_code(2), i18n_language_name(2)), (Some("ja"), Some("\u{65e5}\u{672c}\u{8a9e}")));
-        assert_eq!((i18n_language_code(3), i18n_language_name(-1)), (None, None));
-        assert!(i18n_setting_known("auto") && i18n_setting_known("es") && i18n_setting_known("ja") && !i18n_setting_known("fr") && !i18n_setting_known(""));
-        assert_eq!((i18n_plural_forms("es"), i18n_plural_forms("ja"), i18n_plural_forms("fr")), (2, 1, 0));
+        assert_eq!((i18n_language_code(3), i18n_language_name(3)), (Some("pl"), Some("Polski")));
+        assert_eq!((i18n_language_code(4), i18n_language_name(-1)), (None, None));
+        assert!(i18n_setting_known("auto") && i18n_setting_known("es") && i18n_setting_known("ja") && i18n_setting_known("pl") && !i18n_setting_known("fr") && !i18n_setting_known(""));
+        assert_eq!((i18n_plural_forms("es"), i18n_plural_forms("ja"), i18n_plural_forms("pl"), i18n_plural_forms("fr")), (2, 1, 3, 0));
         english();
     }
 

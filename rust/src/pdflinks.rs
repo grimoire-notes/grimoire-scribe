@@ -50,9 +50,26 @@ pub fn pdflinks_seed(src: u32, index: u32) -> u32 {
 }
 
 /// Whether two areas are the same link's, within the tolerance on each edge.
-fn same_area(a: Rect, b: Rect) -> bool {
+pub(crate) fn same_area(a: Rect, b: Rect) -> bool {
     let t = PDFLINKS_TOLERANCE_PX;
     (a.x - b.x).abs() <= t && (a.y - b.y).abs() <= t && ((a.x + a.w) - (b.x + b.w)).abs() <= t && ((a.y + a.h) - (b.y + b.h)).abs() <= t
+}
+
+/// A link's rectangle clamped to the page (pw x ph, each at most NAV_AREA_MAX), None when less than 1 px a side
+/// is left of it.
+pub(crate) fn page_area(r: Rect, pw: i32, ph: i32) -> Option<Rect> {
+    let (pw, ph) = (pw.min(NAV_AREA_MAX), ph.min(NAV_AREA_MAX));
+    if pw < 1 || ph < 1 {
+        return None;
+    }
+    let x0 = (r.x as i64).clamp(0, pw as i64) as i32;
+    let y0 = (r.y as i64).clamp(0, ph as i64) as i32;
+    let x1 = (r.x as i64 + r.w as i64).clamp(0, pw as i64) as i32;
+    let y1 = (r.y as i64 + r.h as i64).clamp(0, ph as i64) as i32;
+    if x1 - x0 < 1 || y1 - y0 < 1 {
+        return None;
+    }
+    Some(Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
 }
 
 /// Validation: both pages in the notebook, not a link to its own page, the area clamped to the page (pw x ph)
@@ -62,19 +79,8 @@ pub fn pdflinks_valid(rec: &DocRecord, pw: i32, ph: i32, exists: &dyn Fn(u32) ->
     if rec.src == 0 || rec.dst == 0 || rec.src == rec.dst || !exists(rec.src) || !exists(rec.dst) {
         return None;
     }
+    let area = page_area(rec.rect, pw, ph)?;
     let (pw, ph) = (pw.min(NAV_AREA_MAX), ph.min(NAV_AREA_MAX));
-    if pw < 1 || ph < 1 {
-        return None;
-    }
-    let r = rec.rect;
-    let x0 = (r.x as i64).clamp(0, pw as i64) as i32;
-    let y0 = (r.y as i64).clamp(0, ph as i64) as i32;
-    let x1 = (r.x as i64 + r.w as i64).clamp(0, pw as i64) as i32;
-    let y1 = (r.y as i64 + r.h as i64).clamp(0, ph as i64) as i32;
-    if x1 - x0 < 1 || y1 - y0 < 1 {
-        return None;
-    }
-    let area = Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
     let outline = rec.quad.and_then(|q| {
         let mut pts = q.to_vec();
         pts.push(q[0]);
@@ -139,29 +145,51 @@ pub fn pdflinks_fill(
 /// the bytes the file would have (outline lines included), the densest pages first, each page keeping its first
 /// links in annotation order. The 10% left is room for Copy page and later fills. Returns how many links went.
 pub fn pdflinks_water(dl: &mut DocLinks) -> usize {
+    water(dl, &|_| false)
+}
+
+/// pdflinks_water for a fill into a notebook that has links already (2.2): the links `kept` says yes to (the ones
+/// the notebook had) are never trimmed and count against the caps as they are; the level trims only the others,
+/// by the same rule among them (the densest pages first, each page keeping its first links). Returns how many went.
+pub fn pdflinks_water_keeping(dl: &mut DocLinks, kept: &dyn Fn(&DocLink) -> bool) -> usize {
+    water(dl, kept)
+}
+
+fn water(dl: &mut DocLinks, fixed: &dyn Fn(&DocLink) -> bool) -> usize {
     let max_n = DOCLINKS_MAX * DOCLINKS_WATER_PCT / 100;
     let max_b = DOCLINKS_FILE_MAX * DOCLINKS_WATER_PCT / 100;
     let total_b = doclinks_bytes(dl);
     if dl.links.len() <= max_n && total_b <= max_b {
         return 0;
     }
-    let base = total_b - dl.links.iter().map(|l| doclinks_link_bytes(dl, l)).sum::<usize>();
-    // rank of each link in its page, and its bytes
+    let held: Vec<bool> = dl.links.iter().map(fixed).collect();
+    let held_n = held.iter().filter(|&&h| h).count();
+    // (the bytes of everything that stays whatever the level: the header, the carried lines, the links held)
+    let base = total_b - dl.links.iter().zip(&held).filter(|(_, &h)| !h).map(|(l, _)| doclinks_link_bytes(dl, l)).sum::<usize>();
+    // rank of each link among its page's links that may go, and its bytes (0 for a link held)
     let mut rank = Vec::with_capacity(dl.links.len());
     let mut cost = Vec::with_capacity(dl.links.len());
     let (mut last, mut run) = (0u32, 0usize);
-    for l in &dl.links {
-        run = if l.pid == last { run + 1 } else { 1 };
-        last = l.pid;
+    for (l, &h) in dl.links.iter().zip(&held) {
+        if l.pid != last {
+            run = 0;
+            last = l.pid;
+        }
+        if h {
+            rank.push(0);
+            cost.push(0);
+            continue;
+        }
+        run += 1;
         rank.push(run);
         cost.push(doclinks_link_bytes(dl, l));
     }
     let widest = rank.iter().copied().max().unwrap_or(0);
     let level = |lv: usize| -> (usize, usize) {
-        let mut n = 0;
+        let mut n = held_n;
         let mut b = base;
         for i in 0..rank.len() {
-            if rank[i] <= lv {
+            if rank[i] != 0 && rank[i] <= lv {
                 n += 1;
                 b += cost[i];
             }

@@ -7,7 +7,8 @@
 # rust-only
 wait 200
 expect host is
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 510 460
 tap 1564 2254
@@ -16,15 +17,20 @@ expect screen is editor
 pen line 300 1700 1400 1720 60 0.4 0.9
 wait 700
 expect editor.strokes is 1
-pentap panel display
+pentap panel settings
 wait 300
-expect editor.modal is display
-tap 800 1500
+expect editor.modal is settings
+tap library settings.cat.2
+wait 100
+tap library sleep-clock
+wait 300
+expect editor.settings.sheet is display
+tap library display.sleep
 wait 200
-tap 800 1500
+tap library display.sleep
 wait 200
 expect settings.sleep_mode is 2
-tap 1464 1950
+tap library display.done
 wait 300
 expect editor.modal is none
 expect asleep.mode is

@@ -4,8 +4,10 @@
 # The Pair sheet's every state in Spanish (the longer language) upright and sideways, its texts
 # checked for fit: searching, the controllers found, pairing, a controller paired (its Forget row).
 wait 2000
-tap 1535 95
+tap library settings
 wait 200
+tap library settings.cat.4
+wait 100
 tap library pair-menu
 wait 200
 expect library.sheet is pair-menu
@@ -17,7 +19,7 @@ shot 01-searching
 wait 3000
 expect library.pair is idle 2 0
 shot 02-found
-tap 930 895
+tap 930 452
 wait 300
 expect library.pair is pairing 2 0
 shot 03-pairing

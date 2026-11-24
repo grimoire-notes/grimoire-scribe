@@ -6,7 +6,7 @@
 # chip that picks, undo and redo, the top dock, Cancel, a zoomed view, Choose from the pages... and sideways.
 # The root's page 1 has three links (to page 3 twice and to page 2), page 3 is Árbol and page 5 Arena.
 wait 300
-tap 200 400
+tap library card.1
 wait 300
 expect editor.page is 1
 expect editor.links is 3 3
@@ -95,13 +95,12 @@ expect toast is
 key 38 0
 pen line 300 2000 900 2150 30 0.6 0.6
 expect editor.linkto.dock is top
-expect editor.linkto.rect is 20 173 1820 736
+expect editor.linkto.rect is 20 86 1820 736
 expect editor.linkto.chips is 5
 expect editor.linkto.3 is recent p3
 expect editor.linkto.4 is p3
 shot 03-linkto-top
-expect editor.ui_at.1530.819 is linkto.cancel
-tap 1530 819
+tap panel linkto.cancel
 wait 100
 expect toast is
 expect editor.linkto is 0

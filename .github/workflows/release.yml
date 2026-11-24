@@ -18,6 +18,8 @@ env:
   # the same bytes (tests/repro_check.sh holds the build to that), so these are the versions the
   # maintainer's Mac must run before a release is tagged: docs/RELEASING.md, Before the tag.
   # Each is at least two weeks older than the release it builds.
+  # Moving RUST_VERSION or ZIG_VERSION also means the worker's Scribe check again
+  # (docs/RELEASING.md, What the workflow pins).
   RUST_VERSION: '1.97.1'
   ZIG_VERSION: '0.16.0'
   CARGO_ZIGBUILD_VERSION: '0.23.0'
@@ -409,7 +411,9 @@ jobs:
     # privileges, rlimits and seccomp filter need Linux and root, so rust/tests/test_sandbox_linux.rs runs here,
     # as root, with the sandbox required (GRIMOIRE_SANDBOX=require), and skips itself anywhere else. The
     # worker is the headless runner's binary; the allow-list is x86-64's here and ARM's on the Kindle (the
-    # tests of the filter itself run for both in the unit job).
+    # tests of the filter itself run for both in the unit job). The storage layer's writes run here too
+    # (test_fsview_writes): this is the one job on Linux, where renameat2's no-replace flag is tried; the unit
+    # job on macOS takes the fallback only.
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
@@ -429,12 +433,19 @@ jobs:
         run: |
           sudo mount -t tmpfs -o size=1g,mode=1777 tmpfs /tmp
           findmnt -no FSTYPE /tmp
+      - name: The linux-kernel feature compiles
+        # A platform kept in another crate whose system runs a Linux kernel under another name builds the sandbox's
+        # steps with it (rust/PORTING.md). No test runs it yet (docs/BACKLOG.md); this checks that it builds, the
+        # library and the tests, on Linux. (Before the tests as root, which leave root's files in rust/target.)
+        run: |
+          cd rust
+          PATH="$RUST_BIN:$PATH" cargo check --locked --features "sim linux-kernel" --lib --tests
       - name: The sandbox tests, as root
         run: |
           (cd rust && PATH="$RUST_BIN:$PATH" cargo fetch --locked)
           cd rust
           sudo -E env "PATH=$RUST_BIN:$PATH" "HOME=$HOME" GRIMOIRE_SANDBOX=require \
-            cargo test --locked --features sim --test test_sandbox_linux -- --test-threads=1 --nocapture
+            cargo test --locked --features sim --test test_sandbox_linux --test test_sec_spawn_fds --test test_sec_handshake --test test_sec_import_names --test test_sec_import_io --test test_fsview_writes -- --test-threads=1 --nocapture
 
   gate:
     # The one required check: every job of this run passed (a docs-only pull request: the docs job).

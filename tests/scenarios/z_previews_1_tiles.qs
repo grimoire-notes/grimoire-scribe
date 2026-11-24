@@ -23,6 +23,6 @@ waitbg 30000
 wait 400
 # the dense page's preview in its tile, that tile alone refreshed (a GL16, no flash)
 expect editor.pages.shows is ppppppppp
-expect display.presents is ui 24 214 588 674
+expect display.presents is ui 24 292 588 648
 shot 02-ready
 quit

@@ -150,6 +150,10 @@ struct State {
     // Simulated front light (the simulator has no light to drive).
     light_i: i32,
     light_w: i32,
+    /// the Kindle's own auto brightness (flAuto): 1 on, 0 off
+    light_auto: i32,
+    /// GRIMOIRE_SIM_LIGHT_SENSOR: whether this simulated Kindle has an ambient-light sensor
+    light_sensor: bool,
     // The simulated power service's state, what sys_powerd_state reports: set by the script's
     // `powerd <state>` ("unknown" reads as unreadable). It never changes on its own.
     powerd_state: FixedStr<32>,
@@ -278,6 +282,8 @@ impl Default for State {
             npresents: 0,
             light_i: 12,
             light_w: 8,
+            light_auto: 0,
+            light_sensor: false,
             powerd_state: FixedStr::from_str("active"),
             sim_grab: true,
             pokes: 0,
@@ -1046,7 +1052,10 @@ pub fn display_set_invert(on: bool) {
 pub fn light_available() -> bool {
     std::env::var_os("GRIMOIRE_SIM_NO_LIGHT").is_none()
 }
-pub fn light_refresh() {}
+pub fn light_refresh() {
+    let sensor = light_available() && std::env::var_os("GRIMOIRE_SIM_LIGHT_SENSOR").is_some_and(|v| v != "0");
+    with(|st| st.light_sensor = sensor);
+}
 pub fn light_get(intensity: &mut i32, warmth: &mut i32) {
     with(|st| {
         *intensity = st.light_i;
@@ -1061,6 +1070,25 @@ pub fn light_set_warmth(level: i32) {
 }
 pub fn light_warmth() -> i32 {
     with(|st| st.light_w)
+}
+pub fn light_auto() -> i32 {
+    if !with(|st| st.light_sensor) {
+        return -1;
+    }
+    with(|st| st.light_auto)
+}
+pub fn light_set_auto(on: bool) {
+    if !with(|st| st.light_sensor) {
+        return;
+    }
+    with(|st| {
+        st.light_auto = i32::from(on);
+        if on {
+            // The simulated sensor's room: a level distinct from the startup one, so a script can
+            // see the Brightness slider follow auto brightness.
+            st.light_i = 18;
+        }
+    });
 }
 pub fn sys_powerd_state(out: &mut String, cap: usize) -> i32 {
     with(|st| {
@@ -1427,6 +1455,40 @@ fn display_stale(a: Option<&mut App>, key: &[u8], out: &mut String, cap: usize) 
     })
 }
 
+/// The rect a probe key's tail names: exactly four numbers, X.Y.W.H (display.dark).
+fn probe_rect(rest: &[u8]) -> Option<Rect> {
+    let v = std::str::from_utf8(rest).ok()?.split('.').map(|t| t.parse::<i32>().ok()).collect::<Option<Vec<i32>>>()?;
+    (v.len() == 4).then(|| Rect { x: v[0], y: v[1], w: v[2], h: v[3] })
+}
+
+/// "display.dark.X.Y.W.H": how many pixels of that screen rect the simulated panel shows darker than
+/// mid-gray, the colors as drawn (Invert colors undone): what a person sees there, ink and the overlays
+/// drawn over it (issue #187: a selection's halo over erased ink). -1 (unknown key) before there is an App
+/// or a panel, while the panel and the app's screen differ in size (turned sideways), or for a key that is not
+/// exactly four numbers.
+fn display_dark(a: Option<&mut App>, key: &[u8], out: &mut String, cap: usize) -> bool {
+    let Some(rest) = key.strip_prefix(b"display.dark.") else { return false };
+    let Some(a) = a else { return false };
+    let Some(want) = probe_rect(rest) else { return false };
+    with(|st| {
+        let ew = st.w;
+        if st.eink.is_empty() || a.screen.w != ew || a.screen.h != st.h {
+            return false;
+        }
+        let r = rect_intersect(want, Rect { x: 0, y: 0, w: ew, h: st.h });
+        let mut n = 0i64;
+        for y in r.y..r.y + r.h {
+            for x in r.x..r.x + r.w {
+                let shown = st.eink[y as usize * ew as usize + x as usize];
+                let shown = if st.sim_invert { 255 - shown } else { shown };
+                n += (shown < 128) as i64;
+            }
+        }
+        csnprintf!(out, cap, "%lld", n);
+        true
+    })
+}
+
 /// "live.stale.X.Y.W.H": how many pixels of that screen rect the browser's picture (live_picture_now: the
 /// frame's tiles with the toolbar's and the corner's layers over them and the toast with its alpha, every
 /// layer switched on) shows more than a unit of gray off what the simulated panel shows there, the panel's
@@ -1510,18 +1572,53 @@ fn live_toast_stale(a: Option<&mut App>, key: &[u8], out: &mut String, cap: usiz
 
 /// "live.frame.stale": how many pixels of Live view's frame (what a browser is sent) differ from the app's
 /// screen, the editor's panel left out (the frame holds the page under it, the panel being a layer of its
-/// own): 0 when every change on the screen went out to the frame with its present; "none" while Live view
-/// is off.
+/// own) and a notebook's status bar taken off: the bar is a layer of its own too, the frame holds the screen
+/// as it was under the bar (app.rs live_push_under_status), and the count is against that screen, the bar's
+/// rows put back after. 0 when every change on the screen went out to the frame with its present; "none"
+/// while Live view is off.
 fn live_frame_stale(a: Option<&mut App>, key: &[u8], out: &mut String, cap: usize) -> bool {
     if key != b"live.frame.stale" {
         return false;
     }
     let Some(a) = a else { return false };
     let skip = if a.scr == ScreenId::Editor { editor_live_hole(a) } else { RECT_EMPTY };
-    match live_frame_differs(&a.screen, skip) {
+    let zone = rect_intersect(crate::status::status_live_zone(a), Rect::new(0, 0, a.screen.w, a.screen.h));
+    let (stride, w) = (a.screen.stride as usize, zone.w as usize);
+    let rows = |y: i32| (y as usize) * stride + zone.x as usize;
+    let mut bar = Vec::with_capacity(w * zone.h.max(0) as usize);
+    for y in zone.y..zone.y + zone.h {
+        bar.extend_from_slice(&a.screen.px[rows(y)..rows(y) + w]);
+    }
+    let under = !rect_is_empty(zone) && crate::globalui::gui_status_under_put(&mut a.screen, zone);
+    let differs = live_frame_differs(&a.screen, skip);
+    if under {
+        for (i, y) in (zone.y..zone.y + zone.h).enumerate() {
+            a.screen.px[rows(y)..rows(y) + w].copy_from_slice(&bar[i * w..][..w]);
+        }
+    }
+    match differs {
         Some(n) => csnprintf!(out, cap, "%lld", n),
         None => csnprintf!(out, cap, "%s", "none"),
     };
+    true
+}
+
+/// "libindex.*": how far the library index (libindex.rs: every notebook's pages, names and links, for
+/// the Graph of all notebooks) has got, whatever screen is up. "libindex.complete" 1 once its check of
+/// every notebook is through (opening a notebook starts one), 0 before the first and while one runs;
+/// "libindex.reads" how many times it has read a notebook from its files since Grimoire started (the
+/// backlinks cache's check comes first, so 0 until that is through); "libindex.books" the notebooks it
+/// holds read. A waitfor on them waits for the index itself, where a fixed wait guessed how many idle
+/// ticks the machine would give it. Read only: no file is read, nothing is counted again.
+fn libindex_probe(key: &[u8], out: &mut String, cap: usize) -> bool {
+    let Some(key) = key.strip_prefix(b"libindex.") else { return false };
+    let v = match key {
+        b"complete" => libindex_complete() as usize,
+        b"reads" => libindex_reads() as usize,
+        b"books" => libindex_with(|e| e.iter().filter(|e| e.readable()).count()),
+        _ => return false,
+    };
+    csnprintf!(out, cap, "%u", v as u32);
     true
 }
 
@@ -1570,10 +1667,13 @@ fn expect_check_as(gone: bool, mut a: Option<&mut App>) {
         && !watching
         && !with(|st| st.display_probe(&key, &mut got, GOT_CAP))
         && !display_stale(a.as_deref_mut(), &key, &mut got, GOT_CAP)
+        && !display_dark(a.as_deref_mut(), &key, &mut got, GOT_CAP)
         && !live_toast_stale(a.as_deref_mut(), &key, &mut got, GOT_CAP)
         && !live_frame_stale(a.as_deref_mut(), &key, &mut got, GOT_CAP)
         && !live_stale(a.as_deref_mut(), &key, &mut got, GOT_CAP)
         && !power_probe(&key, &mut got, GOT_CAP)
+        && !libindex_probe(&key, &mut got, GOT_CAP)
+        && !upload_probe(a.as_deref(), &key, &mut got, GOT_CAP)
         && probe_app(a, &key, &mut got, GOT_CAP) != 0
     {
         err(&bformat("expect failed (line %d): unknown key \"%s\"\n", &[B::D(line), B::S(&key)]));
@@ -1707,6 +1807,119 @@ enum Step {
     Share(FixedStr<96>,bool),
     LibraryContact(FixedStr<96>,InType),
     Strokes(FixedStr<512>,usize,u32,usize),
+    /// `upload MODE FILE`: a browser's send from the Share page (sim_upload), started where the App says the port
+    Upload(String, String),
+}
+
+/// What each `upload` line's browser had, in order: its answer, "<status> <last line>", None while it waits; and the
+/// send's code from its reply's first line, once it came (a send the Kindle asked about).
+#[derive(Clone, Default)]
+struct Sent {
+    reply: Option<String>,
+    code: Option<String>,
+}
+static UPLOADS: std::sync::Mutex<Vec<Sent>> = std::sync::Mutex::new(Vec::new());
+
+/// A browser on the Wi-Fi sending `file` (its whole path) to the share server on `port`, in a thread of its own (the main loop serves
+/// it meanwhile): it loads the Share page for its token, then sends the file's bytes as web/upload.js does, its name
+/// percent-encoded, and waits for the answer (the Kindle's question's). The thread ends with its answer; the scripts
+/// wait for it (upload.reply.N) before anything forks.
+fn sim_upload(port: i32, mode: String, file: String) {
+    let slot = {
+        let mut u = UPLOADS.lock().unwrap_or_else(|e| e.into_inner());
+        u.push(Sent::default());
+        u.len() - 1
+    };
+    std::thread::spawn(move || {
+        let r = sim_upload_run(port as u16, &mode, &file, slot).unwrap_or_else(|e| format!("error {e}"));
+        UPLOADS.lock().unwrap_or_else(|e| e.into_inner())[slot].reply = Some(r);
+    });
+}
+
+/// One request and everything its answer holds, to the close; `seen` is given what has come after each read.
+fn sim_http(port: u16, head: &str, body: &[u8], mut seen: impl FnMut(&[u8])) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).map_err(|e| e.to_string())?;
+    let _ = s.set_read_timeout(Some(Duration::from_secs(180)));
+    s.write_all(head.as_bytes()).map_err(|e| e.to_string())?;
+    let _ = s.write_all(body); // (a refusal may close the connection before the body is all sent)
+    let mut out = Vec::new();
+    let mut b = [0u8; 4096];
+    while let Ok(n) = s.read(&mut b) {
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&b[..n]);
+        seen(&out);
+    }
+    Ok(out)
+}
+
+/// The send's code in what has come of an answer: the four digits of its body's first line, `code NNNN`.
+fn sim_code(out: &[u8]) -> Option<String> {
+    let at = out.windows(4).position(|w| w == b"\r\n\r\n")? + 4;
+    let line = out[at..].strip_prefix(b"code ")?;
+    (line.len() >= 5 && line[..4].iter().all(u8::is_ascii_digit) && line[4] == b'\n').then(|| String::from_utf8_lossy(&line[..4]).into_owned())
+}
+
+fn sim_upload_run(port: u16, mode: &str, file: &str, slot: usize) -> Result<String, String> {
+    let body = std::fs::read(file).map_err(|e| e.to_string())?;
+    let page = sim_http(port, &format!("GET / HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n\r\n"), b"", |_| {})?;
+    let page = String::from_utf8_lossy(&page);
+    const AT: &str = "window.GRIMOIRE_UPLOAD={\"token\":\"";
+    let token: String = page.find(AT).map(|i| page[i + AT.len()..].chars().take_while(|c| c.is_ascii_hexdigit()).collect()).unwrap_or_default();
+    let name: String = file.rsplit('/').next().unwrap_or(file).bytes().map(|c| {
+        // encodeURIComponent's
+        if c.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&c) { (c as char).to_string() } else { format!("%{c:02X}") }
+    }).collect();
+    let origin = if mode == "othersite" { "http://evil.example".to_string() } else { format!("http://127.0.0.1:{port}") };
+    let token = match mode {
+        "notoken" => String::new(),
+        "badtoken" => format!("X-Grimoire-Token: {}\r\n", "0".repeat(32)),
+        _ => format!("X-Grimoire-Token: {token}\r\n"),
+    };
+    let head = format!(
+        "POST /upload HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: {origin}\r\nContent-Type: application/pdf\r\nContent-Length: {}\r\n{token}X-Grimoire-Name: {name}\r\n\r\n",
+        body.len()
+    );
+    let r = sim_http(port, &head, &body, |out| {
+        if let Some(code) = sim_code(out) {
+            UPLOADS.lock().unwrap_or_else(|e| e.into_inner())[slot].code.get_or_insert(code);
+        }
+    })?;
+    let r = String::from_utf8_lossy(&r);
+    let status = r.split(' ').nth(1).unwrap_or("0");
+    // (a send the Kindle asked about says its code first and its answer last: the answer is the last line)
+    let text = r.split_once("\r\n\r\n").map_or("", |x| x.1).trim_end();
+    Ok(format!("{status} {}", text.rsplit('\n').next().unwrap_or("")))
+}
+
+/// "upload.reply.N": the answer the Nth `upload` line's browser had, "" while it waits; "upload.count": how many;
+/// "upload.samecode.N": "1" when the code the Nth browser was given is the one under the question the Kindle shows,
+/// "0" when it is another, "" while either has none.
+fn upload_probe(a: Option<&App>, key: &[u8], out: &mut String, cap: usize) -> bool {
+    let u = UPLOADS.lock().unwrap_or_else(|e| e.into_inner());
+    if key == b"upload.count" {
+        csnprintf!(out, cap, "%d", u.len() as i32);
+        return true;
+    }
+    let nth = |prefix: &[u8]| key.strip_prefix(prefix).and_then(|n| std::str::from_utf8(n).ok()?.parse::<usize>().ok()).and_then(|n| n.checked_sub(1)).map(|i| u.get(i).cloned().unwrap_or_default());
+    if let Some(sent) = nth(b"upload.samecode.") {
+        let mut shown = String::new();
+        if let Some(a) = a {
+            crate::share::share_probe(a, "code", &mut shown, 64);
+        }
+        let shown: String = shown.chars().filter(char::is_ascii_digit).collect();
+        let v = match sent.code {
+            Some(code) if !shown.is_empty() => if code == shown { "1" } else { "0" },
+            _ => "",
+        };
+        csnprintf!(out, cap, "%s", v);
+        return true;
+    }
+    let Some(sent) = nth(b"upload.reply.") else { return false };
+    csnprintf!(out, cap, "%s", &sent.reply.unwrap_or_default());
+    true
 }
 
 // Reads script lines until a batch boundary (wait/shot/end). Returns false at EOF.
@@ -2229,6 +2442,25 @@ fn script_step_in(st: &mut State) -> Step {
             st.power_key(InType::PowerHeld, INPUT_POWER_HOLD_MS);
             st.power_key(InType::PowerUp, INPUT_POWER_HOLD_MS + 200);
             return Step::Batch;
+        } else if a == b"storage" && b == b"move" {
+            // storage move SRC DST: a path on the storage root (GRIMOIRE_STORAGE) renamed to another, as a writer over
+            // USB would while Grimoire runs (each a storage path, _ for a space; nothing replaced, no link followed:
+            // the rename is of the entry itself). A move that fails, or a path that is no storage path, fails the line.
+            let w: Vec<String> = [sc.word(599), sc.word(599), sc.word(15)].into_iter().flatten().map(|x| String::from_utf8_lossy(x).replace('_', " ")).collect();
+            let root = crate::pdfimport::storage_root();
+            let ok = match (root, w.as_slice()) {
+                (Some(root), [from, to]) if crate::fsview::StoragePath::new(from.as_bytes()).is_some_and(|p| !p.is_root())
+                    && crate::fsview::StoragePath::new(to.as_bytes()).is_some_and(|p| !p.is_root()) =>
+                {
+                    let (f, d) = (format!("{}/{from}", root.trim_end_matches('/')), format!("{}/{to}", root.trim_end_matches('/')));
+                    std::fs::symlink_metadata(&d).is_err() && std::fs::rename(&f, &d).is_ok()
+                }
+                _ => false,
+            };
+            if !ok {
+                err(&bformat("script: storage move failed: %s", &[B::S(s)]));
+                st.expect_unknown_line();
+            }
         } else if a == b"storage" {
             // storage full: every file write fails from now on (a full userstore); storage ok
             SIM_STORAGE_FULL.store(b == b"full", Ordering::Relaxed);
@@ -2338,6 +2570,18 @@ fn script_step_in(st: &mut State) -> Step {
             let ms = if k > 4 { v[4] as u32 } else { 80 };
             st.tg_tapn(v[0] as usize, v[1], v[2], sep, ms);
             return Step::Batch;
+        } else if a == b"upload" {
+            // `upload MODE FILE`: a browser on the Wi-Fi sends FILE (a path in the data root, the rest of the line)
+            // as the Share page's script does (MODE send), with no token (notoken), a wrong one (badtoken), or
+            // from another site's page (othersite). Its answer is upload.reply.N (N from 1, in order).
+            sc.space();
+            let file = String::from_utf8_lossy(sc.s[sc.i..].trim_ascii()).into_owned();
+            if !matches!(b, b"send" | b"notoken" | b"badtoken" | b"othersite") || file.is_empty() {
+                err(&bformat("script: bad upload line: %s", &[B::S(s)]));
+                st.expect_unknown_line();
+                continue;
+            }
+            return Step::Upload(String::from_utf8_lossy(b).into_owned(), file);
         } else if a == b"quit" {
             let e = st.make_ev(InType::Quit, 0.0, 0.0, true);
             st.q_push(e);
@@ -2378,7 +2622,7 @@ fn script_step(mut a: Option<&mut App>) {
             }
             Step::Strokes(path,n,hold,from)=>{
                 let mut page=None;
-                let data=read_file(path.as_str());
+                let data=read_system_file(path.as_str());
                 if data.is_none() || page_deserialize(data.as_deref().unwrap_or(&[]),&mut page)!=0 || page.as_ref().is_none_or(|p|p.readonly) || a.as_ref().is_none_or(|a|a.scr!=ScreenId::Editor) {
                     with(|st|{err(format!("expect failed (line {}): cannot replay strokes from {}\n",st.line_no,path.as_str()).as_bytes());st.expect_total+=1;st.expect_failed+=1;});
                     continue;
@@ -2405,6 +2649,11 @@ fn script_step(mut a: Option<&mut App>) {
                 with(|st|match at{Some((x,y))=>st.touch_ev(t,x,y),None=>{
                     err(format!("expect failed (line {}): no library control {}\n",st.line_no,name.as_str()).as_bytes());st.expect_total+=1;st.expect_failed+=1;
                 }});break;
+            }
+            Step::Upload(mode, file) => {
+                let port = a.as_deref().map_or(8765, |a| a.settings.http_port);
+                // (the data root is this thread's to read: the browser's thread is given the whole path)
+                sim_upload(port, mode, format!("{}/{file}", store_root()));
             }
             Step::Share(name,pen)=>{
                 let at=a.as_deref().and_then(|a|crate::share::share_control_point(a,name.as_str()));
@@ -2700,7 +2949,16 @@ fn poll_in(ev: &mut InEvent, timeout_ms: i32, mut a: Option<&mut App>) -> i32 {
         // timeout 0 still drains every due event, including releases after a slow frame.
         if timeout_ms != 0 {
             let left = due.wrapping_sub(now_ms()) as i32;
-            if left > 0 { sleep_ms(if timeout_ms < 0 { left } else { left.min(timeout_ms) }); }
+            if left > 0 {
+                let step = if timeout_ms < 0 { left } else { left.min(timeout_ms) };
+                sleep_ms(step);
+                // GRIMOIRE_SIM_CLOCK=script: app time stands still while the runner sleeps, and the
+                // click's events are stamped by it, so the click's own time moves it on, as a wait's
+                // does (else its release would never come due, and no line after it be read).
+                if let Some(at) = crate::util::sim_clock() {
+                    crate::util::sim_clock_set(Some(at.wrapping_add(step as u32)));
+                }
+            }
             if with(|st| st.q_pop(ev)) { return 1; }
         }
         return 0;
@@ -3643,6 +3901,109 @@ mod tests {
     }
 
     #[test]
+    fn a_side_click_moves_the_script_clock_by_its_own_time_and_the_script_reads_on() {
+        fresh();
+        script("side-clock", "side click 2 150 80\nwait 200\nquit\n");
+        let _clock = ScriptClock;
+        crate::util::sim_clock_set(Some(5000));
+        // The hover and the first press come at once; each later event when the runner has slept up to
+        // it, app time moved on to just its stamp, however long the host took over each round. (Without
+        // that the first release never came due: app time stood at the press, and nothing after the
+        // click was read.)
+        let mut ev = InEvent::default();
+        let mut got = Vec::new();
+        for _ in 0..60 {
+            if got.len() == 5 {
+                break;
+            }
+            if input_poll(&mut ev, 30) == 1 {
+                got.push((ev.type_, ev.side_button, ev.t_ms - 5000, now_ms() - 5000));
+            }
+        }
+        assert_eq!(got, [
+            (InType::PenHover, false, 0, 0),
+            (InType::PenButton, true, 0, 0),
+            (InType::PenButton, false, 80, 80),
+            (InType::PenButton, true, 230, 230),
+            (InType::PenButton, false, 310, 310),
+        ]);
+        assert!(with(|st| st.side_click_until.is_none()));
+        // The wait after it moves app time on by its 200 ms and no more: what the app times from the
+        // release (a single click's wait for a second one) is as far along at the next line as the
+        // script says, on any machine.
+        for _ in 0..100 {
+            if input_poll(&mut ev, 30) == 1 {
+                break;
+            }
+            assert!(now_ms() - 5000 <= 510, "{}", now_ms());
+        }
+        assert_eq!((ev.type_, now_ms() - 5000), (InType::Quit, 510));
+        // docs/SIM.md says so where it describes the scripted clock
+        let doc = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/SIM.md")).unwrap();
+        let para = doc.split("\n\n").find(|p| p.starts_with("`GRIMOIRE_SIM_CLOCK=script`")).unwrap();
+        assert!(para.contains("`side click`"), "the scripted clock's paragraph does not name side click: {para}");
+    }
+
+    #[test]
+    fn the_library_index_probes_follow_its_check() {
+        fresh();
+        let base = std::env::var("GRIMOIRE_TEST_TMP").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+        let root = base.join(format!("sim-libindex-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        let probe = |key: &str| {
+            let mut got = String::new();
+            libindex_probe(key.as_bytes(), &mut got, GOT_CAP).then_some(got)
+        };
+        for name in ["A", "B", "C"] {
+            let mut nb = NotebookInfo::default();
+            assert_eq!(store_create(name, "", PAPER_BLANK, &mut nb), 0);
+        }
+        // Before its first check: nothing read, not complete.
+        assert_eq!((probe("libindex.complete"), probe("libindex.reads"), probe("libindex.books")),
+            (Some("0".into()), Some("0".into()), Some("0".into())));
+        // One notebook read a tick: the count follows, and complete comes with the check's end alone.
+        let mut seen = vec![0u32];
+        let mut ticks = 0;
+        while libindex_step() {
+            ticks += 1;
+            assert!(ticks < 1000);
+            let reads: u32 = probe("libindex.reads").unwrap().parse().unwrap();
+            assert!(reads == *seen.last().unwrap() || reads == seen.last().unwrap() + 1, "{reads} after {seen:?}");
+            if reads != *seen.last().unwrap() {
+                seen.push(reads);
+            }
+            if reads < 3 {
+                assert_eq!(probe("libindex.complete"), Some("0".into()));
+            }
+        }
+        assert_eq!(seen, [0, 1, 2, 3]);
+        assert_eq!((probe("libindex.complete"), probe("libindex.reads"), probe("libindex.books")),
+            (Some("1".into()), Some("3".into()), Some("3".into())));
+        // A notebook opened starts a check again (editor_open_notebook: libindex_revalidate): not complete
+        // until it is through, and nothing is read again where no file changed.
+        libindex_revalidate();
+        assert_eq!(probe("libindex.complete"), Some("0".into()));
+        while libindex_step() {}
+        assert_eq!((probe("libindex.complete"), probe("libindex.reads")), (Some("1".into()), Some("3".into())));
+        // An expect and a waitfor read them (the runner answers these keys, with no App); an unknown one fails.
+        for (line, failed) in [("expect libindex.books is 3", 0), ("waitfor libindex.complete is 1", 0), ("expect libindex.nope is 1", 1)] {
+            let before = with(|st| st.expect_failed);
+            with(|st| st.expect_read(line.as_bytes()));
+            expect_check(None);
+            assert!(!with(|st| st.expect.pending), "{line}");
+            assert_eq!(with(|st| st.expect_failed) - before, failed, "{line}");
+        }
+        // and docs/SIM.md lists the three
+        let doc = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/SIM.md")).unwrap();
+        let row = doc.lines().find(|l| l.starts_with("| `libindex.complete`")).expect("docs/SIM.md has no libindex row");
+        for key in ["`libindex.reads`", "`libindex.books`"] {
+            assert!(row.contains(key), "the libindex row does not name {key}: {row}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn a_waitfor_hands_a_held_touch_back_to_the_clock_as_the_docs_say() {
         fresh();
         script("waitfor-touch", "touch down 100 100\nwaitfor watching is 1\nwait 300\ntouch up 100 100\nquit\n");
@@ -4090,6 +4451,17 @@ mod tests {
             if !rounding || !a.is_finite() || !b.is_finite() || (a - b).abs() > tolerance { return false; }
         }
         true
+    }
+
+    #[test]
+    fn display_dark_takes_exactly_four_numbers() {
+        assert!(probe_rect(b"1.2.3.4") == Some(Rect { x: 1, y: 2, w: 3, h: 4 }));
+        assert!(probe_rect(b"-5.0.30.40") == Some(Rect { x: -5, y: 0, w: 30, h: 40 }));
+        assert!(probe_rect(b"1.x.2.3.4").is_none());
+        assert!(probe_rect(b"1.2.3").is_none());
+        assert!(probe_rect(b"1.2.3.4.5").is_none());
+        assert!(probe_rect(b"1.2..3").is_none());
+        assert!(probe_rect(b"").is_none());
     }
 
     #[test]

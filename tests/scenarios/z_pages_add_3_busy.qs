@@ -42,10 +42,10 @@ shot 01-added
 # Undo is offered while the pages are unused. One of them named (held page 2, Rename, "a"): in use, so
 # Undo is no longer offered (it would only refuse with a toast)
 expect editor.pages.undo.kind is add
-expect editor.pages.at.page.2 is 930 551
-touch down 930 551
+expect editor.pages.at.page.2 is 930 616
+touch down 930 616
 wait 700
-touch up 930 551
+touch up 930 616
 expect editor.pages.context is 2
 tap panel pages.rename
 wait 200

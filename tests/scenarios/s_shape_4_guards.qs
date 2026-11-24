@@ -6,7 +6,8 @@
 # settings: shortcuts_enabled=1
 # copy: tests/fixtures/index-keys .
 wait 200
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 1564 2254
 wait 200
@@ -129,15 +130,10 @@ finger 1 up 1200 900
 frame
 expect fshape.fired is 0
 expect editor.strokes is 1
-# A shape starts inside the clock corner and still acts; a tap only toggles the clock.
-shape Z 300 300 45 600
+# A shape starts below the shared status bar and still acts.
+shape Z 500 500 45 600
 expect editor.strokes is 0
 expect fshape.fired is 1
-expect settings.status_on is 0
-tap 60 60
-expect settings.status_on is 1
-tap 60 60
-expect settings.status_on is 0
 # A normal link tap/hold keeps its existing behavior while shapes are armed.
 pentap panel next
 pentap panel previous

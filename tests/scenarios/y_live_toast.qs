@@ -20,15 +20,16 @@ expect toast is Last update failed. See grimoire.log.
 expect toast.rect is 476 2250 907 110
 # Live view off: no layer
 expect live.toast is
-tap 1345 95
+tap library add
+tap library add.share
 wait 300
-tap 318 2100
+tap share live
 wait 300
 expect live.pairing is 1
 # the toast is up over the card, and not in the frame
 expect toast is Last update failed. See grimoire.log.
 expect live.toast is
-tap 1538 2100
+tap share done
 wait 300
 expect screen is library
 expect live.pairing is 0
@@ -36,7 +37,8 @@ expect live.pairing is 0
 expect live.toast is 476 2250 907 110
 expect live.toast.stale is 0
 # above the New sheet's buttons, and back
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 expect library.sheet is new
 expect toast.rect is 476 2050 907 110
@@ -90,10 +92,10 @@ expect asleep is 0
 expect toast is
 expect live.toast is
 # a toast raised over the card is not in the frame, nor after it once it went
-tap 1345 95
+tap library add
+tap library add.share
 wait 300
-tap 318 2100
-wait 300
+expect screen is share
 expect live.pairing is 1
 hid attach pad Pad
 wait 100
@@ -101,7 +103,7 @@ expect toast is Controller connected
 expect live.toast is
 wait 1800
 expect toast is
-tap 1538 2100
+tap share done
 wait 300
 expect live.pairing is 0
 expect live.toast is

@@ -4,27 +4,27 @@
 # settings: landscape_fit=1
 # Full-page landscape uses the outside margin and retains the chosen toolbar side.
 wait 300
-tap 200 400
+tap library card.1
 wait 300
-expect editor.panel_rect is 1704 220 128 1734
+expect editor.panel_rect is 1704 220 128 1842
 rotate 1
 wait 200
-expect editor.panel_rect is 1962 126 128 1734
+expect editor.panel_rect is 1962 41 128 1819
 shot 01-right-margin
 # Flipping between landscape orientations also retains the margin placement.
 rotate 3
 wait 200
-expect editor.panel_rect is 1962 126 128 1734
+expect editor.panel_rect is 1962 41 128 1819
 rotate 0
 wait 200
 touch down 1736 260
 touch move 100 260
 touch up 100 260
 wait 100
-expect editor.panel_rect is 68 220 128 1734
+expect editor.panel_rect is 68 220 128 1842
 rotate 1
 wait 200
-expect editor.panel_rect is 390 126 128 1734
+expect editor.panel_rect is 390 41 128 1819
 shot 02-left-margin
 rotate 0
 wait 200
@@ -33,5 +33,5 @@ key 17 0
 expect settings.landscape_fit is 0
 rotate 1
 wait 200
-expect editor.panel_rect is 68 126 128 1734
+expect editor.panel_rect is 68 41 128 1819
 shot 03-width-view-unchanged

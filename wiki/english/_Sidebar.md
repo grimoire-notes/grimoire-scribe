@@ -1,0 +1,17 @@
+### Grimoire
+
+- [Home](Home)
+- [About](About)
+- [Install](Install)
+- [Using Grimoire](Using-Grimoire)
+- [Widgets](Widgets)
+- [Fonts and Language](Fonts-and-Language)
+- [Importing](Importing)
+- [Getting Pages Off the Kindle](Exporting)
+- [KOReader](KOReader)
+- [Shortcuts](Shortcuts)
+- [Troubleshooting](Troubleshooting)
+- [Privacy](Privacy)
+- [Contributing](Contributing)
+- [Building from Source](Building-from-Source)
+- [Translating](Translating)

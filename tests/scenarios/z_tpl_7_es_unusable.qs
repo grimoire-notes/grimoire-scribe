@@ -6,7 +6,8 @@
 # Gothic and Classic, upright and sideways.
 # copy: tests/fixtures/tpl-bad templates
 wait 300
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap library paper.more
 wait 200
@@ -20,20 +21,23 @@ rotate 1
 wait 300
 expect library.sheet is templates
 shot 02-unusable-gothic-sideways
-tap 300 1694
+tap 570 1696
 wait 100
 tap 570 1700
 wait 100
 rotate 0
 wait 300
-tap 1535 95
+tap library settings
 wait 100
-tap 930 930
+tap library settings.cat.1
+wait 100
+tap library theme
 wait 100
 expect settings.theme is classic
-tap 1560 1930
+tap library done
 wait 100
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap library paper.more
 wait 200
@@ -42,7 +46,7 @@ shot 03-unusable-classic
 rotate 1
 wait 300
 shot 04-unusable-classic-sideways
-tap 300 1694
+tap 570 1696
 wait 100
 tap 570 1700
 wait 100

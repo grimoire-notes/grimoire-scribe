@@ -19,7 +19,10 @@ pub enum BgKind {
     MirrorPdf = 0, // BG_MIRROR_PDF
     /// id: the notebook; drops strokes that erasing made invisible (src/bgwork_compact.c)
     CompactPages = 1, // BG_COMPACT_PAGES
-    /// id: the notebook, path: the source image; normalizes it into the notebook (src/bgwork_template.c)
+    /// id: the notebook, path: the source image; normalizes it into the notebook (src/bgwork_template.c). With no
+    /// notebook: the templates folder's previews (path: the folder), or (2.2, issue #172) a slice of a template PDF's
+    /// pages (path: the PDF), which ends 0, or 3 while pages are left (queued again, behind whatever ranks higher), or 4
+    /// when the sandbox refused its worker a step (the session is then broken here too).
     Template = 2, // BG_TEMPLATE
     /// path: a folder of page images; makes a notebook of them (src/bgwork_template.c)
     ImportFolder = 3, // BG_IMPORT_FOLDER
@@ -37,6 +40,22 @@ pub enum BgKind {
     /// the sandboxed worker (userfonts.rs, 2.1.0-beta.2). It ends 0, 3 (some files wait), 4 (no worker) or 5 (one font checked, more to do: the next job is queued
     /// with the path "next", behind exports and a PDF's slices).
     FontCheck = 8,
+    /// id: none, path: "<dev>.<ino>.<size>.<mtime>:<StoragePath>", a file as Files' Covers view listed it; its preview
+    /// made by the sandboxed worker into grimoire/.cache/files, or its "no preview" mark (bgwork_previews.rs, 2.2).
+    /// One file a job, held to a few seconds, never one the user waits on by name: it runs behind exports, the PDF
+    /// mirror, imports and font checks (`rank`); dropped at exit. Ends 0 or 1.
+    FilePreviews = 9,
+    /// id: the folder it goes into ("templates", "photos" or "fonts"), path: "<dev>.<ino>.<size>.<mtime>:<StoragePath>",
+    /// the source as listed; a copy of a file into one of Grimoire's folders for the user's files, under the free
+    /// space floor, to a temporary name and then a rename that replaces nothing (bgwork_copy.rs, 2.2). Ends 0, 1
+    /// (not copied), or not copied for a cause the screen has a sentence for, bgwork_copy.rs's CopyFail: 2 (bigger
+    /// than its folder takes), 3 (no longer the file listed) or 4 (a path or name too long).
+    CopyFile = 10,
+    /// id: the notebook the picture is made in, path: "<source notebook id>:<page index>:<key, 16 hex>"; one of
+    /// the source notebook's pages rendered as a template picture for the notebook (the Templates sheet's From a
+    /// notebook..., 2.2, issue #195), drawn in the child (bgwork_template.rs). Ends 0, or -1 (not made: the page does
+    /// not read, its paper's picture is missing, or the id it was given is not in the notebook's bg/index.ini).
+    PageTemplate = 11,
 }
 
 /// Queues a job (a queued duplicate, same kind, id and path, is merged). notify: report the result
@@ -71,11 +90,7 @@ pub fn bg_queue(kind: BgKind, id: Option<&str>, path: Option<&str>, dpi: f32, no
             }
             take(&mut s.q, drop)
         });
-        qlog!(
-            "bg: queue full, dropping the oldest %s (%s)",
-            K_KIND_NAMES[gone.kind as usize],
-            if gone.id.is_empty() { "a folder" } else { gone.id.as_str() }
-        );
+        qlog!("bg: queue full, dropping the oldest %s (%s)", K_KIND_NAMES[gone.kind as usize], job_of(&gone));
     }
     let j = Job { kind, id: FixedStr::from_str(id), dir: FixedStr::from_str(path), dpi, notify };
     with(|s| s.q.push(j));
@@ -135,6 +150,16 @@ pub fn bg_cancel_notebook(id: &str) {
 pub fn bg_prefer(kind:BgKind,id:&str,path:&str) {
     with(|s|for j in s.q.iter_mut().filter(|j|j.kind==kind&&j.id.as_str()==id) {j.notify=j.dir.as_str()==path;});
 }
+/// Whether a child runs a job on notebook `id` now (its id is the notebook's: an export, a compaction, a picture,
+/// a layout, previews). A PDF fill's commit, in the UI, waits for it; and while that commit runs, no job on the
+/// notebook starts (next_job): a job queued for it waits for the commit's end.
+pub fn bg_notebook_busy(id: &str) -> bool {
+    with(|s| (s.pid > 0 && s.running.id.as_str() == id) || (s.extra_pid > 0 && s.extra.id.as_str() == id))
+}
+// A queued job on the notebook a PDF fill's commit writes now (pdfimport.rs): it starts after that commit.
+fn held(j: &Job) -> bool {
+    !j.id.is_empty() && crate::pdfimport::fill_holds(j.id.as_str())
+}
 /// Running includes an exited child until it is reaped, so a reopened view still receives its result.
 pub fn bg_pending(kind:BgKind,id:&str)->bool {
     let same=|j:&Job|j.kind==kind&&j.id.as_str()==id;
@@ -156,6 +181,29 @@ pub fn bg_job_pending(kind:BgKind,id:&str,path:&str)->bool {
 // The same, queued only (not started: its child reads what it works on, a notebook's page list, as it starts).
 fn bg_job_queued(kind:BgKind,id:&str,path:&str)->bool {
     with(|s|s.q.iter().any(|j|j.kind==kind&&j.id.as_str()==id&&j.dir.as_str()==path))
+}
+/// Whether a child runs a job of this kind now (not one that only waits in the queue).
+pub fn bg_kind_running(kind: BgKind) -> bool {
+    with(|s| (s.pid > 0 && s.running.kind == kind) || (s.extra_pid > 0 && s.extra.kind == kind))
+}
+/// The paths of the queued and running jobs of these kinds (either child): what they work on. fsview's busy
+/// check reads the imports' (a PDF's storage path; a folder of pictures, a storage path when picked in place, else
+/// its path under Grimoire's folder), so what an import holds is never renamed or trashed under it (2.2).
+pub fn bg_job_paths(kinds: &[BgKind]) -> Vec<String> {
+    job_paths(|j| kinds.contains(&j.kind))
+}
+/// The pictures the queued and running jobs still have to copy into a notebook (BgKind::Template with a notebook's
+/// id: a template or a photo picked for a page, by its path under Grimoire's folder). fsview's busy check reads
+/// them too, so the file is not renamed or trashed before its job has read it. The previews job (no notebook: its
+/// path is a whole folder) holds nothing.
+pub fn bg_job_pictures() -> Vec<String> {
+    job_paths(|j| j.kind == BgKind::Template && !j.id.is_empty())
+}
+fn job_paths(want: impl Fn(&Job) -> bool) -> Vec<String> {
+    with(|s| {
+        let running = [(s.pid > 0).then_some(&s.running), (s.extra_pid > 0).then_some(&s.extra)];
+        running.into_iter().flatten().chain(s.q.iter()).filter(|j| want(j)).map(|j| j.dir.as_str().to_string()).collect()
+    })
 }
 /// The exit status of the job bg_poll_job reported last (a PDF import's: 0 done, 2 done with blank pages).
 pub fn bg_last_exit() -> i32 {
@@ -195,13 +243,21 @@ pub fn bg_poll_job(done_kind:Option<&mut i32>,mut done_id:Option<&mut FixedStr<S
             let code = if r == pid && libc::WIFEXITED(st) { libc::WEXITSTATUS(st) } else { -1 };
             let (kind, notify, id, job) = with(|s| if extra { (s.extra.kind, s.extra.notify, s.extra.id, s.extra) } else { (s.running.kind, s.running_notify, s.running.id, s.running) });
             let is_pdf = kind == BgKind::PdfImport;
+            // (a template PDF's slice that left pages for the next, 2.2: queued again as an import's slice is)
+            let tpl_more = template_pdf(&job) && code == crate::bgwork_tplpdf::CODE_MORE;
+            // (a template PDF's worker refused a sandbox step, 2.2: the child's session is broken, and now this one's,
+            // as an import's progress record and a font check's 4 tell it here, so no look queues the job again)
+            if template_pdf(&job) && code == crate::bgwork_tplpdf::CODE_SANDBOX {
+                crate::sandbox::session_set_broken();
+                qlog!("bg: the sandbox refused a template PDF's worker a step: no worker is asked for again until Grimoire starts again");
+            }
             // (a font check's 3: some files were still being copied and wait for the next look)
-            let ok = code == 0 || (is_pdf && (code == 2 || code == 3)) || (kind == BgKind::FontCheck && (code == 3 || code == 5));
+            let ok = code == 0 || (is_pdf && (code == 2 || code == 3)) || (kind == BgKind::FontCheck && (code == 3 || code == 5)) || tpl_more;
             if let Some(done)=done_id.as_deref_mut(){*done=id;}
-            if is_pdf && code == 3 {
+            if (is_pdf && code == 3) || tpl_more {
                 with(|s| if extra { s.extra_pid = -1 } else { s.pid = -1 });
                 let (id, dir) = (job.id, job.dir);
-                bg_queue(BgKind::PdfImport, Some(id.as_str()), Some(dir.as_str()), job.dpi, false);
+                bg_queue(kind, Some(id.as_str()), Some(dir.as_str()), job.dpi, false);
                 break; // (nothing finished: the notice and the progress record tell how far it is)
             }
             qlog!("bg: %s pid %d %s", K_KIND_NAMES[kind as usize], pid, if ok { "done" } else { "FAILED" });
@@ -245,6 +301,24 @@ pub fn bg_detach_rest() {
     });
     for j in &left {
         qlog!("bg: notebook work for %s left for the next run", &j.id);
+    }
+    // Files' previews were for the screen that asked: none is made after Grimoire ends. Nor are a template PDF's
+    // pages (2.2): the next look at the templates folder queues them again, and they go on from the pages made.
+    let previews = with(|s| {
+        let n = s.q.len();
+        s.q.retain(|j| j.kind != BgKind::FilePreviews);
+        n - s.q.len()
+    });
+    if previews > 0 {
+        qlog!("bg: %d file preview(s) dropped (Grimoire ends)", previews as i32);
+    }
+    let pdf_pages = with(|s| {
+        let n = s.q.len();
+        s.q.retain(|j| !template_pdf(j));
+        n - s.q.len()
+    });
+    if pdf_pages > 0 {
+        qlog!("bg: %d template PDF job(s) left for the next look (Grimoire ends)", pdf_pages as i32);
     }
     let (mut jobs, running) = with(|s| (s.q.clone(), s.pid));
     // A PDF import slice that is running goes on in the detached child too: its next slice is not queued
@@ -312,7 +386,9 @@ struct Job {
     notify: bool,
 }
 
-const K_KIND_NAMES: [&str; 9] = ["export", "compaction", "template", "import", "map layout", "page previews", "library map layout", "PDF import", "font check"];
+// (by the kind's number)
+const K_KIND_NAMES: [&str; 12] =
+    ["export", "compaction", "template", "import", "map layout", "page previews", "library map layout", "PDF import", "font check", "file previews", "file copy", "page template"];
 
 /// bgjob.c's g_q, g_n, g_pid, g_running_notify and g_running.
 struct State {
@@ -424,6 +500,9 @@ fn run_job(j: &Job) -> i32 {
         BgKind::ImportFolder => bg_import_folder(j.dir.as_str(), j.dpi),
         BgKind::PdfImport => crate::pdfimport::bg_pdf_import(j.id.as_str(), j.dir.as_str()),
         BgKind::FontCheck => crate::userfonts::bg_font_check(j.dir.as_str(), j.dpi),
+        BgKind::CopyFile => crate::bgwork_copy::bg_copy_file(j.id.as_str(), j.dir.as_str()),
+        BgKind::PageTemplate => crate::bgwork_template::bg_page_template(j.id.as_str(), j.dir.as_str(), j.dpi),
+        BgKind::FilePreviews => crate::bgwork_previews::bg_file_preview(j.dir.as_str()),
     }
 }
 
@@ -481,10 +560,18 @@ fn child_setup(keep_lock: bool) {
 }
 
 // Which job goes first: something the user waits on (an export they asked for, a template's
-// picture), then the mirror PDFs, then imports, and compaction last. A compaction can take minutes
-// on the Kindle, and its pages stay listed until it is done, so nothing is lost by its waiting.
+// picture), then the mirror PDFs, then imports, then Files' previews and a template PDF's pages, and compaction last. A compaction
+// can take minutes on the Kindle, and its pages stay listed until it is done, so nothing is lost by its
+// waiting.
 fn rank(j: &Job) -> i32 {
-    if j.notify || j.kind == BgKind::Template {
+    // A template PDF's pages (2.2, issue #172): drawn for a sheet that shows them as they come, never one picture the
+    // user picked and waits on. Behind imports and font checks, with Files' previews (first queued, first run); a
+    // slice at a time, so a picture picked meanwhile waits at most one slice.
+    if template_pdf(j) {
+        return 4;
+    }
+    // (a file's preview is never a job the user waits on by name, whoever queued it)
+    if (j.notify && j.kind != BgKind::FilePreviews) || j.kind == BgKind::Template {
         return 0;
     }
     match j.kind {
@@ -493,10 +580,32 @@ fn rank(j: &Job) -> i32 {
         BgKind::ImportFolder | BgKind::PdfImport => 3,
         // (a font check after the first font of a look: one font a job, behind an export and a PDF's slice)
         BgKind::FontCheck => 3,
+        // Files' previews (2.2): the files of a Covers screen, whatever a folder holds. Behind every job above,
+        // an import's next slice too (queued again as each ends), so a screen of slow files never holds the one
+        // child ahead of an export, the mirror, an import or a font check; ahead of compaction and the idle
+        // warm-ups, since someone looks at the screen. A full queue lets them go before those jobs, too.
+        BgKind::FilePreviews => 4,
         // (an idle warm-up of the Pages view's previews: after anything asked for, with compaction)
-        BgKind::PagePreviews => 4,
-        _ => 4,
+        BgKind::PagePreviews => 5,
+        _ => 5,
     }
+}
+
+// What a job works on, for the log: its notebook, else "a file" (a file's preview, a template PDF's pages) or "a
+// folder" (never a name).
+fn job_of(j: &Job) -> &str {
+    match (j.id.is_empty(), j.kind) {
+        (false, _) => j.id.as_str(),
+        (true, BgKind::FilePreviews) => "a file",
+        (true, _) if template_pdf(j) => "a file",
+        (true, _) => "a folder",
+    }
+}
+
+// Whether a job is a slice of a template PDF's pages (2.2, issue #172): BgKind::Template with no notebook and a PDF's
+// path (the previews job's path is the folder).
+fn template_pdf(j: &Job) -> bool {
+    j.kind == BgKind::Template && j.id.is_empty() && crate::bgwork_tplpdf::is_pdf_name(j.dir.as_str().rsplit('/').next().unwrap_or(""))
 }
 
 fn take(q: &mut Vec<Job>, i: usize) -> Job {
@@ -602,7 +711,7 @@ fn next_job(s: &mut State, cores: bool) -> Option<(usize, bool)> {
         s.extra_off = false;
         let mut next: Option<usize> = None;
         for i in 0..s.q.len() {
-            if s.extra_pid > 0 && previews_overlap(&s.q[i], &s.extra) {
+            if held(&s.q[i]) || (s.extra_pid > 0 && previews_overlap(&s.q[i], &s.extra)) {
                 continue;
             }
             if next.is_none_or(|n| rank(&s.q[i]) < rank(&s.q[n])) {
@@ -614,7 +723,7 @@ fn next_job(s: &mut State, cores: bool) -> Option<(usize, bool)> {
     if s.extra_pid > 0 || s.extra_off || !cores {
         return None;
     }
-    let i = s.q.iter().position(|j| j.kind == BgKind::PagePreviews && j.notify && !previews_overlap(j, &s.running))?;
+    let i = s.q.iter().position(|j| j.kind == BgKind::PagePreviews && j.notify && !held(j) && !previews_overlap(j, &s.running))?;
     Some((i, true))
 }
 
@@ -651,11 +760,7 @@ fn start_job(j: Job, extra: bool) -> bool {
         }
         if j.kind != BgKind::MirrorPdf {
             // only the PDF is worth a stall of the UI
-            qlog!(
-                "bg: cannot fork; %s of %s skipped",
-                K_KIND_NAMES[j.kind as usize],
-                if j.id.is_empty() { "a folder" } else { j.id.as_str() }
-            );
+            qlog!("bg: cannot fork; %s of %s skipped", K_KIND_NAMES[j.kind as usize], job_of(&j));
             return false;
         }
         qlog!("bg: cannot fork; exporting %s in the foreground", &j.id);
@@ -677,9 +782,14 @@ fn start_job(j: Job, extra: bool) -> bool {
         }
         let rc = run_job_guarded(&j);
         // SAFETY: the child ends here without running the parent's exit handlers or flushing its
-        // buffers. (A PDF import slice's 2 and 3 mean done with blank pages, and more to do; a font check's 3
-        // and 4, some files wait, and no worker can be had.)
-        let says_more = (j.kind == BgKind::PdfImport && (rc == 2 || rc == 3)) || (j.kind == BgKind::FontCheck && (rc == 3 || rc == 4 || rc == 5));
+        // buffers. (A PDF import slice's 2 and 3 mean done with blank pages, and more to do; a font check's 3,
+        // 4, 5 and 6, some files wait, no worker can be had, more fonts are left, and what it finds cannot be kept;
+        // a copy's 2, 3 and 4, the file is bigger than its folder takes, is no longer the one listed, and has too
+        // long a path; a template PDF's 3 and 4, more pages are left, and the sandbox refused its worker a step.)
+        let says_more = (j.kind == BgKind::PdfImport && (rc == 2 || rc == 3))
+            || (j.kind == BgKind::FontCheck && (rc == 3 || rc == 4 || rc == 5 || rc == 6))
+            || (j.kind == BgKind::CopyFile && (rc == 2 || rc == 3 || rc == 4))
+            || (template_pdf(&j) && (rc == crate::bgwork_tplpdf::CODE_MORE || rc == crate::bgwork_tplpdf::CODE_SANDBOX));
         unsafe { libc::_exit(if rc == 0 { 0 } else if says_more { rc } else { 1 }) };
     }
     let beside = with(|s| {
@@ -699,12 +809,7 @@ fn start_job(j: Job, extra: bool) -> bool {
     } else if extra {
         qlog!("bg: %s of %s (pid %d, beside pid %d)", K_KIND_NAMES[j.kind as usize], j.id.as_str(), pid, beside);
     } else {
-        qlog!(
-            "bg: %s of %s (pid %d)",
-            K_KIND_NAMES[j.kind as usize],
-            if j.id.is_empty() { "a folder" } else { j.id.as_str() },
-            pid
-        );
+        qlog!("bg: %s of %s (pid %d)", K_KIND_NAMES[j.kind as usize], job_of(&j), pid);
     }
     true
 }
@@ -1042,6 +1147,36 @@ mod tests {
         cache.sync(&nb, false);
         assert!(!cache.has(pids[1]));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // What the jobs of some kinds work on, queued or running in either child (fsview's busy check asks for the
+    // imports'): the running job's path, the second child's, the queue's, and nothing of the other kinds. No child is
+    // forked: the pids are made up, and the state is put back.
+    #[test]
+    fn the_paths_jobs_work_on() {
+        let job = |kind: BgKind, path: &str| Job { kind, id: FixedStr::from_str("paths"), dir: FixedStr::from_str(path), dpi: 300.0, notify: false };
+        with(|s| {
+            s.pid = 999_998;
+            s.running = job(BgKind::PdfImport, "grimoire/import/A.pdf");
+            s.q.push(job(BgKind::ImportFolder, "/data/grimoire/import/Trip"));
+            s.q.push(job(BgKind::MirrorPdf, "/data/grimoire/PDFs"));
+            s.q.push(job(BgKind::PdfImport, "documents/B.pdf"));
+        });
+        let imports = [BgKind::PdfImport, BgKind::ImportFolder];
+        assert_eq!(bg_job_paths(&imports), vec!["grimoire/import/A.pdf", "/data/grimoire/import/Trip", "documents/B.pdf"]);
+        assert_eq!(bg_job_paths(&[BgKind::FontCheck]), Vec::<String>::new());
+        // a running job that has been reaped (pid -1) holds nothing; the second child's does
+        with(|s| {
+            s.pid = -1;
+            s.extra_pid = 999_997;
+            s.extra = job(BgKind::ImportFolder, "documents/Pictures");
+        });
+        assert_eq!(bg_job_paths(&imports), vec!["documents/Pictures", "/data/grimoire/import/Trip", "documents/B.pdf"]);
+        with(|s| {
+            s.extra_pid = -1;
+            s.q.retain(|j| j.id.as_str() != "paths");
+        });
+        assert!(!bg_busy());
     }
 
     // A view waiting on one batch puts it first: the other queued previews batches of that notebook wait as idle

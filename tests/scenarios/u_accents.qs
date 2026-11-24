@@ -10,7 +10,8 @@
 # The checks read the keyboard's text, so they hold the accents themselves (UTF-8).
 # rust-only
 wait 200
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 790 460
 tap 1564 2254
@@ -22,7 +23,7 @@ pentap panel library
 wait 1500
 expect settings.mirror_pdf is 1
 # The card's menu, Rename; clear the default name ("Notebook Oct 19", at most 15 characters).
-tap 547 1052
+tap library card-menu.1
 wait 200
 tap library more.rename
 wait 200
@@ -77,14 +78,14 @@ wait 300
 expect library.sheet is none
 shot 03-renamed-gothic
 # The renamed notebook opens (the keyboard is gone, so the tap reaches the card), and back.
-tap 326 608
+tap library card.1
 wait 300
 expect screen is editor
 pentap panel library
 wait 300
 expect screen is library
 # The card's menu shows the name in the blackletter title face.
-tap 547 1052
+tap library card-menu.1
 wait 200
 expect library.sheet is more
 shot 04-menu-title-gothic
@@ -92,21 +93,26 @@ tap library done
 wait 200
 expect library.sheet is none
 # Classic: Settings, Style, Done.
-tap 1535 95
+tap library settings
 wait 200
-tap 496 937
+tap library settings.cat.1
+wait 100
+tap library theme
 wait 300
 expect settings.theme is classic
-tap 1557 1930
+tap library done
 wait 300
 expect library.sheet is none
 # Rename again: the keyboard opens on the name the Library stored, accents whole. Add a space,
 # an inverted exclamation mark, "Ol" (O with shift) and e acute.
-tap 547 1052
+tap library card-menu.1
 wait 200
 tap library more.rename
 wait 200
 expect library.text is Música española
+# The name opens selected (issue #191): put the caret after it to add to it.
+tap 1100 1570
+expect library.caret is Música española|
 tap 1060 2365
 tap 696 2365
 wait 100
@@ -133,7 +139,7 @@ wait 300
 expect library.sheet is none
 shot 08-renamed-classic
 # Once more to read the stored name back, then Cancel; the notebook still opens.
-tap 547 1052
+tap library card-menu.1
 wait 200
 tap library more.rename
 wait 200
@@ -141,7 +147,7 @@ expect library.text is Música española ¡Olé
 tap 217 2365
 wait 300
 expect library.sheet is none
-tap 326 608
+tap library card.1
 wait 300
 expect screen is editor
 pentap panel library

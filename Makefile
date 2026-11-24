@@ -7,8 +7,10 @@
 #   make kindle    static armhf binary (cargo zigbuild) -> build/kindle/grimoire
 #   make package   Kindle zip (scriptlet + app)      -> build/dist/Grimoire.zip
 #   make dev       build a separate "Grimoire (dev)" and copy it over MTP (tools/kindle-dev)
+#   make prod      build and update the installed release over MTP, in place (tools/kindle-dev --prod)
 #   make dev-ssh   build, patch and start a separate "Grimoire (dev)" over SSH (tools/kindle-dev-ssh;
 #                  --release replaces the release launcher instead)
+#   make wifieap   local WPA2/WPA3-Enterprise test AP on this computer (tools/wifieap)
 #   make dist      complete installable bundle       -> dist/Grimoire-VERSION-COMMIT/
 #   make check     make rust-check (tests + scenarios + the languages + share server + exporter +
 #                  ARM build) + the zip, its launchers, the dev launcher's patch, the KPM package
@@ -61,7 +63,7 @@ HDRS := $(wildcard src/*.h) third_party/qrcodegen/qrcodegen.h VERSION Makefile
 SDL_CFLAGS := $(shell pkg-config --cflags sdl3 2>/dev/null)
 SDL_LIBS   := $(shell pkg-config --libs sdl3 2>/dev/null)
 
-.PHONY: all sim headless test tools tablet kindle package dev dev-ssh dev-check scenarios check clean icon logo l10n l10n-check
+.PHONY: all sim headless test tools tablet kindle package dev prod dev-ssh dev-check wifieap scenarios check clean icon logo l10n l10n-check
 .PHONY: c-headless c-test c-tools c-kindle c-check c-package c-icon c-logo
 all: sim headless test tools kindle dist
 
@@ -168,17 +170,19 @@ $(CBUILD)/host/grimoire-headless: $(CORE_SRC) $(UI_SRC) $(APP_SRC) $(SIM_PLAT) $
 # its root has finished. Each run's output is in build/scen-logs/NAME.log; one line per run is
 # printed as it ends, the failed runs' logs whole at the end, then "SCENARIOS FAILED: ..." as before.
 SIM_HOOKS := GRIMOIRE_WIFI_SCRIPT GRIMOIRE_HOST GRIMOIRE_PASSCODE GRIMOIRE_SIM_ADDRS GRIMOIRE_HTTPD_DELAY_MS GRIMOIRE_BG_DELAY_MS GRIMOIRE_SIM_PRESSURE \
-             GRIMOIRE_SIM_PEN_BUTTON2 GRIMOIRE_SIM_TOUCH_SLOTS GRIMOIRE_SIM_NO_SERVICES GRIMOIRE_SIM_NO_LIGHT GRIMOIRE_SIM_DEVICE_NAME GRIMOIRE_TOUCH_TUNE SIM_TOUCH_SLOTS TOUCH_TUNE \
+             GRIMOIRE_SIM_PEN_BUTTON2 GRIMOIRE_SIM_TOUCH_SLOTS GRIMOIRE_SIM_NO_SERVICES GRIMOIRE_SIM_NO_LIGHT GRIMOIRE_SIM_LIGHT_SENSOR GRIMOIRE_SIM_DEVICE_NAME GRIMOIRE_TOUCH_TUNE SIM_TOUCH_SLOTS TOUCH_TUNE \
              GRIMOIRE_BT_API GRIMOIRE_UPDATE_SCRIPT GRIMOIRE_UPDATE_REQUEST FAKE_UPDATE_PREVIEW FAKE_UPDATE_STABLE FAKE_UPDATE_FAIL \
              GRIMOIRE_SIM_STATS GRIMOIRE_SIM_SIZE GRIMOIRE_CHECK_FIT GRIMOIRE_LANG GRIMOIRE_L10N_DIR GRIMOIRE_ANNOTATE \
              GRIMOIRE_SLEEP_MINUTE_MS GRIMOIRE_SIM_RAWPEN GRIMOIRE_SIM_RAWPEN_MAIN GRIMOIRE_SIM_STALL_MS \
              GRIMOIRE_LIVE_PEN_SOURCE GRIMOIRE_SIM_MAP_NOMEM GRIMOIRE_KEEP_RENDER_MS GRIMOIRE_PAGE_VIEWS GRIMOIRE_SIM_LATE_MS GRIMOIRE_SIM_CLOCK GRIMOIRE_SIM_UPTIME_MS \
              GRIMOIRE_SIM_DENSE_DRAW_MS GRIMOIRE_SIM_CORES GRIMOIRE_SIM_BACKLINKS_STEP_MS GRIMOIRE_CACHE_WINDOW_MS GRIMOIRE_STORAGE \
-             GRIMOIRE_IMPORT_STABLE GRIMOIRE_PDF_SLICE_PAGES GRIMOIRE_PDF_BANDS GRIMOIRE_PDF_NO_MAP GRIMOIRE_PDF_FREE_BYTES GRIMOIRE_PDF_WATCHDOG_MS \
-             GRIMOIRE_PDF_TEST_CRASH_PAGE GRIMOIRE_PDF_TEST_HANG_PAGE GRIMOIRE_PDF_TEST_ALLOC_PAGE GRIMOIRE_PDF_TEST_TRAP_PAGE GRIMOIRE_PDF_TEST_LINKS GRIMOIRE_PDF_TEST_WOKE GRIMOIRE_PDF_JOB_CPU_SECS GRIMOIRE_WORK_FAIL_STEP GRIMOIRE_WORK_EXE GRIMOIRE_SANDBOX \
+             GRIMOIRE_COPY_FREE_BYTES GRIMOIRE_COPY_FAIL_AFTER GRIMOIRE_IMPORT_STABLE GRIMOIRE_PDF_SLICE_PAGES GRIMOIRE_PDF_BANDS GRIMOIRE_PDF_NO_MAP GRIMOIRE_PDF_FREE_BYTES GRIMOIRE_PDF_WATCHDOG_MS \
+             GRIMOIRE_PDF_TEST_CRASH_PAGE GRIMOIRE_PDF_TEST_HANG_PAGE GRIMOIRE_PDF_TEST_ALLOC_PAGE GRIMOIRE_PDF_TEST_TRAP_PAGE GRIMOIRE_PDF_TEST_LINKS GRIMOIRE_PDF_TEST_WOKE GRIMOIRE_PDF_JOB_CPU_SECS GRIMOIRE_FILL_STEP_PAGES GRIMOIRE_BOOK_STEP_PAGES GRIMOIRE_WORK_FAIL_STEP GRIMOIRE_WORK_EXE GRIMOIRE_SANDBOX \
              GRIMOIRE_PIC_WATCHDOG_MS GRIMOIRE_PIC_TEST_CRASH GRIMOIRE_PIC_TEST_HANG GRIMOIRE_PIC_TEST_TRAP \
              GRIMOIRE_FONT_WATCHDOG_MS GRIMOIRE_FONT_SLICE_MS GRIMOIRE_FONT_JOB_MS GRIMOIRE_FONT_TEST_CRASH GRIMOIRE_FONT_TEST_HANG \
              GRIMOIRE_FONT_TEST_TRAP GRIMOIRE_FONT_TEST_DRAW_CRASH GRIMOIRE_FONT_MEM_AVAILABLE \
+             GRIMOIRE_STATE GRIMOIRE_STATE_FREE_BYTES GRIMOIRE_FONT_GLYPH_US GRIMOIRE_FONT_TEST_SLOW \
+             GRIMOIRE_PREVIEW_MS GRIMOIRE_PREVIEWS_MAX \
              GRIMOIRE_CAPS_PROBE GRIMOIRE_CAPS_NO_STATM
 # The scenarios tap by coordinates and check English text: they run in English whatever the
 # caller's LANG says (GRIMOIRE_LANG ranks first), unless a scenario's "# env:" line sets another.
@@ -212,15 +216,20 @@ scenario-times: scenarios
 # these two failed there on every release while passing here. A script times a contact by the
 # script's own clock (docs/SIM.md), so they hold however late the machine is. After the scenarios
 # (s_shape_4_guards starts from s_shape_1_record's data). z_pages_drag_hold times the Pages view's
-# 300 ms drag hold against the card's 600 ms timer, which reads the real clock: its short holds are
-# frame lines, so a late wake cannot open the card first. u_keyboard_hold_delete times a held delete's repeats by
-# frame lines, against the screen's tick, which reads the real clock.
+# 300 ms drag hold against the card's 600 ms timer: its short holds and its flick are frame lines, and it
+# runs by the script's clock (its pen's hold is a wait), so a late wake can neither open the card first
+# nor take the flick past its 800 ms.
+# u_keyboard_hold_delete times a held delete's repeats by frame lines, against the screen's tick, which
+# reads the real clock.
 # z_links_3_bar_learns runs late for the waits around its learning (the Links bar opened before the
 # check is through, the hold on a row past the long press). Late waits do not slow the backlinks check
 # itself, as a slow runner did: the scenario's own GRIMOIRE_SIM_BACKLINKS_STEP_MS does, in both runs,
 # and its waitfor waits for the rows however long the check takes.
-LATE_SCENARIOS := y_status_press s_shape_4_guards z_pages_drag_hold u_keyboard_hold_delete y_status_corner z_rc8_pages_refresh \
-  z_links_3_bar_learns
+# v_gestures_4e_single checks what one click of the pen's side button has NOT done yet, 200 ms after it:
+# by the script's clock (GRIMOIRE_SIM_CLOCK=script), which a late wait does not move, where by the real
+# clock a wait that ended late ended after the click had acted (issue #86).
+LATE_SCENARIOS := s_shape_4_guards z_pages_drag_hold u_keyboard_hold_delete z_rc8_pages_refresh \
+  z_links_3_bar_learns v_gestures_4e_single
 .PHONY: scenarios-late
 scenarios-late: $(BUILD)/host/grimoire-headless
 	@echo "== the scenarios again with every wait 400 ms late: $(LATE_SCENARIOS)"
@@ -351,6 +360,13 @@ $(BUILD)/host/scribe-tablet: tools/scribe-tablet.c
 dev:
 	tools/kindle-dev
 
+# MTP, the release itself: build and copy the zip's own documents/Grimoire.sh over the installed
+# documents/Grimoire.sh, in place (no (dev) copy, no patch: /mnt/us/grimoire and its notebooks stay,
+# and updates stay on). The zip is this branch's build, and its version (README.txt) must be this
+# branch's VERSION: a downloaded release of another version is refused rather than installed.
+prod:
+	tools/kindle-dev --prod
+
 # SSH: build, patch and start a separate "Grimoire (dev)" on a Kindle over SSH (tools/kindle-dev-ssh:
 # GRIMOIRE_HOST, default "kindle"; --release replaces the release launcher, keeping a backup;
 # --no-build, --zip and --logs).
@@ -362,6 +378,14 @@ dev-ssh:
 # (tests/kindle_dev_check.sh).
 dev-check: package
 	tests/kindle_dev_check.sh $(BUILD)/dist/Grimoire.zip
+
+# A local WPA2/WPA3-Enterprise (PEAP/MSCHAPv2) test AP beside the current Wi-Fi connection: a second
+# virtual interface on the same channel, so the existing link stays up when the driver allows
+# AP + managed. It offers both Enterprise AKMs with PMF optional; WIFI_EAP_WPA3_ONLY=1 makes it
+# WPA3-Enterprise only. Test credentials: SSID Grimoire-Test-EAP, identity student, password
+# test-password.
+wifieap:
+	tools/wifieap
 
 # The C tree's: tools/grimoire-export.c, mkicon.c and mklogo.c (the same bytes as the Rust ones).
 c-tools: $(CBUILD)/host/grimoire-export
@@ -386,16 +410,30 @@ $(CBUILD)/host/mklogo: tools/mklogo.c $(CORE_SRC) $(GEN_SRC) $(HDRS)
 # the headless build (--features sim), whose tests check the runner itself, the Share screen and
 # the pen that reports tilt.
 # (test-host and test-sim are the two halves, which CI runs as two jobs.)
+# Each half starts with its scratch folder (GRIMOIRE_TEST_TMP, $(BUILD)/test/tmp) empty: the tests name
+# their folders in it by process id, and a process id comes round again, so what an earlier run left
+# there met a later run's test (one that appends to a file, or expects none). TEST_TMP_EMPTY removes
+# that folder alone and makes it again: not $(BUILD)/test, which holds the tests' out folder. No link is
+# followed (rm removes a link, never what it names: tests leave links to /etc there). A folder a test
+# stopped half way left read-only is made writable first, or rm could not empty it.
+# The halves run one after another, here and under make check (where nothing else uses the folder), and
+# on runners of their own in CI. Two test runs at once in one worktree would empty each other's folder:
+# give the second a BUILD of its own.
 .PHONY: test-host test-sim
+define TEST_TMP_EMPTY
+$(if $(strip $(1)),,$(error TEST_TMP_EMPTY: no build folder))if [ -d "$(1)/test/tmp" ] && [ ! -L "$(1)/test/tmp" ]; then \
+	  find "$(1)/test/tmp" -type d ! -perm -700 -exec chmod u+rwx {} \; ; fi; \
+	rm -rf "$(1)/test/tmp" && mkdir -p "$(1)/test/tmp"
+endef
 test:
 	@$(MAKE) --no-print-directory test-host
 	@$(MAKE) --no-print-directory test-sim
 	@echo "ALL TESTS PASSED"
 test-host:
-	@mkdir -p $(BUILD)/test/tmp
+	@$(call TEST_TMP_EMPTY,$(BUILD))
 	$(call RCARGO,GRIMOIRE_TEST_TMP="$(abspath $(BUILD))/test/tmp") test -- --test-threads=1
 test-sim:
-	@mkdir -p $(BUILD)/test/tmp
+	@$(call TEST_TMP_EMPTY,$(BUILD))
 	$(call RCARGO,GRIMOIRE_TEST_TMP="$(abspath $(BUILD))/test/tmp") test --features sim -- --test-threads=1
 
 # The PDFs the scenarios copy (tests/fixtures/pdf/), made by the fixture writer in rust/tests/pdffix, never
@@ -418,6 +456,7 @@ TESTS := $(patsubst tests/%.c,$(CBUILD)/test/%,$(wildcard tests/test_*.c))
 # were recorded so, and turning it off changes them.
 TEST_FLAGS := -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -ffp-contract=on
 c-test: $(TESTS)
+	@$(call TEST_TMP_EMPTY,$(CBUILD))
 	@set -e; for t in $(TESTS); do echo "== $$t"; GRIMOIRE_TEST_TMP=$(CBUILD)/test/tmp $$t; done; echo "ALL TESTS PASSED"
 $(CBUILD)/test/%: tests/%.c $(wildcard tests/*.h) $(CORE_SRC) $(UI_SRC) $(GEN_SRC) $(HDRS)
 	@mkdir -p $(CBUILD)/test/tmp

@@ -1,29 +1,41 @@
 # settings: status_mode=1
 # settings: shortcuts_enabled=1
-# Settings > Shortcuts and Settings > Pair (2.0.0-beta.2, the owner's ruling of 2026-11-04): Settings' top rows in
-# the owner's order (Display, Pen sensitivity, Shortcuts, Calibrate), upright and sideways, and Pair where
-# Controller was. The Shortcuts sheet's devices and one device's own shortcuts: on from a copy of the default, a
+# Settings > Shortcuts and Settings > Pair (2.0.0-beta.2): Settings' rows in their categories since the new Settings
+# menu (#115: Display under Display, Tool Settings and Calibrate under Pen, Shortcuts, Pair and Gestures under
+# Controls), upright and sideways. The Shortcuts sheet's devices and one device's own shortcuts: on from a copy of the default, a
 # button learned into them (controller.ini never made), that device's presses using them while another's and a
 # key from no device use the default; off (the file kept, the default again), on again (as it was), and the
 # device listed while it is not connected.
 # rust-only
 wait 150
-tap 1535 95
+tap library settings
 wait 100
 expect library.sheet is settings
-expect library.ui_at.930.445 is display
-expect library.ui_at.930.568 is pen-feel
-expect library.ui_at.930.691 is shortcuts
-expect library.ui_at.930.814 is calibrate
-expect library.ui_at.580.1930 is pair-menu
-expect library.ui_at.1000.1930 is gestures
+tap library settings.cat.1
+wait 100
+expect library.ui_at.1233.371 is display
+tap library settings.cat.3
+wait 100
+expect library.ui_at.1233.371 is pen-feel
+expect library.ui_at.1233.773 is calibrate
+tap library settings.cat.4
+wait 100
+expect library.ui_at.1233.371 is shortcuts
+expect library.ui_at.1233.505 is pair-menu
+expect library.ui_at.1233.639 is gestures
 rotate 1
 wait 200
 expect library.sheet is settings
-expect library.ui_at.1240.251 is display
-expect library.ui_at.1240.374 is pen-feel
-expect library.ui_at.1240.497 is shortcuts
-expect library.ui_at.1240.620 is calibrate
+expect library.ui_at.1544.371 is shortcuts
+tap library settings.cat.1
+wait 100
+expect library.ui_at.1544.371 is display
+tap library settings.cat.3
+wait 100
+expect library.ui_at.1544.371 is pen-feel
+expect library.ui_at.1544.773 is calibrate
+tap library settings.cat.4
+wait 100
 rotate 0
 wait 200
 # Pair: no helper here, so its rows are greyed (no control to tap).
@@ -32,7 +44,7 @@ wait 100
 expect library.sheet is pair-menu
 expect library.ui_has.bluetooth is 0
 expect library.ui_has.pair is 0
-expect library.ui_has.done is 1
+expect library.ui_has.settings.back is 1
 key 1 0
 wait 100
 expect library.sheet is settings
@@ -79,14 +91,15 @@ expect pads.tool:eraser is East
 tap library done
 wait 100
 expect library.ui_has.buttons.reset is 1
-tap library done
+tap library settings.back
 wait 100
 expect library.sheet is shortcuts
-tap library done
+tap library settings.close
 wait 100
 expect library.sheet is none
 # In a notebook: the Pro 2's East undoes, the Arcade Stick's East and a key from no device pick the eraser.
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 1564 2254
 wait 200
@@ -118,7 +131,9 @@ expect editor.tool is pencil
 # Its own shortcuts off: the default for it too, the file kept.
 pentap panel library
 wait 300
-tap 1535 95
+tap library settings
+wait 100
+tap library settings.cat.4
 wait 100
 tap library shortcuts
 wait 100
@@ -131,7 +146,7 @@ tap library buttons
 wait 100
 expect library.ui_has.buttons.reset is 0
 expect library.buttons.undo is South
-tap library done
+tap library settings.back
 wait 100
 # Gone, it is listed as not connected; on again, its own buttons as they were.
 hid detach Pro 2
@@ -145,7 +160,7 @@ expect shortcuts.profiles is pro-2-2dc8-6006:on
 tap library buttons
 wait 100
 expect library.buttons.undo is East
-tap library done
+tap library settings.back
 wait 100
 tap library shortcuts.device
 wait 100

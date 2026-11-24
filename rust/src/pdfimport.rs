@@ -26,7 +26,24 @@
 //! - Colour (the owner's change to D18): a page with colour is stored as an 8-bit RGB PNG, a page that is
 //!   gray within `pdfwork::GRAY_TOLERANCE` as an 8-bit gray one. The Scribe shows both in gray (bgimage
 //!   decodes either to its luma at load and keeps only that), so the UI never holds the 13.8 MB RGB copy.
-//! - No file name, title or key reaches grimoire.log: ids, page numbers, counts, timings and reasons.
+//! - "Imported before" is said of the very file: a notebook keeps a record of the file it was made from (its
+//!   SHA-256, its size and its key: one line of source.ini, `FileRecord`), and a PDF that has a notebook's key is
+//!   compared with it (`key_holders`, `key_match`). The same file ends "PDF already imported."; another file
+//!   with that key becomes a notebook of its own, which carries the key in its record alone, so the book's first
+//!   notebook stays the one KOReader's version 1 route finds (a PDF KOReader hands over by its path is this
+//!   import's: it ends on the notebook of its own file, which the import names, `ended_notebook`). A notebook
+//!   without a record goes by its key. The whole file is read in the writer only (once at the commit, and before
+//!   that only for a file of a record's size).
+//! - A fill (2.2): the same PDF again, while its notebook lacks some of the book's pages, adds those pages to
+//!   that notebook instead of saying "PDF already imported." (`fill_plan`). The writer draws the pages as an
+//!   import's, in the work folder, at the notebook's own page size, and never writes the notebook: its last slice
+//!   says the pages are made. The UI process puts them in (`fill_tick`), as KOReader's book job does: with the
+//!   Library in front (no notebook open), no book job running and no background job on that notebook, over a few
+//!   ticks with input held, each notebook file read again and written whole in the tick that writes it, with the
+//!   links that start or end on a page it adds and names for those pages only. A notebook renamed, moved or deleted
+//!   while the pages were made is not filled (the PDF is taken again by the next scan). One more slice then files
+//!   the PDF. A PDF whose page count is not the one the notebook's pages name becomes a notebook of its own.
+//! - No file name, title, key or hash reaches grimoire.log: ids, page numbers, counts, sizes, timings and reasons.
 
 use crate::fsview::*;
 use crate::md5::*;
@@ -54,6 +71,21 @@ pub const QUEUE_MAX: usize = 8;
 pub const PDF_TRIES: i32 = 3;
 /// A PDF's pages (STORE_MAX_PAGES).
 pub const PDF_MAX_PAGES: u32 = STORE_MAX_PAGES as u32;
+/// The most the work folder's links.part holds, in bytes: the first worker's L, Q and F records, line for line in
+/// their own grammar (Collected::links_text), of which a worker sends at most RECORDS_MAX_BYTES with their newlines
+/// (Session counts them), and the one line the first slice may add itself, the F line of a walk that sent none
+/// ("F 0 0 0 0", 10 bytes with its newline).
+pub const LINKS_PART_MAX: usize = RECORDS_MAX_BYTES + 10;
+/// The most names.part holds: one O record a page (Collected::take refuses a second) for at most PDF_MAX_PAGES
+/// pages (the parts are kept only after that refusal), each "O", a page of at most 9 digits, a name of at most 95
+/// bytes as 190 hex digits, two spaces and a newline: 203 bytes, 406,000 in all.
+pub const NAMES_PART_MAX: usize = PDF_MAX_PAGES as usize * 203;
+/// The work folder's part of a PDF's web links (2.2, Collected::webs_text): the first worker's W records, line for
+/// line, of which it sends at most RECORDS_MAX_BYTES. Written only for a PDF with a web link, and never into
+/// links.part, which 2.1.0 reads: an import 2.2 began and 2.1.0 finishes keeps its links and names (without its web
+/// links: 2.1.0 never reads this part).
+pub const WEBS_PART: &str = "webs.part";
+pub const WEBS_PART_MAX: usize = RECORDS_MAX_BYTES;
 /// An import that stopped this many times without finishing, keeping its work folder (a writer cut off, the job
 /// over its CPU budget), fails whole at its next slice.
 pub const STOPS_MAX: u32 = 3;
@@ -76,6 +108,10 @@ const ROOM_MARGIN: u64 = 16 << 20;
 /// The mark of a file waiting for the lock or being made lives in import/.marks/<hash>.
 const MARKS_DIR: &str = "import/.marks";
 const STATE_FILE: &str = "pdf-import.ini";
+/// A fill's state has a name of its own: a version before fills never reads it, so it never takes a fill's
+/// work folder for an import of a notebook of its own (it removes the folder instead, and the notebook stays
+/// as it was).
+const FILL_STATE_FILE: &str = "pdf-fill.ini";
 const STATE_MAX: usize = 64 << 10;
 const MARK_MAX: usize = 4 << 10;
 const WORK_PREFIX: &str = ".import-";
@@ -99,7 +135,7 @@ fn job_cpu_cap_ms(pages: u32) -> u64 {
 }
 
 /// The slice length: the table's, or (headless and test builds) GRIMOIRE_PDF_SLICE_PAGES.
-fn slice_pages() -> usize {
+pub(crate) fn slice_pages() -> usize {
     #[cfg(not(feature = "kindle"))]
     if let Some(n) = std::env::var("GRIMOIRE_PDF_SLICE_PAGES").ok().and_then(|v| v.parse::<usize>().ok()).filter(|&n| n > 0) {
         return n;
@@ -125,7 +161,14 @@ struct Progress {
     broken: AtomicU32,
     /// the job `page` and `pages` are for (a hash of its id), stored at the start of every slice
     page_for: AtomicU32,
+    /// an R_ALREADY result's notebook: the id of the notebook this very PDF was found in, as bytes (shorter than
+    /// STORE_ID_LEN, the rest zero), four to a word. The UI checks it names a notebook before it uses it
+    /// (`already_notebook`)
+    nb: [AtomicU32; NB_WORDS],
 }
+
+/// The words of `Progress.nb`: STORE_ID_LEN bytes.
+const NB_WORDS: usize = STORE_ID_LEN.div_ceil(4);
 
 // the reasons a job ends with
 const R_NONE: u32 = 0;
@@ -138,6 +181,10 @@ const R_STORAGE: u32 = 6;
 const R_DONE: u32 = 7;
 /// a copy of this PDF is being imported: this one waits for that notebook (and then says "already")
 const R_DEFERRED: u32 = 8;
+/// a fill's pages are made, its work folder kept: the UI puts them into the notebook (`fill_tick`)
+const R_READY: u32 = 9;
+/// a fill the UI put in place: its PDF filed, its work folder gone (the UI said so at its commit)
+const R_FILED: u32 = 10;
 
 thread_local! {
     static PROGRESS: Cell<usize> = const { Cell::new(0) };
@@ -162,7 +209,8 @@ fn progress() -> &'static Progress {
         }
         p.get()
     });
-    // SAFETY: at is a page-aligned, zeroed, live mapping at least 32 bytes long; Progress is atomics only.
+    // SAFETY: at is a page-aligned, zeroed, live mapping of 4096 bytes, more than Progress takes (60); Progress is
+    // atomics only.
     unsafe { &*(at as *const Progress) }
 }
 
@@ -171,11 +219,41 @@ fn id_hash(id: &str) -> u32 {
 }
 
 fn set_result(id: &str, reason: u32, arg: u32, blank: u32) {
+    set_result_in(id, reason, arg, blank, "");
+}
+
+/// The same, with the notebook an R_ALREADY result names (`nb`; empty for every other result).
+fn set_result_in(id: &str, reason: u32, arg: u32, blank: u32, nb: &str) {
     let p = progress();
     p.reason.store(reason, Ordering::Relaxed);
     p.arg.store(arg, Ordering::Relaxed);
     p.blank.store(blank, Ordering::Relaxed);
+    let b = nb.as_bytes();
+    for (i, w) in p.nb.iter().enumerate() {
+        let mut word = [0u8; 4];
+        for (k, c) in word.iter_mut().enumerate() {
+            *c = b.get(i * 4 + k).copied().unwrap_or(0);
+        }
+        w.store(u32::from_le_bytes(word), Ordering::Relaxed);
+    }
     p.result_for.store(id_hash(id), Ordering::Release);
+}
+
+/// The notebook import `id` found its PDF in, when it ended "PDF already imported.": the one whose record is of
+/// that very file, or the one that holds the file's key with no record (`key_match`), as the import's own open of
+/// the file decided. So whoever asked for the import (KOReader's hand-over by path: annotate.rs) opens that
+/// notebook, and never works the choice out again from another open of the file. None when the result is another
+/// job's or another end's, or when what the record holds is no notebook that is there (the writer is a child that
+/// may be wrong). Valid from the job's end until the next job's.
+pub fn already_notebook(id: &str) -> Option<String> {
+    let p = progress();
+    if p.result_for.load(Ordering::Acquire) != id_hash(id) || p.reason.load(Ordering::Relaxed) != R_ALREADY {
+        return None;
+    }
+    let bytes: Vec<u8> = p.nb.iter().flat_map(|w| w.load(Ordering::Relaxed).to_le_bytes()).take_while(|&c| c != 0).collect();
+    let nb = String::from_utf8(bytes).ok()?;
+    let mut dir = String::new();
+    (!nb.is_empty() && nb.len() < STORE_ID_LEN && store_notebook_dir(&nb, &mut dir, 700) == 0 && exists(&format!("{dir}/notebook.ini"))).then_some(nb)
 }
 
 /// The page and count the notice shows, and the job they are for: stored when a slice starts (and as pages are
@@ -222,17 +300,85 @@ pub(crate) fn import_storage_path(rel: &str) -> Option<StoragePath> {
 }
 
 /// The path of a source under Grimoire's import folder (`Book.pdf`, `Work/Book.pdf`), None for a source
-/// anywhere else and for `import/done/` (compared without case, as the storage is).
+/// anywhere else and for `import/done/` (done in any case, as the storage may keep it). A path whose folders
+/// are spelled as Grimoire's own are is in import with no system call: every path the scan builds, and every
+/// path under the picker's Import place. One spelled in another case is in import only when it is that folder
+/// (`same_import_folder`): on a storage that folds case it is, on one that tells names apart it is not.
 pub(crate) fn under_import(src: &str) -> Option<&str> {
-    let g = grimoire_rel()?;
+    under_import_of(src, &grimoire_rel()?, &same_import_folder)
+}
+
+/// Pure. `same(given)` is asked only when the prefix equals Grimoire's own without ASCII case but not byte for
+/// byte; `given` is that prefix as the path spells it, without its last slash.
+fn under_import_of<'a>(src: &'a str, g: &str, same: &dyn Fn(&str) -> bool) -> Option<&'a str> {
     let pre = format!("{}/import/", g.trim_matches('/'));
     let b = src.as_bytes();
+    // (necessary, not sufficient: the same letters in any case)
     if b.len() <= pre.len() || !b[..pre.len()].eq_ignore_ascii_case(pre.as_bytes()) {
         return None;
     }
     let rest = src.get(pre.len()..)?;
     let first = rest.split('/').next().unwrap_or("");
-    (!first.eq_ignore_ascii_case("done") && !rest.is_empty()).then_some(rest)
+    if first.eq_ignore_ascii_case("done") || rest.is_empty() {
+        return None;
+    }
+    if b[..pre.len()] != *pre.as_bytes() && !same(src.get(..pre.len() - 1)?) {
+        return None;
+    }
+    Some(rest)
+}
+
+/// The entries of a folder that the "same folder" question reads at most (a parent with more is not judged).
+const SAME_FOLDER_LIST_MAX: usize = 5000;
+
+/// Whether `given`, a path from the storage root that equals `<Grimoire's folder>/import` without ASCII case,
+/// names that very folder. Component by component from the root: one spelled as Grimoire's own is the same; one
+/// spelled otherwise is judged in its parent (`same_folder_entry`), by the two spellings' identities and, when
+/// those differ, by the parent's names. Anything that does not read says no: the file is then read in place,
+/// never moved, and keeps no record of tries. No answer is remembered: two lstat calls for each component
+/// spelled otherwise, and a listing only when they disagree.
+fn same_import_folder(given: &str) -> bool {
+    let (Some(root), Some(g)) = (storage_root(), grimoire_rel()) else { return false };
+    let own = format!("{}/import", g.trim_matches('/'));
+    if own.split('/').count() != given.split('/').count() {
+        return false;
+    }
+    // a real folder's identity (a link is none: nothing is followed)
+    let identity = |path: &str| std::fs::symlink_metadata(path).ok().filter(|md| md.file_type().is_dir()).map(|md| (md.dev(), md.ino()));
+    let mut parent = root.trim_end_matches('/').to_string();
+    for (o, s) in own.split('/').zip(given.split('/')) {
+        if o != s {
+            let names = || {
+                use std::os::unix::ffi::OsStrExt;
+                let mut v: Vec<Vec<u8>> = Vec::new();
+                for e in std::fs::read_dir(&parent).ok()? {
+                    if v.len() >= SAME_FOLDER_LIST_MAX {
+                        return None;
+                    }
+                    v.push(e.ok()?.file_name().as_bytes().to_vec());
+                }
+                Some(v)
+            };
+            if !same_folder_entry(identity(&format!("{parent}/{o}")), identity(&format!("{parent}/{s}")), o, &names) {
+                return false;
+            }
+        }
+        // (the folder above the next component is Grimoire's own, shown to be the one given)
+        parent.push('/');
+        parent.push_str(o);
+    }
+    true
+}
+
+/// Pure: whether two spellings of one name in one folder are the same folder. `own` and `other` are each
+/// spelling's (device, inode) where lstat found a real folder (None for anything else and for an error);
+/// `names` lists the parent (None when it does not read). Equal identities are one folder, with no listing.
+/// Other identities are still one folder when the parent holds exactly one entry of that name without ASCII
+/// case (the storage takes both spellings as that entry, and may number it differently by each); with two or
+/// more they are two folders. A number alone never says "another folder".
+fn same_folder_entry(own: Option<(u64, u64)>, other: Option<(u64, u64)>, own_name: &str, names: &dyn Fn() -> Option<Vec<Vec<u8>>>) -> bool {
+    let (Some(a), Some(b)) = (own, other) else { return false };
+    a == b || names().is_some_and(|n| n.iter().filter(|n| n.eq_ignore_ascii_case(own_name.as_bytes())).count() == 1)
 }
 
 /// Whether a file may be moved (to import/done) or written beside: only when it lies in Grimoire's import folder.
@@ -279,32 +425,87 @@ pub enum Lock {
     Fresh,
     /// this process holds it already (an import is queued or running)
     Held,
-    /// another process holds it (a previous run's detached child still importing), or it cannot be opened
+    /// not taken, and the errno says why. EWOULDBLOCK: another process holds it (a previous run's detached child
+    /// still importing), and what was asked for waits for that import. Anything else: the lock file cannot be
+    /// opened or is not a plain file at its own name, and nothing waits for it.
     Busy(i32),
 }
 
+/// The lock file, opened to be locked: never through a link, never anything but a plain file with one name
+/// (what util::open_rewrite_nofollow asks of every file saved on that storage). O_NONBLOCK, as the two other lock
+/// files have, so nothing that is not a file can hold the open; the descriptor is never read or written. The
+/// descriptor, or an errno (EINVAL for what is no plain file of one name: it is left as it is).
+fn lock_open(path: &std::ffi::CStr) -> Result<i32, i32> {
+    // SAFETY: open reads the NUL-terminated path we were given; fstat writes the struct we own; the descriptor
+    // is the caller's, or closed here.
+    unsafe {
+        let fd = libc::open(path.as_ptr(), libc::O_RDWR | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_NOCTTY | libc::O_NONBLOCK | libc::O_CLOEXEC, 0o644 as libc::c_uint);
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO));
+        }
+        let mut st: libc::stat = std::mem::zeroed();
+        if libc::fstat(fd, &mut st) != 0 || (st.st_mode & libc::S_IFMT) != libc::S_IFREG || st.st_nlink != 1 {
+            libc::close(fd);
+            return Err(libc::EINVAL);
+        }
+        Ok(fd)
+    }
+}
+
+/// What lstat says of `path` when `fd` is the plain file that name holds now: both stat, both are regular files
+/// (the name itself: lstat follows no link), and they are one device and inode. None for anything else.
+fn at_its_name(fd: i32, path: &std::ffi::CStr) -> Option<libc::stat> {
+    // SAFETY: fstat and lstat write the structs we own; path is NUL-terminated.
+    unsafe {
+        let (mut a, mut b): (libc::stat, libc::stat) = (std::mem::zeroed(), std::mem::zeroed());
+        (libc::fstat(fd, &mut a) == 0
+            && libc::lstat(path.as_ptr(), &mut b) == 0
+            && (a.st_mode & libc::S_IFMT) == libc::S_IFREG
+            && (b.st_mode & libc::S_IFMT) == libc::S_IFREG
+            && a.st_dev == b.st_dev
+            && a.st_ino == b.st_ino)
+            .then_some(b)
+    }
+}
+
+/// Whether `fd` is the plain file that `path` names now (`at_its_name`).
+pub fn lock_is_at(fd: i32, path: &std::ffi::CStr) -> bool {
+    at_its_name(fd, path).is_some()
+}
+
 /// Takes `import/.lock` without blocking, once, and keeps the handle (O_CLOEXEC, so no script and no worker
-/// inherits it) while any import is queued or running. Never blocks. (The file is where `lock_file_path` says.)
+/// inherits it) while any import is queued or running. Never blocks. (The file is where `lock_file_path` says;
+/// a missing import/ is made, as writing a mark makes import/.marks.) The file locked must still be the one at
+/// its name once it is locked: when it is not (the name was given to another file meanwhile) the handle is let
+/// go and the lock is asked for once more, and after two such rounds it is not taken (ESTALE). Whatever else is
+/// found at the lock's name is never removed and never followed.
 pub fn lock_take() -> Lock {
     if LOCK.with(|l| l.get()) >= 0 {
         return Lock::Held;
     }
+    mkdir_p(&root_path("import"));
     let path = lock_file_path(&root_path("import/.lock"));
     let Ok(c) = std::ffi::CString::new(path) else { return Lock::Busy(libc::ENOENT) };
-    // SAFETY: open reads the NUL-terminated path we own; the descriptor it returns is ours alone.
-    let fd = unsafe { libc::open(c.as_ptr(), libc::O_RDWR | libc::O_CREAT | libc::O_CLOEXEC, 0o644 as libc::c_uint) };
-    if fd < 0 {
-        return Lock::Busy(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO));
-    }
-    // SAFETY: flock only takes the open descriptor.
-    if unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
-        // SAFETY: closing the descriptor opened above.
+    for _ in 0..2 {
+        let fd = match lock_open(&c) {
+            Ok(fd) => fd,
+            Err(e) => return Lock::Busy(e),
+        };
+        // SAFETY: flock only takes the open descriptor.
+        if unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+            // SAFETY: closing the descriptor opened above.
+            unsafe { libc::close(fd) };
+            return Lock::Busy(e);
+        }
+        if lock_is_at(fd, &c) {
+            LOCK.with(|l| l.set(fd));
+            return Lock::Fresh;
+        }
+        // SAFETY: closing the descriptor opened above (its lock goes with it: it is not the file at the name).
         unsafe { libc::close(fd) };
-        return Lock::Busy(e);
     }
-    LOCK.with(|l| l.set(fd));
-    Lock::Fresh
+    Lock::Busy(libc::ESTALE)
 }
 
 /// The lock's descriptor, or -1: what `child_setup` keeps open in a bgjob child and the detached child, so
@@ -361,6 +562,9 @@ pub struct Mark {
     /// a done mark's file: its size and mtime (another file of that name later is a new file)
     pub size: u64,
     pub mtime: i64,
+    /// darker lines (2.2, issue #173): the gamma the import is drawn at, as the UI decided it when it queued the
+    /// file (the setting, or KOReader's request); a line only when it is not Off
+    pub gamma: Gamma,
 }
 
 fn mark_hash(src: &str) -> String {
@@ -371,20 +575,29 @@ fn mark_path(src: &str) -> String {
     root_path(&format!("{}/{}", MARKS_DIR, mark_hash(src)))
 }
 
+/// A label (an id, a name given, a Library folder) as a line of a mark or a state holds it: no control character.
+/// The path of the file is never cleaned: it is kept as it is, or not at all (`name_storable`).
 fn clean_field(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).collect()
 }
 
+/// Whether a path can be kept in a mark or an import's state and read back as itself: no line feed and no
+/// carriage return in it (the two characters a line of those files cannot hold).
+pub fn name_storable(s: &str) -> bool {
+    !s.contains(['\n', '\r'])
+}
+
 pub fn mark_text(m: &Mark) -> String {
+    let gamma = if m.gamma == Gamma::Off { String::new() } else { format!("gamma={}\n", m.gamma.name()) };
     format!(
-        "# Grimoire: a PDF being imported (docs/FORMAT.md)\nstate={}\nid={}\nsrc={}\npick={}\nname={}\nfolder={}\npage={}\npages={}\nat={}\nsize={}\nmtime={}\n",
+        "# Grimoire: a PDF being imported (docs/FORMAT.md)\nstate={}\nid={}\nsrc={}\npick={}\nname={}\nfolder={}\npage={}\npages={}\nat={}\nsize={}\nmtime={}\n{gamma}",
         match m.state {
             MarkState::Making => "making",
             MarkState::Waiting => "waiting",
             MarkState::Done => "done",
         },
         clean_field(&m.id),
-        clean_field(&m.src),
+        m.src,
         m.pick as u8,
         clean_field(&m.name),
         clean_field(&m.folder),
@@ -396,7 +609,7 @@ pub fn mark_text(m: &Mark) -> String {
     )
 }
 
-/// Reads a mark strictly (at most 4 KiB, known keys, an id the store takes).
+/// Reads a mark strictly (at most 4 KiB, known keys, an id the store takes, a path that reads back as itself).
 pub fn mark_parse(t: &[u8]) -> Option<Mark> {
     if t.len() > MARK_MAX {
         return None;
@@ -428,7 +641,13 @@ pub fn mark_parse(t: &[u8]) -> Option<Mark> {
                 }
                 m.id = v.to_string();
             }
-            "src" => m.src = v.to_string(),
+            "src" => {
+                // (a line never holds a line feed; a carriage return inside one is no path a mark was given)
+                if !name_storable(v) {
+                    return None;
+                }
+                m.src = v.to_string();
+            }
             "pick" => m.pick = v == "1",
             "name" => m.name = v.to_string(),
             "folder" => m.folder = v.to_string(),
@@ -437,6 +656,8 @@ pub fn mark_parse(t: &[u8]) -> Option<Mark> {
             "at" => m.at = v.parse().ok()?,
             "size" => m.size = v.parse().ok()?,
             "mtime" => m.mtime = v.parse().ok()?,
+            // (only the three known values: anything else is no gamma)
+            "gamma" => m.gamma = Gamma::parse(v.as_bytes()),
             _ => {}
         }
     }
@@ -459,6 +680,10 @@ pub fn sandbox_broken_in_progress() -> bool {
 }
 
 fn mark_write(m: &Mark) -> bool {
+    if !name_storable(&m.src) {
+        qlog!("import: a path that holds a line break is never imported; refused");
+        return false;
+    }
     let dir = root_path(MARKS_DIR);
     if mkdir_p(&dir) != 0 {
         return false;
@@ -505,9 +730,53 @@ pub struct State {
     pub open: bool,
     /// how often the import stopped without finishing and kept its folder (a writer cut off, the CPU budget)
     pub stops: u32,
+    /// a fill (2.2): the notebook the pages go to ("" for an import that makes a notebook of its own), the book
+    /// pages it makes (ascending: `next` and `pics` count these, not the book's pages), and the size its pages are
+    /// drawn at (the notebook's own)
+    pub fill: String,
+    pub todo: Vec<u32>,
+    pub page_w: i32,
+    pub page_h: i32,
+    /// a hash of the notebook's name and Library folder as the fill was decided (`nb_sig`): a notebook renamed,
+    /// moved or deleted since is not filled
+    pub sig: u64,
+    /// where a fill is (`STAGE_*`): its pages being made, made (the UI's to put in), being put in by the UI (then
+    /// finished from the work folder alone, so a commit cut off half way is always taken to its end), or in
+    pub stage: u8,
+    /// the page ids the UI's commit gave the pages: (book page, page id), kept so a commit taken up again writes
+    /// the same files, and adds its links and names to those pages only
+    pub ids: Vec<(u32, u32)>,
+    /// darker lines (2.2, issue #173): the gamma every gray page of this import is drawn at, decided by its first
+    /// slice and kept here so every slice draws at it (`gamma=`, a line only when it is not Off)
+    pub gamma: Gamma,
 }
 
+/// A fill's pages are being made (the writer's slices).
+pub const STAGE_MAKING: u8 = 0;
+/// They are made: the UI puts them in once nothing holds the notebook.
+pub const STAGE_READY: u8 = 1;
+/// The UI's commit has begun.
+pub const STAGE_COMMIT: u8 = 2;
+/// The commit is in: one more slice files the PDF and removes the work folder.
+pub const STAGE_DONE: u8 = 3;
+
 impl State {
+    /// How many pages this import makes: the PDF's, or a fill's missing ones.
+    pub fn total(&self) -> u32 {
+        if self.fill.is_empty() {
+            self.pages
+        } else {
+            self.todo.len() as u32
+        }
+    }
+    /// The book page the `n`th page made is (from 1).
+    pub fn book_page(&self, n: u32) -> u32 {
+        if self.fill.is_empty() {
+            n
+        } else {
+            self.todo.get(n as usize - 1).copied().unwrap_or(0)
+        }
+    }
     pub fn strikes_of(&self, page: u32) -> u32 {
         self.strikes.iter().find(|s| s.0 == page).map_or(0, |s| s.1)
     }
@@ -526,9 +795,16 @@ impl State {
     pub fn text(&self) -> String {
         let join = |v: &[u32], hex: bool| v.iter().map(|x| if hex { format!("{x:x}") } else { x.to_string() }).collect::<Vec<_>>().join(",");
         let strikes = self.strikes.iter().map(|(p, n)| format!("{p}:{n}")).collect::<Vec<_>>().join(",");
+        let fill = if self.fill.is_empty() {
+            String::new()
+        } else {
+            let ids = self.ids.iter().map(|(p, id)| format!("{p}:{id}")).collect::<Vec<_>>().join(",");
+            format!("fill={}\ntodo={}\npage_w={}\npage_h={}\nsig={:x}\nstage={}\nids={ids}\n", clean_field(&self.fill), join(&self.todo, false), self.page_w, self.page_h, self.sig, self.stage)
+        };
+        let gamma = if self.gamma == Gamma::Off { String::new() } else { format!("gamma={}\n", self.gamma.name()) };
         format!(
-            "# Grimoire: a PDF import in progress (docs/FORMAT.md)\nsrc={}\nsize={}\nmtime={}\nkey={}\npages={}\nnext={}\npics={}\nblank={}\nstrikes={}\ncpu_ms={}\npick={}\nname={}\nfolder={}\nbytes={}\nopen={}\nstops={}\n",
-            clean_field(&self.src),
+            "# Grimoire: a PDF import in progress (docs/FORMAT.md)\nsrc={}\nsize={}\nmtime={}\nkey={}\npages={}\nnext={}\npics={}\nblank={}\nstrikes={}\ncpu_ms={}\npick={}\nname={}\nfolder={}\nbytes={}\nopen={}\nstops={}\n{gamma}{fill}",
+            self.src,
             self.size,
             self.mtime,
             self.key,
@@ -567,6 +843,10 @@ impl State {
             let (k, v) = line.split_once('=')?;
             match k {
                 "src" => {
+                    // (as mark_parse: a carriage return inside the line is no path a state was given)
+                    if !name_storable(v) {
+                        return None;
+                    }
                     s.src = v.to_string();
                     have |= 1;
                 }
@@ -600,12 +880,50 @@ impl State {
                 "bytes" => s.bytes = v.parse().ok()?,
                 "open" => s.open = v == "1",
                 "stops" => s.stops = v.parse().ok()?,
+                // (only the three known values: anything else is no gamma)
+                "gamma" => s.gamma = Gamma::parse(v.as_bytes()),
+                "fill" => {
+                    let mut d = String::new();
+                    if v.is_empty() || v.len() >= STORE_ID_LEN || store_notebook_dir(v, &mut d, 700) != 0 {
+                        return None;
+                    }
+                    s.fill = v.to_string();
+                }
+                "todo" => s.todo = list(v, 10)?,
+                "page_w" => s.page_w = v.parse().ok()?,
+                "page_h" => s.page_h = v.parse().ok()?,
+                "sig" => s.sig = u64::from_str_radix(v, 16).ok()?,
+                "stage" => s.stage = v.parse().ok().filter(|&n| n <= STAGE_DONE)?,
+                "ids" => {
+                    if !v.is_empty() {
+                        for e in v.split(',') {
+                            let (p, id) = e.split_once(':')?;
+                            s.ids.push((p.parse().ok()?, id.parse().ok()?));
+                        }
+                    }
+                }
                 _ => {}
             }
         }
+        // a fill's pages: ascending, each once, each a page of the book, drawn at a page size the store takes (both
+        // or neither), each page id given once to a page it makes; none of it without a fill
+        let size_ok = |n: i32| (100..=6000).contains(&n);
+        let fill_ok = if s.fill.is_empty() {
+            s.todo.is_empty() && s.stage == STAGE_MAKING && s.ids.is_empty() && s.page_w == 0 && s.page_h == 0
+        } else {
+            !s.todo.is_empty()
+                && s.todo.windows(2).all(|w| w[0] < w[1])
+                && s.todo.iter().all(|&p| p >= 1 && p <= s.pages)
+                && size_ok(s.page_w)
+                && size_ok(s.page_h)
+                && s.ids.len() <= s.todo.len()
+                && s.ids.iter().enumerate().all(|(i, &(p, id))| s.todo.contains(&p) && (1..0x7fff_fffe).contains(&id) && s.ids[..i].iter().all(|x| x.0 != p && x.1 != id))
+        };
         let ok = have == 3
+            && fill_ok
+            && (s.stage == STAGE_MAKING || s.next == s.total() + 1)
             && s.next >= 1
-            && s.next <= s.pages + 1
+            && s.next <= s.total() + 1
             && s.pics.len() as u32 == s.next - 1
             && s.blank.iter().all(|&p| p >= 1 && p <= s.pages)
             && s.strikes.iter().all(|&(p, _)| p >= 1 && p <= s.pages)
@@ -618,12 +936,31 @@ fn state_path(id: &str) -> String {
     format!("{}/{}", work_dir(id), STATE_FILE)
 }
 
+fn fill_state_path(id: &str) -> String {
+    format!("{}/{}", work_dir(id), FILL_STATE_FILE)
+}
+
+/// An import's state: pdf-import.ini, or a fill's pdf-fill.ini (which names its notebook). Read up to its cap (the
+/// UI reads a fill's too).
 fn state_read(id: &str) -> Option<State> {
-    State::parse(&read_file(&state_path(id))?)
+    if let Some(t) = read_file_max(&state_path(id), STATE_MAX) {
+        return State::parse(&t).filter(|s| s.fill.is_empty());
+    }
+    State::parse(&read_file_max(&fill_state_path(id), STATE_MAX)?).filter(|s| !s.fill.is_empty())
 }
 
 fn state_write(id: &str, s: &State) -> bool {
-    write_file_atomic(&state_path(id), s.text().as_bytes()) == 0
+    if !name_storable(&s.src) {
+        return false;
+    }
+    let path = if s.fill.is_empty() { state_path(id) } else { fill_state_path(id) };
+    write_file_atomic(&path, s.text().as_bytes()) == 0
+}
+
+/// What a fill notes of its notebook as it is decided, and finds again before its pages go in: a hash of its name
+/// and its Library folder (a rename, a move, a folder renamed or merged change it; a delete takes the notebook).
+pub fn nb_sig(nb: &NotebookInfo) -> u64 {
+    fnv(fnv(fnv(FNV0, nb.name.as_bytes()), &[0]), nb.folder.as_bytes())
 }
 
 // ---- stability (3.8) ----
@@ -681,16 +1018,61 @@ pub fn looks_complete(head: &[u8], tail: &[u8]) -> bool {
     tail[..end].ends_with(b"%%EOF") || has(&tail[end.saturating_sub(1024)..end], b"%%EOF") && tail[end.saturating_sub(8)..end].ends_with(b"EOF")
 }
 
-fn read_ends(path: &str, size: u64) -> Option<(Vec<u8>, Vec<u8>)> {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut f = std::fs::File::open(path).ok()?;
+/// What the scan's look at a listed PDF found.
+enum Ends {
+    /// the first and the last KiB of the file that was listed
+    Read(Vec<u8>, Vec<u8>),
+    /// a file is there, but not the one listed (another device, inode, size or time)
+    Changed,
+    /// the file or the storage does not read just now
+    Unreadable,
+    /// no file the import opens: a link, a FIFO, a folder, another device, a refused place, or gone
+    NotAFile,
+}
+
+/// `buf` filled from `fd` at `off` (pread: the descriptor's offset is untouched); false for a short or failed read.
+fn pread_exact(fd: i32, buf: &mut [u8], off: u64) -> bool {
+    let mut got = 0;
+    while got < buf.len() {
+        // SAFETY: pread writes at most the bytes left of buf into it; fd is the caller's open descriptor.
+        let n = unsafe { libc::pread(fd, buf[got..].as_mut_ptr() as *mut libc::c_void, buf.len() - got, (off + got as u64) as libc::off_t) };
+        if n < 0 && errno() == libc::EINTR {
+            continue;
+        }
+        if n <= 0 {
+            return false;
+        }
+        got += n as usize;
+    }
+    true
+}
+
+/// The scan's look at a PDF it listed: its first and last KiB. The file is opened as the import itself opens it
+/// (fsview's walk: no link followed anywhere, a regular file on the storage's device, opened without waiting),
+/// and is read only when it is the file the listing saw (`listed`: its size, mtime, device and inode).
+fn read_ends(st: &FsStorage, sp: &StoragePath, listed: (u64, i64, u64, u64)) -> Ends {
+    use std::os::fd::AsRawFd;
+    let fd = match st.open_file(sp, false) {
+        Ok(fd) => fd,
+        Err(FsErr::Io(_)) => return Ends::Unreadable,
+        Err(_) => return Ends::NotAFile,
+    };
+    // SAFETY: md is written by fstat before it is read.
+    let mut md: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::fstat(fd.as_raw_fd(), &mut md) } != 0 {
+        return Ends::Unreadable;
+    }
+    let (size, mtime, dev, ino) = listed;
+    if (md.st_size as u64, md.st_mtime as i64, md.st_dev as u64, md.st_ino as u64) != (size, mtime, dev, ino) {
+        return Ends::Changed;
+    }
     let mut head = vec![0u8; 1024.min(size as usize)];
-    f.read_exact(&mut head).ok()?;
     let from = size.saturating_sub(1024);
-    f.seek(SeekFrom::Start(from)).ok()?;
     let mut tail = vec![0u8; (size - from) as usize];
-    f.read_exact(&mut tail).ok()?;
-    Some((head, tail))
+    if !pread_exact(fd.as_raw_fd(), &mut head, 0) || !pread_exact(fd.as_raw_fd(), &mut tail, from) {
+        return Ends::Unreadable;
+    }
+    Ends::Read(head, tail)
 }
 
 // ---- the UI's side: what is queued, what is seen ----
@@ -718,6 +1100,9 @@ struct Ui {
     deferred: Vec<String>,
     /// PDFs that found no room this session, and the bytes free then: taken again once more is free
     room_wait: Vec<(String, u64)>,
+    /// fills whose pages are made, for the UI to put in (`fill_tick`): their work folder's id, their PDF, the
+    /// notebook they fill
+    ready: Vec<(String, String, String)>,
 }
 
 thread_local! {
@@ -728,20 +1113,53 @@ fn ui<R>(f: impl FnOnce(&mut Ui) -> R) -> R {
     UI.with(|u| f(&mut u.borrow_mut()))
 }
 
+thread_local! {
+    /// Darker lines in imported PDFs (2.2, issue #173): settings.ini `pdf_gamma` as the app last set it
+    /// (`set_darker`, at the start and when the setting changes). What an import queued in this process is drawn
+    /// at, unless KOReader's request names a level of its own; the import's mark carries it to the writer. Kept apart
+    /// from `Ui`, which a reset of what the queue remembers clears.
+    static DARKER: Cell<Gamma> = const { Cell::new(Gamma::Off) };
+}
+
+/// The app's darker lines setting, for the imports this process queues from now on (an import already queued keeps
+/// the level its mark or its state has).
+pub fn set_darker(g: Gamma) {
+    DARKER.with(|d| d.set(g));
+}
+
+/// The darker lines setting the app last set.
+pub fn darker() -> Gamma {
+    DARKER.with(|d| d.get())
+}
+
 pub fn pending_count() -> usize {
     ui(|u| u.pending.len())
 }
 
-/// Whether any PDF import (queued or running) belongs to `src`.
+/// Whether any PDF import (queued or running, or a fill whose pages wait for the UI) belongs to `src`.
 pub fn is_queued(src: &str) -> bool {
-    ui(|u| u.queued.iter().any(|q| q == src))
+    ui(|u| u.queued.iter().any(|q| q == src) || u.ready.iter().any(|r| r.1 == src))
 }
 
-/// Resets what the UI side remembers (tests), the shared record with it.
+/// The PDF (its StoragePath's text) of import `id`, while this process holds it as queued or running.
+pub fn queued_src(id: &str) -> Option<String> {
+    ui(|u| u.pending.iter().position(|p| p == id).and_then(|i| u.queued.get(i).cloned()))
+}
+
+/// Whether the PDF at `src` is still on its way to a notebook in this process: queued or running, its pages made
+/// and waiting to go in, going in now, or a pick that waits for the lock (its mark in import/.marks).
+pub fn in_flight(src: &str) -> bool {
+    is_queued(src)
+        || COMMIT.with(|c| c.borrow().as_ref().is_some_and(|c| c.src == src))
+        || mark_read(src).is_some_and(|m| m.state == MarkState::Waiting)
+}
+
+/// Resets what the UI side remembers (tests: as a new start), the shared record and a fill's commit with it.
 pub fn ui_reset() {
     ui(|u| *u = Ui::default());
+    COMMIT.with(|c| *c.borrow_mut() = None);
     let p = progress();
-    for a in [&p.page, &p.pages, &p.result_for, &p.reason, &p.arg, &p.blank, &p.broken, &p.page_for] {
+    for a in [&p.page, &p.pages, &p.result_for, &p.reason, &p.arg, &p.blank, &p.broken, &p.page_for].into_iter().chain(&p.nb) {
         a.store(0, Ordering::Relaxed);
     }
 }
@@ -773,8 +1191,9 @@ pub fn pictures_wait(on: bool) {
 /// What a scan found to do.
 #[derive(Default, Debug)]
 pub struct Found {
-    /// loose files and those of `import/<Folder>/`: (path under import/, folder, size, mtime)
-    pub files: Vec<(String, String, u64, i64)>,
+    /// loose files and those of `import/<Folder>/`: (path under import/, folder, size, mtime, device, inode), the
+    /// last four as the listing saw the file (a directory entry's own: no link followed)
+    pub files: Vec<(String, String, u64, i64, u64, u64)>,
     /// folders (names) that hold PDFs: their pictures wait until the PDFs are done
     pub pdf_folders: Vec<String>,
     /// work folders a cut-off import left that can go on (their ids)
@@ -789,7 +1208,8 @@ fn is_pdf_name(n: &str) -> bool {
 }
 
 /// The PDFs of import/ (top level, and one folder down), no links, regular files only, sorted by the
-/// comparator the browser and the font list use.
+/// comparator the browser and the font list use. A PDF or a folder whose name a mark cannot keep
+/// (`name_storable`) is left out and counted.
 pub fn list_pdfs() -> Found {
     let mut f = Found::default();
     let dir = root_path("import");
@@ -815,8 +1235,16 @@ pub fn list_pdfs() -> Found {
     }
     top.sort_by(|a, b| name_cmp(&a.0, &b.0));
     for (name, md) in top {
-        if md.is_file() && is_pdf_name(&name) {
-            f.files.push((name, String::new(), md.len(), md.mtime()));
+        let pdf = md.is_file() && is_pdf_name(&name);
+        if !name_storable(&name) {
+            // (a PDF or a folder only: a stray file of no kind never makes the scan's line print at every scan)
+            if pdf || md.is_dir() {
+                f.skipped += 1;
+            }
+            continue;
+        }
+        if pdf {
+            f.files.push((name, String::new(), md.len(), md.mtime(), md.dev(), md.ino()));
         } else if md.is_dir() {
             let Ok(rd) = std::fs::read_dir(format!("{dir}/{name}")) else { continue };
             let mut inner: Vec<(String, std::fs::Metadata)> = Vec::new();
@@ -829,7 +1257,7 @@ pub fn list_pdfs() -> Found {
                     continue;
                 }
                 let Ok(ft) = e.file_type() else { continue };
-                if ft.is_symlink() || !ft.is_file() {
+                if ft.is_symlink() || !ft.is_file() || !name_storable(&n) {
                     f.skipped += 1;
                     continue;
                 }
@@ -842,7 +1270,7 @@ pub fn list_pdfs() -> Found {
             }
             inner.sort_by(|a, b| name_cmp(&a.0, &b.0));
             for (n, md) in inner {
-                f.files.push((format!("{name}/{n}"), name.clone(), md.len(), md.mtime()));
+                f.files.push((format!("{name}/{n}"), name.clone(), md.len(), md.mtime(), md.dev(), md.ino()));
             }
         }
     }
@@ -851,12 +1279,16 @@ pub fn list_pdfs() -> Found {
 
 /// Whether a folder of import/ still holds PDFs that can be imported (its pictures wait for them). A PDF that
 /// was refused or failed its tries and has not changed since, or one imported already that could not move,
-/// holds nothing back: the pictures then import as they did before 2.1.
+/// holds nothing back: the pictures then import as they did before 2.1. Nor does a PDF the scan leaves out for
+/// its name or its folder's (`name_storable`): the pictures never wait for a PDF that is not imported.
 pub(crate) fn folder_holds_pdfs(name: &str, attempts: &[crate::bgwork_template::Attempt]) -> bool {
+    if !name_storable(name) {
+        return false;
+    }
     let Ok(rd) = std::fs::read_dir(root_path(&format!("import/{name}"))) else { return false };
     rd.flatten().take(1000).any(|e| {
         let Some(n) = e.file_name().to_str().map(str::to_string) else { return false };
-        if !is_pdf_name(&n) || !e.file_type().is_ok_and(|t| t.is_file()) {
+        if !is_pdf_name(&n) || !name_storable(&n) || !e.file_type().is_ok_and(|t| t.is_file()) {
             return false;
         }
         let Ok(md) = e.metadata() else { return false };
@@ -869,9 +1301,13 @@ pub(crate) fn folder_holds_pdfs(name: &str, attempts: &[crate::bgwork_template::
     })
 }
 
-/// Whether a cut-off work folder can go on: it has a readable state whose source is still there, unchanged.
+/// Whether a cut-off work folder can go on: it has a readable state whose source is still there, unchanged; or it
+/// is a fill whose pages are made, which goes on from the work folder alone.
 pub fn keep_work_folder(id: &str) -> bool {
     let Some(s) = state_read(id) else { return false };
+    if s.stage != STAGE_MAKING {
+        return true;
+    }
     let Ok(sp) = StoragePath::new(s.src.as_bytes()).ok_or(()) else { return false };
     let Some(abs) = abs_of(&sp) else { return false };
     match std::fs::symlink_metadata(&abs) {
@@ -917,7 +1353,16 @@ pub fn scan_queue(found: &Found, dpi: f32, lock_busy: bool) -> i32 {
     progress(); // (the shared record is made before any fork)
     let mut queued = 0;
     let (mut waiting, mut tried_out, mut already_made, mut skipped_busy, mut no_room) = (0, 0, 0, 0, 0);
+    // (the looks that found another file than the one listed, and those that found no file)
+    let (mut differ, mut not_files) = (0, 0);
+    // the storage the looks open their files through: opened once a scan, when the first steady file needs it
+    let mut storage: Option<Option<FsStorage>> = None;
     ui(|u| u.rescan_at = None);
+    // fills whose pages are made wait for the UI, which needs no worker for them: so in a session the sandbox
+    // broke too
+    for id in &found.resumable {
+        note_ready(id);
+    }
     if session_broken() {
         qlog!("import: PDFs are not imported this session (the sandbox refused a step; see the log above)");
         return 0;
@@ -937,7 +1382,7 @@ pub fn scan_queue(found: &Found, dpi: f32, lock_busy: bool) -> i32 {
             continue;
         }
         let Some(s) = state_read(id) else { continue };
-        if lock_busy || is_queued(&s.src) {
+        if lock_busy || is_queued(&s.src) || matches!(s.stage, STAGE_READY | STAGE_COMMIT) {
             continue;
         }
         ui(|u| {
@@ -945,11 +1390,11 @@ pub fn scan_queue(found: &Found, dpi: f32, lock_busy: bool) -> i32 {
             u.queued.push(s.src.clone());
         });
         bg_queue(BgKind::PdfImport, Some(id), Some(&s.src), dpi, false);
-        qlog!("import: PDF import %s goes on from page %d of %d", id, s.next as i32, s.pages as i32);
+        qlog!("import: PDF import %s goes on from page %d of %d", id, s.next as i32, s.total() as i32);
         queued += 1;
     }
     let free = if ui(|u| u.room_wait.is_empty()) { None } else { free_bytes() };
-    for (rel, folder, size, mtime) in &found.files {
+    for (rel, folder, size, mtime, dev, ino) in &found.files {
         let Some(sp) = import_storage_path(rel) else { continue };
         let Ok(src) = String::from_utf8(sp.as_bytes().to_vec()) else { continue };
         if src.len() >= FS_PATH_MAX || is_queued(&src) {
@@ -983,7 +1428,6 @@ pub fn scan_queue(found: &Found, dpi: f32, lock_busy: bool) -> i32 {
             }
         }
         let key = fnv(FNV0, src.as_bytes());
-        let abs = format!("{}/import/{}", store_root(), rel);
         let stable_hash = fnv(fnv(FNV0, &size.to_ne_bytes()), &mtime.to_ne_bytes());
         if attempt_key(&src).is_some_and(|k| crate::bgwork_template::attempts_waiting_key(k, stable_hash, &attempts, PDF_TRIES)) {
             tried_out += 1;
@@ -997,39 +1441,64 @@ pub fn scan_queue(found: &Found, dpi: f32, lock_busy: bool) -> i32 {
             waiting += 1;
             continue;
         }
-        let ok = read_ends(&abs, *size).is_some_and(|(h, t)| looks_complete(&h, &t));
-        if !ok {
-            if ui(|u| unchanged_ms(&u.seen, key, now)) < INCOMPLETE_GIVE_UP_MS {
-                waiting += 1;
+        // (when the storage cannot be opened, no file reads this scan)
+        let st = storage.get_or_insert_with(|| storage_root().and_then(|r| FsStorage::open(&r, &store_root()).ok()));
+        let look = st.as_ref().map_or(Ends::Unreadable, |st| read_ends(st, &sp, (*size, *mtime, *dev, *ino)));
+        let (ok, other) = match look {
+            Ends::Read(h, t) => (looks_complete(&h, &t), false),
+            Ends::Unreadable => (false, false),
+            // (its entry in the table of files seen stays, or the minute below would never pass: a file that
+            // really was replaced is listed as itself by the look 5 s on, and read then)
+            Ends::Changed => (false, true),
+            Ends::NotAFile => {
+                // never taken "as it is", and no sooner look is asked for it: the next scan lists the folder again
+                not_files += 1;
                 continue;
             }
-            qlog!("import: a PDF without its end marker has not changed for a minute; it is imported as it is");
+        };
+        if !ok {
+            if ui(|u| unchanged_ms(&u.seen, key, now)) < INCOMPLETE_GIVE_UP_MS {
+                if other {
+                    differ += 1;
+                } else {
+                    waiting += 1;
+                }
+                continue;
+            }
+            if other {
+                qlog!("import: a PDF that differs from its listing has not changed for a minute; it is imported as it is");
+            } else {
+                qlog!("import: a PDF without its end marker has not changed for a minute; it is imported as it is");
+            }
         }
-        if queue_one(&src, "", folder, false, dpi) {
+        if queue_one(&src, "", folder, false, darker(), dpi) {
             queued += 1;
         }
     }
-    if waiting > 0 {
+    if waiting > 0 || differ > 0 {
         ui(|u| u.rescan_at = Some(now.wrapping_add(WAIT_RESCAN_MS)));
     }
-    if queued != 0 || waiting != 0 || tried_out != 0 || found.skipped != 0 || already_made != 0 || skipped_busy != 0 || no_room != 0 {
+    if queued != 0 || waiting != 0 || tried_out != 0 || found.skipped != 0 || already_made != 0 || skipped_busy != 0 || no_room != 0 || differ != 0 || not_files != 0 {
         qlog!(
-            "import: %d PDF(s) queued; left as they are: %d not yet steady, %d that failed and have not changed since, %d imported already, %d skipped (links or odd names), %d while the lock is held elsewhere, %d waiting for room",
+            "import: %d PDF(s) queued; left as they are: %d not yet steady, %d that failed and have not changed since, %d imported already, %d skipped (links or odd names), %d while the lock is held elsewhere, %d waiting for room, %d that differ from their listing, %d no longer files",
             queued,
             waiting,
             tried_out,
             already_made,
             found.skipped as i32,
             skipped_busy,
-            no_room
+            no_room,
+            differ,
+            not_files
         );
     }
     queued
 }
 
-/// Queues one PDF import: its mark first (the notebook id it will be), then the job. `pick`: a file chosen by
-/// hand (its name and folder kept for the notebook); whether the file may move is still where it lies.
-fn queue_one(src: &str, name: &str, folder: &str, pick: bool, dpi: f32) -> bool {
+/// Queues one PDF import: its mark first (the notebook id it will be, and the gamma its gray pages are drawn at),
+/// then the job. `pick`: a file chosen by hand (its name and folder kept for the notebook); whether the file may move
+/// is still where it lies.
+fn queue_one(src: &str, name: &str, folder: &str, pick: bool, gamma: Gamma, dpi: f32) -> bool {
     let id = fresh_id();
     let prior = mark_read(src);
     // a mark left by a run that was cut off names the notebook this file was becoming: that id again
@@ -1037,7 +1506,7 @@ fn queue_one(src: &str, name: &str, folder: &str, pick: bool, dpi: f32) -> bool 
         Some(m) if m.state == MarkState::Making && !m.id.is_empty() && exists(&work_dir(&m.id)) => m.id,
         _ => id,
     };
-    let m = Mark { state: MarkState::Making, id: id.clone(), src: src.to_string(), pick, name: name.to_string(), folder: folder.to_string(), at: wall_time(), ..Default::default() };
+    let m = Mark { state: MarkState::Making, id: id.clone(), src: src.to_string(), pick, name: name.to_string(), folder: folder.to_string(), at: wall_time(), gamma, ..Default::default() };
     if !mark_write(&m) {
         qlog!("import: a PDF's mark could not be written; left as it is");
         return false;
@@ -1057,13 +1526,23 @@ pub fn marks_waiting() -> bool {
     waiting_marks().next().is_some()
 }
 
+/// The waiting marks, each its path's own: a mark is named by the hash of the path it holds, and a waiting one
+/// filed under another name is removed here and not returned (an earlier build kept a cleaned path under the hash
+/// of the true one: such a mark named another file, and no end of that file's import ever dropped it).
 fn waiting_marks() -> impl Iterator<Item = Mark> {
     std::fs::read_dir(root_path(MARKS_DIR))
         .into_iter()
         .flat_map(|rd| rd.flatten().take(256))
-        .filter_map(|e| read_file(&e.path().to_string_lossy()))
-        .filter_map(|t| mark_parse(&t))
-        .filter(|m| m.state == MarkState::Waiting)
+        .filter_map(|e| read_file(&e.path().to_string_lossy()).map(|t| (e, t)))
+        .filter_map(|(e, t)| mark_parse(&t).map(|m| (e, m)))
+        .filter(|(_, m)| m.state == MarkState::Waiting)
+        .filter_map(|(e, m)| {
+            if e.file_name().to_str() == Some(mark_hash(&m.src).as_str()) {
+                return Some(m);
+            }
+            let _ = std::fs::remove_file(e.path());
+            None
+        })
 }
 
 /// When the UI takes the lock afresh: the picks that waited for it are queued now (a PDF as a PDF import, a
@@ -1083,7 +1562,7 @@ pub fn queue_waiting_marks(dpi: f32) -> i32 {
         let md = std::fs::symlink_metadata(&abs);
         let ok = match md {
             Ok(md) if md.is_dir() => crate::bgwork_template::queue_folder_pick(&m.src, &m.name, &m.folder, dpi).is_some(),
-            Ok(md) if md.is_file() => !is_queued(&m.src) && queue_one(&m.src, &m.name, &m.folder, true, dpi),
+            Ok(md) if md.is_file() => !is_queued(&m.src) && queue_one(&m.src, &m.name, &m.folder, true, m.gamma, dpi),
             _ => {
                 // (gone, or a link: nothing to import)
                 mark_drop(&m.src);
@@ -1142,19 +1621,31 @@ pub enum Queued {
     Waiting,
     /// this very file is queued or running already
     AlreadyRunning,
-    /// not a file this can import
+    /// not a file this can import, or ("lock") the import lock cannot be taken: the log says which
     Refused(&'static str),
 }
 
 /// The picker's entry point (lane L8): imports the PDF at `path` (read in place; moved to import/done only
 /// when it lies in import/ itself), named `name` (else the file's name) into Library folder `folder` (else the
-/// top). Takes the import lock first; when another process holds it the file is recorded as waiting, and
-/// queued as soon as a scan takes the lock afresh.
+/// top), its gray pages at the darker lines setting. Takes the import lock first; when another process holds it the
+/// file is recorded as waiting, and queued as soon as a scan takes the lock afresh.
 pub fn pdf_import_queue(path: &StoragePath, name: Option<&str>, folder: Option<&str>, dpi: f32) -> Queued {
+    pdf_import_queue_at(path, name, folder, None, dpi)
+}
+
+/// `pdf_import_queue`, with the gamma the gray pages are drawn at: `Some` for a level of the caller's own (KOReader's
+/// request, which names one), None for the darker lines setting (2.2, issue #173).
+pub fn pdf_import_queue_at(path: &StoragePath, name: Option<&str>, folder: Option<&str>, gamma: Option<Gamma>, dpi: f32) -> Queued {
+    let gamma = gamma.unwrap_or_else(darker);
     let Ok(src) = String::from_utf8(path.as_bytes().to_vec()) else {
         qlog!("import: a picked PDF's path is not UTF-8; refused");
         return Queued::Refused("name");
     };
+    // (before the lock is asked for and before any mark: nothing ever waits under a path a mark cannot keep)
+    if !name_storable(&src) {
+        qlog!("import: a picked PDF's path holds a line break; refused");
+        return Queued::Refused("name");
+    }
     if session_broken() {
         qlog!("import: a picked PDF is not imported this session (the sandbox refused a step; see the log above)");
         return Queued::Refused("sandbox");
@@ -1176,8 +1667,13 @@ pub fn pdf_import_queue(path: &StoragePath, name: Option<&str>, folder: Option<&
         }
     }
     match lock_take() {
+        Lock::Busy(e) if e != libc::EWOULDBLOCK => {
+            // (no import holds the lock: nothing is recorded as waiting for one to end)
+            qlog!("import: the import lock cannot be taken (%s); a picked PDF is refused", &strerror(e));
+            return Queued::Refused("lock");
+        }
         Lock::Busy(_) => {
-            let m = Mark { state: MarkState::Waiting, src: src.clone(), pick: true, name: name.unwrap_or("").to_string(), folder: folder.unwrap_or("").to_string(), at: wall_time(), ..Default::default() };
+            let m = Mark { state: MarkState::Waiting, src: src.clone(), pick: true, name: name.unwrap_or("").to_string(), folder: folder.unwrap_or("").to_string(), at: wall_time(), gamma, ..Default::default() };
             if !mark_write(&m) {
                 qlog!("import: a picked PDF's mark could not be written; refused");
                 return Queued::Refused("mark");
@@ -1196,7 +1692,7 @@ pub fn pdf_import_queue(path: &StoragePath, name: Option<&str>, folder: Option<&
         }
         Lock::Held => {}
     }
-    if !queue_one(&src, name.unwrap_or(""), folder.unwrap_or(""), true, dpi) {
+    if !queue_one(&src, name.unwrap_or(""), folder.unwrap_or(""), true, gamma, dpi) {
         lock_release_if_idle();
         return Queued::Refused("mark");
     }
@@ -1300,14 +1796,15 @@ fn detached_progress() -> Option<(u32, u32)> {
 }
 
 /// Whether the previous run's detached child is still going (the lock is held elsewhere): checked by trying
-/// the lock now and then. Returns true while it holds it.
+/// the lock now and then. Returns true while it holds it. (A lock that cannot be taken for another reason is no
+/// import still going.)
 pub fn detached_check() -> bool {
     if lock_fd() >= 0 {
         ui(|u| u.detached = false);
         return false;
     }
     let busy = match lock_take() {
-        Lock::Busy(_) => true,
+        Lock::Busy(e) => e == libc::EWOULDBLOCK,
         Lock::Fresh => {
             lock_release_if_idle();
             false
@@ -1350,6 +1847,12 @@ pub fn rescan_clear() {
     ui(|u| u.rescan_at = None);
 }
 
+/// Grimoire itself put a PDF into import/ (one sent from the Share page, issue #175): the scan is due at once, the
+/// next time the Library is in front, however recently it last looked.
+pub fn rescan_soon() {
+    ui(|u| u.rescan_at = Some(now_ms()));
+}
+
 /// The scan is due now: at most every 10 s, or sooner when a file was waiting to be stable.
 pub fn scan_due(now: u32, entering: bool) -> bool {
     ui(|u| {
@@ -1384,6 +1887,9 @@ pub enum Finished {
     Failed(FailWhy),
     /// the PDF was imported before
     Already,
+    /// a fill added `added` pages to notebook `nb`, of which `blank` could not be read, and left `trimmed` of its
+    /// links out
+    Filled { nb: String, added: u32, blank: u32, trimmed: u32 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1440,6 +1946,10 @@ pub fn finished(id: &str, ok: bool) -> Finished {
     if deferred {
         ui(|u| u.deferred.push(src.clone()));
     }
+    if mine && reason == R_READY {
+        // A fill whose pages are made: the UI puts them in (`fill_tick`), with no job and no scan meanwhile.
+        note_ready(id);
+    }
     lock_release_if_idle();
     if pending_count() == 0 {
         // pictures that waited for this folder's PDFs, or copies that waited for a notebook: the scan is due now.
@@ -1455,7 +1965,7 @@ pub fn finished(id: &str, ok: bool) -> Finished {
             }
         });
     }
-    if mine && reason == R_DEFERRED {
+    if mine && matches!(reason, R_DEFERRED | R_READY | R_FILED) {
         return Finished::Nothing;
     }
     if !ok {
@@ -1497,6 +2007,10 @@ pub enum SliceEnd {
     Sandbox,
     /// a copy of this PDF is being imported: this one ended, counting nothing, and is taken again later
     Deferred,
+    /// a fill's pages are made (`blank` of them could not be read), its work folder kept: the UI puts them in
+    Ready { blank: u32 },
+    /// a fill the UI put in place: its PDF is filed and its work folder gone
+    Filed,
 }
 
 // what attempts_note records (bgwork_template.rs)
@@ -1514,7 +2028,7 @@ fn mono_ms_now() -> u64 {
     mono_ms()
 }
 
-fn read_mem_available() -> Option<u64> {
+pub(crate) fn read_mem_available() -> Option<u64> {
     #[cfg(not(feature = "kindle"))]
     if let Some(v) = std::env::var("GRIMOIRE_PDF_BANDS").ok().and_then(|v| v.parse::<u64>().ok()) {
         // (the runner asks for band mode: report little memory)
@@ -1525,7 +2039,7 @@ fn read_mem_available() -> Option<u64> {
     Some(l.split_whitespace().nth(1)?.parse::<u64>().ok()? * 1024)
 }
 
-fn free_bytes() -> Option<u64> {
+pub(crate) fn free_bytes() -> Option<u64> {
     #[cfg(not(feature = "kindle"))]
     if let Some(v) = std::env::var("GRIMOIRE_PDF_FREE_BYTES").ok().and_then(|v| v.parse::<u64>().ok()) {
         return Some(v);
@@ -1534,6 +2048,18 @@ fn free_bytes() -> Option<u64> {
     // SAFETY: sv is written by statvfs before it is read; c is NUL-terminated.
     let mut sv: libc::statvfs = unsafe { std::mem::zeroed() };
     (unsafe { libc::statvfs(c.as_ptr(), &mut sv) } == 0).then(|| sv.f_bavail as u64 * sv.f_frsize as u64)
+}
+
+/// The storage the data root is on: its size and the bytes free (statvfs's f_blocks and f_bavail),
+/// None when the system cannot tell.
+pub(crate) fn storage_space() -> Option<(u64, u64)> {
+    let c = std::ffi::CString::new(store_root()).ok()?;
+    // SAFETY: sv is written by statvfs before it is read; c is NUL-terminated.
+    let mut sv: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut sv) } != 0 {
+        return None;
+    }
+    Some((sv.f_blocks as u64 * sv.f_frsize as u64, sv.f_bavail as u64 * sv.f_frsize as u64))
 }
 
 struct Src {
@@ -1561,8 +2087,33 @@ fn open_source(src: &str) -> Result<Src, &'static str> {
     Ok(Src { fd, size: md.st_size as u64, mtime: md.st_mtime as i64 })
 }
 
+/// Whether the name `abs` still holds the file an import opened and read: the open file is the plain file at
+/// that name (`at_its_name`: the name itself, one device and inode), and the name has the size and the time the
+/// file was opened with. A name that is gone, a link, another file, or that file changed since, is not it.
+fn source_at_its_name(source: &Src, abs: &str) -> bool {
+    use std::os::fd::AsRawFd;
+    std::ffi::CString::new(abs)
+        .ok()
+        .and_then(|c| at_its_name(source.fd.as_raw_fd(), &c))
+        .is_some_and(|st| st.st_size as u64 == source.size && st.st_mtime as i64 == source.mtime)
+}
+
+// (tests) What runs once, in this thread, as an import is about to file its PDF: its file has been read, and its
+// name is about to be looked at again. Set by `sim_before_filing`; the Kindle's build has neither.
+#[cfg(feature = "sim")]
+thread_local! {
+    static BEFORE_FILING: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// (tests) `f` runs once, in this thread, as the next import files its PDF (`finish_pdf`): after the file was
+/// read, before its name is looked at again. No test has to wait for that moment.
+#[cfg(feature = "sim")]
+pub fn sim_before_filing(f: impl FnOnce() + 'static) {
+    BEFORE_FILING.with(|b| *b.borrow_mut() = Some(Box::new(f)));
+}
+
 /// Whether the private read-only mapping the worker needs works on this storage (the S1 spike's question).
-fn can_map(fd: i32, len: u64) -> bool {
+pub(crate) fn can_map(fd: i32, len: u64) -> bool {
     if len == 0 {
         return false;
     }
@@ -1627,21 +2178,224 @@ pub fn unique_import_name(base: &str, all: &[NotebookInfo]) -> String {
     base.to_string()
 }
 
-/// A notebook already holds this book key (its `source=`, or a `source.ini` that names it).
-fn notebook_with_key(key: &str, all: &[NotebookInfo]) -> bool {
-    notebook_id_with_key(key, all).is_some()
+// ---- the file a notebook was made from ----
+
+/// The record a notebook keeps of the file it was made from: one line of its source.ini,
+/// `file=sha256:<64 hex>:<size in bytes>:<the book key, 32 hex>` (docs/FORMAT.md). It is of the file as it was
+/// read when the notebook was made.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileRecord {
+    /// the SHA-256 of the whole file, 64 lower-case hex digits
+    pub sha256: String,
+    pub size: u64,
+    /// the book key (KOReader's partial MD5), 32 lower-case hex digits
+    pub key: String,
 }
 
-/// The notebook that holds this book key, when one does (the picker's "has notes" and Open its notebook).
-pub fn notebook_id_with_key(key: &str, all: &[NotebookInfo]) -> Option<String> {
-    all.iter().find(|nb| {
-        nb.source.as_bytes() == key.as_bytes() || (nb.source.is_empty() && {
-            let mut m = AnnotateMap::default();
-            let r = annotate_map_load(nb.id.as_str(), &mut m) == 0 && m.book.as_bytes() == key.as_bytes();
-            annotate_map_free(&mut m);
-            r
-        })
-    }).map(|nb| nb.id.as_str().to_string())
+fn lower_hex(s: &str, len: usize) -> bool {
+    s.len() == len && s.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// The record's line, without its line end (130 bytes at most).
+pub fn file_record_line(r: &FileRecord) -> String {
+    format!("file=sha256:{}:{}:{}", r.sha256, r.size, r.key)
+}
+
+/// Reads a record's line strictly: `file=`, then four fields split by `:`. The first is `sha256`; the hash is 64
+/// characters of 0-9a-f; the size is decimal digits alone, 1 or more, with no leading zero, and fits 64 bits; the
+/// key is 32 characters of 0-9a-f. Anything else (another algorithm's name, upper case, a field missing or one
+/// too many, a space) is None: a notebook with such a line has no record for this version.
+pub fn file_record_parse(line: &str) -> Option<FileRecord> {
+    let mut f = line.strip_prefix("file=")?.split(':');
+    let (alg, sha, size, key) = (f.next()?, f.next()?, f.next()?, f.next()?);
+    if f.next().is_some() || alg != "sha256" || !lower_hex(sha, 64) || !lower_hex(key, 32) {
+        return None;
+    }
+    if size.is_empty() || size.starts_with('0') || !size.bytes().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(FileRecord { sha256: sha.to_string(), size: size.parse().ok()?, key: key.to_string() })
+}
+
+/// A notebook's record among the lines of its source.ini that annotate.rs keeps as they are (`AnnotateMap.extra`):
+/// the first line that reads as one. Each line is judged by itself, as bytes, so a kept line that is no UTF-8
+/// does not hide a record beside it.
+fn record_among(kept: &[u8]) -> Option<FileRecord> {
+    kept.split(|&c| c == b'\n').find_map(|line| file_record_parse(std::str::from_utf8(line).ok()?))
+}
+
+/// The gamma a notebook's gray pages were drawn at (darker lines, 2.2, issue #173): the first `gamma=` line among the
+/// lines of its source.ini that annotate.rs keeps as they are, read strictly (`Gamma::parse`: only the three known
+/// values, anything else is no gamma). No such line is no gamma: a notebook made at Off, before 2.2, or by KOReader.
+pub fn gamma_among(kept: &[u8]) -> Gamma {
+    kept.split(|&c| c == b'\n').find_map(|line| line.strip_prefix(b"gamma=")).map_or(Gamma::Off, Gamma::parse)
+}
+
+/// The line a notebook made at `g` keeps in its source.ini (with its newline), none at Off.
+pub fn gamma_line(g: Gamma) -> String {
+    if g == Gamma::Off {
+        String::new()
+    } else {
+        format!("gamma={}\n", g.name())
+    }
+}
+
+/// A notebook that holds a book key, and the record of its file when it has one that names that key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeyHolder {
+    pub id: String,
+    pub key: String,
+    pub rec: Option<FileRecord>,
+}
+
+/// The notebooks that hold a book key, in `all`'s order (store_list's: newest modified first). A notebook holds
+/// a key by the first of these that applies: its notebook.ini's `source=`; with no `source` line, its source.ini's
+/// `book=` (an older version dropped the `source` line); with neither, the key its file record names (the second
+/// notebook of a key carries it there alone). `rec` is the notebook's record when it reads and names that key.
+/// With `only`, the holders of that key alone, and a notebook whose `source` is another key is passed by without
+/// reading its source.ini; without, every notebook's source.ini is read once (the picker's session). Small reads
+/// only: no file is hashed here.
+pub fn key_holders(all: &[NotebookInfo], only: Option<&str>) -> Vec<KeyHolder> {
+    let mut out = Vec::new();
+    for nb in all {
+        let source = nb.source.as_str();
+        if only.is_some_and(|k| !source.is_empty() && source != k) {
+            continue;
+        }
+        let mut m = AnnotateMap::default();
+        let (book, rec) = if annotate_map_load(nb.id.as_str(), &mut m) == 0 {
+            (m.book.as_str().to_string(), record_among(m.extra.as_bytes()))
+        } else {
+            (String::new(), None)
+        };
+        annotate_map_free(&mut m);
+        let key = if !source.is_empty() {
+            source.to_string()
+        } else if !book.is_empty() {
+            book
+        } else if let Some(r) = &rec {
+            r.key.clone()
+        } else {
+            continue;
+        };
+        if only.is_some_and(|k| k != key) {
+            continue;
+        }
+        let rec = rec.filter(|r| r.key == key);
+        out.push(KeyHolder { id: nb.id.as_str().to_string(), key, rec });
+    }
+    out
+}
+
+/// What the notebooks that hold a PDF's key say of the PDF.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeyMatch {
+    /// no notebook is of this file: none holds the key, or every one that does has a record of another file
+    None,
+    /// this notebook's record is of this very file (its size and its hash)
+    Same(String),
+    /// this notebook holds the key and has no record: the key decides, as it did before records
+    KeyOnly(String),
+    /// this notebook's record has the file's size, and no hash was given: only the hash can tell
+    SizeOnly(String),
+}
+
+/// Pure. `holders` are the holders of one key; `size` and `sha` are the PDF's. In this order: with a hash, a
+/// holder whose record has this size and this hash is `Same`; without one, a holder whose record has this size
+/// is `SizeOnly`; else the first holder without a record is `KeyOnly`; else `None`.
+pub fn key_match(holders: &[KeyHolder], size: u64, sha: Option<&str>) -> KeyMatch {
+    let of_size = |h: &&KeyHolder| h.rec.as_ref().is_some_and(|r| r.size == size && sha.is_none_or(|s| r.sha256 == s));
+    if let Some(h) = holders.iter().find(of_size) {
+        return if sha.is_some() { KeyMatch::Same(h.id.clone()) } else { KeyMatch::SizeOnly(h.id.clone()) };
+    }
+    match holders.iter().find(|h| h.rec.is_none()) {
+        Some(h) => KeyMatch::KeyOnly(h.id.clone()),
+        None => KeyMatch::None,
+    }
+}
+
+/// What a notebook that holds a PDF's key lacks of the book (a fill's plan).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FillPlan {
+    pub nb: String,
+    /// the book's page count, as the notebook's pages name it (`page.<n>.<count>` in its source.ini)
+    pub count: u32,
+    /// the book pages no page of the notebook holds, ascending
+    pub todo: Vec<u32>,
+    /// the notebook's page size (the pages are drawn at it)
+    pub pw: i32,
+    pub ph: i32,
+    /// its pages now
+    pub have: u32,
+    /// its name and Library folder now (`nb_sig`)
+    pub sig: u64,
+    /// the gamma its gray pages were drawn at (its source.ini's `gamma=`): the pages a fill adds are drawn at it too
+    pub gamma: Gamma,
+}
+
+/// What notebook `nb` holds of its book: Ok(None) when it holds every page (nothing to fill), Ok(Some) with the
+/// pages it lacks, Err (why, for the log) when it cannot say: its files do not read, its book is not paged, or its
+/// pages name no page count or more than one (a reflowable book's, or pages of two engines' counts). The book's
+/// page count is the one its source.ini's page lines carry (the import's own, or the `pages=` of KOReader's
+/// request), kept for a page deleted since too. Small reads: notebook.ini and source.ini.
+pub fn fill_plan(nb: &str) -> Result<Option<FillPlan>, &'static str> {
+    let mut info = NotebookInfo::default();
+    if store_load_info(nb, &mut info) != 0 {
+        return Err("its notebook.ini does not read");
+    }
+    let mut m = AnnotateMap::default();
+    if annotate_map_load(nb, &mut m) != 0 {
+        return Err("its source.ini does not read");
+    }
+    if !(m.kind.is_empty() || m.kind.as_str() == "paged") {
+        return Err("its book is not a paged one");
+    }
+    let mut counts: Vec<i32> = m.e.iter().map(|e| e.pages).collect();
+    counts.sort_unstable();
+    counts.dedup();
+    let count = match counts.as_slice() {
+        [] => return Err("its pages name no page count of the book"),
+        [n] => *n,
+        _ => return Err("its pages name more than one page count of the book"),
+    };
+    if count < 1 || count as u32 > PDF_MAX_PAGES {
+        return Err("its book's page count is over the cap");
+    }
+    let todo: Vec<u32> = (1..=count).filter(|&p| annotate_map_find(&m, &info, p, count) == 0).map(|p| p as u32).collect();
+    let gamma = gamma_among(m.extra.as_bytes());
+    annotate_map_free(&mut m);
+    if todo.is_empty() {
+        return Ok(None);
+    }
+    let (mut pw, mut ph) = (0, 0);
+    store_notebook_page_size(&info, &mut pw, &mut ph);
+    Ok(Some(FillPlan { nb: nb.to_string(), count: count as u32, todo, pw, ph, have: info.npages() as u32, sig: nb_sig(&info), gamma }))
+}
+
+/// SHA-256 of the first `len` bytes of an open file, as hex: pread from 0 in pieces of 256 KiB (a heap buffer),
+/// EINTR tried again, the descriptor's offset untouched. None on a read error or when the file ends before `len`.
+/// It parses nothing, and runs in the writer (a background child), never in the UI process.
+fn file_sha256(fd: i32, len: u64) -> Option<String> {
+    const PIECE: usize = 256 << 10;
+    let mut buf: Vec<u8> = Vec::new();
+    buf.try_reserve_exact(PIECE).ok()?;
+    buf.resize(PIECE, 0);
+    let mut h = crate::sha256::Sha256::new();
+    let mut at = 0u64;
+    while at < len {
+        let want = (len - at).min(PIECE as u64) as usize;
+        // SAFETY: pread writes at most `want` bytes into buf, which holds PIECE; fd is the caller's open descriptor.
+        let n = unsafe { libc::pread(fd, buf.as_mut_ptr() as *mut libc::c_void, want, at as libc::off_t) };
+        if n < 0 && errno() == libc::EINTR {
+            continue;
+        }
+        if n <= 0 {
+            return None;
+        }
+        h.update(&buf[..n as usize]);
+        at += n as u64;
+    }
+    Some(crate::sha256::sha256_hex(&h.finish()))
 }
 
 /// Another import in flight (another work folder) holds this key.
@@ -1674,9 +2428,11 @@ pub fn encode_png(p: &BgPicture) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Stores one page: its picture (shared by content), its page file, and, for page 1, the card's thumbnail.
-/// Returns the picture's id and about what the page took on the storage (its picture when new, its page file).
-fn store_one_page(work: &str, bgdir: &str, ix: &mut BgIndex, page_no: u32, px: PagePixels, pw: i32, ph: i32) -> Result<(u32, u64), &'static str> {
+/// Stores one page: its picture (shared by content), its page file, and, for the book's page 1 (`thumb`), the
+/// card's thumbnail. Returns the picture's id and about what the page took on the storage (its picture when new,
+/// its page file).
+#[allow(clippy::too_many_arguments)]
+fn store_one_page(work: &str, bgdir: &str, ix: &mut BgIndex, page_no: u32, px: PagePixels, pw: i32, ph: i32, thumb: bool) -> Result<(u32, u64), &'static str> {
     let pic = BgPicture { px: px.px, w: px.w, h: px.h, ch: px.ch };
     let key = bgimage_key(&pic);
     let mut id = 0u32;
@@ -1694,7 +2450,7 @@ fn store_one_page(work: &str, bgdir: &str, ix: &mut BgIndex, page_no: u32, px: P
         }
         bytes += png.len() as u64;
     }
-    if page_no == 1 {
+    if thumb {
         let mut full = Canvas::default();
         let mut thumb = Canvas::default();
         if bgimage_luma(&pic, &mut full) == 0 && canvas_init(&mut thumb, pw / 3, ph / 3) == 0 {
@@ -1757,11 +2513,27 @@ fn check_made_pages(work: &str, bgdir: &str, ix: &mut BgIndex, state: &mut State
 
 /// Moves a PDF that became a notebook to import/done/<Name>-<YYYYMMDD-HHMMSS>.pdf; one that cannot move is
 /// marked done in place, with its size and mtime, so no later start imports that very file again. Only a file
-/// that lies in import/ ever moves: any other stays where it is, whatever a mark or a state says (H6).
-fn finish_pdf(abs: &str, src: &str, id: &str, size: u64, mtime: i64) {
+/// that lies in import/ ever moves: any other stays where it is, whatever a mark or a state says (H6). And only
+/// the file the import read (`source`, its open file): the name is looked at once more here, just before the
+/// move, and when it no longer holds that file (another was put there while this one was read, or it changed, or
+/// it is gone) nothing moves and nothing is marked done. What is at the name then waits for the next scan, which
+/// takes it as the file it is.
+///
+/// Returns whether the name's entry is dealt with. False (left for the next scan): the caller leaves the try
+/// counted, so a name that never holds the file read is tried PDF_TRIES times with those contents and no more.
+fn finish_pdf(abs: &str, src: &str, id: &str, source: &Src) -> bool {
+    #[cfg(feature = "sim")]
+    if let Some(f) = BEFORE_FILING.with(|b| b.borrow_mut().take()) {
+        f();
+    }
     if !in_import(src) {
         mark_drop(src);
-        return;
+        return true;
+    }
+    if !source_at_its_name(source, abs) {
+        qlog!("import: %s: its PDF's name no longer holds the file that was read; nothing moves to import/done, and the next scan takes what is at that name", id);
+        mark_drop(src);
+        return false;
     }
     let done = root_path("import/done");
     let stem = Path::new(abs).file_stem().and_then(|s| s.to_str()).unwrap_or("import").to_string();
@@ -1785,11 +2557,12 @@ fn finish_pdf(abs: &str, src: &str, id: &str, size: u64, mtime: i64) {
         crate::bgwork_template::sync_dir_public(&root_path("import"));
         // (the mark would only ever say "done" for a file that is not there)
         mark_drop(src);
-        return;
+        return true;
     }
-    let m = Mark { state: MarkState::Done, id: id.to_string(), src: src.to_string(), size, mtime, ..Default::default() };
+    let m = Mark { state: MarkState::Done, id: id.to_string(), src: src.to_string(), size: source.size, mtime: source.mtime, ..Default::default() };
     mark_write(&m);
     qlog!("import: %s: its PDF could not move to import/done; marked as imported", id);
+    true
 }
 
 fn fail(id: &str, reason: u32, arg: u32) -> SliceEnd {
@@ -1808,7 +2581,7 @@ fn need_bytes(pages: u32) -> u64 {
 fn room_for_rest(state: &State) -> bool {
     let Some(free) = free_bytes() else { return true };
     let made = state.next.saturating_sub(1) as u64;
-    let left = (state.pages + 1).saturating_sub(state.next) as u64;
+    let left = (state.total() + 1).saturating_sub(state.next) as u64;
     let per = if made > 0 { (state.bytes / made).max(PAGE_FILE_BYTES) } else { PAGE_GUESS };
     fsview_room_for(free, per.saturating_mul(left) + (2 << 20))
 }
@@ -1828,7 +2601,7 @@ fn ignore_sigpipe() {
 }
 
 #[cfg(not(feature = "kindle"))]
-fn test_hooks() -> Vec<(&'static str, u32)> {
+pub(crate) fn test_hooks() -> Vec<(&'static str, u32)> {
     let mut v = Vec::new();
     for (name, var) in [
         ("crash", "GRIMOIRE_PDF_TEST_CRASH_PAGE"),
@@ -1844,7 +2617,7 @@ fn test_hooks() -> Vec<(&'static str, u32)> {
     v
 }
 #[cfg(feature = "kindle")]
-fn test_hooks() -> Vec<(&'static str, u32)> {
+pub(crate) fn test_hooks() -> Vec<(&'static str, u32)> {
     Vec::new()
 }
 
@@ -1882,8 +2655,18 @@ fn log_worker_failure(id: &str, why: &str) {
 /// commits.
 pub fn run_slice(id: &str, src: &str) -> SliceEnd {
     ignore_sigpipe();
+    // (a path no state can keep is refused where it comes in, the scan's and the pick's; here nothing is written)
+    if !name_storable(src) {
+        qlog!("import: %s: its path holds a line break; nothing imported", id);
+        return fail(id, R_FAILED, 0);
+    }
     let mark = mark_read(src);
     let Some(abs) = StoragePath::new(src.as_bytes()).and_then(|sp| abs_of(&sp)) else { return fail(id, R_FAILED, 0) };
+    let state = state_read(id);
+    // a fill past its pages: the UI's to put in (nothing here writes the notebook), or put in (its PDF is filed now)
+    if let Some(st) = state.as_ref().filter(|s| s.stage != STAGE_MAKING) {
+        return fill_after(id, src, &abs, st);
+    }
     let source = match open_source(src) {
         Ok(s) => s,
         Err(why) => {
@@ -1893,7 +2676,7 @@ pub fn run_slice(id: &str, src: &str) -> SliceEnd {
             return fail(id, R_FAILED, 0);
         }
     };
-    match state_read(id) {
+    match state {
         None => first_slice(id, src, &abs, &source, mark.as_ref()),
         Some(state) => later_slice(id, src, &abs, &source, state),
     }
@@ -1906,6 +2689,8 @@ fn first_slice(id: &str, src: &str, abs: &str, source: &Src, mark: Option<&Mark>
     let bgdir = format!("{work}/bg");
     let stable_hash = fnv(fnv(FNV0, &source.size.to_ne_bytes()), &source.mtime.to_ne_bytes());
     let (pick, name, folder) = mark.map_or((false, String::new(), String::new()), |m| (m.pick, m.name.clone(), m.folder.clone()));
+    // (darker lines: the level the UI queued the file at; a file whose mark is lost, the setting as this process has it)
+    let gamma = mark.map_or_else(darker, |m| m.gamma);
     if is_dir_path(&work) {
         remove_work_folder(id); // (a folder without a readable state is no one's)
     }
@@ -1936,15 +2721,51 @@ fn first_slice(id: &str, src: &str, abs: &str, source: &Src, mark: Option<&Mark>
         qlog!("import: %s: a PDF over %d MB; nothing imported%s", id, (cap >> 20) as i32, if mapped { "" } else { " (the device refuses the private mapping)" });
         return refuse(R_TOO_BIG, (cap >> 20) as u32);
     }
-    let key = partial_md5_fd(std::os::fd::AsRawFd::as_raw_fd(&source.fd));
+    let Some(key) = partial_md5_fd(std::os::fd::AsRawFd::as_raw_fd(&source.fd)) else {
+        // (a read that fails is no key: one taken from the samples before it would be another file's)
+        qlog!("import: %s: its book key could not be read (the storage failed a read); nothing imported", id);
+        mark_drop(src);
+        return fail(id, R_FAILED, 0);
+    };
     let mut all = Vec::new();
     store_list(&mut all);
-    if notebook_with_key(&key, &all) {
-        qlog!("import: %s: this PDF was imported before; nothing made", id);
-        finish_pdf(abs, src, id, source.size, source.mtime); // (only a file of import/ moves)
-        note_try(src, stable_hash, A_DONE);
-        set_result(id, R_ALREADY, 0, 0);
-        return SliceEnd::Already;
+    // "Imported before" is said of this very file. The notebooks that hold its key decide: one whose record has
+    // this file's size is asked again with the whole file's hash, one without a record goes by the key, and when
+    // every holder's record is of another file this one is imported (docs/FORMAT.md, the book key).
+    let holders = key_holders(&all, Some(&key));
+    let mut held = key_match(&holders, source.size, None);
+    if matches!(held, KeyMatch::SizeOnly(_)) {
+        let t0 = mono_ms_now();
+        let sha = file_sha256(std::os::fd::AsRawFd::as_raw_fd(&source.fd), source.size);
+        match &sha {
+            Some(_) => qlog!("import: %s: its file read to compare with a notebook's record: %d KB in %d ms", id, (source.size >> 10) as i32, (mono_ms_now() - t0) as i32),
+            None => qlog!("import: %s: its file could not be read whole to compare with a notebook's record", id),
+        }
+        // (a file that cannot be read whole is not the same file: asked with a hash that equals no record)
+        held = key_match(&holders, source.size, Some(sha.as_deref().unwrap_or("")));
+    }
+    // The notebook that is this PDF's: one that holds every page of the book says "already"; one that lacks some is
+    // filled with them (2.2), once the probe has said the PDF has the page count the notebook's pages name. A
+    // notebook that cannot say what it lacks is "already", as before fills.
+    let mut plan: Option<FillPlan> = None;
+    if let KeyMatch::Same(nb) | KeyMatch::KeyOnly(nb) = &held {
+        match fill_plan(nb) {
+            Ok(Some(p)) => plan = Some(p),
+            Ok(None) => {}
+            Err(why) => qlog!("import: %s: its notebook %s cannot be filled (%s)", id, nb, why),
+        }
+        if plan.is_none() {
+            qlog!("import: %s: this PDF was imported before; nothing made", id);
+            // (only a file of import/ moves, and only while its name still holds the file read here)
+            if finish_pdf(abs, src, id, source) {
+                note_try(src, stable_hash, A_DONE);
+            }
+            // (which notebook: for KOReader's hand-over by path, which opens it)
+            set_result_in(id, R_ALREADY, 0, 0, nb);
+            return SliceEnd::Already;
+        }
+    } else if !holders.is_empty() {
+        qlog!("import: %s: a notebook holds this PDF's key but was made from another file; this one is imported", id);
     }
     if in_flight_with_key(&key, id) {
         // A copy of this PDF is being imported. Waiting for its notebook here would hold this job (and, in the
@@ -1952,7 +2773,7 @@ fn first_slice(id: &str, src: &str, abs: &str, source: &Src, mark: Option<&Mark>
         // nothing, and is taken again once the imports are done, when it is "already imported" (H9).
         note_try(src, stable_hash, A_UNTRY);
         if pick {
-            mark_write(&Mark { state: MarkState::Waiting, src: src.to_string(), pick, name, folder, at: wall_time(), ..Default::default() });
+            mark_write(&Mark { state: MarkState::Waiting, src: src.to_string(), pick, name, folder, at: wall_time(), gamma, ..Default::default() });
         } else {
             mark_drop(src);
         }
@@ -1970,7 +2791,7 @@ fn first_slice(id: &str, src: &str, abs: &str, source: &Src, mark: Option<&Mark>
         qlog!("import: %s: notebooks/ cannot be written (%s)", id, &strerror(errno()));
         return no_room();
     }
-    let mut st = State { src: src.to_string(), size: source.size, mtime: source.mtime, key, pages: 0, next: 1, pick, name, folder, ..Default::default() };
+    let mut st = State { src: src.to_string(), size: source.size, mtime: source.mtime, key, pages: 0, next: 1, pick, name, folder, gamma, ..Default::default() };
     let limits = Limits { as_bytes: worker_as_bytes(source.size, false), cpu_secs: s1::SLICE_CPU_SECS, mapped, file_len: source.size };
     let (spw, sph) = {
         let (mut w, mut h) = (0, 0);
@@ -1983,9 +2804,19 @@ fn first_slice(id: &str, src: &str, abs: &str, source: &Src, mark: Option<&Mark>
     let pages = match start_session(source, &limits, id) {
         Ok(mut s) => {
             let r = s.probe();
+            // A fill needs the PDF to have the page count the notebook's pages name: another count (a broken PDF
+            // whose pages two engines count differently, or another file of the key) is a notebook of its own,
+            // never a fill. Decided here, before the links are read at the size the pages will be drawn at.
+            if let (Ok(n), Some(p)) = (&r, &plan) {
+                if *n != p.count {
+                    qlog!("import: %s: the PDF has %d page(s) and the book of notebook %s %d: it becomes a notebook of its own", id, *n as i32, &p.nb, p.count as i32);
+                    plan = None;
+                }
+            }
+            let (lw, lh) = plan.as_ref().map_or((spw, sph), |p| (p.pw, p.ph));
             // the links and names, in the same worker: a failure costs the notebook them, not its pages
             if matches!(r, Ok(n) if n <= PDF_MAX_PAGES) {
-                match s.links(spw, sph) {
+                match s.links(lw, lh) {
                     Ok(c) => found = Some(c),
                     Err(why) => qlog!("import: %s: the links and names could not be read (%s); the notebook has none", id, why),
                 }
@@ -2031,30 +2862,57 @@ fn first_slice(id: &str, src: &str, abs: &str, source: &Src, mark: Option<&Mark>
         remove_work_folder(id);
         return refuse(R_TOO_LONG, PDF_MAX_PAGES);
     }
+    if let Some(p) = &plan {
+        // (a notebook holds 2000 pages: a fill past them adds none, as KOReader's route does)
+        if p.have as usize + p.todo.len() > STORE_MAX_PAGES {
+            qlog!("import: %s: %d page(s) to add to the %d of notebook %s, more than a notebook holds; nothing added", id, p.todo.len() as i32, p.have as i32, &p.nb);
+            remove_work_folder(id);
+            return refuse(R_TOO_LONG, PDF_MAX_PAGES);
+        }
+    }
+    let making = plan.as_ref().map_or(pages, |p| p.todo.len() as u32);
     if let Some(free) = free_bytes() {
-        if !fsview_room_for(free, need_bytes(pages)) {
-            qlog!("import: %s: not enough room for %d pages; nothing imported", id, pages as i32);
+        if !fsview_room_for(free, need_bytes(making)) {
+            qlog!("import: %s: not enough room for %d pages; nothing imported", id, making as i32);
             return no_room();
         }
     }
     if let Some(c) = &found {
         let w1 = write_file_atomic(&format!("{work}/links.part"), c.links_text().as_bytes());
         let w2 = write_file_atomic(&format!("{work}/names.part"), c.names_text().as_bytes());
-        if w1 != 0 || w2 != 0 {
+        let wt = c.webs_text();
+        let w3 = if wt.is_empty() { 0 } else { write_file_atomic(&format!("{work}/{WEBS_PART}"), wt.as_bytes()) };
+        if w1 != 0 || w2 != 0 || w3 != 0 {
             qlog!("import: %s: the links and names could not be kept (%s); the notebook has none", id, &strerror(errno()));
             let _ = std::fs::remove_file(format!("{work}/links.part"));
             let _ = std::fs::remove_file(format!("{work}/names.part"));
+            let _ = std::fs::remove_file(format!("{work}/{WEBS_PART}"));
         }
     }
     st.pages = pages;
     st.cpu_ms = children_cpu_ms().saturating_sub(cpu0);
+    if let Some(p) = plan {
+        st.fill = p.nb;
+        st.todo = p.todo;
+        st.page_w = p.pw;
+        st.page_h = p.ph;
+        st.sig = p.sig;
+        // (a fill draws the pages it adds at its notebook's own gamma, whatever the file was queued at)
+        st.gamma = p.gamma;
+    }
     if !state_write(id, &st) {
         qlog!("import: %s: its state could not be written", id);
         return no_room();
     }
     qlog!("import: %s: %d page(s), the PDF is %d KB", id, pages as i32, (source.size >> 10) as i32);
-    set_progress(id, 0, pages);
-    write_progress_mark(src, mark, &st, id, 0, pages, true);
+    if !st.fill.is_empty() {
+        qlog!("import: %s: notebook %s lacks %d of the book's %d page(s): they are added to it", id, &st.fill, st.todo.len() as i32, pages as i32);
+    }
+    if st.gamma != Gamma::Off || st.gamma != gamma {
+        qlog!("import: %s: darker lines: its gray pages are drawn at gamma %s (%s)", id, st.gamma.name(), if st.fill.is_empty() { "the import's" } else { "its notebook's" });
+    }
+    set_progress(id, 0, st.total());
+    write_progress_mark(src, mark, &st, id, 0, st.total(), true);
     SliceEnd::More
 }
 
@@ -2091,7 +2949,7 @@ fn later_slice(id: &str, src: &str, abs: &str, source: &Src, mut state: State) -
     }
     // what pages took so far: the pages left must fit above the floor (M2)
     if !room_for_rest(&state) {
-        qlog!("import: %s: not enough room for the %d page(s) left; nothing imported", id, (state.pages + 1 - state.next) as i32);
+        qlog!("import: %s: not enough room for the %d page(s) left; nothing imported", id, (state.total() + 1 - state.next) as i32);
         note_try(src, stable_hash, A_UNTRY);
         remove_work_folder(id);
         mark_drop(src);
@@ -2117,9 +2975,12 @@ fn later_slice(id: &str, src: &str, abs: &str, source: &Src, mut state: State) -
         mark_drop(src);
         return fail(id, R_STORAGE, 0);
     }
-    set_progress(id, state.next.saturating_sub(1), state.pages);
+    set_progress(id, state.next.saturating_sub(1), state.total());
     let cpu_start = children_cpu_ms();
-    let (pw, ph) = {
+    // (a fill draws at its notebook's page size, kept in its state; an import at the device's)
+    let (pw, ph) = if state.page_w > 0 && state.page_h > 0 {
+        (state.page_w, state.page_h)
+    } else {
         let (mut w, mut h) = (0, 0);
         store_page_size(&mut w, &mut h);
         (w, h)
@@ -2137,8 +2998,10 @@ fn later_slice(id: &str, src: &str, abs: &str, source: &Src, mut state: State) -
     let mut woke_again: Vec<u32> = Vec::new();
     let max_pages = slice_pages();
     let mut end: Option<SliceEnd> = None;
-    while state.next <= state.pages && made < max_pages && mono_ms_now() - t0 < s1::SLICE_WALL_MS as u64 {
-        let page = state.next;
+    while state.next <= state.total() && made < max_pages && mono_ms_now() - t0 < s1::SLICE_WALL_MS as u64 {
+        // (the page made, from 1, and the book page it is: the same for an import, a missing page for a fill)
+        let n = state.next;
+        let page = state.book_page(n);
         let px = loop {
             if state.blank.contains(&page) || state.strikes_of(page) >= 2 {
                 if !state.blank.contains(&page) {
@@ -2199,7 +3062,11 @@ fn later_slice(id: &str, src: &str, abs: &str, source: &Src, mut state: State) -
             }
             let outcome = sess.as_mut().map(|s| s.render(page, pw, ph, bands));
             let why = match outcome {
-                Some(PageOutcome::Page(p)) => break p,
+                Some(PageOutcome::Page(mut p)) => {
+                    // darker lines: a gray page through the import's gamma; a colour page as it came (issue #173)
+                    darken(&mut p, state.gamma);
+                    break p;
+                }
                 Some(PageOutcome::Died(Death::TimeoutAfterWake)) if !woke_again.contains(&page) => {
                     sess = None;
                     woke_again.push(page);
@@ -2233,7 +3100,9 @@ fn later_slice(id: &str, src: &str, abs: &str, source: &Src, mut state: State) -
         if end.is_some() {
             break;
         }
-        match store_one_page(&work, &bgdir, &mut ix, page, px, pw, ph) {
+        // (the page file is named by the count made, which check_made_pages reads; the card's thumbnail is the
+        // book's first page's)
+        match store_one_page(&work, &bgdir, &mut ix, n, px, pw, ph, page == 1) {
             Ok((pic, bytes)) => {
                 state.pics.push(pic);
                 state.bytes += bytes;
@@ -2247,9 +3116,9 @@ fn later_slice(id: &str, src: &str, abs: &str, source: &Src, mut state: State) -
         }
         state.next += 1;
         made += 1;
-        progress().page.store(page, Ordering::Relaxed);
-        if made % FLOOR_EVERY == 0 && state.next <= state.pages && !room_for_rest(&state) {
-            qlog!("import: %s: not enough room for the %d page(s) left; nothing imported", id, (state.pages + 1 - state.next) as i32);
+        progress().page.store(n, Ordering::Relaxed);
+        if made % FLOOR_EVERY == 0 && state.next <= state.total() && !room_for_rest(&state) {
+            qlog!("import: %s: not enough room for the %d page(s) left; nothing imported", id, (state.total() + 1 - state.next) as i32);
             end = Some(fail(id, R_STORAGE, 0));
             break;
         }
@@ -2282,7 +3151,7 @@ fn later_slice(id: &str, src: &str, abs: &str, source: &Src, mut state: State) -
         bgindex_free(&mut ix);
         return e;
     }
-    let cap_ms = job_cpu_cap_ms(state.pages);
+    let cap_ms = job_cpu_cap_ms(state.total());
     if state.cpu_ms > cap_ms {
         // Over the job's CPU budget (s1's, a placeholder until the Scribe is measured): it stops, keeping every page
         // made, and a later scan goes on with a budget of its own; the stops end it (M10).
@@ -2313,21 +3182,24 @@ fn later_slice(id: &str, src: &str, abs: &str, source: &Src, mut state: State) -
             id,
             (state.next - made as u32) as i32,
             state.next as i32 - 1,
-            state.pages as i32,
+            state.total() as i32,
             (mono_ms_now() - t0) as i32,
             mem.map_or(-1, |m| (m >> 20) as i32),
             bands as i32
         );
     }
-    let last = state.next > state.pages;
-    write_progress_mark(src, None, &state, id, state.next.saturating_sub(1), state.pages, last);
+    let last = state.next > state.total();
+    write_progress_mark(src, None, &state, id, state.next.saturating_sub(1), state.total(), last);
     if !last {
         return SliceEnd::More;
+    }
+    if !state.fill.is_empty() {
+        return fill_made(id, src, source, &mut state);
     }
     commit(id, src, abs, &state, source, pw, ph)
 }
 
-fn death_text(d: &Death) -> String {
+pub(crate) fn death_text(d: &Death) -> String {
     match d {
         Death::Timeout => "stalled".to_string(),
         Death::TimeoutAfterWake => "stalled right after a wake".to_string(),
@@ -2366,6 +3238,7 @@ fn write_progress_mark(src: &str, prior: Option<&Mark>, state: &State, id: &str,
         page,
         pages,
         at: now,
+        gamma: state.gamma,
         ..Default::default()
     };
     mark_write(&m);
@@ -2373,18 +3246,22 @@ fn write_progress_mark(src: &str, prior: Option<&Mark>, state: &State, id: &str,
 
 /// Folds the first slice's links and names (the work folder's links.part and names.part) into the notebook being
 /// made: doclinks.ini (every record validated and put through pdflinks.rs, the water level trimming the densest
-/// pages first) and nav.ini (the outline's names, for the pages that have none: all of them, here). Both are
-/// optional: a part that is missing or does not read, or a file that cannot be written, leaves the notebook
-/// without them and says so in the log. Returns whether doclinks.ini was written, and how many links were left out
-/// for room (the toast says so).
+/// pages first), weblinks.ini (2.2: the web links, through weblinks.rs the same way; written only when there is
+/// one) and nav.ini (the outline's names, for the pages that have none: all of them, here). All are optional: a
+/// part that is missing or does not read, or a file that cannot be written, leaves the notebook without them and
+/// says so in the log. Returns whether doclinks.ini was written, and how many links were left out for room (the
+/// toast says so).
 fn fold_links(id: &str, work: &str, nb: &NotebookInfo, pw: i32, ph: i32) -> (bool, u32) {
-    let read = |n: &str| std::fs::read(format!("{work}/{n}")).ok().filter(|b| b.len() <= 2 * RECORDS_MAX_BYTES);
-    let (Some(lt), Some(nt)) = (read("links.part"), read("names.part")) else { return (false, 0) };
+    // (a plain file at the name, of at most what the first slice can write: a link there is not followed, a FIFO
+    // never waited on, and a longer file is not read)
+    let read = |n: &str, max: usize| read_file_max(&format!("{work}/{n}"), max);
+    let (Some(lt), Some(nt)) = (read("links.part", LINKS_PART_MAX), read("names.part", NAMES_PART_MAX)) else { return (false, 0) };
     let pages = nb.npages().max(0) as u32;
-    let Some(c) = Collected::from_parts(&lt, &nt, pages) else {
+    let Some(mut c) = Collected::from_parts(&lt, &nt, pages) else {
         qlog!("import: %s: its links and names do not read; the notebook has none", id);
         return (false, 0);
     };
+    read_webs(id, work, &mut c, pages);
     // the names
     let mut nav = Nav::default();
     nav_init(&mut nav);
@@ -2407,6 +3284,9 @@ fn fold_links(id: &str, work: &str, nb: &NotebookInfo, pw: i32, ph: i32) -> (boo
         qlog!("import: %s: its page names could not be written; left out", id);
         named = 0;
     }
+    // the web links (2.2): a file of their own, which a version before 2.2 never reads
+    let mut wl = WebLinks::default();
+    let web_left = put_weblinks(id, work, &mut wl, nb, pw, ph, &c, &|bp| (bp as usize).checked_sub(1).and_then(|i| nb.page_ids.get(i)).copied().unwrap_or(0), &|_| true, false);
     // the links
     let recs: Vec<DocRecord> = c
         .links
@@ -2429,7 +3309,7 @@ fn fold_links(id: &str, work: &str, nb: &NotebookInfo, pw: i32, ph: i32) -> (boo
     let kept = dl.links.len();
     if doclinks_save_in(work, &mut dl, nb) != 0 {
         qlog!("import: %s: its document links could not be written; left out", id);
-        return (false, 0);
+        return (false, web_left);
     }
     qlog!(
         "import: %s: %d document link(s) and %d page name(s); left out: %d web, %d other action(s), %d without a place to go, %d refused, %d for room",
@@ -2442,16 +3322,85 @@ fn fold_links(id: &str, work: &str, nb: &NotebookInfo, pw: i32, ph: i32) -> (boo
         st.invalid as i32,
         (water + st.full + c.left.capped as usize) as i32
     );
-    (true, (water + st.full + c.left.capped as usize) as u32)
+    (true, (water + st.full + c.left.capped as usize) as u32 + web_left)
+}
+
+/// The web links of a walk (2.2) into wl and weblinks.ini in the folder `dir` (a new notebook's work folder, or a
+/// filled notebook's own): each W record mapped to its page id (`pid_of`, 0 for none) and kept when `take` says
+/// yes to that page, put through weblinks_fill (validated again, one of each, a page's 256), then the water level
+/// (a fill's: only the links it adds go). Written only when there is a link, or a file there already. Returns how
+/// many were left out for room (the worker's caps among them: U), or all of them when the file cannot be written;
+/// logs what it did.
+#[allow(clippy::too_many_arguments)]
+fn put_weblinks(id: &str, dir: &str, wl: &mut WebLinks, nb: &NotebookInfo, pw: i32, ph: i32, c: &Collected, pid_of: &dyn Fn(u32) -> u32, take: &dyn Fn(u32) -> bool, fill: bool) -> u32 {
+    let mut recs: Vec<WebRecord> = Vec::new();
+    for l in &c.webs {
+        let pid = pid_of(l.src);
+        if pid == 0 || !take(pid) {
+            continue;
+        }
+        if recs.try_reserve(1).is_err() {
+            return c.webs.len() as u32;
+        }
+        recs.push(WebRecord { src: pid, rect: Rect { x: l.x, y: l.y, w: l.w, h: l.h }, index: l.index, address: l.address.clone() });
+    }
+    let (capped, off, long) = (c.web_left.capped, c.web_left.off as i32, c.web_left.long as i32);
+    if recs.is_empty() {
+        if c.web_left != WebLeft::default() {
+            qlog!(
+                "import: %s: %d web link(s) (0 added, 0 already there, 0 refused, %d left out for room); left out: %d off the page, %d over 200 bytes",
+                id,
+                wl.links.len() as i32,
+                capped as i32,
+                off,
+                long
+            );
+        }
+        return capped;
+    }
+    if !wl.writable {
+        qlog!("import: %s: its weblinks.ini does not read; its web links are left as they are", id);
+        return recs.len() as u32 + capped;
+    }
+    let before: std::collections::HashSet<(u32, u32)> = wl.links.iter().map(|l| (l.pid, l.seed)).collect();
+    let have = |p: u32| nb.page_ids.contains(&p);
+    let st = weblinks_fill(wl, &recs, pw, ph, &have);
+    let water = weblinks_water(wl, &|l| fill && before.contains(&(l.pid, l.seed)));
+    if weblinks_save_in(dir, wl, nb) != 0 {
+        qlog!("import: %s: its web links could not be written; left out", id);
+        return recs.len() as u32 + capped;
+    }
+    let left = (st.full + water) as u32 + capped;
+    qlog!(
+        "import: %s: %d web link(s) (%d added, %d already there, %d refused, %d left out for room); left out: %d off the page, %d over 200 bytes",
+        id,
+        wl.links.len() as i32,
+        st.added as i32,
+        st.same as i32,
+        st.invalid as i32,
+        left as i32,
+        off,
+        long
+    );
+    left
 }
 
 fn commit(id: &str, src: &str, abs: &str, state: &State, source: &Src, pw: i32, ph: i32) -> SliceEnd {
     let work = work_dir(id);
     let bgdir = format!("{work}/bg");
-    // the file must be the one the slices read
+    // the file must be the one the slices read: its name still opens to the first slice's size and time, and this
+    // slice's own open file has the first slice's key. The record made below pairs that key with the hash of
+    // this open file, so both are of one file: a file that took the name between two slices, with the same size
+    // and time and another key, ends the import here.
     let again = open_source(src);
-    if again.as_ref().map_or(true, |s| s.size != state.size || s.mtime != state.mtime) || source.size != state.size {
-        qlog!("import: %s: the PDF changed under the import; nothing imported", id);
+    let still = again.as_ref().is_ok_and(|s| s.size == state.size && s.mtime == state.mtime) && source.size == state.size;
+    let key = if still { partial_md5_fd(std::os::fd::AsRawFd::as_raw_fd(&source.fd)) } else { None };
+    if !still || key.as_deref() != Some(state.key.as_str()) {
+        if still && key.is_none() {
+            qlog!("import: %s: its book key could not be read (the storage failed a read); nothing imported", id);
+        } else {
+            qlog!("import: %s: the PDF changed under the import; nothing imported", id);
+        }
         remove_work_folder(id);
         mark_drop(src);
         return fail(id, R_FAILED, 0);
@@ -2473,8 +3422,10 @@ fn commit(id: &str, src: &str, abs: &str, state: &State, source: &Src, pw: i32, 
         // made by a run cut off before its file moved
         qlog!("import: %s: made by an earlier run; its PDF moves now", id);
         remove_work_folder(id);
-        finish_pdf(abs, src, id, source.size, source.mtime); // (only a file of import/ moves)
-        note_try(src, 0, A_DONE);
+        // (only a file of import/ moves, and only while its name still holds the file this slice opened)
+        if finish_pdf(abs, src, id, source) {
+            note_try(src, 0, A_DONE);
+        }
         return SliceEnd::Done { pages: state.pages, blank: state.blank.len() as u32 };
     }
     let n = state.pages as usize;
@@ -2482,6 +3433,27 @@ fn commit(id: &str, src: &str, abs: &str, state: &State, source: &Src, pw: i32, 
     let papers: Vec<PaperKind> = state.pics.iter().map(|&p| paper_image(PAPER_ROLE_DOCUMENT, p)).collect();
     let mut all = Vec::new();
     store_list(&mut all);
+    // The record of its file: the whole file's SHA-256, read once here, in the last slice. One notebook holds a
+    // book's bare key (`source=` in notebook.ini, `book=` in source.ini), the first: KOReader's route and every
+    // earlier build go by those two lines alone. A notebook made while another holds the key carries neither,
+    // and the key in its record only.
+    let shared = !key_holders(&all, Some(&state.key)).is_empty();
+    let t0 = mono_ms_now();
+    let record = file_sha256(std::os::fd::AsRawFd::as_raw_fd(&source.fd), source.size)
+        .map(|sha| file_record_line(&FileRecord { sha256: sha, size: source.size, key: state.key.clone() }))
+        // (a line this version would not read back is not written)
+        .filter(|line| file_record_parse(line).is_some());
+    match (&record, shared) {
+        (Some(_), _) => qlog!("import: %s: its file read for its record: %d KB in %d ms", id, (source.size >> 10) as i32, (mono_ms_now() - t0) as i32),
+        (None, false) => qlog!("import: %s: its file could not be read whole; the notebook keeps no file record", id),
+        (None, true) => {
+            // (without a record this notebook could not be told from the one that holds the key)
+            qlog!("import: %s: its file could not be read whole and another notebook holds its key; nothing imported", id);
+            remove_work_folder(id);
+            mark_drop(src);
+            return fail(id, R_FAILED, 0);
+        }
+    }
     let mut nb = NotebookInfo::default();
     nb.id.set(id);
     nb.name.set_cut(&import_name(&state.name, src, &all));
@@ -2497,13 +3469,25 @@ fn commit(id: &str, src: &str, abs: &str, state: &State, source: &Src, pw: i32, 
     nb.next_page_id = state.pages + 1;
     nb.page_w = pw;
     nb.page_h = ph;
-    nb.source.set(&state.key);
+    if !shared {
+        nb.source.set(&state.key);
+    }
     // the links and names the first slice read (links.part, names.part): doclinks.ini and nav.ini, before
     // notebook.ini is written
     let (links_written, trimmed) = fold_links(id, &work, &nb, pw, ph);
     let mut m = AnnotateMap::default();
-    m.book.set(&state.key);
+    if !shared {
+        m.book.set(&state.key);
+    }
     m.kind.set("paged");
+    // (annotate.rs writes the lines it does not know back after the page lines, and so does every version since
+    // 1.1: the record rides there)
+    // (and the gamma its gray pages were drawn at, a line only when it is not Off: a fill reads it, every other version
+    // writes it back as it was)
+    let extra = record.as_ref().map_or(String::new(), |line| format!("{line}\n")) + &gamma_line(state.gamma);
+    if !extra.is_empty() {
+        m.extra.set(&extra);
+    }
     // (the book's links are in doclinks.ini already: KOReader's Open this book does not ask for them again,
     // which could add each a second time where the two mappers differ: M22)
     m.links = links_written;
@@ -2518,6 +3502,7 @@ fn commit(id: &str, src: &str, abs: &str, state: &State, source: &Src, pw: i32, 
             let _ = std::fs::remove_file(state_path(id)); // (a finished notebook carries no import state)
             let _ = std::fs::remove_file(format!("{work}/links.part"));
             let _ = std::fs::remove_file(format!("{work}/names.part"));
+            let _ = std::fs::remove_file(format!("{work}/{WEBS_PART}"));
             store_write_info_in(&work, &nb) == 0 // notebook.ini last: a folder holding it is whole
         };
     if !wrote {
@@ -2537,11 +3522,674 @@ fn commit(id: &str, src: &str, abs: &str, state: &State, source: &Src, pw: i32, 
     crate::bgwork_template::sync_dir_public(&root_path("notebooks"));
     let blank = state.blank.len() as u32;
     qlog!("import: notebook %s made of %d page(s), %d picture(s), %d blank", id, n as i32, state.pics.iter().collect::<std::collections::HashSet<_>>().len() as i32, blank as i32);
-    // a file of import/ goes to import/done, whoever chose it (M5); any other stays where it is (H6)
-    finish_pdf(abs, src, id, source.size, source.mtime);
-    note_try(src, 0, A_DONE);
+    // a file of import/ goes to import/done, whoever chose it (M5); any other stays where it is (H6), and so does
+    // whatever took this file's name while it was read (the next scan takes that as the file it is)
+    if finish_pdf(abs, src, id, source) {
+        note_try(src, 0, A_DONE);
+    }
     set_result(id, if blank > 0 { R_DONE } else { R_NONE }, trimmed, blank);
     SliceEnd::Done { pages: state.pages, blank }
+}
+
+// ---- a fill: the writer's last slices ----
+
+/// Whether an open PDF has the key the first slice read (its book key, KOReader's partial MD5). A key that does
+/// not read (the storage failed a read) is no match.
+fn has_key(source: &Src, key: &str) -> bool {
+    partial_md5_fd(std::os::fd::AsRawFd::as_raw_fd(&source.fd)).as_deref() == Some(key)
+}
+
+/// A fill's last slice: its pages are made. The file must be the one the slices read (its name still opens to the
+/// first slice's size and time, and this open file has its key), and one of the pages it lacks at least must have
+/// been read. Then the state says the pages are made, and the UI puts them in (`fill_tick`). The writer never writes
+/// the notebook: not here, nor in a slice cut off, nor in the child that finishes the queue after Grimoire closed.
+fn fill_made(id: &str, src: &str, source: &Src, state: &mut State) -> SliceEnd {
+    let again = open_source(src);
+    let still = again.as_ref().is_ok_and(|s| s.size == state.size && s.mtime == state.mtime) && source.size == state.size;
+    let key = if still { partial_md5_fd(std::os::fd::AsRawFd::as_raw_fd(&source.fd)) } else { None };
+    let why = if still && key.is_none() {
+        // (no key is no match: nothing is added, and the PDF stays where it is, as after any fill that fails)
+        "its book key could not be read (the storage failed a read)"
+    } else if key.as_deref() != Some(state.key.as_str()) {
+        "the PDF changed under the import"
+    } else if state.blank.len() >= state.todo.len() {
+        "no page of those it lacks could be read"
+    } else {
+        state.stage = STAGE_READY;
+        if state_write(id, state) {
+            let blank = state.blank.len() as u32;
+            set_result(id, R_READY, 0, blank);
+            return SliceEnd::Ready { blank };
+        }
+        "its state could not be written"
+    };
+    qlog!("import: %s: %s; nothing added to notebook %s", id, why, &state.fill);
+    remove_work_folder(id);
+    mark_drop(src);
+    fail(id, R_FAILED, 0)
+}
+
+/// A slice of a fill past its pages. Made, or being put in: the UI's (nothing here writes the notebook), so the job
+/// ends at once. Put in: its PDF goes to import/done when its name still holds the file the pages were made of (any
+/// other file there is left for the next scan, as the file it is), and the work folder goes.
+fn fill_after(id: &str, src: &str, abs: &str, st: &State) -> SliceEnd {
+    if st.stage != STAGE_DONE {
+        let blank = st.blank.len() as u32;
+        set_result(id, R_READY, 0, blank);
+        return SliceEnd::Ready { blank };
+    }
+    match open_source(src) {
+        Ok(s) if s.size == st.size && s.mtime == st.mtime && has_key(&s, &st.key) => {
+            if finish_pdf(abs, src, id, &s) {
+                note_try(src, 0, A_DONE);
+            }
+        }
+        _ => mark_drop(src),
+    }
+    remove_work_folder(id);
+    set_result(id, R_FILED, 0, 0);
+    SliceEnd::Filed
+}
+
+// ---- a fill's commit, in the UI process ----
+
+// (tests) A fill's commit stops after step `n` as a process killed there would: nothing tidied, the work folder and
+// the notebook as the steps before left them, and nothing of it kept in this process. Set by `sim_fill_cut`; the
+// Kindle's build has neither.
+#[cfg(feature = "sim")]
+thread_local! {
+    static FILL_CUT: Cell<u32> = const { Cell::new(0) };
+}
+
+/// (tests) The next fill's commit in this thread stops after step `n` (1 to 7), as a process killed there.
+#[cfg(feature = "sim")]
+pub fn sim_fill_cut(n: u32) {
+    FILL_CUT.with(|c| c.set(n));
+}
+
+fn cut_after(step: u32) -> bool {
+    #[cfg(feature = "sim")]
+    if FILL_CUT.with(|c| c.get()) == step {
+        FILL_CUT.with(|c| c.set(0));
+        qlog!("import: (test) a fill's commit cut off after its step %d", step as i32);
+        return true;
+    }
+    let _ = step;
+    false
+}
+
+/// The links and names the first slice read, back from the work folder (None when there are none or they do not
+/// read, which the log says). Read up to their cap, never through a link.
+fn read_parts(id: &str, work: &str, pages: u32) -> Option<Collected> {
+    let read = |n: &str| read_file_max(&format!("{work}/{n}"), 2 * RECORDS_MAX_BYTES);
+    let (lt, nt) = (read("links.part")?, read("names.part")?);
+    let mut c = Collected::from_parts(&lt, &nt, pages);
+    match c.as_mut() {
+        Some(c) => read_webs(id, work, c, pages),
+        None => qlog!("import: %s: its links and names do not read; none are added", id),
+    }
+    c
+}
+
+/// The work folder's webs.part (2.2) read into c: nothing when there is none (a PDF without web links); one that
+/// does not read leaves c without web links, its links and names kept, and the log says so.
+fn read_webs(id: &str, work: &str, c: &mut Collected, pages: u32) {
+    let path = format!("{work}/{WEBS_PART}");
+    let ok = match read_file_max(&path, WEBS_PART_MAX) {
+        Some(t) => c.take_webs(&t, pages),
+        None => std::fs::symlink_metadata(&path).is_err(),
+    };
+    if !ok {
+        c.webs = Vec::new();
+        qlog!("import: %s: its web links do not read; none are kept", id);
+    }
+}
+
+/// A fill's links: the PDF's links that start or end on a page this fill added (`added`), mapped through the notebook
+/// as it is now (`nb` and `m`), put through the same fill as any source's with the notebook's own links counted: a
+/// link whose target and area (within 2 px) a link of the page has already is that link, the user's links' seeds are
+/// never taken, and the water level trims only links this fill adds. A link between two pages the notebook had is
+/// never added (the app has no way to remove a document link): deleting the pages a fill added takes every link it
+/// wrote. Idempotent, so a commit taken up again adds nothing twice. Returns how many links were left out (for room,
+/// or all of them when doclinks.ini cannot be written).
+#[allow(clippy::too_many_arguments)]
+fn fill_links(id: &str, nbid: &str, dir: &str, nb: &NotebookInfo, m: &AnnotateMap, pages: u32, pw: i32, ph: i32, c: &Collected, added: &[u32]) -> u32 {
+    let pid_of = |bp: u32| annotate_map_find(m, nb, bp as i32, pages as i32);
+    let mut recs: Vec<DocRecord> = Vec::new();
+    for (l, q) in &c.links {
+        let (s, d) = (pid_of(l.src), pid_of(l.dst));
+        if s == 0 || d == 0 || !(added.contains(&s) || added.contains(&d)) {
+            continue;
+        }
+        if recs.try_reserve(1).is_err() {
+            return c.links.len() as u32;
+        }
+        recs.push(DocRecord {
+            src: s,
+            dst: d,
+            rect: Rect { x: l.x, y: l.y, w: l.w, h: l.h },
+            quad: q.map(|q| {
+                let f = |i: usize| q[i] as f32 / 16.0;
+                [(f(0), f(1)), (f(2), f(3)), (f(4), f(5)), (f(6), f(7))]
+            }),
+            index: l.index,
+        });
+    }
+    if recs.is_empty() {
+        return c.left.capped;
+    }
+    let mut dl = doclinks_load(nbid);
+    if !dl.writable {
+        qlog!("import: %s: the doclinks.ini of notebook %s does not read; its links are left as they are", id, nbid);
+        return recs.len() as u32;
+    }
+    let before: std::collections::HashSet<(u32, u32)> = dl.links.iter().map(|l| (l.pid, l.seed)).collect();
+    let mut mine = Nav::default();
+    nav_init(&mut mine);
+    nav_load_links(nbid, &mut mine);
+    let have = |p: u32| nb.page_ids.contains(&p);
+    let st = pdflinks_fill(&mut dl, &recs, pw, ph, &have, &|pid, seed| nav_link_get(&mine, pid, seed).is_some());
+    nav_free(&mut mine);
+    let water = pdflinks_water_keeping(&mut dl, &|l| before.contains(&(l.pid, l.seed)));
+    if doclinks_save_in(dir, &mut dl, nb) != 0 {
+        qlog!("import: %s: the document links of notebook %s could not be written; left out", id, nbid);
+        return recs.len() as u32;
+    }
+    let left = st.full + water + c.left.capped as usize;
+    qlog!(
+        "import: %s: notebook %s: %d document link(s) (%d added, %d already there, %d refused, %d left out for room)",
+        id,
+        nbid,
+        dl.links.len() as i32,
+        st.added as i32,
+        st.same as i32,
+        st.invalid as i32,
+        left as i32
+    );
+    left as u32
+}
+
+/// A fill's web links (2.2): the PDF's web links on a page this fill added (`added`), mapped through the notebook as
+/// it is now, put into the notebook's weblinks.ini as an import's are, the links it had never trimmed. Idempotent
+/// (the same address with its area within 2 px is the link the page has). Returns how many were left out (for room,
+/// or all of them when weblinks.ini does not read or cannot be written).
+#[allow(clippy::too_many_arguments)]
+fn fill_weblinks(id: &str, nbid: &str, dir: &str, nb: &NotebookInfo, m: &AnnotateMap, pages: u32, pw: i32, ph: i32, c: &Collected, added: &[u32]) -> u32 {
+    if c.webs.is_empty() {
+        return c.web_left.capped;
+    }
+    let mut wl = weblinks_load(nbid);
+    put_weblinks(id, dir, &mut wl, nb, pw, ph, c, &|bp| annotate_map_find(m, nb, bp as i32, pages as i32), &|p| added.contains(&p), true)
+}
+
+/// A fill's names: the outline's, for the pages this fill added (`added`; a page the notebook had keeps its name, or
+/// its lack of one). Idempotent. Returns how many it gave.
+fn fill_names(id: &str, nbid: &str, nb: &NotebookInfo, m: &AnnotateMap, pages: u32, c: &Collected, added: &[u32]) -> u32 {
+    if c.names.is_empty() {
+        return 0;
+    }
+    let mut nav = Nav::default();
+    nav_init(&mut nav);
+    if nav_load_names(nbid, &mut nav) != 0 {
+        qlog!("import: %s: the page names of notebook %s do not read; none are added", id, nbid);
+        nav_free(&mut nav);
+        return 0;
+    }
+    let mut named = 0;
+    for (bp, text) in &c.names {
+        let pid = annotate_map_find(m, nb, *bp as i32, pages as i32);
+        if added.contains(&pid) && nav_name(&nav, pid).is_empty() && nav_set_name(&mut nav, pid, &String::from_utf8_lossy(text)) == 0 {
+            named += 1;
+        }
+    }
+    if named > 0 && nav_save(nbid, &mut nav, nb) != 0 {
+        qlog!("import: %s: the page names of notebook %s could not be written; left out", id, nbid);
+        named = 0;
+    }
+    nav_free(&mut nav);
+    named
+}
+
+/// The book's page count a notebook's source.ini map names (one count, else None).
+fn map_count(m: &AnnotateMap) -> Option<u32> {
+    let first = m.e.first()?.pages;
+    (first >= 1 && m.e.iter().all(|e| e.pages == first)).then_some(first as u32)
+}
+
+/// How long a tick of the UI's commit may take: KOReader's book job's own budget (`book_step(150, ..)`).
+const FILL_STEP_MS: u64 = 150;
+
+/// The files a tick of the commit moves or writes at most: as many as its time allows, or (headless and test
+/// builds) GRIMOIRE_FILL_STEP_PAGES, so a test or a scenario can act between two of its ticks.
+fn fill_step_files() -> usize {
+    #[cfg(not(feature = "kindle"))]
+    if let Some(n) = std::env::var("GRIMOIRE_FILL_STEP_PAGES").ok().and_then(|v| v.parse::<usize>().ok()).filter(|&n| n > 0) {
+        return n;
+    }
+    usize::MAX
+}
+
+/// A fill's commit under way in the UI process (`fill_tick`).
+struct Commit {
+    /// its work folder's id, its PDF, its state (`ids` filled, stage 2)
+    id: String,
+    src: String,
+    st: State,
+    /// the notebook's folder and its bg/, the work folder's bg/
+    dir: String,
+    nbg: String,
+    wbg: String,
+    /// the pages it adds: (book page, the work folder's picture, page id), with each one's paper
+    add: Vec<(u32, u32, u32)>,
+    papers: Vec<PaperKind>,
+    /// the pictures to move in: (the work folder's, the notebook's)
+    of: Vec<(u32, u32)>,
+    /// how many pictures are moved and how many page files written so far
+    moved: usize,
+    written: usize,
+}
+
+thread_local! {
+    static COMMIT: RefCell<Option<Commit>> = const { RefCell::new(None) };
+}
+
+/// A fill whose pages are made (its work folder `id`, made or with its commit begun): noted once, for the UI to put
+/// in (the log says so once).
+fn note_ready(id: &str) {
+    if ui(|u| u.ready.iter().any(|r| r.0 == id)) || COMMIT.with(|c| c.borrow().as_ref().is_some_and(|c| c.id == id)) {
+        return;
+    }
+    let Some(s) = state_read(id).filter(|s| matches!(s.stage, STAGE_READY | STAGE_COMMIT)) else { return };
+    qlog!("import: %s: the pages for notebook %s are made; they go in once the Library is in front", id, &s.fill);
+    ui(|u| u.ready.push((id.to_string(), s.src, s.fill)));
+}
+
+/// The fill whose pages are going into their notebook now: (page files written, of how many). The input waits
+/// meanwhile (app.rs: pen and touch, keys and controller buttons, and the Live view's keys).
+pub fn fill_busy() -> Option<(u32, u32)> {
+    COMMIT.with(|c| c.borrow().as_ref().map(|c| (c.written as u32, c.add.len() as u32)))
+}
+
+/// Whether notebook `nb` is the one a fill's commit writes now: it does not open (editor.rs), and no background job
+/// on it starts (bgjob.rs), until that commit has ended.
+pub fn fill_holds(nb: &str) -> bool {
+    COMMIT.with(|c| c.borrow().as_ref().is_some_and(|c| c.st.fill == nb))
+}
+
+/// The UI's tick (app.rs): goes on with the fill being put in, or, when `free` (the Library in front, so no notebook
+/// is open in the editor, and no KOReader book job running), begins the first fill whose pages are made and whose
+/// notebook no background job works on. A tick takes at most FILL_STEP_MS; what to tell the user once a commit ends
+/// (Nothing until then, and for a fill that was not put in: the log says why).
+pub fn fill_tick(free: bool, dpi: f32) -> Finished {
+    let t0 = mono_ms_now();
+    TOLD.with(|t| *t.borrow_mut() = None);
+    let mut c = match COMMIT.with(|c| c.borrow_mut().take()) {
+        Some(c) => c,
+        None => {
+            if !free {
+                return Finished::Nothing;
+            }
+            let Some((id, src, nb)) = ui(|u| u.ready.iter().find(|r| !bg_notebook_busy(&r.2)).cloned()) else {
+                return Finished::Nothing;
+            };
+            ui(|u| u.ready.retain(|r| r.0 != id));
+            match commit_begin(&id, &src) {
+                Ok(c) => c,
+                Err(f) => return told(&src, &nb, f),
+            }
+        }
+    };
+    match commit_step(&mut c, t0, dpi) {
+        Some(f) => told(&c.src, &c.st.fill, f),
+        None => {
+            COMMIT.with(|x| *x.borrow_mut() = Some(c));
+            Finished::Nothing
+        }
+    }
+}
+
+thread_local! {
+    /// The PDF whose fill the last fill_tick told of, and the notebook that fill was for (`fill_told_src`,
+    /// `fill_told_nb`).
+    static TOLD: RefCell<Option<(String, String)>> = const { RefCell::new(None) };
+}
+
+fn told(src: &str, nb: &str, f: Finished) -> Finished {
+    if f != Finished::Nothing {
+        TOLD.with(|t| *t.borrow_mut() = Some((src.to_string(), nb.to_string())));
+    }
+    f
+}
+
+/// The PDF (its StoragePath's text) of the fill the last fill_tick ended, when it said anything: so a fill that
+/// KOReader's hand-over by path started is told by the book job (annotate.rs), not by the import's own toast.
+pub fn fill_told_src() -> Option<String> {
+    TOLD.with(|t| t.borrow().as_ref().map(|t| t.0.clone()))
+}
+
+/// The notebook that fill was for: where a commit found every page there already (`Finished::Already`), the
+/// notebook that holds them.
+pub fn fill_told_nb() -> Option<String> {
+    TOLD.with(|t| t.borrow().as_ref().map(|t| t.1.clone()).filter(|nb| !nb.is_empty()))
+}
+
+/// The notebook an import's end is about, for whoever asked for that import and opens its notebook (KOReader's
+/// hand-over by path: annotate.rs): the one a new import made (`id`, its job), the one a fill went to, and for "PDF
+/// already imported." the one the import found the PDF in (`already_notebook`; for a fill's commit, which has no
+/// job, the fill's own notebook). The import's choice, from its own open of the file. Asked as the end is told.
+pub fn ended_notebook(id: &str, fin: &Finished) -> Option<String> {
+    match fin {
+        Finished::Imported { .. } => Some(id.to_string()),
+        Finished::Filled { nb, .. } => Some(nb.clone()),
+        Finished::Already if id.is_empty() => fill_told_nb(),
+        Finished::Already => already_notebook(id),
+        _ => None,
+    }
+}
+
+/// The notebook a fill of the PDF at `src` is for, while its pages wait to go in or go in now (the import's own
+/// choice, from the fill's state). KOReader's hand-over by path notes it, so a fill that ends without a word (its
+/// notebook renamed or moved meanwhile) still ends on that notebook.
+pub fn fill_target(src: &str) -> Option<String> {
+    ui(|u| u.ready.iter().find(|r| r.1 == src).map(|r| r.2.clone())).or_else(|| COMMIT.with(|c| c.borrow().as_ref().filter(|c| c.src == src).map(|c| c.st.fill.clone())))
+}
+
+/// A fill that ends without its pages going in (or, past its notebook.ini, without the rest): the log says why once,
+/// the work folder goes, and the PDF stays where it is, for the next scan to take as the file it is.
+fn commit_gone(id: &str, src: &str, nb: &str, why: &str, f: Finished) -> Finished {
+    qlog!("import: %s: %s; nothing added to notebook %s", id, why, nb);
+    remove_work_folder(id);
+    mark_drop(src);
+    if f == Finished::Failed(FailWhy::Storage) {
+        // (no room is not the file's fault: the scan takes it again once more is free)
+        let free = free_bytes().unwrap_or(0);
+        ui(|u| {
+            u.room_wait.retain(|r| r.0 != src);
+            u.room_wait.push((src.to_string(), free));
+        });
+    }
+    f
+}
+
+/// A commit's first tick: the checks, 1. the page ids, 2. the pictures claimed in the notebook's index. Every file
+/// is read in this tick, and written whole.
+fn commit_begin(id: &str, src: &str) -> Result<Commit, Finished> {
+    let Some(mut st) = state_read(id).filter(|s| matches!(s.stage, STAGE_READY | STAGE_COMMIT)) else { return Err(Finished::Nothing) };
+    let nbid = st.fill.clone();
+    let gone = |why: &str, f: Finished| -> Result<Commit, Finished> { Err(commit_gone(id, src, &nbid, why, f)) };
+    let mut nb = NotebookInfo::default();
+    let loaded = store_load_info(&nbid, &mut nb) == 0;
+    // A notebook renamed, moved or deleted while the pages were made (or one that no longer holds the PDF's key) is
+    // not filled: the PDF is taken again by the next scan, as the file it is (a fill of the notebook as it is now,
+    // or a notebook of its own). A commit that has begun is finished, whatever became of the notebook's name.
+    if st.stage == STAGE_READY && (!loaded || nb_sig(&nb) != st.sig || key_holders(std::slice::from_ref(&nb), Some(st.key.as_str())).is_empty()) {
+        ui(|u| u.rescan_at = Some(now_ms()));
+        return gone("its notebook was renamed, moved or deleted while the pages were made", Finished::Nothing);
+    }
+    let (mut dir, mut nbg) = (String::new(), String::new());
+    if !loaded || store_notebook_dir(&nbid, &mut dir, 600) != 0 || bgimage_dir(&nbid, &mut nbg, 700) != 0 {
+        return gone("the notebook is gone", Finished::Nothing);
+    }
+    let mut m = AnnotateMap::default();
+    let counted = annotate_map_load(&nbid, &mut m) == 0 && map_count(&m) == Some(st.pages);
+    let pages = st.pages as i32;
+    // the pages it still lacks (one KOReader's route added since stays as it is, and is not added again), each with
+    // the id an earlier try of this commit gave it
+    let mut add: Vec<(u32, u32, u32)> = st
+        .todo
+        .iter()
+        .zip(&st.pics)
+        .filter(|(&bp, _)| annotate_map_find(&m, &nb, bp as i32, pages) == 0)
+        .map(|(&bp, &pic)| (bp, pic, st.ids.iter().find(|x| x.0 == bp).map_or(0, |x| x.1)))
+        .collect();
+    annotate_map_free(&mut m);
+    if !counted {
+        return gone("its source.ini no longer names the PDF's page count", Finished::Failed(FailWhy::Generic));
+    }
+    // a commit that finds `open` set was cut off (a stop), and the third stop ends it, the notebook as the cuts left it
+    if st.stage == STAGE_COMMIT && st.open {
+        st.stops += 1;
+        qlog!("import: %s: its commit was cut off (%d of %d)", id, st.stops as i32, STOPS_MAX as i32);
+        if st.stops >= STOPS_MAX {
+            qlog!("import: %s: its commit stopped %d times without finishing; notebook %s is as its last cut left it", id, st.stops as i32, &nbid);
+            remove_work_folder(id);
+            mark_drop(src);
+            return Err(Finished::Failed(FailWhy::Generic));
+        }
+    }
+    if nb.npages() as usize + add.len() > STORE_MAX_PAGES {
+        return gone("it would have more pages than a notebook holds", Finished::Failed(FailWhy::TooLong(PDF_MAX_PAGES)));
+    }
+    // 1. ids for the pages an earlier try gave none: reserved in notebook.ini (its page list as it is) before
+    // anything is written under them, then kept in the state, so a try taken up again writes the same files
+    if add.iter().any(|a| a.2 == 0) {
+        let mut next = nb.next_page_id.max(1);
+        for a in add.iter_mut().filter(|a| a.2 == 0) {
+            while nb.page_ids.contains(&next) || st.ids.iter().any(|x| x.1 == next) || exists(&format!("{dir}/p{next}.qpg")) {
+                next += 1;
+            }
+            if next >= 0x7fff_fffe {
+                return gone("no page id is left", Finished::Failed(FailWhy::Generic));
+            }
+            a.2 = next;
+            next += 1;
+        }
+        nb.next_page_id = next;
+        if store_write_info_in(&dir, &nb) != 0 {
+            return gone("its notebook.ini cannot be written", Finished::Failed(FailWhy::Storage));
+        }
+        for a in &add {
+            if !st.ids.iter().any(|x| x.0 == a.0) {
+                st.ids.push((a.0, a.2));
+            }
+        }
+    }
+    st.stage = STAGE_COMMIT;
+    st.open = true;
+    if !state_write(id, &st) {
+        return gone("its state cannot be written", Finished::Failed(FailWhy::Storage));
+    }
+    // 2. the pictures: claimed in the notebook's index (one it has already of the same content is shared), the index
+    // saved; their files move in from the next step. (bg/ is made inside the notebook's folder, never that folder.)
+    let wbg = format!("{}/bg", work_dir(id));
+    let _ = std::fs::create_dir(&nbg);
+    let (mut wix, mut nix) = (BgIndex::default(), BgIndex::default());
+    if bgindex_load(&wbg, &mut wix) != 0 || bgindex_load(&nbg, &mut nix) != 0 {
+        return gone("a picture index does not read", Finished::Failed(FailWhy::Generic));
+    }
+    let (mut of, mut papers): (Vec<(u32, u32)>, Vec<PaperKind>) = (Vec::new(), Vec::new());
+    for &(_, wpic, _) in &add {
+        let nid = match of.iter().find(|x| x.0 == wpic) {
+            Some(x) => x.1,
+            None => {
+                let Some(key) = wix.e.iter().find(|e| e.id == wpic).map(|e| e.key) else {
+                    return gone("a picture of its pages is not in its index", Finished::Failed(FailWhy::Generic));
+                };
+                let (mut nid, mut added) = (0u32, false);
+                if bgindex_claim(&mut nix, &nbg, key, &mut nid, &mut added) != 0 {
+                    return gone("the notebook's picture index is full", Finished::Failed(FailWhy::Generic));
+                }
+                of.push((wpic, nid));
+                nid
+            }
+        };
+        papers.push(paper_image(PAPER_ROLE_DOCUMENT, nid));
+    }
+    if !add.is_empty() && bgindex_save(&nbg, &nix) != 0 {
+        return gone("the notebook's picture index cannot be written", Finished::Failed(FailWhy::Storage));
+    }
+    if cut_after(1) {
+        return Err(Finished::Nothing);
+    }
+    Ok(Commit { id: id.to_string(), src: src.to_string(), st, dir, nbg, wbg, add, papers, of, moved: 0, written: 0 })
+}
+
+/// A commit's next files, as many as the tick allows (2. the pictures moved in, 3. the page files), then its end.
+/// None while more ticks are needed.
+fn commit_step(c: &mut Commit, t0: u64, dpi: f32) -> Option<Finished> {
+    let most = fill_step_files();
+    let mut n = 0usize;
+    let room = |n: usize| n < most && mono_ms_now().saturating_sub(t0) < FILL_STEP_MS;
+    // (a notebook gone meanwhile, which nothing in the app can do while this runs, is never made again)
+    if !is_dir_path(&c.dir) {
+        return Some(commit_gone(&c.id, &c.src, &c.st.fill, "the notebook is gone", Finished::Nothing));
+    }
+    while c.moved < c.of.len() {
+        if !room(n) {
+            return None;
+        }
+        let (wpic, nid) = c.of[c.moved];
+        let (mut from, mut to) = (String::new(), String::new());
+        bgimage_file(&c.wbg, wpic, &mut from, 900);
+        bgimage_file(&c.nbg, nid, &mut to, 900);
+        // (a picture the notebook holds already, or one an earlier try moved in, is there)
+        if !exists(&to) && std::fs::rename(&from, &to).is_err() {
+            return Some(commit_gone(&c.id, &c.src, &c.st.fill, "a picture cannot be moved into the notebook", Finished::Failed(FailWhy::Storage)));
+        }
+        c.moved += 1;
+        n += 1;
+    }
+    if c.written == 0 && cut_after(2) {
+        return Some(Finished::Nothing);
+    }
+    while c.written < c.add.len() {
+        if !room(n) {
+            return None;
+        }
+        let pg = page_new(c.st.page_w, c.st.page_h, c.papers[c.written]);
+        let rc = store_write_page_in(&c.dir, c.add[c.written].2, &pg);
+        page_free(pg);
+        if rc != 0 {
+            // (the page files written go: no list names them)
+            for a in &c.add[..c.written] {
+                let _ = std::fs::remove_file(format!("{}/p{}.qpg", c.dir, a.2));
+            }
+            return Some(commit_gone(&c.id, &c.src, &c.st.fill, "a page file cannot be written", Finished::Failed(FailWhy::Storage)));
+        }
+        c.written += 1;
+        n += 1;
+    }
+    Some(commit_finish(c, dpi))
+}
+
+/// A commit's last tick: bg/pages.ini, then the notebook as it is now, read again here: 4. source.ini with the new
+/// pages' lines, 5. notebook.ini with the pages in book order, then 6. the links and 7. the names. Until notebook.ini
+/// lists the pages the notebook shows nothing new; a try taken up again after it adds nothing twice.
+fn commit_finish(c: &mut Commit, dpi: f32) -> Finished {
+    let (id, src, nbid) = (c.id.clone(), c.src.clone(), c.st.fill.clone());
+    let gone = |why: &str, f: Finished| commit_gone(&id, &src, &nbid, why, f);
+    if !c.add.is_empty() {
+        let ids: Vec<u32> = c.add.iter().map(|a| a.2).collect();
+        if store_note_papers_in(&c.nbg, &ids, &c.papers) != 0 {
+            return gone("its bg/pages.ini cannot be written", Finished::Failed(FailWhy::Storage));
+        }
+        crate::bgwork_template::sync_dir_public(&c.nbg);
+    }
+    if cut_after(3) {
+        return Finished::Nothing;
+    }
+    let mut nb = NotebookInfo::default();
+    let mut m = AnnotateMap::default();
+    if store_load_info(&nbid, &mut nb) != 0 || annotate_map_load(&nbid, &mut m) != 0 {
+        annotate_map_free(&mut m);
+        return gone("the notebook is gone", Finished::Nothing);
+    }
+    // each page before the first page that holds a later book page (KOReader's route's rule), the page the
+    // notebook reopens at kept
+    let pages = c.st.pages as i32;
+    let open_pid = nb.page_ids.get(nb.last_page.max(0) as usize).copied();
+    let mut put = 0;
+    for &(bp, _, pid) in &c.add {
+        if annotate_map_find(&m, &nb, bp as i32, pages) != 0 || nb.page_ids.contains(&pid) {
+            continue;
+        }
+        let at = annotate_insert_at(&nb, &m, bp as i32, pages);
+        nb.page_ids.insert(at.clamp(0, nb.npages()) as usize, pid);
+        nb.next_page_id = nb.next_page_id.max(pid + 1);
+        if annotate_map_add(&mut m, bp as i32, pages, pid) != 0 {
+            annotate_map_free(&mut m);
+            return gone("out of memory", Finished::Failed(FailWhy::Generic));
+        }
+        put += 1;
+    }
+    if let Some(i) = open_pid.and_then(|p| nb.page_ids.iter().position(|&x| x == p)) {
+        nb.last_page = i as i32;
+    }
+    let stop = |m: &mut AnnotateMap| {
+        annotate_map_free(m);
+        Finished::Nothing
+    };
+    if put > 0 {
+        // 4. source.ini, its new page lines beside the old (its record, or none, kept as it is: a notebook without one
+        // is never given one); a page line goes only with a page of the list, so nothing reads them before 5.
+        let text = annotate_map_text(&m, &nb);
+        if !text.is_some_and(|t| write_file_atomic(&format!("{}/source.ini", c.dir), &t) == 0) {
+            annotate_map_free(&mut m);
+            return gone("its source.ini cannot be written", Finished::Failed(FailWhy::Storage));
+        }
+        if cut_after(4) {
+            return stop(&mut m);
+        }
+        // 5. notebook.ini: from here the pages are the notebook's
+        nb.modified = wall_time();
+        if store_write_info_in(&c.dir, &nb) != 0 {
+            annotate_map_free(&mut m);
+            return gone("its notebook.ini cannot be written", Finished::Failed(FailWhy::Storage));
+        }
+        crate::bgwork_template::sync_dir_public(&c.dir);
+        if cut_after(5) {
+            return stop(&mut m);
+        }
+    }
+    // the pages this fill gave the notebook (a try taken up again after notebook.ini finds them listed)
+    let added: Vec<u32> = c.st.ids.iter().map(|x| x.1).filter(|p| nb.page_ids.contains(p)).collect();
+    // the card's thumbnail, when its first page is one of them: the book's page 1 has its own (drawn in the work
+    // folder), any other the Library draws again
+    let work = work_dir(&id);
+    if let Some(&(bp, _)) = nb.page_ids.first().and_then(|f| c.st.ids.iter().find(|x| x.1 == *f)) {
+        let thumb = format!("{}/thumb.pgm", c.dir);
+        if bp != 1 {
+            let _ = std::fs::remove_file(&thumb);
+        } else if exists(&format!("{work}/thumb.pgm")) {
+            let _ = std::fs::rename(format!("{work}/thumb.pgm"), &thumb);
+        }
+    }
+    // 6. the links and 7. the names: either can fail alone, as an import's (the pages stay, without them)
+    let mut trimmed = 0;
+    if let Some(col) = read_parts(&id, &work, c.st.pages) {
+        trimmed = fill_links(&id, &nbid, &c.dir, &nb, &m, c.st.pages, c.st.page_w, c.st.page_h, &col, &added);
+        trimmed += fill_weblinks(&id, &nbid, &c.dir, &nb, &m, c.st.pages, c.st.page_w, c.st.page_h, &col, &added);
+        if cut_after(6) {
+            return stop(&mut m);
+        }
+        fill_names(&id, &nbid, &nb, &m, c.st.pages, &col, &added);
+    }
+    annotate_map_free(&mut m);
+    if cut_after(7) {
+        return Finished::Nothing;
+    }
+    let blank = c.st.ids.iter().filter(|x| added.contains(&x.1) && c.st.blank.contains(&x.0)).count() as u32;
+    qlog!("import: notebook %s filled: %d page(s) added (%d now), %d blank", &nbid, added.len() as i32, nb.npages(), blank as i32);
+    // In: one more slice files the PDF (the writer's, as for every file of import/) and removes the work folder. A
+    // start before it runs finds the folder and queues that slice.
+    c.st.stage = STAGE_DONE;
+    c.st.open = false;
+    if !state_write(&id, &c.st) {
+        // (the PDF stays in import/: the next scan finds every page there, says "already" and files it)
+        remove_work_folder(&id);
+        mark_drop(&src);
+    } else if !matches!(lock_take(), Lock::Busy(_)) {
+        progress(); // (the shared record is made before the fork)
+        ui(|u| {
+            u.pending.push(id.clone());
+            u.queued.push(src.clone());
+        });
+        bg_queue(BgKind::PdfImport, Some(&id), Some(&src), dpi, false);
+    }
+    if added.is_empty() {
+        return Finished::Already;
+    }
+    Finished::Filled { nb: nbid, added: added.len() as u32, blank, trimmed }
 }
 
 /// bgjob.h: one slice of a PDF import (BG_PDF_IMPORT), in the child: 0 = done (or nothing to do: imported before,
@@ -2556,7 +4204,7 @@ pub fn bg_pdf_import(id: &str, src: &str) -> i32 {
                 CODE_DONE
             }
         }
-        SliceEnd::Already | SliceEnd::Deferred => CODE_DONE,
+        SliceEnd::Already | SliceEnd::Deferred | SliceEnd::Ready { .. } | SliceEnd::Filed => CODE_DONE,
         SliceEnd::More => CODE_MORE,
         SliceEnd::Failed(..) | SliceEnd::Sandbox => CODE_FAILED,
     }
@@ -2604,17 +4252,73 @@ mod tests {
 
     #[test]
     fn marks_round_trip_and_refuse_junk() {
-        let m = Mark { state: MarkState::Making, id: "20261109-101112-ab12".into(), src: "grimoire/import/A.pdf".into(), pick: true, name: "My book".into(), folder: "Work".into(), page: 3, pages: 40, at: 99, size: 5000, mtime: 7 };
+        let m = Mark { state: MarkState::Making, id: "20261109-101112-ab12".into(), src: "grimoire/import/A.pdf".into(), pick: true, name: "My book".into(), folder: "Work".into(), page: 3, pages: 40, at: 99, size: 5000, mtime: 7, gamma: Gamma::Off };
         let r = Mark { ..m.clone() };
         // (the id must be one the store takes)
         let t = mark_text(&m);
         let p = mark_parse(t.as_bytes());
         assert_eq!(p, Some(r));
+        // darker lines (2.2): a line only away from Off, read strictly
+        assert!(!t.contains("gamma"));
+        for g in [Gamma::Medium, Gamma::Strong] {
+            let mg = Mark { gamma: g, ..m.clone() };
+            assert_eq!(mark_parse(mark_text(&mg).as_bytes()), Some(mg));
+        }
+        assert_eq!(mark_parse(format!("{t}gamma=2\n").as_bytes()).map(|m| m.gamma), Some(Gamma::Off));
         assert!(mark_parse(b"state=zzz\n").is_none());
         assert!(mark_parse(b"id=x\n").is_none());
         assert!(mark_parse(&vec![b'a'; 5000]).is_none());
         assert!(mark_parse(b"state=making\nid=../../etc\n").is_none());
         assert!(mark_parse(b"state=making\npage=x\n").is_none());
+        // a path with a carriage return inside its line is no path a mark was given
+        assert!(mark_parse(b"state=waiting\nsrc=documents/a\rb.pdf\npick=1\n").is_none());
+        // (a line that ends CR LF is a line: the file was edited where lines end so)
+        assert_eq!(mark_parse(b"state=waiting\r\nsrc=documents/ab.pdf\r\n").map(|m| m.src).as_deref(), Some("documents/ab.pdf"));
+        // a label is still cleaned as it is written; the path never is
+        let odd = Mark { state: MarkState::Making, src: "documents/t\tx.pdf".into(), name: "My\tbook\n".into(), folder: "Wo\u{85}rk".into(), ..Default::default() };
+        let back = mark_parse(mark_text(&odd).as_bytes()).expect("parses");
+        assert_eq!((back.src.as_str(), back.name.as_str(), back.folder.as_str()), ("documents/t\tx.pdf", "Mybook", "Work"));
+    }
+
+    #[test]
+    fn a_path_with_a_line_break_cannot_be_kept() {
+        for ok in ["", "grimoire/import/A.pdf", "documents/t\tx.pdf", "documents/c\u{85}d.pdf", "documents/\u{7f}\u{9f}.pdf", "documents/\u{2028}.pdf"] {
+            assert!(name_storable(ok), "{ok:?}");
+        }
+        for bad in ["a\nb.pdf", "a\rb.pdf", "documents/Tr\rip/x.pdf", "Icon\r", "\n", "x.pdf\n"] {
+            assert!(!name_storable(bad), "{bad:?}");
+        }
+        // a state says so too: one that names such a path does not read
+        let ok = sample_state().text();
+        assert!(State::parse(ok.replace("src=grimoire/import/A.pdf", "src=grimoire/import/a\rb.pdf").as_bytes()).is_none());
+        assert!(State::parse(ok.replace("src=grimoire/import/A.pdf", "src=grimoire/import/a\tb.pdf").as_bytes()).is_some());
+    }
+
+    // The two writers refuse such a path themselves, whoever asks: a state and a mark of it are never on storage.
+    #[test]
+    fn a_path_with_a_line_break_is_written_to_no_state_and_no_mark() {
+        let base = std::env::var("GRIMOIRE_TEST_TMP").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+        let root = base.join(format!("grimoire-pdfimport-writers-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let r = root.to_str().unwrap().to_string();
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(store_init(&r), 0);
+        let id = "20260101-000000-abcd";
+        assert_eq!(mkdir_p(&work_dir(id)), 0);
+        let marks = || std::fs::read_dir(root_path(MARKS_DIR)).map(|d| d.flatten().count()).unwrap_or(0);
+        for bad in ["grimoire/import/a\nb.pdf", "grimoire/import/a\rb.pdf", "grimoire/import/Tr\nip/x.pdf"] {
+            assert!(!state_write(id, &State { src: bad.into(), ..sample_state() }), "{bad:?}");
+            assert!(!exists(&state_path(id)), "{bad:?}: a state was written");
+            assert!(!mark_write(&Mark { state: MarkState::Waiting, src: bad.into(), pick: true, ..Default::default() }), "{bad:?}");
+            assert_eq!(marks(), 0, "{bad:?}: a mark was written");
+        }
+        // (and both write a path they can read back)
+        let good = State { src: "grimoire/import/t\tx.pdf".into(), ..sample_state() };
+        assert!(state_write(id, &good));
+        assert_eq!(state_read(id).map(|s| s.src), Some(good.src.clone()));
+        assert!(mark_write(&Mark { state: MarkState::Waiting, src: good.src.clone(), pick: true, ..Default::default() }));
+        assert_eq!(mark_read(&good.src).map(|m| m.src), Some(good.src));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn sample_state() -> State {
@@ -2635,6 +4339,7 @@ mod tests {
             bytes: 123_456,
             open: true,
             stops: 2,
+            ..Default::default()
         }
     }
 
@@ -2646,6 +4351,26 @@ mod tests {
         assert_eq!(back.blank, vec![2]);
         assert_eq!(back.strikes_of(2), 2);
         assert_eq!(back.strikes_of(9), 0);
+    }
+
+    // Darker lines (2.2, issue #173): the import's gamma rides in its state, a line only when it is not Off, so a
+    // state at Off is the text it was before; a value the state does not know is no gamma.
+    #[test]
+    fn state_keeps_the_imports_gamma() {
+        let off = sample_state();
+        assert!(!off.text().contains("gamma"), "{}", off.text());
+        for g in [Gamma::Medium, Gamma::Strong] {
+            let s = State { gamma: g, ..sample_state() };
+            assert!(s.text().contains(&format!("\ngamma={}\n", g.name())));
+            assert_eq!(State::parse(s.text().as_bytes()), Some(s.clone()));
+            let fill = State { fill: "20261115-120000-ab12".into(), todo: vec![2, 4, 5], page_w: 600, page_h: 800, ..s };
+            assert_eq!(State::parse(fill.text().as_bytes()).map(|b| b.gamma), Some(g));
+        }
+        let t = State { gamma: Gamma::Strong, ..sample_state() }.text();
+        for bad in ["gamma=2", "gamma=4.0", "gamma=", "gamma=2.0 "] {
+            let back = State::parse(t.replace("gamma=2.0", bad).as_bytes()).expect("the state reads");
+            assert_eq!(back.gamma, Gamma::Off, "{bad}");
+        }
     }
 
     #[test]
@@ -2662,6 +4387,174 @@ mod tests {
         assert!(State::parse(ok.replace("0123456789abcdef0123456789abcdef", "xyz").as_bytes()).is_none());
         assert!(State::parse(&vec![b'#'; STATE_MAX + 1]).is_none());
         assert!(State::parse(b"src=x\n").is_none());
+    }
+
+    // A mark and a state hold the path of their file as it is: a tab and a C1 control character are a name's own.
+    #[test]
+    fn a_path_is_kept_as_it_is_in_a_mark_and_a_state() {
+        for src in ["grimoire/import/t\tx.pdf", "documents/c\u{85}d.pdf", "documents/\u{7f}.pdf"] {
+            let m = Mark { state: MarkState::Waiting, src: src.into(), pick: true, ..Default::default() };
+            assert!(mark_text(&m).contains(&format!("\nsrc={src}\n")), "{src:?}");
+            assert_eq!(mark_parse(mark_text(&m).as_bytes()).map(|m| m.src).as_deref(), Some(src));
+            let s = State { src: src.into(), ..sample_state() };
+            assert!(s.text().contains(&format!("\nsrc={src}\n")), "{src:?}");
+            assert_eq!(State::parse(s.text().as_bytes()).map(|s| s.src).as_deref(), Some(src));
+        }
+    }
+
+    // Whether a file may move to import/done is decided by its folder: the letters of `<grimoire>/import/` in any
+    // case are needed, and where the case differs the folder itself is asked.
+    #[test]
+    fn a_folder_spelled_like_import_is_import_only_when_it_is_that_folder() {
+        let never = |_: &str| -> bool { panic!("the exact spelling asks nothing of the storage") };
+        assert_eq!(under_import_of("grimoire/import/x.pdf", "grimoire", &never), Some("x.pdf"));
+        assert_eq!(under_import_of("grimoire/import/Work/x.pdf", "grimoire", &never), Some("Work/x.pdf"));
+        // spelled otherwise: the folder decides, and is asked by the spelling given, without its last slash
+        assert_eq!(under_import_of("Grimoire/Import/x.pdf", "grimoire", &|_| false), None);
+        assert_eq!(under_import_of("Grimoire/Import/x.pdf", "grimoire", &|_| true), Some("x.pdf"));
+        let asked = std::cell::RefCell::new(Vec::new());
+        let note = |g: &str| {
+            asked.borrow_mut().push(g.to_string());
+            true
+        };
+        assert_eq!(under_import_of("GRIMOIRE/import/Work/x.pdf", "grimoire", &note), Some("Work/x.pdf"));
+        assert_eq!(*asked.borrow(), ["GRIMOIRE/import"]);
+        // done in any case is never import, whatever the folder says, and nothing is asked for it
+        for src in ["grimoire/import/DONE/x.pdf", "grimoire/import/done/x.pdf", "Grimoire/Import/Done/x.pdf", "Grimoire/Import/done"] {
+            assert_eq!(under_import_of(src, "grimoire", &never), None, "{src}");
+        }
+        // other letters are another place; so are the folder itself and what lies beside it
+        for src in ["grimoire/imports/x.pdf", "documents/x.pdf", "grimoire/import", "grimoire/import/", "grimoire/Import", "x/grimoire/import/x.pdf", ""] {
+            assert_eq!(under_import_of(src, "grimoire", &never), None, "{src}");
+        }
+        // Grimoire's folder deeper in the storage
+        assert_eq!(under_import_of("apps/grimoire/import/x.pdf", "apps/grimoire", &never), Some("x.pdf"));
+        assert_eq!(under_import_of("Apps/grimoire/import/x.pdf", "apps/grimoire", &|g| g == "Apps/grimoire/import"), Some("x.pdf"));
+    }
+
+    #[test]
+    fn two_spellings_are_one_folder_when_the_parent_holds_one_entry() {
+        let never = || -> Option<Vec<Vec<u8>>> { panic!("equal identities are one folder without a listing") };
+        let names = |n: &[&str]| -> Option<Vec<Vec<u8>>> { Some(n.iter().map(|s| s.as_bytes().to_vec()).collect()) };
+        let (a, b) = (Some((7, 100)), Some((7, 200)));
+        // one identity: the same folder
+        assert!(same_folder_entry(a, a, "import", &never));
+        // two identities and one entry of that name: the storage takes both spellings as that entry
+        assert!(same_folder_entry(a, b, "import", &|| names(&["notebooks", "Import", "settings.ini"])));
+        assert!(same_folder_entry(a, b, "import", &|| names(&["import"])));
+        // two entries: two folders
+        assert!(!same_folder_entry(a, b, "import", &|| names(&["import", "Import"])));
+        assert!(!same_folder_entry(a, b, "import", &|| names(&["IMPORT", "import", "Import"])));
+        // no entry of that name, or a parent that does not list: not judged the same
+        assert!(!same_folder_entry(a, b, "import", &|| names(&["imports", "notebooks"])));
+        assert!(!same_folder_entry(a, b, "import", &|| None));
+        // a spelling that is no real folder (missing, a link, an error): never the same, and nothing is listed
+        assert!(!same_folder_entry(None, b, "import", &never));
+        assert!(!same_folder_entry(a, None, "import", &never));
+        assert!(!same_folder_entry(None, None, "import", &never));
+    }
+
+    const SHA_A: &str = "5e54918cec7ac9735b8f0e82c1ee75b9f0afef2eadca2998bdb313d4444c75c3";
+    const SHA_B: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    const KEY: &str = "0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn a_file_record_reads_strictly() {
+        let r = FileRecord { sha256: SHA_A.into(), size: 6009, key: KEY.into() };
+        let line = file_record_line(&r);
+        assert_eq!(line, format!("file=sha256:{SHA_A}:6009:{KEY}"));
+        assert_eq!(file_record_parse(&line), Some(r));
+        // the biggest size is 20 digits: the line is 130 bytes at most
+        let big = FileRecord { sha256: SHA_A.into(), size: u64::MAX, key: KEY.into() };
+        assert_eq!(file_record_line(&big).len(), 130);
+        assert_eq!(file_record_parse(&file_record_line(&big)), Some(big));
+        assert_eq!(file_record_parse(&format!("file=sha256:{SHA_A}:1:{KEY}")).map(|r| r.size), Some(1));
+        let refused = [
+            format!("file=md5:{KEY}:6009:{KEY}"),                       // another algorithm's name
+            format!("file=SHA256:{SHA_A}:6009:{KEY}"),
+            format!("file=sha256:{}:6009:{KEY}", SHA_A.to_uppercase()), // upper case
+            format!("file=sha256:{SHA_A}:6009:{}", KEY.to_uppercase()),
+            format!("file=sha256:{}:6009:{KEY}", &SHA_A[1..]),          // a hash too short, too long, not hex
+            format!("file=sha256:{SHA_A}0:6009:{KEY}"),
+            format!("file=sha256:{}g:6009:{KEY}", &SHA_A[1..]),
+            format!("file=sha256:{SHA_A}:6009:{}", &KEY[1..]),          // a key too short, too long
+            format!("file=sha256:{SHA_A}:6009:{KEY}0"),
+            format!("file=sha256:{SHA_A}:6009"),                        // a field missing
+            format!("file=sha256:{SHA_A}::{KEY}"),
+            format!("file=sha256:{SHA_A}:6009:{KEY}:"),                 // a field too many
+            format!("file=sha256:{SHA_A}:6009:{KEY}:x"),
+            format!("file=sha256:{SHA_A}:0:{KEY}"),                     // no size, a leading zero, a sign, a space
+            format!("file=sha256:{SHA_A}:06009:{KEY}"),
+            format!("file=sha256:{SHA_A}:+6009:{KEY}"),
+            format!("file=sha256:{SHA_A}: 6009:{KEY}"),
+            format!("file=sha256:{SHA_A}:6009x:{KEY}"),
+            format!("file=sha256:{SHA_A}:18446744073709551616:{KEY}"),  // past 64 bits
+            format!("file=sha256:{SHA_A}:6009:{KEY} "),                 // anything around the line
+            format!(" file=sha256:{SHA_A}:6009:{KEY}"),
+            format!("file=sha256:{SHA_A}:6009:{KEY}\r"),
+            format!("File=sha256:{SHA_A}:6009:{KEY}"),
+            format!("sha256:{SHA_A}:6009:{KEY}"),
+            "file=".to_string(),
+            String::new(),
+        ];
+        for line in &refused {
+            assert_eq!(file_record_parse(line), None, "{line:?}");
+        }
+    }
+
+    // The record is the first kept line that reads as one, whatever stands around it.
+    #[test]
+    fn a_record_is_found_among_the_kept_lines() {
+        let line = format!("file=sha256:{SHA_A}:6009:{KEY}");
+        let rec = Some(FileRecord { sha256: SHA_A.into(), size: 6009, key: KEY.into() });
+        assert_eq!(record_among(format!("{line}\n").as_bytes()), rec);
+        assert_eq!(record_among(format!("later=1\n{line}\nother=2\n").as_bytes()), rec);
+        // a kept line that is no UTF-8 does not hide the record after it
+        let mut odd = b"note=caf\xe9\n".to_vec();
+        odd.extend_from_slice(format!("{line}\n").as_bytes());
+        assert_eq!(record_among(&odd), rec);
+        // the first that reads: a line of another form is passed by, a second record is not looked at
+        let two = format!("file=md5:{KEY}:6009:{KEY}\n{line}\nfile=sha256:{SHA_B}:7:{KEY}\n");
+        assert_eq!(record_among(two.as_bytes()), rec);
+        assert_eq!(record_among(b""), None);
+        assert_eq!(record_among(b"later=1\nfile=sha256:short:1:x\n"), None);
+    }
+
+    // The decision, as a table: the holders of one key against a PDF's size and, when it was read, its hash.
+    #[test]
+    fn the_holders_of_a_key_say_whether_a_pdf_is_theirs() {
+        let rec = |sha: &str, size: u64| Some(FileRecord { sha256: sha.into(), size, key: KEY.into() });
+        let h = |id: &str, rec: Option<FileRecord>| KeyHolder { id: id.into(), key: KEY.into(), rec };
+        // no holder: no notebook is of this file
+        assert_eq!(key_match(&[], 100, None), KeyMatch::None);
+        assert_eq!(key_match(&[], 100, Some(SHA_A)), KeyMatch::None);
+        // a holder without a record: the key decides, with or without a hash
+        let old = [h("old", None)];
+        assert_eq!(key_match(&old, 100, None), KeyMatch::KeyOnly("old".into()));
+        assert_eq!(key_match(&old, 100, Some(SHA_A)), KeyMatch::KeyOnly("old".into()));
+        // a holder with a record of this size: only the hash can tell
+        let one = [h("a", rec(SHA_A, 100))];
+        assert_eq!(key_match(&one, 100, None), KeyMatch::SizeOnly("a".into()));
+        assert_eq!(key_match(&one, 100, Some(SHA_A)), KeyMatch::Same("a".into()));
+        assert_eq!(key_match(&one, 100, Some(SHA_B)), KeyMatch::None);
+        // (a file that could not be read whole is asked with a hash that equals no record)
+        assert_eq!(key_match(&one, 100, Some("")), KeyMatch::None);
+        // a record of another size is of another file, whatever the hash
+        assert_eq!(key_match(&one, 101, None), KeyMatch::None);
+        assert_eq!(key_match(&one, 101, Some(SHA_A)), KeyMatch::None);
+        // a mix, in the list's order: the record that fits comes before the holder without one, wherever it stands
+        let mix = [h("old", None), h("b", rec(SHA_B, 100)), h("a", rec(SHA_A, 100)), h("older", None)];
+        assert_eq!(key_match(&mix, 100, None), KeyMatch::SizeOnly("b".into()));
+        assert_eq!(key_match(&mix, 100, Some(SHA_A)), KeyMatch::Same("a".into()));
+        assert_eq!(key_match(&mix, 100, Some(SHA_B)), KeyMatch::Same("b".into()));
+        // no record fits: the first holder without a record
+        assert_eq!(key_match(&mix, 7, None), KeyMatch::KeyOnly("old".into()));
+        assert_eq!(key_match(&mix, 100, Some("")), KeyMatch::KeyOnly("old".into()));
+        // every holder has a record, and none is of this file
+        let all = [h("b", rec(SHA_B, 100)), h("a", rec(SHA_A, 200))];
+        assert_eq!(key_match(&all, 100, Some(SHA_A)), KeyMatch::None);
+        assert_eq!(key_match(&all, 300, None), KeyMatch::None);
+        assert_eq!(key_match(&all, 200, None), KeyMatch::SizeOnly("a".into()));
     }
 
     #[test]

@@ -11,23 +11,25 @@ labels es gothic 09dd77e8971fa3b8
 labels es classic 8bb94f4d4a3dd0b7
 labels ja gothic 5a76352a7532a147
 labels ja classic 4662da7a5d189228
+labels pl gothic 2fbadab7d5766299
+labels pl classic 732c096fbbdf8b51
 == music
 music pg L0 rect 60 217 1740 1827 systems 5 hash fdb27b1c8f8fb58a
 music pg L1 rect 60 217 1740 1827 systems 2 hash abc74dcb6e69db4b
 music pg L2 rect 60 217 1740 1827 systems 1 hash 2fc3b5799bb4a343
 music pg L3 rect 60 217 1740 1827 systems 4 hash 39cf282dce8373a9
-music pc L0 rect 60 217 1740 1827 systems 5 hash f23fa1516fe08df4
-music pc L1 rect 60 217 1740 1827 systems 2 hash 4d833a2d1572ceaa
-music pc L2 rect 60 217 1740 1827 systems 1 hash 7808161a88872a03
-music pc L3 rect 60 217 1740 1827 systems 4 hash cacf9971b775ec0c
+music pc L0 rect 60 217 1740 1827 systems 5 hash 607a38df4dde4768
+music pc L1 rect 60 217 1740 1827 systems 2 hash 1b29b7abc9836d0e
+music pc L2 rect 60 217 1740 1827 systems 1 hash 9520bb4d22e97bcb
+music pc L3 rect 60 217 1740 1827 systems 4 hash b5b7c9755d6a4d1c
 music lg L0 rect 370 29 1740 1772 systems 5 hash b75c537786a3daed
 music lg L1 rect 370 29 1740 1772 systems 2 hash ecb15d526db6bf3c
 music lg L2 rect 370 29 1740 1772 systems 1 hash 2f83bb41048992a1
 music lg L3 rect 370 29 1740 1772 systems 4 hash 13299476e98d1a81
-music lc L0 rect 370 29 1740 1772 systems 5 hash f219584ae617cca0
-music lc L1 rect 370 29 1740 1772 systems 2 hash dd9fd6559e027032
-music lc L2 rect 370 29 1740 1772 systems 1 hash 3ced8b5633c64190
-music lc L3 rect 370 29 1740 1772 systems 4 hash 921e3268f44bbfdc
+music lc L0 rect 370 29 1740 1772 systems 5 hash f9d9de4bd7af722c
+music lc L1 rect 370 29 1740 1772 systems 2 hash 90716fea99aeefba
+music lc L2 rect 370 29 1740 1772 systems 1 hash 15cecdb50caaa6cc
+music lc L3 rect 370 29 1740 1772 systems 4 hash 52410ef2db9024ac
 music tap 4 2 -> 1 dirty 60 217 1740 1827 systems 3 n 4 kind 1124084001 hash 57eb8006049f0f98
 music tap 4 11 -> 1 dirty 60 217 1740 1827 systems 3 n 5 kind 1124804897 hash a85e4c303714df74
 music tap 2 0 -> 1 dirty 60 217 1740 1827 systems 3 n 5 kind 1124804882 hash ee3522c6848254ad
@@ -77,6 +79,14 @@ tplsheet empty0 ja lg templates 6688c23ddba169d7
 tplsheet empty0 ja lg photos 8a64a3af399ea6b0
 tplsheet empty0 ja lc templates d64e112e0174e8fd
 tplsheet empty0 ja lc photos 3f66afb2ad5d5887
+tplsheet empty0 pl pg templates 4f8d3c11afd8f848
+tplsheet empty0 pl pg photos c835c458b4e5b25a
+tplsheet empty0 pl pc templates c1511a2c62ccd2fe
+tplsheet empty0 pl pc photos eb96427366d95881
+tplsheet empty0 pl lg templates a97fa3881c4e23ac
+tplsheet empty0 pl lg photos 89f8c61c6c564e9e
+tplsheet empty0 pl lc templates e4a7360411d9400c
+tplsheet empty0 pl lc photos 8ba1ad279f823197
 tplsheet empty1 en pg templates 8ecc1ca07a3f7630
 tplsheet empty1 en pg photos 9788d58c9d06384a
 tplsheet empty1 en pc templates 706edb3629c3d4be
@@ -101,6 +111,14 @@ tplsheet empty1 ja lg templates 00977986a543f174
 tplsheet empty1 ja lg photos 8a64a3af399ea6b0
 tplsheet empty1 ja lc templates fd7ae784a777e972
 tplsheet empty1 ja lc photos 3f66afb2ad5d5887
+tplsheet empty1 pl pg templates d50b2b29543c92e0
+tplsheet empty1 pl pg photos c835c458b4e5b25a
+tplsheet empty1 pl pc templates e2da63af0bfbc426
+tplsheet empty1 pl pc photos eb96427366d95881
+tplsheet empty1 pl lg templates 5b0c3bb575cfd724
+tplsheet empty1 pl lg photos 89f8c61c6c564e9e
+tplsheet empty1 pl lc templates f7fed3815cb9e0a4
+tplsheet empty1 pl lc photos 8ba1ad279f823197
 tplsheet pg waiting page 1 of 2 selected 16 hash 216a43b4fc9b711b
 tplsheet pg ready tick 1 dirty 70 123 1720 2110 page 1 of 2 hash c4c7929a36aee38c
 tplsheet pg turn 1 -> 1 page 2 e854388bdd22871f
@@ -114,10 +132,10 @@ tplsheet lc waiting page 1 of 2 selected 16 hash eeb725999bcadcfb
 tplsheet lc ready tick 0 dirty 0 0 0 0 page 1 of 2 hash eeb725999bcadcfb
 tplsheet lc turn 1 -> 1 page 2 82f304a2f5efdb2f
 == pages views
-pages pg tab0 screen 0 79d81fc623dfecec
-pages pg tab17 ticked 3 screen 0 45ff5ee0c359f1e0
-pages pg all ticked 30 screen 1 8d0502cf0e5e24c0
-pages pg one ticked 1 40691cb35f2fd8ab
+pages pg tab0 screen 0 bc7f766b624a7bc8
+pages pg tab17 ticked 3 screen 0 fcb757cf4a797fbc
+pages pg all ticked 30 screen 1 5395a9ccdc9e2fe8
+pages pg one ticked 1 4013606b71563ae7
 pages pg probe pages_tab rc 0 'pages'
 pages pg probe picking rc 0 ''
 pages pg probe keyboard rc 0 ''
@@ -195,10 +213,10 @@ pages pg probe tile.x rc 0 ''
 pages pg probe bogus rc -1 ''
 pages pg readonly index 46ebb8b6a7fc68cb
 pages pg unreadable index 51162b52ed661216
-pages pc tab0 screen 0 2223a7704194e488
-pages pc tab17 ticked 3 screen 0 809ad327f6e5b7e5
-pages pc all ticked 30 screen 1 a1dabdc8fd52039c
-pages pc one ticked 1 372a3ca94655ef19
+pages pc tab0 screen 0 5cbee2ff66546b17
+pages pc tab17 ticked 3 screen 0 21c63f01d99e90ba
+pages pc all ticked 30 screen 1 e2b20ad16fd5b46b
+pages pc one ticked 1 c7b4a81827fee482
 pages pc probe pages_tab rc 0 'pages'
 pages pc probe picking rc 0 ''
 pages pc probe keyboard rc 0 ''
@@ -276,10 +294,10 @@ pages pc probe tile.x rc 0 ''
 pages pc probe bogus rc -1 ''
 pages pc readonly index b4524f523e0e9451
 pages pc unreadable index c9e30f8c0cbae465
-pages lg tab0 screen 0 e7b78055bb0a395e
-pages lg tab17 ticked 3 screen 0 75de0d308efaba0e
-pages lg all ticked 30 screen 1 28f035073732bf96
-pages lg one ticked 1 92ac674a45d940af
+pages lg tab0 screen 0 0005592a4cfbebbe
+pages lg tab17 ticked 3 screen 0 4ddb4a085fa479ee
+pages lg all ticked 30 screen 1 d3137e6fdeb885b6
+pages lg one ticked 1 e626d9643583e48f
 pages lg probe pages_tab rc 0 'pages'
 pages lg probe picking rc 0 ''
 pages lg probe keyboard rc 0 ''
@@ -300,7 +318,7 @@ pages lg probe bogus rc -1 ''
 pages lg index b8eb972f11f7546d
 pages lg many index 0 (screen 0) d89fcfdfbb9436d3
 pages lg many index 1 (screen 1) e57264211299bdb0
-pages lg many index 2 (screen 1) e57264211299bdb0
+pages lg many index 2 (screen 2) abe5ea52904fb07f
 pages lg probe pages_tab rc 0 'index'
 pages lg probe picking rc 0 ''
 pages lg probe keyboard rc 0 ''
@@ -357,10 +375,10 @@ pages lg probe tile.x rc 0 ''
 pages lg probe bogus rc -1 ''
 pages lg readonly index a4d247100f96ce95
 pages lg unreadable index bfc5d72044e576ee
-pages lc tab0 screen 0 e4626a4f79650b15
-pages lc tab17 ticked 3 screen 0 ebd91297d66e8c90
-pages lc all ticked 30 screen 1 3340e0ec890884d2
-pages lc one ticked 1 2491213e0a4e075d
+pages lc tab0 screen 0 076a7cb88dd1e115
+pages lc tab17 ticked 3 screen 0 7212ee7b51ed3c90
+pages lc all ticked 30 screen 1 7f696126c170d562
+pages lc one ticked 1 55600521d5caa45d
 pages lc probe pages_tab rc 0 'pages'
 pages lc probe picking rc 0 ''
 pages lc probe keyboard rc 0 ''
@@ -381,7 +399,7 @@ pages lc probe bogus rc -1 ''
 pages lc index f9c2ad1f3da9c189
 pages lc many index 0 (screen 0) 81e7a7ec27b60c21
 pages lc many index 1 (screen 1) c22a3bb26fefbb0c
-pages lc many index 2 (screen 1) c22a3bb26fefbb0c
+pages lc many index 2 (screen 2) b08f1ec0c7063f60
 pages lc probe pages_tab rc 0 'index'
 pages lc probe picking rc 0 ''
 pages lc probe keyboard rc 0 ''
@@ -450,22 +468,26 @@ pages lang ja pg 92f3f03a9d80786b
 pages lang ja pc d44a96a05f381beb
 pages lang ja lg 270b865f076e2963
 pages lang ja lc 567880f6cef9163c
+pages lang pl pg 862b9c651772a9fb
+pages lang pl pc 42926b3c1420c760
+pages lang pl lg bbcf4aa7f22c93a0
+pages lang pl lc 997ca28e41c51f1c
 == pages taps
-pages tap 4 3 -> 0 target 0 tab 0 screen 0 idx 0 ticked 1 kb 0 a5a387a0b82c1ea3
-pages tap 4 5 -> 0 target 0 tab 0 screen 0 idx 0 ticked 2 kb 0 b9f4b2042d12b547
-pages tap 4 3 -> 0 target 0 tab 0 screen 0 idx 0 ticked 1 kb 0 fdc3e5a94c931a37
-pages tap 3 0 -> 0 target 0 tab 0 screen 0 idx 0 ticked 30 kb 0 20f6ae1ad56e07e7
-pages tap 3 0 -> 0 target 0 tab 0 screen 0 idx 0 ticked 0 kb 0 f369ad493ac6f2c4
-pages tap 7 0 -> 0 target 0 tab 0 screen 1 idx 0 ticked 0 kb 0 72557061b99f08ab
-pages tap 4 29 -> 0 target 0 tab 0 screen 1 idx 0 ticked 1 kb 0 f51949f0838dc424
-pages tap 10 0 -> 5 target 29 tab 0 screen 1 idx 0 ticked 1 kb 0 f51949f0838dc424
-pages tap 9 0 -> 4 target 30 tab 0 screen 1 idx 0 ticked 1 kb 0 f51949f0838dc424
-pages tap 2 0 -> 3 target 30 tab 0 screen 1 idx 0 ticked 1 kb 0 f51949f0838dc424
-pages tap 6 0 -> 0 target 30 tab 0 screen 0 idx 0 ticked 1 kb 0 58617ddba82886a0
-pages tap 6 0 -> -1 target 30 tab 0 screen 0 idx 0 ticked 1 kb 0 58617ddba82886a0
-pages tap 4 12 -> 0 target 30 tab 0 screen 0 idx 0 ticked 2 kb 0 350507409b16dd88
-pages tap 10 0 -> -1 target 30 tab 0 screen 0 idx 0 ticked 2 kb 0 350507409b16dd88
-pages tap 9 0 -> 4 target 30 tab 0 screen 0 idx 0 ticked 2 kb 0 350507409b16dd88
+pages tap 4 3 -> 0 target 0 tab 0 screen 0 idx 0 ticked 1 kb 0 6833bbd489cd1e4f
+pages tap 4 5 -> 0 target 0 tab 0 screen 0 idx 0 ticked 2 kb 0 0230b67bd7012fdb
+pages tap 4 3 -> 0 target 0 tab 0 screen 0 idx 0 ticked 1 kb 0 db3a0732aa822543
+pages tap 3 0 -> 0 target 0 tab 0 screen 0 idx 0 ticked 30 kb 0 0845a3fe2de1f15f
+pages tap 3 0 -> 0 target 0 tab 0 screen 0 idx 0 ticked 0 kb 0 7b3b6281d4f5f6c0
+pages tap 7 0 -> 0 target 0 tab 0 screen 1 idx 0 ticked 0 kb 0 d8f2ce301342af2f
+pages tap 4 29 -> 0 target 0 tab 0 screen 1 idx 0 ticked 1 kb 0 99bc581ff88eb928
+pages tap 10 0 -> 5 target 29 tab 0 screen 1 idx 0 ticked 1 kb 0 99bc581ff88eb928
+pages tap 9 0 -> 4 target 30 tab 0 screen 1 idx 0 ticked 1 kb 0 99bc581ff88eb928
+pages tap 2 0 -> 3 target 30 tab 0 screen 1 idx 0 ticked 1 kb 0 99bc581ff88eb928
+pages tap 6 0 -> 0 target 30 tab 0 screen 0 idx 0 ticked 1 kb 0 d9cd4dcc392e47e4
+pages tap 6 0 -> -1 target 30 tab 0 screen 0 idx 0 ticked 1 kb 0 d9cd4dcc392e47e4
+pages tap 4 12 -> 0 target 30 tab 0 screen 0 idx 0 ticked 2 kb 0 1d94967e969d1d44
+pages tap 10 0 -> -1 target 30 tab 0 screen 0 idx 0 ticked 2 kb 0 1d94967e969d1d44
+pages tap 9 0 -> 4 target 30 tab 0 screen 0 idx 0 ticked 2 kb 0 1d94967e969d1d44
 pages tap 11 1 -> 0 target 30 tab 1 screen 0 idx 0 ticked 0 kb 0 c0928161b7dc653b
 pages tap 12 0 -> 0 target 30 tab 1 screen 0 idx 0 ticked 0 kb 1 22d28a0775cb2023
 pages typed '12' -> 2 target 11 kb 0 text '12' a6b9d9378313f870

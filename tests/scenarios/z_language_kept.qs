@@ -6,12 +6,14 @@
 wait 200
 expect settings.language is en
 expect language is en
-tap 1535 95
+tap library settings
 wait 200
-tap 930 1580
+tap library settings.cat.0
+wait 100
+tap library language
 wait 200
 expect library.sheet is language
-tap 930 785
+tap library language.auto
 wait 300
 expect library.sheet is settings
 expect settings.language is auto

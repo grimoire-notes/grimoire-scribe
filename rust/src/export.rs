@@ -76,14 +76,15 @@ pub struct FileSink {
     failed: bool,
 }
 impl FileSink {
-    /// Creates (truncating) the file. None when it cannot be (the simulator's full storage too).
+    /// Makes the file afresh: what stands at the name is removed, never opened or written (util.rs
+    /// create_fresh_nofollow). None when it cannot be (the simulator's full storage too).
     pub fn create(path: &str) -> Option<FileSink> {
         #[cfg(feature = "sim")]
         if crate::util::SIM_STORAGE_FULL.load(std::sync::atomic::Ordering::Relaxed) {
             qlog!("write %s: %s (simulated: storage full)", path, &strerror(libc::ENOSPC));
             return None;
         }
-        match std::fs::File::create(path) {
+        match create_fresh_nofollow(path) {
             Ok(f) => Some(FileSink { f, len: 0, failed: false }),
             Err(e) => {
                 qlog!("write %s: %s", path, &strerror(e.raw_os_error().unwrap_or(0)));
@@ -91,7 +92,10 @@ impl FileSink {
             }
         }
     }
-    /// A file to be made and read back (a spool): the caller unlinks it when it likes.
+    /// A file to be made and read back (a spool): the caller unlinks it when it likes. (Kept out of line: made
+    /// small by util::create_fresh_nofollow_as, it was inlined into both of the share server's respond_made
+    /// specializations, 5 KB more of the Kindle binary.)
+    #[inline(never)]
     pub fn create_spool(path: &str) -> Option<FileSink> {
         #[cfg(feature = "sim")]
         if crate::util::SIM_STORAGE_FULL.load(std::sync::atomic::Ordering::Relaxed) {
@@ -99,9 +103,7 @@ impl FileSink {
         }
         // (made afresh, O_EXCL|O_NOFOLLOW, mode 0600: a spool is written as root, and a planted link at its name, which
         // the pid makes easy to guess, must never be truncated and written through; security review 2026-11)
-        use std::os::unix::fs::OpenOptionsExt;
-        let _ = std::fs::remove_file(path);
-        let f = std::fs::OpenOptions::new().read(true).write(true).create_new(true).mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(path).ok()?;
+        let f = create_fresh_nofollow_as(path, true, 0o600).ok()?;
         Some(FileSink { f, len: 0, failed: false })
     }
     /// A write failed (the disk is full): the file is not whole.
@@ -1147,8 +1149,8 @@ fn add_raw_files(nb: &NotebookInfo, z: &mut ZipWriter, dirprefix: &str) -> i32 {
     let mut path = String::new();
     let mut name = String::new();
     // Notebook metadata, the book-page map and named sections: a notebook put back from the zip
-    // keeps its navigation as well as its ink and pictures.
-    const K_INFO: [&str; 5] = ["notebook.ini", "source.ini", "nav.ini", "links.ini", "doclinks.ini"];
+    // keeps its navigation as well as its ink and pictures (and, from 2.2, its web links).
+    const K_INFO: [&str; 6] = ["notebook.ini", "source.ini", "nav.ini", "links.ini", "doclinks.ini", WEBLINKS_FILE];
     for k in K_INFO {
         csnprintf!(&mut path, 900, "%s/%s", &dir, k);
         let Some(d) = read_file(&path) else { continue };

@@ -133,16 +133,22 @@ pub struct Settings {
     /// The pen in use when the eraser was last picked on the panel, a tool id or -1 for none: where
     /// a tap on the eraser in use goes back to while that pen is still on the panel.
     pub before_eraser: i32,
-    /// The clock and battery corner is on (settings.ini status_on; status.rs)
+    /// A notebook shows the shared status bar (settings.ini status_on; status.rs). A tap on the bar
+    /// hides it there, and another tap on the top strip brings it back; the state is saved. Settings
+    /// > Sleep & Clock > Status bar can also turn it back on. The other screens' bars are always shown.
     pub status_on: bool,
-    /// and how large it is: 0 small, 1 medium, 2 large (settings.ini status_size)
+    /// and how large it is: 0 small, 1 medium, 2 large (settings.ini status_size). The size scales
+    /// the whole top status bar too, not just the corner clock (globalui.rs).
     pub status_size: i32,
     /// and in which corner of the page it sits: 0 top left (the default), 1 top right, 2 bottom right,
     /// 3 bottom left (settings.ini status_corner; the tap zone follows it)
     pub status_corner: i32,
     /// The clock shows the time on the 12-hour clock (settings.ini clock_12h): "2:32 PM" instead of
-    /// "14:32". The Display sheet's "Display time as 12 hour" row.
+    /// "14:32", in the top status bar. The Status bar page's "Display time as 12 hour" row.
     pub clock_12h: bool,
+    /// A notebook shows the shared status bar over its page (settings.ini status_in_notebooks, on by
+    /// default). Its background there is transparent, so ink under it still shows.
+    pub status_in_notebooks: bool,
     /// Rotation to hold while locked (settings.ini rotation_lock): 0 follows the Kindle, 1..=4
     /// hold the current rotation plus one. The app resolves the current orientation at lock time.
     pub rotation_lock: i32,
@@ -181,11 +187,214 @@ pub struct Settings {
     pub whatsnew_due: bool,
     /// One-time hints already shown, a bitmask (settings.ini hints; bit numbers: docs/FORMAT.md).
     pub hints: i32,
+    /// The home app row's order, most recently used first (settings.ini `recent_apps`): Files,
+    /// Share, Settings, and installed app packages as `pkg:<id>`, comma separated. A core app missing
+    /// from the line follows in the default order; an app package the package index no longer has is
+    /// ignored when the row is built.
+    pub recent_apps: FixedStr<512>,
     /// The eye: dotted boxes over the page where a finger tap follows a link (settings.ini link_areas).
     pub link_areas: bool,
     /// Memory only, never saved: settings.ini was an existing version 3 file without a gestures key,
     /// so this run is the owner's first with the gestures, and the one-time toasts of what changed show.
     pub upgraded: bool,
+    /// Files in the Library (2.2): the Files card is the Library's last card (settings.ini files_card=1; absent,
+    /// the default: hidden). The file picker's "Show Files in Library" sets it, the card's "Hide from Library"
+    /// clears it.
+    pub files_card: bool,
+    /// Files' order (files_sort, FILES_SORT_NAMES: name, newest, size), what it lists (files_show,
+    /// FILES_SHOW_NAMES: usable files or all) and how (files_view, FILES_VIEW_NAMES: list or covers). Each line is absent
+    /// at its default (the first name), and a value this build does not have is used as the default and
+    /// written back as it was.
+    pub files_sort: i32,
+    pub files_show: i32,
+    pub files_view: i32,
+    /// The home folder (2.2, issue #160): where the main menu opens at each start, as settings.ini `home=` keeps
+    /// it (home.rs: "" for Notebooks, the Library's top, which is no line in the file; `notebooks/<a Library
+    /// folder>`; `files/<a folder of the Kindle's storage>`). Always a value `Home::parse` takes: the file's line
+    /// is read strictly, and one that names no home is not kept (`home_refused`).
+    pub home: FixedStr<{ crate::home::HOME_MAX }>,
+    /// Memory only, never saved: settings.ini's `home=` named no home (a value `Home::parse` refuses), so home is
+    /// Notebooks, and the Library says "Home folder not found." once as it first shows.
+    pub home_refused: bool,
+    /// Darker lines in imported PDFs (2.2, issue #173): the gamma a PDF imported from then on draws its gray pages
+    /// at, by `pdfwork::Gamma`'s index (settings.ini `pdf_gamma`, `Gamma::NAMES`: absent at Off, the default; a value
+    /// this build does not have is Off and is written back as it was).
+    pub pdf_gamma: i32,
+}
+
+/// settings.ini files_sort's values, by Settings.files_sort (2.2).
+pub const FILES_SORT_NAMES: [&str; 3] = ["name", "newest", "size"];
+/// files_show's: the files Grimoire can use, or every file.
+pub const FILES_SHOW_NAMES: [&str; 2] = ["usable", "all"];
+/// files_view's: a list, or the previews in a grid (Covers, 2.2, issue #145).
+pub const FILES_VIEW_NAMES: [&str; 2] = ["list", "covers"];
+/// The four built-in home apps, by the names settings.ini writes for them.
+pub const APP_ORDER_NAMES: [&str; 4] = ["files", "share", "settings", "store"];
+/// The prefix that marks an installed app package in recent_apps. `:` cannot occur in a package id,
+/// so old files' unknown words remain ignored as before.
+pub const APP_PACKAGE_PREFIX: &str = "pkg:";
+
+fn package_token_id(part: &[u8]) -> Option<String> {
+    let rest = part.strip_prefix(APP_PACKAGE_PREFIX.as_bytes())?;
+    if rest.is_empty() || rest.len() > 128 {
+        return None;
+    }
+    let id = std::str::from_utf8(rest).ok()?;
+    if id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
+        && !id.starts_with('.')
+        && !id.ends_with('.')
+        && !id.contains("..")
+    {
+        Some(id.to_string())
+    } else {
+        None
+    }
+}
+
+/// recent_apps' tokens split into the built-in order and the installed packages, each once in
+/// the order the file names them.
+fn app_order_tokens(v: &[u8]) -> (Vec<i32>, Vec<String>) {
+    let mut core = Vec::new();
+    let mut packages = Vec::new();
+    for part in v.split(|&c| c == b',') {
+        if let Some(id) = APP_ORDER_NAMES.iter().position(|name| name.as_bytes() == part) {
+            let id = id as i32;
+            if !core.contains(&id) {
+                core.push(id);
+            }
+        } else if let Some(id) = package_token_id(part) {
+            if !packages.contains(&id) {
+                packages.push(id);
+            }
+        }
+    }
+    (core, packages)
+}
+
+/// recent_apps' order as this build has it: known core apps once each, then any it does not name
+/// in default order.
+fn app_order_from(v: &[u8]) -> [i32; 4] {
+    let (mut order, _) = app_order_tokens(v);
+    for id in 0..4 {
+        if !order.contains(&id) {
+            order.push(id);
+        }
+    }
+    [order[0], order[1], order[2], order[3]]
+}
+
+/// The file text settings_load keeps: every valid token once, in order, then missing core apps.
+fn app_order_canonical(v: &[u8]) -> String {
+    let (mut core, _packages) = app_order_tokens(v);
+    let mut parts: Vec<String> = Vec::new();
+    for part in v.split(|&c| c == b',') {
+        if let Some(id) = APP_ORDER_NAMES.iter().position(|name| name.as_bytes() == part) {
+            let name = APP_ORDER_NAMES[id];
+            if !parts.iter().any(|x| x == name) {
+                parts.push(name.to_string());
+            }
+        } else if let Some(id) = package_token_id(part) {
+            let token = format!("{APP_PACKAGE_PREFIX}{id}");
+            if !parts.iter().any(|x| *x == token) {
+                parts.push(token);
+            }
+        }
+    }
+    for id in 0..4 {
+        if !core.contains(&id) {
+            core.push(id);
+            parts.push(APP_ORDER_NAMES[id as usize].to_string());
+        }
+    }
+    parts.join(",")
+}
+
+/// The home app row's four built-in apps, most recently used first.
+pub fn settings_app_order(s: &Settings) -> [i32; 4] {
+    app_order_from(s.recent_apps.as_str().as_bytes())
+}
+
+/// One entry of recent_apps in the order the file names it, for the home row's interleaved order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RecentApp {
+    Core(i32),
+    Package(String),
+}
+
+/// The recent app token order with unknown words dropped and missing core apps appended.
+pub fn settings_recent_apps(s: &Settings) -> Vec<RecentApp> {
+    let v = s.recent_apps.as_str().as_bytes();
+    let (core, _packages) = app_order_tokens(v);
+    let mut out = Vec::new();
+    for part in v.split(|&c| c == b',') {
+        if let Some(id) = APP_ORDER_NAMES.iter().position(|name| name.as_bytes() == part) {
+            let id = id as i32;
+            if core.contains(&id) && !out.iter().any(|x| matches!(x, RecentApp::Core(n) if *n == id)) {
+                out.push(RecentApp::Core(id));
+            }
+        } else if let Some(id) = package_token_id(part) {
+            if !out.iter().any(|x| matches!(x, RecentApp::Package(n) if *n == id)) {
+                out.push(RecentApp::Package(id));
+            }
+        }
+    }
+    for id in 0..4 {
+        let id = id as i32;
+        if core.contains(&id) && !out.iter().any(|x| matches!(x, RecentApp::Core(n) if *n == id)) {
+            out.push(RecentApp::Core(id));
+        }
+    }
+    out
+}
+
+/// The installed app package ids in recent-use order. The launcher filters ids the index no longer
+/// has and appends installed apps this line has not seen in name order.
+pub fn settings_package_order(s: &Settings) -> Vec<String> {
+    app_order_tokens(s.recent_apps.as_str().as_bytes()).1
+}
+
+fn rewrite_recent(s: &mut Settings, text: String) -> bool {
+    if text == s.recent_apps.as_str() {
+        return false;
+    }
+    s.recent_apps.set(&text);
+    true
+}
+
+/// Move a built-in `app` (0 Files, 1 Share, 2 Settings, 3 Package Store) to the front of the
+/// home app row. Every other app keeps its place, including installed packages. Returns false
+/// when nothing changes.
+pub fn settings_app_used(s: &mut Settings, app: i32) -> bool {
+    if !(0..4).contains(&app) {
+        return false;
+    }
+    let mut parts = vec![APP_ORDER_NAMES[app as usize].to_string()];
+    for item in settings_recent_apps(s) {
+        match item {
+            RecentApp::Core(id) if id == app => {}
+            RecentApp::Core(id) => parts.push(APP_ORDER_NAMES[id as usize].to_string()),
+            RecentApp::Package(id) => parts.push(format!("{APP_PACKAGE_PREFIX}{id}")),
+        }
+    }
+    rewrite_recent(s, parts.join(","))
+}
+
+/// Move an installed app package to the front of the home app row. Every other app keeps its
+/// place, including the built-in apps. Returns false when unchanged.
+pub fn settings_package_app_used(s: &mut Settings, id: &str) -> bool {
+    if package_token_id(format!("{APP_PACKAGE_PREFIX}{id}").as_bytes()).is_none() {
+        return false;
+    }
+    let token = format!("{APP_PACKAGE_PREFIX}{id}");
+    let mut parts = vec![token.clone()];
+    for item in settings_recent_apps(s) {
+        match item {
+            RecentApp::Core(id) => parts.push(APP_ORDER_NAMES[id as usize].to_string()),
+            RecentApp::Package(old) if old != id => parts.push(format!("{APP_PACKAGE_PREFIX}{old}")),
+            RecentApp::Package(_) => {}
+        }
+    }
+    rewrite_recent(s, parts.join(","))
 }
 
 // ---- state ----
@@ -224,6 +433,9 @@ struct State {
     /// unknown lines past the bound, logged once per load
     g_set_dropped: i32,
     g_kept: Vec<Kept>,
+    /// settings_load found a settings.ini that it could not read (no plain file, too long, it did not open,
+    /// or a read failed partway): settings_save moves that entry aside before it writes, and never writes over it.
+    g_set_unread: bool,
     /// how many notebook.ini files store_load_info has read (store_info_reads)
     g_info_reads: u32,
 }
@@ -243,6 +455,7 @@ impl State {
             g_set_unknown: Vec::new(),
             g_set_dropped: 0,
             g_kept: Vec::new(),
+            g_set_unread: false,
             g_info_reads: 0,
         }
     }
@@ -694,12 +907,17 @@ macro_rules! qlog_once {
 
 // ---- tiny ini ----
 
+/// settings.ini and notebook.ini are read up to this size, and no version writes one longer (docs/FORMAT.md):
+/// Grimoire writes a settings.ini under 100 KB and a notebook.ini under 30 KB. folders.ini and a notebook's
+/// bg/pages.ini are read up to it too.
+const STORE_INI_MAX: usize = 1 << 20;
+
 /// The lines of an ini file as (key, value) to cb, which keeps what it knows and sends the rest to
 /// its own list of unknown lines (the C's IniCb and IniUnknown): so keys a newer version wrote can
 /// be written back (docs/FORMAT.md). Comment lines and lines with no '=' are skipped; a value loses
-/// one trailing CR.
+/// one trailing CR. -1 for a file that is not read: missing, no plain file, or longer than STORE_INI_MAX.
 fn ini_parse_file(path: &str, cb: &mut dyn FnMut(&[u8], &[u8])) -> i32 {
-    let Some(txt) = read_file(path) else { return -1 ;
+    let Some(txt) = read_file_max(path, STORE_INI_MAX) else { return -1 ;
     };
     for line in c_lines(&txt) {
         let Some(eq) = line.iter().position(|&b| b == b'=') else { continue ;
@@ -770,6 +988,7 @@ pub fn store_root() -> String {
 pub fn store_init(root: &str) -> i32 {
     with(|s| {
         strlcpy_q(&mut s.g_root, root, 512);
+        s.g_set_unread = false; // (another root's settings.ini)
     });
     if mkdir_p(root) != 0 {
         qlog!("store: cannot create %s", root);
@@ -1149,12 +1368,12 @@ fn side_set(s: &mut Side, pid: u32, kind: u32) -> i32 {
 }
 
 /// Reads <bgdir>/pages.ini: lines p<page id>=<paper value>, for image papers only. 0 (no file: an
-/// empty list), or -1 when it is there but does not read, or there is no memory for it: then nothing
-/// may be saved over it, or every other page's entry would go.
+/// empty list), or -1 when it is there but does not read (longer than STORE_INI_MAX too), or there is no
+/// memory for it: then nothing may be saved over it, or every other page's entry would go.
 fn side_load(bgdir: &str, s: &mut Side) -> i32 {
     *s = Side::default();
     let path = side_path(bgdir);
-    let Some(txt) = read_file(&path) else {
+    let Some(txt) = read_file_max(&path, STORE_INI_MAX) else {
         return if access_ok(&path) { -1 } else { 0 };
     };
     let mut rc = 0;
@@ -1543,6 +1762,44 @@ pub fn store_delete(id: &str) -> i32 {
     rc
 }
 
+/// A notebook back from the trash (Files' Restore: fsview's restore put `notebooks/<id>` back, from a name
+/// store_delete gave it): a name another notebook of its Library folder has (in any ASCII case, as their PDF copies
+/// would be one file on the Kindle's storage) gets " 2", " 3" and so on, cut to fit; its modified time stays, so it
+/// goes back to its place in the Library's order. The Graph's index reads the notebooks again. Its info, as it is
+/// now, in `out`, and the Library as it is now in `all` (read here once, for the names taken: the caller needs no
+/// read of its own). 0; -1 when its notebook.ini does not read (`out` is left as it was: the Library does not list
+/// such a notebook); -2 when its new name could not be written (`out` has it under its own name, in its folder).
+pub fn store_restored(id: &str, out: &mut NotebookInfo, all: &mut Vec<NotebookInfo>) -> i32 {
+    let mut nb = NotebookInfo::default();
+    let read = store_load_info(id, &mut nb) == 0;
+    store_list(all);
+    libindex_revalidate();
+    if !read {
+        return -1;
+    }
+    *out = nb.clone();
+    let taken = |n: &[u8]| all.iter().any(|o| o.id != nb.id && o.folder == nb.folder && o.name.as_bytes().eq_ignore_ascii_case(n));
+    if taken(nb.name.as_bytes()) {
+        let base = nb.name.as_str().to_string();
+        let free = (2..1000).map(|k| {
+            let suffix = format!(" {k}");
+            format!("{}{suffix}", cut_at_bytes(&base, STORE_NAME_LEN - 1 - suffix.len()))
+        });
+        if let Some(name) = free.into_iter().find(|n| !taken(n.as_bytes())) {
+            clean_line(&mut nb.name, name.as_bytes());
+            if write_info(&nb) != 0 {
+                return -2;
+            }
+            if let Some(o) = all.iter_mut().find(|o| o.id == nb.id) {
+                o.name = nb.name.clone();
+            }
+            *out = nb;
+            libindex_revalidate();
+        }
+    }
+    0
+}
+
 fn cmp_modified(x: &NotebookInfo, y: &NotebookInfo) -> Ordering {
     if x.modified != y.modified {
         return if x.modified < y.modified {
@@ -1610,7 +1867,7 @@ type FolderName = FixedStr<STORE_NAME_LEN>;
 fn load_folders_ini() -> Vec<FolderName> {
     let path = cformat!("%s/folders.ini", &g_root());
     let mut out = Vec::new();
-    let Some(txt) = read_file(&path) else {
+    let Some(txt) = read_file_max(&path, STORE_INI_MAX) else {
         return out;
     };
     let mut first = true;
@@ -2472,11 +2729,11 @@ pub fn store_redo_add_pages(nb: &mut NotebookInfo, u: &PageAddUndo) -> i32 {
     for &pid in &u.added {
         work_pump(); // (each page is an fsync'd write, as the batch's were)
         let path = page_path(nb, pid);
-        match std::fs::read(&path) {
-            Ok(d) if d == u.blank => continue,
-            Ok(_) => bail!(),
-            Err(e) if e.raw_os_error() != Some(libc::ENOENT) => bail!(),
-            Err(_) => {}
+        match read_file(&path) {
+            Some(d) if d == u.blank => continue,
+            Some(_) => bail!(),
+            None if !nothing_at(&path) => bail!(),
+            None => {}
         }
         if write_file_atomic(&path, &u.blank) != 0 {
             bail!();
@@ -2515,7 +2772,7 @@ pub fn store_redo_add_pages(nb: &mut NotebookInfo, u: &PageAddUndo) -> i32 {
 pub fn store_page_paper(nb: &NotebookInfo, index: i32) -> PaperKind {
     let Some(&pid) = nb.page_ids.get(index.max(0) as usize).filter(|_| index >= 0) else { return nb.paper };
     let mut b = [0u8; 20];
-    let Ok(mut f) = std::fs::File::open(page_path(nb, pid)) else { return nb.paper };
+    let Ok((mut f, _)) = open_read_nofollow(&page_path(nb, pid)) else { return nb.paper };
     let mut got = 0;
     while got < b.len() {
         match f.read(&mut b[got..]) {
@@ -2541,9 +2798,12 @@ pub fn store_page_paper(nb: &NotebookInfo, index: i32) -> PaperKind {
 /// it was (or not there at all, which holds nothing either). One page drawn on, even with the ink erased
 /// again, is not.
 pub fn store_added_pages_untouched(nb: &NotebookInfo, u: &PageAddUndo) -> bool {
-    u.added.iter().all(|&pid| match std::fs::read(page_path(nb, pid)) {
-        Ok(d) => d == u.blank,
-        Err(e) => e.raw_os_error() == Some(libc::ENOENT),
+    u.added.iter().all(|&pid| {
+        let path = page_path(nb, pid);
+        match read_file(&path) {
+            Some(d) => d == u.blank,
+            None => nothing_at(&path),
+        }
     })
 }
 
@@ -3032,7 +3292,9 @@ fn scale_page(p: &mut Page, w: i32, h: i32) {
 
 /// The page at w x h, the notebook's page size (store_notebook_page_size): a page file of another
 /// size, one an older version scaled to its own screen, has its points scaled back. Missing page
-/// file -> empty page of nb->paper. A damaged file is set aside (p<id>.qpg.damaged-<time>). A page
+/// file -> empty page of nb->paper. A page file that is there but does not read (an open or read
+/// error) is not opened: -1, and the file is left as it is. A damaged file is set aside
+/// (p<id>.qpg.damaged-<time>). A page
 /// from a newer version comes back read-only (Page.readonly) and is never set aside. A page that
 /// bg/pages.ini lists with an image paper but that reads as Blank (an older version saved it so)
 /// gets its image paper back, and is written so again (each such page counted, below). Every page
@@ -3109,6 +3371,34 @@ fn load_page_with(
                 with(|s| s.g_restored_pages += 1);
             }
         }
+    } else {
+        match std::fs::symlink_metadata(&path) {
+            Err(e) if e.raw_os_error() == Some(libc::ENOENT) => {} // (no page file: a blank page, as before)
+            Ok(m) if !m.is_file() => {
+                // An entry at the page's name that is no plain file (a folder, a link) is not read, and is set
+                // aside as a damaged page is, the entry itself: left there, the blank page shown in its place
+                // could not be saved over a folder, and would be saved in place of a link with nothing said.
+                let mut aside = String::new();
+                csnprintf!(&mut aside, 760, "%s.damaged-%lld", &path, wall_time());
+                let rc = std::fs::rename(&path, &aside);
+                qlog!(
+                    "store: %s is no plain file, %s; starting blank",
+                    &path,
+                    if rc.is_ok() {
+                        "set aside"
+                    } else {
+                        "could not set aside"
+                    }
+                );
+                with(|s| s.g_corrupt_pages += 1);
+            }
+            _ => {
+                // A plain file that did not open or read whole is not blank paper: the page is not opened, and
+                // the file stays as it is (never set aside, and never overwritten by a blank page).
+                qlog!("store: %s is there but does not read; not opened", &path);
+                return -1;
+            }
+        }
     }
     let mut p = match p {
         Some(p) => p,
@@ -3142,6 +3432,8 @@ pub fn store_read_page(nb: &NotebookInfo, index: i32, out: &mut Option<Box<Page>
                 side_restore(nb, pid, pg);
             }
         }
+    } else if std::fs::symlink_metadata(&path).is_ok_and(|m| !m.is_file()) {
+        qlog_once!("store: %s is no plain file; read as a blank page", &path);
     }
     let mut p = match p {
         Some(p) => p,
@@ -3196,7 +3488,7 @@ fn page_file_opens(path: &str) -> bool {
 /// writes a page whose image paper it does not know.
 fn page_file_v1_blank(path: &str) -> bool {
     let mut b = [0u8; 8];
-    let Ok(mut f) = std::fs::File::open(path) else {
+    let Ok((mut f, _)) = open_read_nofollow(path) else {
         return false;
     };
     let got = matches!(f.read(&mut b), Ok(8));
@@ -3431,8 +3723,11 @@ pub fn page_serialize(p: &Page, out: &mut Vec<u8>) -> i32 {
         w_u8(&mut w, s.tool.0 as u8);
         w.extend_from_slice(&s.ext); // as read (0 for strokes drawn here)
         w_u32(&mut w, s.seed);
-        for k in 0..ToolParams::COUNT {
-            w_f32(&mut w, s.params.get(k));
+        // (each width within the range every reader clamps it to, FORMAT.md: a resized stroke's may be past it
+        // in memory, lasso_scale_widths, and is drawn at the range's end)
+        for (k, pi) in tool_param_table().iter().enumerate() {
+            let v = s.params.get(k);
+            w_f32(&mut w, if pi.field <= 1 { clampf(v, pi.min, pi.max) } else { v });
         }
         w_u32(&mut w, s.pts.len() as u32);
         for q in s.pts.iter() {
@@ -3710,7 +4005,7 @@ fn page_deserialize_with(buf: &[u8], out: &mut Option<Box<Page>>, pump: bool) ->
 /// u16 paper, w, h), the rest unread. None for a file that has none (missing, cut short, damage).
 fn page_file_size(path: &str) -> Option<(i32, i32)> {
     let mut b = [0u8; 16];
-    let mut f = std::fs::File::open(path).ok()?;
+    let (mut f, _) = open_read_nofollow(path).ok()?;
     let got = matches!(f.read(&mut b), Ok(16));
     if !got || &b[..4] != b"QPG1" {
         return None;
@@ -3727,6 +4022,11 @@ fn page_file_size(path: &str) -> Option<(i32, i32)> {
 /// access(path, F_OK) == 0
 fn access_ok(path: &str) -> bool {
     std::fs::metadata(path).is_ok()
+}
+
+/// Whether nothing at all stands at path: no file, and no link, folder or other entry either.
+fn nothing_at(path: &str) -> bool {
+    matches!(std::fs::symlink_metadata(path), Err(e) if e.raw_os_error() == Some(libc::ENOENT))
 }
 
 // ---- thumbnails ----
@@ -3755,22 +4055,27 @@ fn pgm_bytes(t: &Canvas) -> Option<Vec<u8>> {
 
 // The page previews are a disposable cache: written to a per-process name and renamed into place,
 // never fsynced (a torn file fails its stamp or its size check and is made again). Each fsync on the
-// Kindle waits 15-25 ms.
+// Kindle waits 15-25 ms. The file at the per-process name is made afresh (util.rs create_fresh_nofollow):
+// what stands there, a leftover of an earlier process or anything else, is removed, never opened or written.
 fn write_cache_file(path: &str, data: &[u8]) -> i32 {
+    use std::io::Write;
     #[cfg(feature = "sim")]
     if crate::util::SIM_STORAGE_FULL.load(std::sync::atomic::Ordering::Relaxed) {
         return -1;
     }
-    if std::fs::write(path, data).is_err() {
+    if create_fresh_nofollow(path).and_then(|mut f| f.write_all(data)).is_err() {
         let _ = std::fs::remove_file(path);
         return -1;
     }
     0
 }
 
+/// A PGM is read up to this size: the largest picture load_pgm takes (8000 x 8000) and a header.
+const PGM_FILE_MAX: usize = 8000 * 8000 + 64;
+
 fn load_pgm(path: &str, out: &mut Canvas) -> i32 {
     *out = Canvas::default();
-    let Some(d) = read_file(path) else { return -1 };
+    let Some(d) = read_file_max(path, PGM_FILE_MAX) else { return -1 };
     let len = d.len();
     let Some((w, h, mx, off)) = scan_p5_header(&d) else {
         return -1;
@@ -3860,7 +4165,7 @@ fn preview_stamp(source: &str) -> Option<String> {
 fn preview_tag(path:&str)->Option<String> {
     use std::io::Read;
     let mut text=String::new();
-    std::fs::File::open(path).ok()?.take(256).read_to_string(&mut text).ok()?;
+    open_read_nofollow(path).ok()?.0.take(256).read_to_string(&mut text).ok()?;
     (text.len()<256).then_some(text)
 }
 // Directory timestamps can have coarse resolution. Publish an opaque change token so an
@@ -3952,10 +4257,10 @@ pub fn store_page_preview_ok(nb: &NotebookInfo, pid: u32) -> bool {
     if store_page_preview_fresh(nb, pid).is_none() {
         return false;
     }
-    let Ok(mut f) = std::fs::File::open(&image) else { return false };
+    let Ok((mut f, md)) = open_read_nofollow(&image) else { return false };
     let mut head = [0u8; 32];
     let Ok(n) = f.read(&mut head) else { return false };
-    let Ok(len) = f.metadata().map(|m| m.len()) else { return false };
+    let len = md.len();
     match scan_p5_header(&head[..n]) {
         Some((w, h, 255, off)) if w > 0 && h > 0 && w <= 400 && h <= 500 => len >= (off + 1 + (w * h) as usize) as u64,
         _ => false,
@@ -4060,6 +4365,20 @@ pub fn store_page_dense(nb: &NotebookInfo, pid: u32) -> bool {
 /// does not make a page slow either.
 pub fn store_page_slow(nb: &NotebookInfo, pid: u32) -> bool {
     page_render_files(nb, pid).is_some_and(|(source, _, _)| page_file_at_least(&source, STORE_SLOW_PAGE_BYTES))
+}
+/// The size of page pid's file in bytes, None where it has none (a blank page never written): for grimoire.log.
+pub fn store_page_file_bytes(nb: &NotebookInfo, pid: u32) -> Option<u64> {
+    page_render_files(nb, pid).and_then(|(source, _, _)| std::fs::metadata(source).ok()).map(|m| m.len())
+}
+
+/// The key of page `index` of notebook `nb` made into a template picture for a pw x ph page (2.2, issue
+/// #195), or None when the page has no file. It is the page's file as it is now (its notebook, id, size and
+/// time): the same page gives the same picture, and one written on since gives another.
+pub fn store_page_template_key(nb: &NotebookInfo, index: i32, pw: i32, ph: i32) -> Option<u64> {
+    let pid = *nb.page_ids.get(usize::try_from(index).ok()?)?;
+    let st = std::fs::metadata(page_path(nb, pid)).ok()?;
+    let seed = format!("{}:{}:{}:{}:{}", nb.id.as_str(), pid, st.len(), st.mtime(), st.mtime_nsec());
+    Some(bgimage_source_key(seed.as_bytes(), pw, ph))
 }
 // Whether page pid has a kept drawing of its file as it is now, at the notebook's page size, by this
 // renderer, layered or not (that is told only by reading the page): the previews job's guess that the page
@@ -4454,6 +4773,7 @@ pub fn settings_default(s: &mut Settings) {
     s.white = false;
     s.before_eraser = -1;
     s.status_on = true;
+    s.status_in_notebooks = true;
     s.status_size = 1;
     s.status_corner = 0;
     s.clock_12h = false;
@@ -4473,6 +4793,7 @@ pub fn settings_default(s: &mut Settings) {
     s.shape_corner = 0;
     s.whatsnew_due = false;
     s.hints = 0;
+    s.recent_apps.set("files,share,settings,store");
     s.link_areas = false;
 }
 
@@ -4835,11 +5156,36 @@ fn settings_cb(s: &mut Settings, k: &[u8], v: &[u8]) -> bool {
         b"white" => s.white = keep_bool("white", v),
         b"panel_tools" => pins_kv(s, "panel_tools", v),
         b"status_on" => s.status_on = keep_bool("status_on", v),
+        b"status_in_notebooks" => s.status_in_notebooks = keep_bool("status_in_notebooks", v),
         b"status_size" => s.status_size = keep_int("status_size", v, 0, 2),
         b"gestures" => s.gestures = keep_bool("gestures", v),
         b"landscape_fit" => s.landscape_fit = keep_bool("landscape_fit", v),
         b"hints" => s.hints = keep_int("hints", v, 0, i32::MAX),
         b"link_areas" => s.link_areas = keep_bool("link_areas", v),
+        // 2.2: Files, read strictly (keep_named)
+        b"files_card" => s.files_card = keep_named("files_card", v, &["0", "1"]) == 1,
+        b"files_sort" => s.files_sort = keep_named("files_sort", v, &FILES_SORT_NAMES),
+        b"files_show" => s.files_show = keep_named("files_show", v, &FILES_SHOW_NAMES),
+        b"files_view" => s.files_view = keep_named("files_view", v, &FILES_VIEW_NAMES),
+        // 2.2: darker lines in imported PDFs (issue #173), read strictly: only the three known values
+        b"pdf_gamma" => s.pdf_gamma = keep_named("pdf_gamma", v, &crate::pdfwork::Gamma::NAMES),
+        b"recent_apps" => {
+            s.recent_apps.set(&app_order_canonical(v));
+        }
+        // 2.2: the home folder (issue #160), read strictly (home.rs). A value that names no home is not used and
+        // not kept: home is Notebooks, the Library says so once, and the next save leaves the line out. (The
+        // value is never logged: it may hold a name.)
+        b"home" => match crate::home::Home::parse(v) {
+            Some(h) => {
+                s.home.set(&h.value());
+                s.home_refused = false;
+            }
+            None => {
+                s.home.clear();
+                s.home_refused = true;
+                qlog_once!("settings: home= names no home (%d bytes): Notebooks", v.len() as i32);
+            }
+        },
         b"status_corner" => s.status_corner = keep_int("status_corner", v, 0, 3),
         b"clock_12h" => s.clock_12h = keep_bool("clock_12h", v),
         b"shapes" => s.shapes = keep_bool("shapes", v),
@@ -4980,6 +5326,16 @@ pub fn settings_load(s: &mut Settings) -> i32 {
     } else {
         1
     };
+    // A settings.ini that is there but was not read is never saved over: the defaults below are used, and
+    // settings_save moves the entry aside before it writes.
+    let unread = rc != 0 && std::fs::symlink_metadata(&path).is_ok();
+    with(|st| st.g_set_unread = unread);
+    if unread {
+        qlog_once!(
+            "settings: settings.ini is there but was not read (no plain file of at most %d bytes, or it did not open or read whole); the defaults are used",
+            STORE_INI_MAX
+        );
+    }
     let dropped = with(|st| st.g_set_dropped);
     if dropped != 0 {
         qlog!(
@@ -5059,6 +5415,28 @@ fn put(b: &mut Vec<u8>, k: &str, v: &str) {
 
 fn put_int(b: &mut Vec<u8>, k: &str, v: i32) {
     put(b, k, &cformat!("%d", v));
+}
+
+/// A line written only when `v` is not the key's default, or when the file's value was kept (keep_value).
+fn put_unless_default(b: &mut Vec<u8>, k: &str, v: &str, default: &str) {
+    if v != default || with(|st| st.g_kept.iter().any(|e| e.key == k)) {
+        put(b, k, v);
+    }
+}
+
+/// A settings.ini value that must be one of `names` exactly (2.2's Files keys): its index, else 0 (the
+/// default) with the value kept to be written back as it was.
+fn keep_named(k: &str, v: &[u8], names: &[&str]) -> i32 {
+    match names.iter().position(|n| n.as_bytes() == v) {
+        Some(i) => {
+            keep_value(k, v, None);
+            i as i32
+        }
+        None => {
+            keep_value(k, v, Some(names[0]));
+            0
+        }
+    }
 }
 
 pub fn settings_save(s: &Settings) -> i32 {
@@ -5161,6 +5539,7 @@ pub fn settings_save(s: &Settings) -> i32 {
     // The newest keys come last of the known ones: a build without them keeps their lines as lines it
     // does not know. The clock and battery corner's (status.rs), then the gestures' (Index phase 1).
     put_int(&mut b, "status_on", s.status_on as i32);
+    put_int(&mut b, "status_in_notebooks", s.status_in_notebooks as i32);
     put_int(&mut b, "status_size", s.status_size);
     put_int(&mut b, "gestures", s.gestures as i32);
     put_int(&mut b, "landscape_fit", s.landscape_fit as i32);
@@ -5193,6 +5572,28 @@ pub fn settings_save(s: &Settings) -> i32 {
     } else if with(|st| st.g_kept.iter().any(|e| e.key == "font_bold")) {
         put(&mut b, "font_bold", "");
     }
+    // 2.2: Files. Each line only away from its default, or when the file's value was one this build does not
+    // have (it goes back as it was).
+    let named = |names: &[&'static str], i: i32| names[clampi(i, 0, names.len() as i32 - 1) as usize];
+    put_unless_default(&mut b, "files_card", if s.files_card { "1" } else { "0" }, "0");
+    put_unless_default(&mut b, "files_sort", named(&FILES_SORT_NAMES, s.files_sort), FILES_SORT_NAMES[0]);
+    put_unless_default(&mut b, "files_show", named(&FILES_SHOW_NAMES, s.files_show), FILES_SHOW_NAMES[0]);
+    put_unless_default(&mut b, "files_view", named(&FILES_VIEW_NAMES, s.files_view), FILES_VIEW_NAMES[0]);
+    // 2.2: the home folder (issue #160), a line only while home is not Notebooks. Written only when it still reads
+    // as a home (whatever set the field), so the file never gains a value this build would refuse.
+    if crate::home::Home::parse(s.home.as_bytes()).is_some() {
+        put_unless_default(&mut b, "home", s.home.as_str(), "");
+    }
+    // 2.2: darker lines in imported PDFs (issue #173), a line only away from Off (or a value this build does not
+    // have, written back as it was).
+    let g = crate::pdfwork::Gamma::from_index(s.pdf_gamma);
+    put_unless_default(&mut b, "pdf_gamma", g.name(), crate::pdfwork::Gamma::Off.name());
+    // The home apps' order, most recently used first (2.3).
+    if s.recent_apps.is_empty() {
+        put(&mut b, "recent_apps", "files,share,settings,store");
+    } else {
+        put(&mut b, "recent_apps", s.recent_apps.as_str());
+    }
     // Lines this build does not know, as they were; but a pen.panel or touch.panel this build could
     // not read goes once the calibration's panel is recorded (written above in its place).
     let unknown = with(|st| st.g_set_unknown.clone());
@@ -5210,7 +5611,50 @@ pub fn settings_save(s: &Settings) -> i32 {
             b.extend_from_slice(&l[..len]);
         }
     }
-    write_file_atomic(&path, &b)
+    // The settings.ini that settings_load found but could not read is kept: it moves to settings.ini.unread
+    // first (the entry itself: what a link names is untouched), and comes back if the save then fails. An
+    // earlier settings.ini.unread stays (the first one kept is the one most likely to be the user's own
+    // file), and the entry is then replaced. No version reads settings.ini.unread (docs/FORMAT.md).
+    let unread = with(|st| st.g_set_unread);
+    let aside = cformat!("%s.unread", &path);
+    let mut moved = false;
+    if unread {
+        let not_found = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
+        match std::fs::symlink_metadata(&aside) {
+            Ok(_) => qlog_once!("settings: settings.ini.unread is there already and stays; the settings.ini that was not read is replaced"),
+            Err(e) if not_found(&e) => match std::fs::rename(&path, &aside) {
+                Ok(()) => moved = true,
+                Err(e) if not_found(&e) => {} // (gone since the load: nothing to keep)
+                Err(e) => {
+                    qlog!(
+                        "settings: the settings.ini that was not read cannot be set aside (%s); nothing is saved over it",
+                        &strerror(e.raw_os_error().unwrap_or(0))
+                    );
+                    return -1;
+                }
+            },
+            Err(e) => {
+                // (whether one is kept already cannot be told: nothing is moved or written)
+                qlog!(
+                    "settings: the settings.ini that was not read cannot be set aside (%s); nothing is saved over it",
+                    &strerror(e.raw_os_error().unwrap_or(0))
+                );
+                return -1;
+            }
+        }
+    }
+    let rc = write_file_atomic(&path, &b);
+    if unread {
+        if rc == 0 {
+            with(|st| st.g_set_unread = false);
+        } else if moved && std::fs::rename(&aside, &path).is_ok() {
+            moved = false; // (back where it was: this save did not happen, and the next one tries again)
+        }
+        if moved {
+            qlog!("settings: the settings.ini that was not read is kept as settings.ini.unread");
+        }
+    }
+    rc
 }
 
 #[cfg(test)]
@@ -5259,6 +5703,27 @@ mod tests {
         }
         assert!(collided);
         let _ = std::fs::remove_dir_all(&r);
+    }
+
+    // The app row is most recently used first, but using one app only moves that app: the others keep
+    // the order they had (a package does not go behind every built-in, or the other way around).
+    #[test]
+    fn using_an_app_moves_only_it_to_the_front() {
+        let mut s = Settings::default();
+        s.recent_apps.set("files,share,settings,store");
+        assert!(settings_package_app_used(&mut s, "com.example.wordle"));
+        assert_eq!(s.recent_apps.as_str(), "pkg:com.example.wordle,files,share,settings,store");
+        assert!(settings_app_used(&mut s, 2));
+        assert_eq!(s.recent_apps.as_str(), "settings,pkg:com.example.wordle,files,share,store");
+        assert!(!settings_app_used(&mut s, 2));
+        assert!(settings_app_used(&mut s, 0));
+        assert_eq!(s.recent_apps.as_str(), "files,settings,pkg:com.example.wordle,share,store");
+        assert!(settings_package_app_used(&mut s, "com.example.wordle"));
+        assert_eq!(s.recent_apps.as_str(), "pkg:com.example.wordle,files,settings,share,store");
+        assert!(!settings_package_app_used(&mut s, "com.example.wordle"));
+        assert!(settings_app_used(&mut s, 3));
+        assert_eq!(s.recent_apps.as_str(), "store,pkg:com.example.wordle,files,settings,share");
+        assert!(!settings_app_used(&mut s, 4));
     }
 
     #[test]
@@ -5613,6 +6078,166 @@ mod tests {
         );
         assert_eq!(b, b"name=a\xffb\nn=5 |");
     }
+
+    // ---- hardening round 2026-11: plain-file reads ----
+
+    fn plain_root(tag: &str) -> std::path::PathBuf {
+        let base = std::env::var("GRIMOIRE_TEST_TMP").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+        let r = base.join(format!("grimoire-store-plain-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&r);
+        assert_eq!(store_init(r.to_str().unwrap()), 0);
+        store_set_device(300.0, 600, 800);
+        r
+    }
+
+    // A settings.ini that was not read is moved aside before the save, and is back at its name when that save
+    // fails: the next save moves it aside again and writes.
+    #[test]
+    fn a_failed_save_puts_the_unread_settings_back() {
+        let r = plain_root("unread");
+        let (ini, aside) = (r.join("settings.ini"), r.join("settings.ini.unread"));
+        std::fs::create_dir(&ini).unwrap();
+        std::fs::write(ini.join("kept"), b"k").unwrap();
+        let mut s = Settings::default();
+        assert_eq!(settings_load(&mut s), 1);
+        crate::util::FAIL_WRITE_AT.with(|c| c.set(1));
+        assert_eq!(settings_save(&s), -1);
+        assert!(ini.is_dir() && ini.join("kept").exists(), "the entry is back at its name");
+        assert!(std::fs::symlink_metadata(&aside).is_err(), "and nothing is left aside");
+        assert_eq!(settings_save(&s), 0);
+        assert!(std::fs::symlink_metadata(&ini).unwrap().is_file());
+        assert!(aside.is_dir() && aside.join("kept").exists(), "the entry is kept aside, as it was");
+        // (read again: a settings.ini of this build's, with nothing to keep aside)
+        assert_eq!(settings_load(&mut s), 0);
+        assert_eq!(settings_save(&s), 0);
+        let _ = std::fs::remove_dir_all(&r);
+    }
+
+    // A page file that is there but does not read is not opened as a blank page: the open fails, and the file
+    // stays where it is. (Root reads it anyway: this has nothing to show then.)
+    #[test]
+    fn a_page_file_that_does_not_read_does_not_open_blank() {
+        use std::os::unix::fs::PermissionsExt;
+        let r = plain_root("page-unread");
+        let mut nb = NotebookInfo::default();
+        assert_eq!(store_create("A", "", PAPER_BLANK, &mut nb), 0);
+        let path = page_path(&nb, nb.page_ids[0]);
+        let (mut w, mut h) = (0, 0);
+        store_notebook_page_size(&nb, &mut w, &mut h);
+        let mut p = None;
+        assert_eq!(store_load_page(&nb, 0, w, h, &mut p), 0);
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::File::open(&path).is_err() {
+            p = None;
+            assert_eq!(store_load_page(&nb, 0, w, h, &mut p), -1, "not blank paper");
+            assert!(p.is_none());
+            assert!(std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()), "left as it is");
+        }
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        p = None;
+        assert_eq!(store_load_page(&nb, 0, w, h, &mut p), 0, "readable again");
+        assert!(p.is_some());
+        let _ = std::fs::remove_dir_all(&r);
+    }
+
+    // The reads of a file's first bytes take a plain file at the name itself, as the whole-file read does.
+    #[test]
+    fn a_page_files_first_bytes_are_read_from_a_plain_file_only() {
+        let r = plain_root("v1blank");
+        let file = r.join("outside.qpg");
+        std::fs::write(&file, [b'Q', b'P', b'G', b'1', 1, 0, PAPER_BLANK.0 as u8, 0]).unwrap();
+        let link = r.join("p1.qpg");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        assert!(page_file_v1_blank(file.to_str().unwrap()));
+        assert!(!page_file_v1_blank(link.to_str().unwrap()));
+        let _ = std::fs::remove_dir_all(&r);
+    }
+
+    #[test]
+    fn a_stamp_is_read_from_a_plain_file_only() {
+        let r = plain_root("tag");
+        let file = r.join("outside.stamp");
+        std::fs::write(&file, b"1:2:3").unwrap();
+        let link = r.join("p1.stamp");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        assert_eq!(preview_tag(file.to_str().unwrap()).as_deref(), Some("1:2:3"));
+        assert_eq!(preview_tag(link.to_str().unwrap()), None);
+        let _ = std::fs::remove_dir_all(&r);
+    }
+
+    #[test]
+    fn a_page_files_size_is_read_from_a_plain_file_only() {
+        let r = plain_root("size");
+        let file = r.join("outside.qpg");
+        let mut head = b"QPG1".to_vec();
+        head.extend_from_slice(&[1, 0, PAPER_BLANK.0 as u8, 0]);
+        head.extend_from_slice(&700u32.to_le_bytes());
+        head.extend_from_slice(&900u32.to_le_bytes());
+        std::fs::write(&file, &head).unwrap();
+        let link = r.join("p1.qpg");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        assert_eq!(page_file_size(file.to_str().unwrap()), Some((700, 900)));
+        assert_eq!(page_file_size(link.to_str().unwrap()), None);
+        let _ = std::fs::remove_dir_all(&r);
+    }
+
+    // The small lists are read up to STORE_INI_MAX, to the byte: a longer one is not read.
+    #[test]
+    fn pages_ini_has_a_limit() {
+        let r = plain_root("pages-limit");
+        let bg = r.join("bg");
+        std::fs::create_dir_all(&bg).unwrap();
+        let (bg, kind) = (bg.to_str().unwrap(), paper_image(PAPER_ROLE_TEMPLATE, 1).0);
+        let mut text = format!("# Grimoire: the image paper of each page that has one (docs/FORMAT.md)\np1={kind}\n#").into_bytes();
+        text.resize(STORE_INI_MAX - 1, b'x');
+        text.push(b'\n');
+        std::fs::write(side_path(bg), &text).unwrap();
+        let mut s = Side::default();
+        assert_eq!(side_load(bg, &mut s), 0, "exactly the limit reads");
+        assert_eq!(side_get(&s, 1), Some(kind));
+        text.insert(text.len() - 1, b'x');
+        std::fs::write(side_path(bg), &text).unwrap();
+        assert_eq!(side_load(bg, &mut s), -1, "one byte more is there but does not read");
+        assert!(s.e.is_empty());
+        let _ = std::fs::remove_dir_all(&r);
+    }
+
+    #[test]
+    fn folders_ini_has_a_limit() {
+        let r = plain_root("folders-limit");
+        let path = r.join("folders.ini");
+        let mut text = b"# Grimoire folders\nSchool\n".to_vec();
+        text.resize(STORE_INI_MAX - 1, b'x');
+        text.push(b'\n');
+        std::fs::write(&path, &text).unwrap();
+        let f = load_folders_ini();
+        assert_eq!(f.len(), 2, "exactly the limit reads");
+        assert_eq!(f[0].as_str(), "School");
+        text.insert(text.len() - 1, b'x');
+        std::fs::write(&path, &text).unwrap();
+        assert!(load_folders_ini().is_empty(), "one byte more reads as no list");
+        let _ = std::fs::remove_dir_all(&r);
+    }
+
+    // A PGM is read up to PGM_FILE_MAX: a longer file is not read.
+    #[test]
+    fn a_pgm_has_a_limit() {
+        let r = plain_root("pgm-limit");
+        let path = r.join("picture.pgm");
+        std::fs::write(&path, b"P5\n2 2\n255\n\x10\x20\x30\x40").unwrap();
+        let p = path.to_str().unwrap();
+        let mut c = Canvas::default();
+        assert_eq!(store_read_pgm(p, &mut c), 0);
+        assert_eq!((c.w, c.h, c.px[3]), (2, 2, 0x40));
+        // (lengthened without writing: the file's own bytes still start it)
+        let f = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        f.set_len(PGM_FILE_MAX as u64).unwrap();
+        assert_eq!(store_read_pgm(p, &mut c), 0, "exactly the limit reads");
+        f.set_len(PGM_FILE_MAX as u64 + 1).unwrap();
+        assert_eq!(store_read_pgm(p, &mut c), -1, "one byte more does not");
+        let _ = std::fs::remove_dir_all(&r);
+    }
 }
 
 /// Visible-page preview jobs render outside the UI process, with bounded work and stale-write checks.
@@ -5729,6 +6354,8 @@ pub fn store_invalidate_page_previews(id:&str) {
 }
 pub fn store_cleanup_preview_work(id:&str,pid:i32) {
     let Some(dir)=notebook_dir(id.as_bytes())else{return};let path=format!("{dir}/.page-previews");
+    // (only in a folder of the notebook's own: one that is a link is left alone, with what it holds)
+    if !std::fs::symlink_metadata(&path).is_ok_and(|m|m.is_dir()) {return;}
     let Ok(entries)=std::fs::read_dir(path)else{return};
     for e in entries.flatten(){let name=e.file_name();let name=name.to_string_lossy();if name.ends_with(&format!(".{pid}"))||name.ends_with(&format!(".{pid}.tmp")){let _=std::fs::remove_file(e.path());}}
 }

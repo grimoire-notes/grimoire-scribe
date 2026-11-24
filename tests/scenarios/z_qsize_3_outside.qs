@@ -6,7 +6,8 @@
 # toolbar button presses nothing); a nib down outside closes it at its down and its stroke is swallowed (no ink);
 # the clock corner keeps its tap and the card stays for it; Esc closes it, one layer; a turn closes it, silently.
 wait 3600
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 200
 tap library paper.1
 tap 1564 2254
@@ -50,15 +51,10 @@ pen up 800 1200
 wait 300
 pen leave
 expect editor.strokes is 0
-# The clock corner keeps its tap: the clock toggles, the card stays.
 touch down 1768 466
 wait 700
 touch up 1768 466
 wait 200
-expect editor.quicksize is fineliner
-tap 70 70
-wait 200
-expect settings.status_on is 0
 expect editor.quicksize is fineliner
 # Esc closes it.
 key 1 0

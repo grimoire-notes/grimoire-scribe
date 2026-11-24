@@ -8,7 +8,8 @@
 # settings: landscape_fit=0
 # rust-only
 wait 300
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 510 460
 tap 1564 2254
@@ -38,7 +39,7 @@ expect editor.stroke_screen_mm is 8.00
 expect editor.stroke_look is round tip
 expect editor.stroke_settings is eraser
 expect editor.live_matches_render is 1
-tap 930 74
+tap 930 100
 expect editor.zoom not 1.00
 pinch 600 600 750 200 6
 wait 300

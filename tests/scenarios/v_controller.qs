@@ -18,8 +18,10 @@ expect toast is Controller disconnected
 hid attach pad Pro Controller
 wait 100
 expect toast is Controller disconnected
-tap 1535 95
+tap library settings
 wait 200
+tap library settings.cat.4
+wait 100
 tap library shortcuts
 wait 200
 expect library.sheet is shortcuts
@@ -49,7 +51,7 @@ expect library.buttons_group is
 tap library buttons.group.pages
 wait 100
 expect library.buttons_group is pages
-tap 930 416
+tap 930 296
 wait 100
 expect library.learning is previous-page
 key 2 0
@@ -96,13 +98,13 @@ tap library buttons.group.tools
 wait 100
 expect library.buttons_group is tools
 shot 04-tools
-tap 930 1475
+tap 930 1374
 wait 100
 expect library.learning is tool:calligraphy
 key 318 0 1
 wait 100
 expect pads.tool:calligraphy is 318
-tap 930 1795
+tap 930 1682
 wait 100
 expect library.learning is previous-tool
 key 318 0 1
@@ -111,10 +113,10 @@ expect toast is That button is no longer for Calligraphy pen.
 expect library.learning is next-tool
 expect pads.tool:calligraphy is
 expect pads.previous-tool is 318
-tap 930 1795
+tap 930 1682
 wait 100
 expect library.learning is
-tap 930 1955
+tap 930 1836
 wait 100
 expect library.learning is picker-previous
 key 319 0 1
@@ -127,7 +129,7 @@ expect pads.picker-previous is 319
 expect pads.picker-next is 320
 expect library.buttons.picker-next is 320
 shot 04-tools-picker
-tap 930 2115
+tap 125 95
 wait 100
 tap library buttons.group.editing
 wait 100
@@ -140,14 +142,15 @@ expect pads.redo is North
 shot 05-learned
 tap library done
 wait 100
-tap library done
+tap library settings.back
 wait 100
 expect library.sheet is shortcuts
-tap library done
+tap library settings.close
 wait 100
 expect library.sheet is none
 # In a notebook the learned buttons act
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 1564 2254
 wait 200
@@ -211,8 +214,10 @@ expect editor.modal is none
 # Reset: shortcuts.ini's buttons again
 pentap panel library
 wait 300
-tap 1535 95
+tap library settings
 wait 200
+tap library settings.cat.4
+wait 100
 tap library shortcuts
 wait 200
 tap library buttons

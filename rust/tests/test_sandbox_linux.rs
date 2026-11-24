@@ -1,7 +1,9 @@
 // test_sandbox_linux.rs: the safe loader's real steps (2.1.0-beta.2, DESIGN.md 3.7 and 4.2; areas/pdf.md 3.1).
 // They need Linux and root (namespaces, chroot, setuid, seccomp), so they run in the CI job `sandbox`
 // (.github/workflows/release.yml: sudo, GRIMOIRE_SANDBOX=require) and are skipped anywhere else, with a line
-// saying so. THEY HAVE NOT BEEN RUN ON THIS MAC OR ON A KINDLE: the first CI run is their first run.
+// saying so. These tests have not run on a Mac (they need Linux) or on a Kindle (they need cargo). The sandbox's
+// steps have run on a Scribe as they were in 2.1.0-beta.2 (sandbox.rs, `s1`); the narrower system-call rules that
+// came after wait for their check there (docs/TESTING.md, "Hardening round (2026-11), sandbox").
 #![cfg(all(target_os = "linux", feature = "sim"))]
 mod fontfix;
 mod pdffix;
@@ -103,6 +105,7 @@ fn the_workers_maps_hold_nothing_of_the_writer() {
     assert_eq!(String::from_utf8_lossy(&w.read_line(512, deadline).expect("its sandbox line")), "S 1");
     let maps = std::fs::read_to_string(format!("/proc/{}/maps", w.pid)).unwrap();
     assert!(!maps.lines().any(|l| l.split_whitespace().nth(1).is_some_and(|p| p.ends_with('s') && p.starts_with("rw"))), "a shared writable mapping:\n{maps}");
+    assert!(!maps.lines().any(|l| l.split_whitespace().nth(1).is_some_and(|p| p.contains('w') && p.contains('x'))), "a mapping both writable and executable:\n{maps}");
     let me = std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
     assert!(!maps.contains(me.to_string_lossy().as_ref()), "the writer's own binary ({me:?}) is mapped in the worker:\n{maps}");
     // /proc/<pid>/exe is the file the worker was exec'd from: GRIMOIRE_WORK_EXE outside the Kindle build
@@ -199,7 +202,8 @@ fn the_filter_is_the_one_the_tests_evaluate() {
 }
 
 // Pictures (lane L7): decoded in the real sandbox, a trap ends the worker and refuses the picture (never a
-// fallback to the writer's own decode), and a forced failed step falls back and says so.
+// fallback to the writer's own decode). What a failed step does to pictures is test_picwork_closed.rs's (where
+// the sandbox is required) and test_picwork_fallback.rs's (where it is not).
 #[test]
 fn pictures_decode_in_the_real_sandbox() {
     use grimoire::picwork::*;
@@ -235,7 +239,7 @@ fn a_font_is_checked_in_the_real_sandbox() {
         return;
     }
     let (_g, _f, _len) = setup();
-    for h in ["GRIMOIRE_FONT_TEST_TRAP", "GRIMOIRE_FONT_SLICE_MS"] {
+    for h in ["GRIMOIRE_FONT_TEST_TRAP", "GRIMOIRE_FONT_SLICE_MS", "GRIMOIRE_FONT_GLYPH_US", "GRIMOIRE_FONT_TEST_SLOW"] {
         std::env::remove_var(h);
     }
     let font = fontfix::ttf(&fontfix::test_font_many(3000));
@@ -253,6 +257,24 @@ fn a_font_is_checked_in_the_real_sandbox() {
     assert!(matches!(check_font(&fontfix::otf(&fontfix::test_font("Regular", 400), 2, false), 44), FontOut::Passed { .. }));
     assert!(matches!(check_font(&fontfix::ttf(&fontfix::cyclic_composite(true)), 44), FontOut::Refused(Refuse::Unreadable)));
     assert!(matches!(check_font(&fontfix::woff2(), 44), FontOut::Refused(Refuse::Format)));
+    // a font with a bold location: every glyph is drawn through both faces the UI makes, and timed
+    match check_font(&fontfix::ttf(&fontfix::test_font_variable()), 44) {
+        FontOut::Passed { facts, slow, .. } => assert!(facts.bold_at == 700 && facts.skip.is_empty() && slow == 0),
+        other => panic!("{other:?}"),
+    }
+    // a glyph over the glyph limit comes from Terminess and the font passes (the limit is 100 s of CPU; the
+    // glyph is over it by the test charge alone, never by this runner's clock)
+    std::env::set_var("GRIMOIRE_FONT_GLYPH_US", "100000000");
+    std::env::set_var("GRIMOIRE_FONT_TEST_SLOW", "slow:2000:100000001");
+    match check_font(&font, 44) {
+        FontOut::Passed { facts, slow, slowest_us, .. } => {
+            assert_eq!(facts.skip, vec![2000]);
+            assert!(slow == 1 && slowest_us >= 100_000_001);
+        }
+        other => panic!("{other:?}"),
+    }
+    std::env::remove_var("GRIMOIRE_FONT_GLYPH_US");
+    std::env::remove_var("GRIMOIRE_FONT_TEST_SLOW");
     // a call outside the list: the worker is ended, and the font is not passed
     std::env::set_var("GRIMOIRE_FONT_TEST_TRAP", "40");
     assert!(matches!(check_font(&font, 44), FontOut::Dead(_)));
@@ -260,6 +282,69 @@ fn a_font_is_checked_in_the_real_sandbox() {
     assert!(!session_broken(), "a trap is the worker's end, not the sandbox's");
     // (a forced failed step, which checks nothing and leaves the session without workers, is test_fontcheck.rs's:
     // it would take the workers away from the tests after this one)
+}
+
+// Files' previews (2.2, issue #145): the job makes a preview of each kind through the real sandbox, a PDF's first
+// page, a picture and a font's sample (the font worker's `T`, its glyphs walked under the check's glyph limit),
+// each a 300 x 400 picture with ink in it in the cache, with every call each worker makes on the allow-list; a file
+// a worker refuses is marked. Nothing falls back to the writer. A worker the filter ends on a file (a call outside
+// the list: here each kind's test trap) is a try, as a page's strike is in an import: its first death writes no
+// mark, the second in a row does, and neither breaks the session.
+#[test]
+fn previews_are_made_in_the_real_sandbox() {
+    use grimoire::bgwork_previews::*;
+    if !root() {
+        return;
+    }
+    let (_g, _f, _len) = setup();
+    for h in ["GRIMOIRE_PIC_TEST_TRAP", "GRIMOIRE_FONT_TEST_TRAP"] {
+        std::env::remove_var(h);
+    }
+    let base = std::env::temp_dir().join(format!("grimoire-sandbox-{}/previews", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let dir = base.join("documents");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(base.join("grimoire")).unwrap();
+    let px: Vec<u8> = (0..120 * 90).map(|i| if i % 120 < 60 { 20 } else { 230 }).collect();
+    assert_eq!(grimoire::bgimage::bgimage_write_png(dir.join("p.png").to_str().unwrap(), &grimoire::bgimage::BgPicture { px, w: 120, h: 90, ch: 1 }), 0);
+    std::fs::write(dir.join("a.pdf"), pdffix::planner(2)).unwrap();
+    std::fs::write(dir.join("f.ttf"), fontfix::ttf(&fontfix::test_font("Regular", 400))).unwrap();
+    std::fs::write(dir.join("junk.pdf"), pdffix::junk()).unwrap();
+    std::env::set_var("GRIMOIRE_STORAGE", &base);
+    assert_eq!(grimoire::store::store_init(base.join("grimoire").to_str().unwrap()), 0);
+    let st = grimoire::fsview::FsStorage::open(base.to_str().unwrap(), base.join("grimoire").to_str().unwrap()).unwrap();
+    for (name, made) in [("a.pdf", true), ("p.png", true), ("f.ttf", true), ("junk.pdf", false)] {
+        let p = grimoire::fsview::StoragePath::new(format!("documents/{name}").as_bytes()).unwrap();
+        let s = st.stat(&p, false).unwrap();
+        let arg = format!("{}.{}.{}.{}:documents/{name}", s.dev, s.ino, s.size, s.mtime);
+        assert_eq!(bg_file_preview(&arg), 0, "{name}");
+        match preview_cached(&p, &s) {
+            Cached::Preview(c) if made => {
+                assert_eq!((c.w, c.h), (PREVIEW_W, PREVIEW_H), "{name}");
+                assert!(c.px.iter().any(|&v| v < 128), "{name}: no ink");
+            }
+            Cached::NoPreview if !made => {}
+            _ => panic!("{name}: not what the worker should have made"),
+        }
+    }
+    assert!(!grimoire::picwork::in_fallback(), "the picture was decoded by a worker");
+    assert!(!session_broken(), "every worker held its sandbox");
+    // the filter ends the worker on the file: a try on record, then the mark
+    for (from, name, hook, at) in [("p.png", "p2.png", "GRIMOIRE_PIC_TEST_TRAP", "1"), ("f.ttf", "f2.ttf", "GRIMOIRE_FONT_TEST_TRAP", "0"), ("a.pdf", "a2.pdf", "GRIMOIRE_PDF_TEST_TRAP_PAGE", "1")] {
+        std::fs::copy(dir.join(from), dir.join(name)).unwrap();
+        let p = grimoire::fsview::StoragePath::new(format!("documents/{name}").as_bytes()).unwrap();
+        let s = st.stat(&p, false).unwrap();
+        let arg = format!("{}.{}.{}.{}:documents/{name}", s.dev, s.ino, s.size, s.mtime);
+        std::env::set_var(hook, at);
+        assert_eq!(bg_file_preview(&arg), 0, "{name}");
+        assert_eq!(preview_info(&p, &s).map(|i| i.made), Some(Made::Once(NoPreview::Ended)), "{name}: the first death is a try");
+        assert!(matches!(preview_cached(&p, &s), Cached::Nothing), "{name}");
+        assert_eq!(bg_file_preview(&arg), 0, "{name}");
+        assert_eq!(preview_info(&p, &s).map(|i| i.made), Some(Made::None(NoPreview::Ended)), "{name}: the second is the mark");
+        std::env::remove_var(hook);
+        // (and without the trap the same bytes under another name are previewed: the file was never at fault)
+    }
+    assert!(!session_broken(), "a worker the filter ended is the worker's end, not the sandbox's");
 }
 
 // The worker's clean end (the 2.1.0-beta.2 fix round): `--work` ends with _exit, so a worker told to stop under
@@ -279,6 +364,266 @@ fn a_workers_clean_end_makes_no_call_outside_the_list() {
     assert!(w.send("Q\n"));
     let st = w.finish(5000);
     assert!(libc::WIFEXITED(st) && libc::WEXITSTATUS(st) == 0, "a clean end, not a signal (SIGSYS is 31): status {st:#x}");
+}
+
+// ---- the hardening round (2026-11): futex, mmap and mprotect are judged by an argument ----
+// These need the filter and no jail, so they also run without root where a worker loads the filter without it.
+
+/// As `setup`, for the tests that need the filter only: a process that is not root asks for no sandbox (no
+/// jail is needed, and a Linux worker still loads the filter without root).
+fn setup_filter() -> (std::sync::MutexGuard<'static, ()>, std::fs::File, u64) {
+    let r = setup();
+    // SAFETY: geteuid has no preconditions.
+    if unsafe { libc::geteuid() } != 0 {
+        std::env::remove_var("GRIMOIRE_SANDBOX");
+    }
+    r
+}
+
+/// Whether a worker runs under the filter here: a session whose `trap` hook makes a call outside the list
+/// must end with the filter's report. As root it does, or the test fails; without root a host that loads no
+/// filter is skipped, with a line saying so.
+fn filter_is_on(f: &std::fs::File, len: u64) -> bool {
+    let on = matches!(page_after_hook(f, len, "trap"), PageOutcome::Died(Death::Sigsys(n)) if n as i64 == libc::SYS_getpid as i64);
+    if !on {
+        // SAFETY: geteuid has no preconditions.
+        assert!(unsafe { libc::geteuid() } != 0, "as root a worker runs under the filter");
+        eprintln!("skipped: this host loads no filter without root");
+    }
+    on
+}
+
+/// How page 1 of the planner ends in a worker told to run `hook` when it reaches that page.
+fn page_after_hook(f: &std::fs::File, len: u64, hook: &str) -> PageOutcome {
+    let mut s = Session::start(f.as_raw_fd(), len, &limits(len)).expect("a worker starts");
+    assert_eq!(s.probe(), Ok(2));
+    assert!(s.hook(hook, 1));
+    s.render(1, 600, 800, 1)
+}
+
+/// A file of `bytes` in the tests' folder (`setup` made it), opened afresh.
+fn file_of(name: &str, bytes: &[u8]) -> (std::fs::File, u64) {
+    let p = std::env::temp_dir().join(format!("grimoire-sandbox-{}/{name}", std::process::id()));
+    std::fs::write(&p, bytes).unwrap();
+    (std::fs::File::open(&p).unwrap(), bytes.len() as u64)
+}
+
+// A futex operation outside the three a worker can make (a requeue between two words of its own) ends the worker,
+// and the report names futex.
+#[test]
+fn a_futex_call_outside_the_list_kills_the_worker() {
+    let (_g, f, len) = setup_filter();
+    if !filter_is_on(&f, len) {
+        return;
+    }
+    match page_after_hook(&f, len, "futexbad") {
+        PageOutcome::Died(Death::Sigsys(n)) => assert_eq!(n, this_arch().futex),
+        other => panic!("{other:?}"),
+    }
+}
+
+// A mapping asked executable, by mmap or by mprotect, ends the worker, and the report names the call.
+#[test]
+fn an_executable_mapping_kills_the_worker() {
+    let (_g, f, len) = setup_filter();
+    if !filter_is_on(&f, len) {
+        return;
+    }
+    for (hook, call) in [("execmap", this_arch().mmap), ("execprot", this_arch().mprotect)] {
+        match page_after_hook(&f, len, hook) {
+            PageOutcome::Died(Death::Sigsys(n)) => assert_eq!(n, call, "{hook}"),
+            other => panic!("{hook}: {other:?}"),
+        }
+    }
+}
+
+// (the guard: the three operations one thread can issue, and the standard library's own wake, pass)
+#[test]
+fn the_futex_calls_a_worker_can_make_pass() {
+    let (_g, f, len) = setup_filter();
+    if !filter_is_on(&f, len) {
+        return;
+    }
+    match page_after_hook(&f, len, "futexok") {
+        PageOutcome::Page(p) => assert_eq!((p.w, p.h, p.ch), (600, 800, 1)),
+        other => panic!("{other:?}"),
+    }
+}
+
+// (the guard: a panic that unwinds under the filter makes no call outside the list, and is reported as one)
+#[test]
+fn a_panic_under_the_filter_is_reported_as_a_panic() {
+    let (_g, f, len) = setup_filter();
+    if !filter_is_on(&f, len) {
+        return;
+    }
+    match page_after_hook(&f, len, "panic") {
+        PageOutcome::Died(Death::Panic) => {}
+        other => panic!("{other:?}"),
+    }
+}
+
+// (the guard: the work no other test runs under the real filter. A colour page in bands, the link walk, a PDF
+// read whole instead of mapped, a PDF with a password, and JPEG pictures, one turned upright.)
+#[test]
+fn the_work_a_worker_does_passes_the_filter() {
+    use grimoire::picwork::{in_fallback, PicOut, PicPool};
+    let (_g, f, len) = setup_filter();
+    if !filter_is_on(&f, len) {
+        return;
+    }
+    let (cf, clen) = file_of("colour.pdf", &pdffix::colour());
+    let mut s = Session::start(cf.as_raw_fd(), clen, &limits(clen)).expect("a worker starts");
+    assert_eq!(s.probe(), Ok(3));
+    match s.render(2, 600, 800, 4) {
+        PageOutcome::Page(p) => assert_eq!((p.w, p.h, p.ch), (600, 800, 3)),
+        other => panic!("the colour page in bands: {other:?}"),
+    }
+    s.end();
+    let (tf, tlen) = file_of("tabs.pdf", &pdffix::tabs());
+    let mut s = Session::start(tf.as_raw_fd(), tlen, &limits(tlen)).expect("a worker starts");
+    assert_eq!(s.probe(), Ok(4));
+    match s.links(600, 800) {
+        Ok(got) => assert!(!got.links.is_empty(), "the walk found no link"),
+        Err(why) => panic!("the link walk: {why}"),
+    }
+    s.end();
+    let (rf, rlen) = file_of("read.pdf", &pdffix::planner(2));
+    let mut s = Session::start(rf.as_raw_fd(), rlen, &Limits { mapped: false, ..limits(rlen) }).expect("a worker starts");
+    assert_eq!(s.probe(), Ok(2));
+    assert!(matches!(s.render(1, 600, 800, 1), PageOutcome::Page(_)), "a PDF read whole");
+    s.end();
+    let (lf, llen) = file_of("locked.pdf", &pdffix::encrypted_planner(2, "secret", "owner"));
+    let mut s = Session::start(lf.as_raw_fd(), llen, &limits(llen)).expect("a worker starts");
+    assert_eq!(s.probe(), Err(StartErr::Password));
+    drop(s);
+    let fix = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bgimage");
+    let mut pool = PicPool::new();
+    let jpeg = std::fs::read(format!("{fix}/base_420.jpg")).unwrap();
+    assert!(matches!(pool.decode(&jpeg, false, 300, 400), PicOut::Pic { src_w: 67, src_h: 39, .. }));
+    // (24 x 16 with orientation 6: upright it is 16 x 24)
+    let turned = std::fs::read(format!("{fix}/exif_le_6.jpg")).unwrap();
+    assert!(matches!(pool.decode(&turned, true, 300, 400), PicOut::Pic { src_w: 16, src_h: 24, .. }));
+    assert!(!in_fallback(), "the pictures were decoded by a worker");
+}
+
+// (the guard: sandbox.rs types its numbers by hand, and this job is where they are first held to libc's)
+#[test]
+fn the_hand_typed_numbers_match_libc() {
+    let n = this_arch();
+    assert_eq!(
+        [n.read, n.write, n.munmap, n.mremap, n.madvise, n.mprotect, n.brk, n.futex, n.clock_gettime, n.rt_sigreturn, n.exit, n.exit_group],
+        [
+            libc::SYS_read as u32,
+            libc::SYS_write as u32,
+            libc::SYS_munmap as u32,
+            libc::SYS_mremap as u32,
+            libc::SYS_madvise as u32,
+            libc::SYS_mprotect as u32,
+            libc::SYS_brk as u32,
+            libc::SYS_futex as u32,
+            libc::SYS_clock_gettime as u32,
+            libc::SYS_rt_sigreturn as u32,
+            libc::SYS_exit as u32,
+            libc::SYS_exit_group as u32
+        ]
+    );
+    #[cfg(target_arch = "arm")]
+    assert_eq!(n.mmap, libc::SYS_mmap2 as u32);
+    #[cfg(not(target_arch = "arm"))]
+    assert_eq!(n.mmap, libc::SYS_mmap as u32);
+    assert_eq!(
+        n.reach_out,
+        [libc::SYS_socket as u32, libc::SYS_execve as u32, libc::SYS_kill as u32, libc::SYS_ptrace as u32, libc::SYS_mount as u32, libc::SYS_chroot as u32]
+    );
+    assert!(n.enosys.contains(&(libc::SYS_gettid as u32)));
+    assert_eq!(
+        [FUTEX_WAIT, FUTEX_WAKE, FUTEX_WAIT_BITSET, FUTEX_PRIVATE_FLAG, PROT_EXEC],
+        [libc::FUTEX_WAIT as u32, libc::FUTEX_WAKE as u32, libc::FUTEX_WAIT_BITSET as u32, libc::FUTEX_PRIVATE_FLAG as u32, libc::PROT_EXEC as u32]
+    );
+    assert_eq!(
+        FUTEX_ALLOWED,
+        [
+            (libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG) as u32,
+            (libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG) as u32,
+            (libc::FUTEX_WAIT_BITSET | libc::FUTEX_PRIVATE_FLAG) as u32
+        ]
+    );
+    // where the filter reads an argument: the low half of args[i] in the kernel's own struct
+    assert_eq!(arg_lo(0) as usize, std::mem::offset_of!(libc::seccomp_data, args));
+    assert_eq!(arg_lo(2) as usize, std::mem::offset_of!(libc::seccomp_data, args) + 2 * std::mem::size_of::<u64>());
+}
+
+// A worker the writer gave a jail holds every step, whatever its own environment says (it is empty): started
+// by hand with a jail that does not exist, it reports the step that failed and reads nothing. No root needed:
+// without it an earlier step fails, and is reported the same way.
+#[test]
+fn a_worker_given_a_jail_holds_every_step() {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let me = std::process::id().to_string();
+    let jail = format!("/tmp/grimoire-no-such-jail-{me}");
+    assert!(std::fs::metadata(&jail).is_err(), "{jail} exists");
+    let exe = std::ffi::CString::new(env!("CARGO_BIN_EXE_grimoire-headless")).unwrap();
+    // (the worker's own command line: the writer's pid is this process's, so the parent-death step holds)
+    let words: Vec<std::ffi::CString> =
+        ["grimoire", "--work", "pdf", &me, "1073741824", "30", "read", "0", &jail].iter().map(|w| std::ffi::CString::new(*w).unwrap()).collect();
+    let mut argv: Vec<*const libc::c_char> = words.iter().map(|w| w.as_ptr()).collect();
+    argv.push(std::ptr::null());
+    let envp: [*const libc::c_char; 1] = [std::ptr::null()];
+    let mut p = [0i32; 2];
+    let mut out = Vec::new();
+    let mut st = 0;
+    // SAFETY: a pipe, and a fork whose child only arranges descriptors 0 to 5 and execs the worker (every
+    // pointer it uses was made before the fork); the parent reads the pipe to its end and reaps the child.
+    unsafe {
+        assert_eq!(libc::pipe(p.as_mut_ptr()), 0);
+        let pid = libc::fork();
+        assert!(pid >= 0);
+        if pid == 0 {
+            let dn = libc::fcntl(libc::open(c"/dev/null".as_ptr(), libc::O_RDWR), libc::F_DUPFD, 10);
+            let w = libc::fcntl(p[1], libc::F_DUPFD, 10);
+            if dn < 0 || w < 0 {
+                libc::_exit(126);
+            }
+            for fd in [0, 1, 2, 3, 5] {
+                if libc::dup2(dn, fd) != fd {
+                    libc::_exit(126);
+                }
+            }
+            if libc::dup2(w, 4) != 4 {
+                libc::_exit(126);
+            }
+            for fd in 6..1024 {
+                libc::close(fd);
+            }
+            libc::execve(exe.as_ptr(), argv.as_ptr(), envp.as_ptr());
+            libc::_exit(127);
+        }
+        libc::close(p[1]);
+        let mut buf = [0u8; 512];
+        loop {
+            let n = libc::read(p[0], buf.as_mut_ptr() as *mut libc::c_void, buf.len());
+            if n < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            if n <= 0 {
+                break;
+            }
+            out.extend_from_slice(&buf[..n as usize]);
+        }
+        libc::close(p[0]);
+        libc::waitpid(pid, &mut st, 0);
+    }
+    let text = String::from_utf8_lossy(&out).into_owned();
+    let mut lines = text.lines();
+    let (build, sandbox) = (lines.next().unwrap_or(""), lines.next().unwrap_or(""));
+    assert!(build.starts_with("B "), "{text:?}");
+    assert!(sandbox.starts_with("E sandbox "), "the worker's sandbox line: {text:?}");
+    // SAFETY: geteuid has no preconditions.
+    if unsafe { libc::geteuid() } == 0 {
+        assert_eq!(sandbox, "E sandbox chroot", "{text:?}");
+    }
+    assert!(libc::WIFEXITED(st) && libc::WEXITSTATUS(st) == 3, "status {st:#x}");
 }
 
 // The mirror child's cap at the Scribe's page size (H3): a notebook of colour pages, each on a photo-like
@@ -345,4 +690,87 @@ fn a_scribe_sized_colour_page_mirrors_under_the_mirror_childs_cap() {
     let pdf = std::fs::read(&path).unwrap();
     assert_eq!(String::from_utf8_lossy(&pdf).matches("/DeviceRGB").count(), 4, "every page in colour");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// Grimoire's own folder (issue #201), as root as on the Kindle, in a parent like the Kindle's /var/local: another
+// user's and another group's, mode 02775 (the group may write it, the setgid bit is set). A folder of another user at
+// the own folder's name, which no one else may write (so its owner alone makes it not Grimoire's own), is moved aside
+// as it is, by a rename that never replaces an entry: the same inode and mode, still that user's, what it holds
+// unchanged. The folder is made afresh, root's, and takes the parent's group and setgid bit: 02700. It is Grimoire's
+// own: a second check takes it and moves nothing. A member of that group, not root, cannot make a file in it. No
+// worker is needed: the fonts folder is empty.
+#[test]
+fn a_folder_of_another_user_at_the_own_folders_name_is_moved_aside() {
+    use grimoire::prelude::*;
+    use grimoire::userfonts::*;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    if !root() {
+        return;
+    }
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let base = std::env::temp_dir().join(format!("grimoire-sandbox-statedir-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (data, parent) = (base.join("grimoire"), base.join("local"));
+    std::fs::create_dir_all(data.join("fonts")).unwrap();
+    std::fs::create_dir_all(&parent).unwrap();
+    // (the parent's owner, its group, and a member of that group who is neither: none of them root)
+    let (owner, group, member) = (65534, 65533, 65532);
+    std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::os::unix::fs::chown(&parent, Some(owner), Some(group)).unwrap();
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o2775)).unwrap();
+    assert_eq!(std::fs::metadata(&parent).unwrap().mode() & 0o7777, 0o2775);
+    let state = parent.join("grimoire");
+    std::fs::create_dir(&state).unwrap();
+    std::fs::write(state.join("keep.me"), b"not Grimoire's").unwrap();
+    std::os::unix::fs::chown(&state, Some(owner), Some(owner)).unwrap();
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let was = std::fs::symlink_metadata(&state).unwrap();
+    std::env::set_var("GRIMOIRE_STATE", &state);
+    assert_eq!(store_init(data.to_str().unwrap()), 0);
+    userfonts_aside_reset();
+    // (as the first check of a run, which alone may make the folder afresh)
+    let rc = bg_font_check(USERFONTS_AFRESH, 300.0);
+    std::env::remove_var("GRIMOIRE_STATE");
+    assert_eq!(rc, 0);
+    let mut names: Vec<String> = std::fs::read_dir(&parent).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    names.sort();
+    assert_eq!(names.len(), 2, "{names:?}");
+    assert_eq!(names[0], "grimoire");
+    assert!(names[1].starts_with("grimoire.not-own-") && names[1].ends_with(&format!("-{}", std::process::id())), "{names:?}");
+    let aside = parent.join(&names[1]);
+    let moved = std::fs::symlink_metadata(&aside).unwrap();
+    assert!(moved.is_dir() && moved.ino() == was.ino() && moved.mode() == was.mode() && moved.uid() == owner);
+    assert_eq!(std::fs::read(aside.join("keep.me")).unwrap(), b"not Grimoire's");
+    let fresh = std::fs::symlink_metadata(&state).unwrap();
+    assert!(fresh.is_dir() && fresh.uid() == 0 && fresh.gid() == group && fresh.mode() & 0o7777 == 0o2700, "{:o} gid {}", fresh.mode(), fresh.gid());
+    // Grimoire's own: a second check, itself given leave to move, takes it as it is and moves nothing
+    std::env::set_var("GRIMOIRE_STATE", &state);
+    userfonts_aside_reset();
+    let rc = bg_font_check(USERFONTS_AFRESH, 300.0);
+    std::env::remove_var("GRIMOIRE_STATE");
+    assert_eq!(rc, 0);
+    assert_eq!(std::fs::read_dir(&parent).unwrap().count(), 2);
+    let again = std::fs::symlink_metadata(&state).unwrap();
+    assert!(again.ino() == fresh.ino() && again.mode() == fresh.mode() && again.gid() == group);
+    // A member of its group, not root, cannot make a file in it.
+    let probe = std::ffi::CString::new(state.join("probe").into_os_string().into_encoded_bytes()).unwrap();
+    // SAFETY: the child makes only raw system calls on data made before the fork (setgroups, setgid, setuid, open,
+    // _exit) and ends with _exit; the parent waits for it.
+    let code = unsafe {
+        let pid = libc::fork();
+        if pid == 0 {
+            let refused = libc::setgroups(0, std::ptr::null()) == 0
+                && libc::setgid(group) == 0
+                && libc::setuid(member) == 0
+                && libc::open(probe.as_ptr(), libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL, 0o600) < 0
+                && *libc::__errno_location() == libc::EACCES;
+            libc::_exit(if refused { 0 } else { 1 });
+        }
+        let mut status = 0;
+        libc::waitpid(pid, &mut status, 0);
+        libc::WIFEXITED(status).then(|| libc::WEXITSTATUS(status))
+    };
+    assert_eq!(code, Some(0), "a member of the folder's group could make a file in it, or could not become one");
+    assert!(std::fs::symlink_metadata(state.join("probe")).is_err());
+    let _ = std::fs::remove_dir_all(&base);
 }

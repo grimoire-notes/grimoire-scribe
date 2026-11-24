@@ -146,7 +146,8 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   is never the pen's hand), a stroke or another gesture is in progress (`editor_busy`), or the driver is in
   pen mode (`display_pen_mode_on`: it stays so past a stroke until a grayscale refresh is due, and
   that refresh waits for the pen's last frame, so a refresh of the corner must not be the one that
-  ends it). A finger tap in the 14 mm corner square, or on the box's place with 4 mm around it (shown or
+  ends it). Taking it down is not held back by the pen merely being near: a sheet opened under the pen
+  must not keep the corner over the sheet. A finger tap in the 14 mm corner square, or on the box's place with 4 mm around it (shown or
   not: `status_hit`), turns it on and off: decided at the lift, with the
   finger down in the zone, on no control (`editor_control_at`: the panel, or a link, but
   not one of your own in the corner; a document link in the corner is a control: D7a, taps follow document links), lifted in the square (or within 5 mm of where it landed) and under 800 ms, whatever the fingertip did between (the path is not asked: a hard press drifts); every decision is one `grimoire.log` line; the screen
@@ -313,17 +314,20 @@ draws them. White ink and the precise eraser make them.
   The glyph cache keys a glyph by its file, so a change of font loses nothing cached. The files are
   static Regular and Bold instances of Google Fonts' variable fonts, cut to Latin, Latin-1, Latin
   Extended-A and General Punctuation (238 KB for the six: `assets/README.md`).
-- Settings > Font (library.rs, `Modal::Font`, 2.1): in Classic the Style row's right end is a chip, "Font:
-  Terminess" (the family's short name, md-format_font beside it), and the rest of the row still changes
-  the style; Gothic has no chip. The chip opens the Font sheet: a sample card (the highlighted family's
-  name at the title size, a translated sentence at the text size, digits and accents at the small size,
-  all drawn in it), then a row for each family drawn in itself, a check on the one in use, then Cancel
-  and Done. The sheet's own words stay in the font in use (in Terminess while that is one of the owner's
-  own, 2.1.0-beta.2: Your own fonts, which also adds the headings Built in and Your fonts, the rows of
-  grimoire/fonts and their pages). A tap highlights a row and refreshes only the
-  sample and the two rows (`font_step`, one partial refresh); Done saves `font=`, applies it and redraws
-  with a Full refresh, as a style change does; Cancel, Back and Esc change nothing. `font_with_family`
-  draws a family's row and sample and puts the font in use back.
+- Settings > Font (library.rs, `Modal::Font`, 2.1; a page of the new Settings menu since #115): in Classic
+  Settings' Display category has a Font row, "Font: Terminess" (the family's short name, or the family name
+  of one of the owner's own fonts); Gothic has no such row (`Show::ClassicOnly`). The row opens the Font
+  sheet, a Settings page with Back at its top left and the X at its top right: a sample card (the
+  highlighted font's name at the title size, a translated sentence at the text size, digits and accents at
+  the small size, all drawn in it), then a row for each family drawn in itself and a check on the one in
+  use. The sheet's own words stay in the font in use (in Terminess while that is one of the owner's own,
+  2.1.0-beta.2: Your own fonts, which also adds the headings Built in and Your fonts, the rows of
+  grimoire/fonts and their pages). A tap on a font applies it at once (`font_apply_pick`): it saves
+  `font=` (and `font=file:` for one of the owner's own, or takes such a line away when a family is
+  tapped, also the family that shows while that font does not draw), restyles the share pages and redraws
+  with a Full refresh, as a style change does. Back and Esc return to Settings and the X closes all of
+  Settings (`close_settings`), each keeping the font tapped, as Language keeps a language picked.
+  `font_with_family` draws a family's row and sample and puts the font in use back.
 - The keyboard's text is UTF-8 and its keys carry code points (`KB_KEY_*` below 32 for the named
   keys, `KB_KEY_FLICK` + row for the kana pad's own keys). There are four pages of characters,
   letters, symbols, accents and kana (`Keyboard.page`); the first three have `-`, `'` and `.`
@@ -405,6 +409,10 @@ draws them. White ink and the precise eraser make them.
   they reach the keyboard as Esc does, through `app_type_text`, whose touch-down on the text box now carries
   the input too, so it is taken as a contact on no key and moves no caret. Letters typed on a paired keyboard
   still type nothing in a field.
+- On the Library, the sheet a keyboard was opened from stays drawn under it, the Wi-Fi page included:
+  `LibraryState.kb_parent` names that sheet, and `draw_modal` draws it before `keyboard_draw` puts the keys
+  over its lower half. The keys take every contact; the page below is not a tap target while they are up.
+  (The editor's pages, Find and the Pages view already keep their page under their keyboards.)
 - Every keyboard host (the Library's sheet, the Pages view's Page name and Go to page) hands its pen
   and finger events to `app_keyboard_pointer` and its tick to `app_keyboard_tick` (app.c), so a key
   costs the same over any screen. A sample that changes nothing (the pen resting on a key sends one
@@ -445,6 +453,10 @@ draws them. White ink and the precise eraser make them.
   take no typed keys (only Esc, their Cancel, and the keys that move the caret, select and copy and paste:
   above), and on the count pads `hidkeys_event` drops the kernel's autorepeat (value 2) as it does for every
   key; so a held arrow moves the caret once.
+- The count pad's - and + held repeat the same way (#119): the same `KB_HOLD_MS`, `KB_REPEAT_MS` and
+  `KB_REPEAT_BATCH`, the same ends of a hold, its Done drawn with the count as for a tap. A hold stops at the
+  pad's limits (`can_repeat`: - at 1, + at its most, the pages the notebook still holds), and one on - at 1 or
+  + at its most never starts. tests/scenarios/z_pages_add_9_hold.qs holds them by the script's clock.
 
 ## Languages
 
@@ -540,6 +552,8 @@ Unset on the Kindle.
 root/settings.ini              current tool, panel, every tool's params, calibration and the
                                panel it was made on, sleep, style, language, port... (unknown
                                keys kept)
+root/settings.ini.unread       a settings.ini that was there but could not be read, kept aside;
+                               never read
 root/folders.ini               the folder names, one per line
 root/sleep.pgm                 the pinned sleep screen (P5)
 root/notebooks/<id>/notebook.ini   name, folder, paper, created, modified, last_page,
@@ -549,7 +563,8 @@ root/notebooks/<id>/p<pageid>.qpg  binary page (see docs/FORMAT.md)
 root/notebooks/<id>/p<pageid>.qpg.damaged-<time>   a page that could not be read, kept
 root/notebooks/<id>/thumb.pgm      binary PGM thumbnail of page 1 (P5)
 root/trash/<id>/               deleted notebooks are moved here, never unlinked
-root/fonts/, fonts/.cache/     the owner's own fonts and what the check found of them (Your own fonts)
+root/fonts/, fonts/.cache/     the owner's own fonts, and the check's previews and marks (Your own fonts)
+/var/local/grimoire/<16 hex digits>/fonts/   the check's verdicts for a data root, outside it (the Kindle; Your own fonts)
 root/.font-inuse               the crash guard of a font of the owner's own (Your own fonts)
 root/PDFs/<folder>/<name>.pdf  the PDF mirror (an export, not data)
 root/.cache/pdf/<id>/          the notebook PDF's page streams (disposable; docs/FORMAT.md)
@@ -563,6 +578,37 @@ All writes are atomic: write `<file>.tmp`, fsync, rename. Page saves happen abou
 last pen-up, at every press of the power button, on page change, on leaving the editor and on
 exit. `store_add_page` never writes over an existing `p<id>.qpg`: it takes the next free id.
 
+Reads of the data folder take plain files only. What is read there through `util::read_file`,
+`util::read_file_max` or `util::open_read_nofollow` (the store's files, the pictures, the template and import
+scans, the marks, the share zip's raw copies, the clipboard, the compaction lists, the shortcut files, the PDF
+cache's records, an import's `links.part`, `names.part` and `webs.part`, a notebook's `nav.ini`, `links.ini` and
+`doclinks.ini`) is read only when the entry at the name itself is a plain file (a link, a folder or anything
+else there reads as a file that is not there, or, for the shortcut files and a notebook's `nav.ini`,
+`links.ini` and `doclinks.ini`, as one that is there and does not read: nothing of it is used, and an edit
+that would write a sidecar that does not read (a page's name, a link) is refused, so it is never written
+over), and the open never waits. Folders on the way to a file may be links (the data root, `notebooks/`, a
+platform's folders, a test's folder): only the last name is held to this. The small text files are read up to
+a limit (`util::read_file_max`: settings.ini, notebook.ini, folders.ini, bg/pages.ini and bg/index.ini 1 MiB;
+an import folder's mark 4 KiB; import/.attempts 64 KiB; an import's links.part 4,194,314 bytes, names.part
+406,000 and webs.part 4,194,304, the most one worker's walk can have the first slice write; a PGM 64,000,064 bytes, its largest
+picture and a header; and, by the same bound in its own reader, a compaction list 64 KiB). A read that fails
+midway leaves any of them unread rather than cut short, so a settings.ini or notebook.ini cut short by a read
+error is never parsed as a shorter file and saved back so. Page files and pictures have no size limit of their
+own, and a read that fails partway leaves them unread too: a page file that is there but does not read is not
+opened (the editor says so) and is left as it is. A settings.ini that is there but was not read is moved to
+`settings.ini.unread` before the next save. An entry at a page's name that is no plain file is set
+aside as a damaged page is. The system's own files (/proc, /sys, the Kindle's locale file) are read with
+`util::read_system_file`, which follows links. The scans of `import/`, `templates/` and `photos/` take only
+real folders and plain files. Temporary files named after the process (`<name>.<pid>`, the mirror's
+`<name>.pdf.<pid>.tmp`, the PDF cache's `p<id>.z.<pid>.tmp`, the share spool) are made afresh
+(`util::create_fresh_nofollow`): what stands at the name is removed, never opened. `mkdir_p` takes an existing
+entry as the folder, a link to one included; code that prunes or empties a folder of Grimoire's checks that
+folder first (`util::no_link_below`, `pdfcache::real_dirs`, the previews' sweep). The mirror's sweep of stale
+temporaries works in the mirror folder the user chose. Your own fonts' files are read the same way: the crash
+guard (`grimoire/.font-inuse`, at most 1 KiB) and the check's `.slow` marks and previews by
+`util::read_file_max`, and its verdicts from a descriptor of the folder that keeps them (`userfonts::read_at`,
+never through a link and never waiting).
+
 The page size: a new notebook gets the device's (`store_set_device`), and
 `store_notebook_page_size` is what every reader and writer of its pages asks. A notebook.ini
 without a size (or with one outside 100..6000) takes the size most of its page files have, by
@@ -571,7 +617,8 @@ stops reading once one size has more than half the pages); with no readable page
 The next save writes it, and the Library's listing writes it once for a notebook whose size it had
 to find. The editor reads pages with `store_load_page` at that size and exports with
 `store_read_page`: a page file of another size has its points scaled to it (`scale_page`, logged
-once per run), and a missing page is blank paper of it. The Custom music sheet counts systems for
+once per run), a missing page is blank paper of it, and one that is there but does not read is not opened (the
+file stays as it is). The Custom music sheet counts systems for
 the page it is for (`musicbuild_open_page` carries that page's size, and `music_max_systems` takes
 its height). Calibrations follow the panel the same way: at startup `app_init` passes each through
 `calib_to_panel` (calib_fit.c). It takes the record (`pen.panel`, `touch.panel`; none
@@ -753,8 +800,9 @@ announcements: goingToScreenSaver draws the sleep screen, outOfScreenSaver is th
   FBInk's CREDITS, the only text the tree has for them. The recipe fails when it cannot find zig's
   LICENSE or musl's COPYRIGHT, or one of those notices. A vendored directory with no license file,
   a font without its OFL text, or a missing notice fails package-check, and so does a change to
-  FBINK_SRC until its notice is added. package-check also holds the size guard (2.1, the owner's
-  decision D23, raised for 2.1.0-beta.2): the Kindle binary under 11 MB (11,000,000 bytes) and the zip under 6 MB.
+  FBINK_SRC until its notice is added. package-check also holds the size guard (the owner's
+  decision D23, raised for 2.1.0-beta.2 and again for 2.2): the Kindle binary under 13 MB (13,000,000 bytes) and the
+  zip under 7 MB.
 
 ## Tests
 
@@ -849,7 +897,8 @@ announcements: goingToScreenSaver draws the sleep screen, outOfScreenSaver is th
    and notebooks with thumbnails; per page PNG, per notebook PDF / zip, per folder zip,
    everything zip. `/api/list.json` makes it scriptable. The server only runs while the Share
    screen is open; turning the Kindle and the redraw after waking keep it (`share_leave` returns
-   early while `App.relayout` is set), with its downloads and queue.
+   early while `App.relayout` is set), with its downloads and queue. Its page also sends one PDF to the Kindle,
+   kept only once the Kindle has asked and the user said Import (Send a PDF from the Share page, below).
    Up to 16 connections at once, each with its own request buffer (a shared one once answered a
    new connection from the previous request); renders fork, two at a time, the rest queue
    oldest first and are dropped when their browser hangs up. The pages use the fonts of the
@@ -858,7 +907,7 @@ announcements: goingToScreenSaver draws the sleep screen, outOfScreenSaver is th
    as 'Grimoire Text', the browser's serif, sans-serif or monospace after it, and Terminess as 'Grimoire
    Mono' for the studio's command line). The server takes the style and the font as it starts, and again
    when either changes while it runs (Live view keeps it up across screens: the style row, the theme
-   shortcut and the Font sheet's Done call `httpd_restyle`), so the next page a browser loads is in them;
+   shortcut and a tap on a font in the Font sheet call `httpd_restyle`), so the next page a browser loads is in them;
    a page already open keeps its own until it loads again. The fonts' licenses go with them (Rust only): `/font/licenses.txt`
    holds the texts (Terminess's OFL, its Material Design icons' notice and the Apache License, the Gothic
    fonts' and the Classic fonts' OFL), each font's answer names it in a `Link: rel="license"` header, and
@@ -1416,6 +1465,83 @@ index reads the file; Clear page, the lasso, the clipboard and the 64/4,000 chec
 never see them by construction. Copy page and Copy to notebook carry them (the latter only to targets that were
 copied too); the notebook PDF and raw zips carry them.
 
+## Web links as a QR card (2.2, issue #174)
+
+A PDF's web links (link annotations whose action is a URI) were counted and left out. From 2.2 an address that
+passes the rules is kept, and a finger's tap on its area shows a card with the address and its QR code, for a phone
+at arm's length to open. The Kindle never opens, fetches or runs an address: the card draws the stored text and a
+code made from it, and nothing else.
+
+- **Where they live: `notebooks/<id>/weblinks.ini`** (`weblinks.rs`, FORMAT.md "Web links"), a file of its own,
+  one `web.<page id>=<seed>,<x>,<y>,<w>,<h>,<address>` line a link. Not a new target kind in `doclinks.ini`: 2.1.0
+  reads `doclinks.ini` and carries the lines it does not know only up to 16 KiB together, past which it refuses the
+  whole file (no tabs at all there). A planner or a book with a few hundred web links would have cost a 2.1.0 user
+  every tab. In a file of their own the web links are simply absent in 2.1.0 and before, which never open it and
+  never write over it; `doclinks.ini` is the same bytes as for the PDF without its web links.
+- **The rules** (`weblinks_address_ok`, `weblinks_authority`): `http://` or `https://` (the scheme in either
+  case), printable ASCII other than a space and `\` (0x21 to 0x7E), at most `WEBLINK_ADDRESS_MAX` (200) bytes, under
+  the 213 bytes a version 10 code holds at level M, the largest `qr.rs` draws, so every address kept has its code,
+  and a plain host: `<host>` or `<host>:<port>`, no `user@` part, a host of letters, digits, `-`, `_` and `.`, a
+  numeric one only as four plain numbers, a port without a leading zero. What is refused is each form whose host a
+  browser reads otherwise than its text says (`\` as `/`, the text before an `@` as a user, `%2E` as a dot,
+  `0x7f.1` as `127.0.0.1`), so the card's title (`weblinks_host`) is always the host a phone opens, as the URL
+  standard writes it (`URL.host`: lower case, the port unless it is the scheme's own); a unit test holds the title
+  against a browser parser's answers. The worker
+  trims the PDF string's ends (spaces, line breaks, NULs: `weblinks_address_from`) and checks; the writer checks the
+  `W` record again (`parse_record`, `Collected::take`), and the reader checks the file's line again. A refused
+  address stays a counted web link left out (`LeftOut.uri`).
+- **The worker** (`pdfwork.rs`, `Walk::target`): a URI action's string is read and, when the rules take it, each
+  quad (or the Rect) of the annotation goes out as `W <src> <x> <y> <w> <h> <i> <address>`, the area as an `L`
+  record's (its box; no polygon), `i` its place among the page's web links. The page links never lose room to
+  them: the walk sends every page's `L` and `Q` records first, exactly as for the PDF without its web links, and
+  keeps the web links for a second pass after them, at most `WEBLINKS_PER_PAGE` (256) a page and `WEBLINKS_MAX`
+  (4,000) in all, what a notebook keeps, under what is left of `LINKS_MAX` and the walk's 3 MiB of records; those
+  left out are counted (`U <capped> <off> <long>`) and added to the end's "Some links were left out.". A web link
+  with nothing of it on the page is left out by the walk (it would take a page's room there) and counted as off the
+  page; an http or https address over 200 bytes is a refused one (`LeftOut.uri`) counted apart too, and the import's
+  log line of web links says both. So `doclinks.ini` and
+  `nav.ini` are, for any PDF, what the PDF without its web links gives. The first slice keeps the `W` records in `webs.part`, a part of their own
+  (`WEBS_PART`, only for a PDF with a web link), never in `links.part`, which 2.1.0 reads: an import 2.2 began and
+  2.1.0 finishes keeps its tabs and names, without its web links.
+- **The writer** (`pdfimport.rs`, `put_weblinks`): the last slice of a new notebook writes `weblinks.ini` in the
+  work folder when there is a web link (`weblinks_fill`: validated, one of each, the same address with its area
+  within 2 px; 256 a page; then `weblinks_water`, 90% of `WEBLINKS_MAX`, 4,000, the densest pages first); a fill's
+  commit (`fill_weblinks`) adds the web links of the pages it adds only, the notebook's own never trimmed. Those left
+  for room count in the end's "Some links were left out.".
+- **The editor**: `EditorState.wl`, read at open and pruned as `dl` is. What a finger's tap opens where links
+  meet (`link_follow`): the user's own links first, their touch area grown to a finger's 7 mm too; then the
+  document's page links (a planner's tabs), a small tab's grown finger margin too; then a web link (`weblinks_at`:
+  exact area first, then the 7 mm growth). Grimoire's own links to pages win over a web link's area wherever they
+  reach, so a whole-page web link never hides a tab. The clock's corner is the clock's over a web link, as over a
+  user's link (`editor_control_at`; a tab under the corner still takes the tap). The tap
+  opens the long-press card in a form of its own (`linkcard_set_web`, `LinkCard.web`): the heavy border around the
+  link's exact box, the card beside it (the popout's place), the host as its title (`weblinks_host`, in Terminess
+  bold; a host too long for the card shows "..." and its end, where its own name is), the address as stored and
+  always whole (in Terminess, the face of every look, broken between its characters: any 200 printable bytes take at
+  most 5 lines; in a look's own face 200 wide letters took up to 9), "Scan with a phone's camera",
+  the code in a 600 px box (a symbol of 37 to 65 modules: 9 to 16 px, 0.8 to 1.4 mm a module on the Scribe; its
+  negative under Invert, as the Share screen's) and Done; a tap outside closes it too. A finger held on a web link
+  arms Select, as on a document link. The eye draws their boxes with the document links' (`LinkBoxes.doc`). Copy
+  page and Copy to notebook carry them (to any notebook: a web link goes nowhere inside it); when they cannot, the
+  document links' toasts say so. Raw zips carry `raw/weblinks.ini`.
+- **Where they never appear**: the Links bar, the backlinks cache, the library index and the Graph (a web link
+  points at no page), the Index and Find (they list pages and names), the notebook's PDF (a choice for the owner:
+  BACKLOG.md), the lasso, Select, Clear page and the clipboard. Nor in a PDF used as a template (PDFs as
+  templates): the template job asks the worker for the page count and the pages only (`PROBE`, `R`), never `LINKS`,
+  the one command whose answer holds `W` records, so a template PDF's web links are never read; a template is drawn
+  under a page as a picture template is, with no link of either kind.
+- **Tests**: `weblinks.rs`'s unit tests and `tests/test_weblinks.rs` (the file, the caps, carried lines, what
+  2.1.0's readers see and write, Copy page and Copy to notebook, raw zips); `test_pdflinks_import.rs` (the rules
+  through a real worker, the `W` record, an import's other files byte for byte those of the PDF without web links,
+  a page past 256); `test_pdf_fill.rs` (a fill, a fill into a notebook with no `weblinks.ini`, and a fill past the
+  water level, which trims only the web links it adds); `test_qr.rs`
+  (`ui_qr_matches`, every address's code); `test_linkcard.rs` (the whole address and the host's end in every look
+  the l10n check runs); scenarios `z_weblinks_1_card`, `z_weblinks_2_es`, `z_weblinks_3_fill`,
+  `z_weblinks_4_wide` (the longest address of wide letters in Literata), `z_weblinks_5_overlap` (what wins where a
+  web link meets a tab, a link of the user's and the clock's corner) and `z_weblinks_6_hold` (the card under
+  Invert, a hold arming Select, a deleted page's web links dropped at the next open), whose
+  `editor.link_card.qr` checks the code on the screen module for module against the address's.
+
 ## The notebook PDF, incremental and streamed (2.1.0-beta.2, lane L9)
 
 Closing a changed notebook used to draw every page again (minutes for a 400-page planner, holding the one
@@ -1459,8 +1585,8 @@ files of mirrors that are gone.
 Every background child carries two caps (`childcaps.rs`): `oom_score_adj` 500 (the PDF worker's 1000 is lane L5's;
 the UI's is unchanged) and `RLIMIT_AS` at the child's size at fork plus a margin by kind (a streaming mirror 128 MiB,
 from the colour page measured above with about 60 MiB of headroom; previews and map layouts 128; the font check's
-writer 128, two copies of a 24 MB font; compaction and the default 256; a picture job 512, above its own tighter
-cap), applied after `child_setup` for each bgjob child, the detached child, the share server's render children
+writer 128, two copies of a 24 MB font; a file's preview 128, a picture or a font read whole; a file copy 64;
+compaction and the default 256; a picture job 512, above its own tighter cap), applied after `child_setup` for each bgjob child, the detached child, the share server's render children
 (128 MiB) and Live view's viewer children (64 MiB). A child that cannot read its own size (`/proc/self/statm`) is
 capped at 1 GiB plus its margin, never left without one. Both caps are Linux's; the host build applies nothing.
 The CI job `sandbox` mirrors a Scribe-sized colour page under the real cap. The mirror logs its pages, how many it
@@ -1799,31 +1925,89 @@ new paths and collisions before writing, retaining original metadata for rollbac
 ## Settings > Wi-Fi (2.1.0-beta.2)
 
 Issue #40 (from #36: someone who relies on Live view among several networks): choose among the Kindle's
-saved Wi-Fi networks from Settings, in the current Settings design. The smallest safe feature: the network
-connected to, the saved networks, a switch to one, its outcome, and a clean fallback; no network is added
-(the Kindle's settings and KOReader do that) and no profile is changed or deleted.
+saved Wi-Fi networks from Settings, in the current Settings design. Nearby networks come first: opening the
+sheet finds them (when the radio is on), with Rescan, Other... and Saved networks above the list. Each scan
+row shows a three-bar signal icon, filled for the strength, and a small lock when the network is not open. A
+saved row has a trash button at its right that deletes that profile at once. The connected row is filled black
+with a white rule inside its edge; tapping it again disconnects, keeping the radio on. While Nearby is idle, a
+quiet scan every 20 s updates the list in place: it never clears it or moves a name that is still there. Other...
+types a hidden network's name, then asks whether it is Open, WPA/WPA2 with a masked password, WPA3-Personal with
+a masked password, or WPA2/WPA3-Enterprise with a username and masked password. Enterprise add uses
+PEAP/MSCHAPv2 through `wpa_cli` (credentials on stdin), with PMF optional and the SHA-256 AKM offered, so it
+joins WPA2-Enterprise and WPA3-Enterprise (non-192-bit); the profile lives in the supplicant, not Saved
+networks, and `save_config` is best effort. WPA3-Personal uses SAE through `wpa_cli`, with PMF required and its
+passphrase on stdin. Both disable the supplicant's background scan, whose learned channel list can take the link
+off-channel. WEP, OWE, WPA3-Enterprise 192-bit, EAP-TTLS and EAP-TLS stay out. No CA-certificate choice
+ships yet, so PEAP does not validate the school's certificate.
 
-- **Where.** A Wi-Fi button in Settings' bottom row, beside Pair (both radios), opens a sheet drawn as the
-  Pair sheet is (draw_menu rows): the radio row (Turn on Wi-Fi, Turn off Wi-Fi, or Retry when the state is
-  not known), the status line, the saved networks (the one connected to first, with a check; seven a page
-  and a More networks row past seven, so it fits sideways), Done. Esc goes back to Settings. The notebook's
-  Settings has it too.
+- **Where.** A Wi-Fi row in Settings opens a full-page sheet drawn as its other submenus are. The status line
+  and the radio control (Turn on Wi-Fi, Turn off Wi-Fi, or Retry) sit over the top buttons: Rescan, Other...
+  and Saved networks. Nearby is the page it opens on; it scans once the radio is on, Rescan scans again, and an
+  idle Nearby asks for a quiet scan every 20 s (WIFI_REFRESH_MS). Saved networks shows the Kindle's saved
+  profiles, the one connected to first, eight a page with More, and
+  each row's trash button. Tapping Saved networks again returns to Nearby. Esc goes back to Settings. The
+  notebook's Settings has it too.
+- **Rows.** A network's name is a name: drawn smaller or shortened as names are, never counted as cut short.
+  Under it are what the sheet knows (Connected or Saved) and its security. The three signal bars fill from the
+  scan's `signal` against `signal_max`; a saved network no scan has measured shows the bars unlit. The lock is
+  over the icon's lower right for every security but Open, drawn from its shackle and body because the icon
+  font's lock is not in every face. The connected network's row is filled black with a white rule inside its
+  edge (its bars stay white); a tap on it calls the helper's disconnect.
 - **Status.** "Connecting to <name>..." while a switch is under way, "Could not connect to <name>." after
-  one failed, else the Share card's lines, with "Connected to <name>" when the name is known. A network's
-  name is a name: drawn smaller or shortened as names are, never counted as cut short.
+  one failed, else the Share card's lines, with "Connected to <name>" when the name is known. A failed Add says
+  "Could not add the network." (wifi_add_failed) rather than the generic read error, and a failed trash tap
+  "Could not forget the network." (wifi_delete_failed); a later successful read clears either.
+- **Add and delete.** A scan result that is not saved opens the masked keyboard for WPA/WPA2 or
+  WPA3-Personal, or is added at once when Open; Other... takes a hidden name, then Open, WPA/WPA2, WPA3
+  or WPA2/WPA3-Enterprise and its password. `wifi_add` derives the WPA/WPA2 PSK (PBKDF2-HMAC-SHA1 over
+  the passphrase and the name) and sends its 64 hex digits on the helper's stdin, never in argv;
+  WPA3-Personal sends the passphrase itself there (SAE needs it); the helper also takes a passphrase
+  there for a direct call.
+  A saved row's trash calls `wifi_delete` directly, with no Yes/No page; the helper tries wifid's
+  `deleteProfile` property by name (older firmware), then by the profile's integer `netid` (from
+  `profileData`, or `netidValue` when it is absent; the Scribe's wifid), then the supplicant's own
+  network, and counts the profile gone only when a fresh read no longer
+  lists it. Add and delete both read the networks back. Duplicate names are handled by wifid's own profile rules and the next read (no guessed merge in the
+  app). A profile that is not among the saved networks afterwards did not stick: that is a failed add. The
+  add's exits name the step in the log: 18 no valid PSK, 19 wifid refused the profile,
+  20 no read came back after the change. The
+  keyboard draws over the Wi-Fi page, which stays on the panel under it.
 - **A switch** is wifi_join: the helper's `join <hex>` (ensureConnection), then a read of the network
   connected to every 2 s. It has worked once a read has the Kindle connected to that network (the helper's
   own report right after the request still names the old one: no false success), and failed when the
   helper refused it or after 45 s (JOIN_WAIT). Nothing switches back: the Kindle's service decides what it
-  joins next. Turning the radio on or off forgets a switch; one switch runs at a time.
+  joins next. Turning the radio on or off forgets a switch; one switch runs at a time. A profile that took
+  joins the same watch (the helper already asked wifid to connect): the sheet says it is connecting until a
+  read names it, or names it failed.
+- **Disconnect** is the helper's `disconnect`, called from a tap on the connected row. Wi-Fi stays on. It
+  first puts wifid's connection manager in its manual `cmConnMode`, so it does not join the profile again
+  the moment the link drops, then writes `cmDisconnect` with the current `cmProfile` (some firmware ignores
+  it without that name), then without a name, then asks wpa_supplicant with `wpa_cli … disconnect` (with a
+  two-second bound, and the known control-socket paths tried). Once the link is down it pins the drop with
+  `wpa_cli disconnect` and disables that network at the supplicant, since the supplicant can reassociate on
+  its own within a moment, and so can a bare reconnect from wifid. It waits for `cmState` to leave
+  CONNECTED, looks once more a second later, and requires the report to say connected=0. A later join, add
+  or turn-on asks wifid to connect, which manages its own networks. A failure re-enables the network and
+  asks for `cmConnMode auto` again, keeping the last known status and saying "Could not disconnect." rather
+  than the generic read error; the helper's exit names the failed step in the log (10 radio, 11 connection
+  state, 12 no route took, 13 it came back past the disconnect pin, 17 it came back past the disable too,
+  15 it came back with no usable `wpa_cli` at all, 14 no final read). Joining, adding and turning the radio
+  on restore `auto` too. It is a change like a switch: one at a time, and success clears the current name.
 - **Reads** run only while the sheet is up (as the Share card's): everything as it opens, the saved
   networks once more when the radio comes on if they could not be read while it was off, everything once
-  more after a refused switch, and the network connected to while a switch is under way, or for 45 s after
-  a tap while the radio is on with no connection.
+  more after a refused switch, the network connected to while a switch is under way, or for 45 s after
+  a tap while the radio is on with no connection. A quiet scan of Nearby runs every 20 s while it is idle
+  with a list; `wifi_scan_quiet` keeps the old order and merges each name's new signal, security and known
+  flag, drops names that left, and appends new ones. Its failure leaves the old list and says nothing. A tap
+  on Rescan while it runs accepts it as the rescan instead of clearing the list. A tap on any change (join,
+  add, delete, disconnect, radio) cancels a running scan and starts at once; the 20 s wait starts when a
+  scan's answer returns, so a slow scan is never followed straight away by another one.
 - **Passwords** never leave the helper (docs/KINDLE.md, Wi-Fi): the profileData reader keeps essid values
-  only and gives no name at all for any format it does not know. Names cross in hex and are checked again
-  in Rust (1 to 32 bytes, no control character; anything else fails the whole report closed). No name is
-  logged.
+  only and gives no name at all for any format it does not know. A password goes from the masked keyboard to
+  the helper's stdin, is turned into a PSK, and is wiped from the keyboard on Done/Cancel; it is never in
+  argv, the environment, output, logs or scenario recordings, and the keyboard's probe returns empty for a
+  secret. Names cross in hex and are checked again in Rust (1 to 32 bytes, no control character; anything
+  else fails the whole report closed). No name is logged.
 
 ## Settings > Gestures and page finger shapes (Index phase 3)
 
@@ -2018,9 +2202,31 @@ The binding design is docs/beta2/LASSO-DESIGN.md; this is where it lives in the 
   (`preview_tick`); the strokes whose halo flipped are drawn again in at most 6 merged fast refreshes
   (DU wear counted), and the lift's Ui redraw covers every one. The halo (`sel_draw_halo`, in compose
   under the panel) is a dither band 3 ui px wider than the ink each side with the page's pixels put back
-  over it by a min, so ink stays on top; it stays on the selection. Probes: `editor.halo`,
-  `preview_batches`, `preview_refreshes`, `preview_reused`, `preview_rect`, `lift_rect`,
-  `lift_covers_preview`.
+  over it by a min, so ink stays on top; it stays on the selection. It goes along the ink as the page draws it
+  (2.2, issue #187: it went along every point, so a lasso drew a dithered ghost of each word erased wholly and
+  bridged each erased gap). `stroke_shown_runs` (lasso.rs) gives the runs of a stroke's spine that show on the
+  page canvas against the page's paper alone (`Drawn`, `drawn_page`; the paper made by `halo_paper`): for a
+  stroke an erase stroke after it in scope reaches (layers and floors as the enclosure takes them), a place of
+  its spine shows where no dab of those reaches its ink, not where one hides it by the enclosure's estimate
+  (`hides`), and elsewhere when the page shows its ink across the stroke there (a pixel darker than the paper by
+  more than `INK_SHOWS` levels in a strip square to the spine, the ink's radius each way and a pixel along)
+  and, at a sample of the spine, near it too (the pixels within its ink's radius as dark as one black pixel in
+  all, each counted past `INK_SHOWS` levels), leaving out pixels one of those erase strokes covers with its hard
+  core (ink drawn there after the erasing is another stroke's). The places are the spine's samples (up to a
+  millimetre apart) and, between two that both show where erasing reaches, places at most 2 px apart
+  (`places_between`), so a cut that passes between two samples has one inside it (a dot, whose spine has no
+  direction, is judged in its ink's radius alone). So ink erased by several passes, a small eraser's or a
+  resize's, or cut across by a pass narrower than the ink is wide (the ink either side of the cut is within
+  the ink's radius of its middle, but not across the stroke there), gets the halo the page shows. A run beside
+  a hidden stretch ends where its ink stops, less the ink's radius, so the band stays out of a narrow gap. The
+  preview's halo and then the selection's find it once for each stroke while the page's stroke count and
+  newest stroke stay (`halo_shown`, `SelMode.visible`), and the lift hands over what the preview found. Ink
+  the page shows none of has no halo, and the preview sends no refresh when it flips. The exact-area preview
+  draws only the judged samples the page shows and never joins two across a place it does not. Without the
+  page drawn to go by, the estimate stands in. Probes: `editor.halo` (strokes with a halo, as `sel_draw_halo`
+  finds them: `halo_items`, `halo_shown`), `halo_found` (how many times the halo found what shows of a stroke
+  since the lasso began), `preview_batches`, `preview_refreshes`, `preview_reused`, `preview_rect`,
+  `lift_rect`, `lift_covers_preview`.
 - Exact area (docs/beta2/PIXEL-LASSO.md 1): `stroke_dabs` runs a stroke's brush dry with
   `BrushState.dab_log` (brush.rs: the dry branch pushes each dab's sample, radius and calligraphy nib) and
   `stroke_cut` splits it into runs of dabs on one side of the lasso: a later piece starts at its first
@@ -2047,7 +2253,9 @@ The binding design is docs/beta2/LASSO-DESIGN.md; this is where it lives in the 
 ## The safe loader and the PDF import (2.1.0-beta.2, lane L5)
 
 PDFs are untrusted, and Grimoire runs as root, so no process that writes files parses one. The import is three
-processes: the UI (queues, shows the notice, never reads the PDF beyond the ends of the file), the writer (a
+processes: the UI (queues, shows the notice, and never parses a PDF: it reads the first and the last KiB of a file
+the scan found, to see that it is whole, and, in the picker, up to twelve 1 KiB samples for the book key, which it
+hashes), the writer (a
 background job child: opens the file through `fsview`'s walk, owns the work folder, validates every record
 and writes the files) and the worker, a fresh exec of the same binary (`grimoire --work pdf ...`, taken
 before any UI start-up) that inherits nothing: descriptors 0 to 5 only (0 to 2 on /dev/null, 3 the PDF, read
@@ -2056,13 +2264,31 @@ failed step sends `E sandbox <step>` and exits before a byte of the PDF is read:
 no network or System V IPC (unshare), chroot into an empty directory on /tmp (checked to be tmpfs), the uid
 and gid 62001 (checked unused), no new privileges and not dumpable, the parent-death signal, the limits
 (`RLIMIT_NOFILE` 0, `NPROC` 0, `FSIZE` 0, `CORE` 0, `AS`, `CPU`) and a seccomp allow-list (read, write, the
-mmap family, brk, futex, clock_gettime, rt_sigreturn, exit) whose violation traps into a reporter. A refused
+mmap family with mprotect and madvise, brk, futex, clock_gettime, rt_sigreturn, exit and exit_group), in which
+futex passes only as a private wait, wake or wait-bitset and mmap and mprotect only for a mapping not asked
+executable. Any other call traps into a reporter, but for the few that answer ENOSYS instead (the time64 calls
+musl tries first on the 32-bit ARM, and gettid). Before the `S 1` of its handshake the worker makes one allowed
+call of each of the three kinds, so a kernel that does not show the filter their arguments ends the worker
+there. A refused
 step, or a worker that cannot be started, marks nothing and counts no try; the session then imports no more PDFs
-(a later slice keeps the pages it made, for the next start). The writer ignores SIGPIPE, and reads a worker's last
+(a later slice keeps the pages it made, for the next start). The handshake is two lines, the build and `S 1` (the
+steps are in place; `S 0` is a build without them, macOS); where the sandbox is required the writers take only
+`S 1`, and a worker is started only with descriptors 0 to 5 in place. The writer ignores SIGPIPE, and reads a worker's last
 records after a send that failed. The page watchdog runs on CLOCK_MONOTONIC (a sleep does not count); a page
-whose wait the Kindle slept through and that then stalls is tried again once without a strike. Off the Kindle the steps are
-skipped (plain process isolation) unless GRIMOIRE_SANDBOX=require. The worker's records are text lines of a
-fixed grammar plus pixel bands, at most 4 MiB a job besides pixels, parsed strictly (`pdfwork.rs`); every
+whose wait the Kindle slept through and that then stalls is tried again once without a strike. Off the Kindle a
+failed step refuses nothing unless the writer requires the sandbox (GRIMOIRE_SANDBOX=require: on Linux it then makes
+the worker's jail, and a worker given a jail holds every step, as on the Kindle). macOS has none of the steps (plain
+process isolation); a Linux build that does not require the sandbox still takes the steps that work without root (no
+new privileges, the limits and the allow-list among them) and has no chroot. A platform kept in another crate whose
+system runs a Linux kernel under another name builds the steps with the `linux-kernel` feature (PORTING.md): its
+worker holds the steps that need no root as a required sandbox does, leaves out namespaces, chroot and uid unless
+its writer requires the whole sandbox, and says `S 2`, a word only such a build takes and only where the whole
+sandbox is not required, so that `S 1` stays the word of the whole set of steps; its address-space limit starts from
+what the worker held before its first step when that is larger than the image, and prctl answers ENOSYS there. The worker's records are text lines of
+a fixed grammar plus pixel bands, parsed strictly (`pdfwork.rs`). The writer ends a worker whose record lines pass
+4 MiB (`RECORDS_MAX_BYTES`: counted for each worker, the pixels and the handshake's two lines apart), and a job is
+many workers: a fresh one for each slice, and after each one that died or stalled. Only the first comes near the
+cap, with the links and the names; the others send the page count, a line a band and a line a page. Every
 number the device spike (S1) sets is in the one table `sandbox::s1`, marked "set by S1". The notebook, its
 slices, marks and colour rule are in FORMAT.md, "Imports: PDFs". Two rules hold the import together (the fix round
 of 2026-11-09): whether a file may be moved is decided by where it lies (`pdfimport::in_import`), never by a mark;
@@ -2070,7 +2296,27 @@ and the state never names a picture the saved index does not (the index is saved
 and makes again what is gone). Only an import's child keeps the import lock's descriptor (`bgjob::child_setup`),
 so a compaction or a mirror that starts as the last import ends never holds it; a pick that met a lock held
 elsewhere is queued by the first scan that takes it afresh, and the tick tries the lock every 10 s while a
-previous run's detached import holds it.
+previous run's detached import holds it. The lock is a plain file at its own name (`pdfimport::lock_take`): it
+is opened without following a link (`O_NOFOLLOW`, and `O_NONBLOCK` as the other lock files), must be a regular
+file with one name, and once locked must still be the file at its name (`lock_is_at`), else the lock is asked
+for once more and then given up. What else is found at the name is never removed and never followed. Only
+`EWOULDBLOCK` means another process imports, and only then does a pick wait; a lock that cannot be taken for
+any other reason refuses a pick with the message for a file that cannot be imported, and leaves no mark. A third
+rule joined the two above in the hardening round of 2026-11: a file's path is kept in its mark and state as it
+is, and a path those files cannot hold (a line break in a name, `pdfimport::name_storable`) is refused where it
+comes in: the scan, the picker's rows, a pick, the job. `in_import` asks the folder itself where a path spells
+`import` in another case (`pdfimport::under_import`), and the scan's first look at a PDF opens it through the
+same walk as the job and reads only the file it listed (`read_ends`). The job reads its PDF through the file it
+opened, and a file of `import/` is moved to `done/` by its name, so the name is looked at once more just before
+the move (`finish_pdf`): it must still hold the file that was read (the lock's own test of a name against an
+open file, and the size and time the file was opened with), else nothing moves, nothing is marked done, and
+the next scan takes what is at the name; the try stays counted, so this cannot repeat without end, as long as the
+scan's listing and the open file agree on the file's size and time (the tries are counted under the size and time
+of the file the import has open, and the scan asks for them under the size and time its listing gives: a storage
+on which the two differ would see the file taken again at every scan). After the third such try the file waits,
+and the Import place's row then reads "Couldn't import PDF (see grimoire.log)." although its notebook exists
+(FORMAT.md, "Imports: PDFs"). The record a notebook keeps of its file takes its key and its hash from the one
+file the last slice has open.
 
 The links and names (lane L6) come out of the same worker. After the page count the writer sends `LINKS <w> <h>`;
 the worker walks the annotations of every page (`pdfwork.rs`, module `links`), resolves each destination to a
@@ -2105,6 +2351,99 @@ says so once a process, with the reason, and a picture a worker was given is nev
 checks a template or photo itself: one with no preview yet waits for the previews job (`install_picture`, the
 fix round's M13).
 
+The same PDF again fills its notebook (2.2): where slice 0 would say "PDF already imported." because a notebook is
+the PDF's (by its file record, or by the book key for a notebook that has none: an earlier version's, or
+KOReader's), it asks that notebook what it lacks (`pdfimport::fill_plan`: the book's page count its `source.ini`
+page lines carry, and the book pages no page of its list holds) and, when it lacks pages, goes on as an import of
+those pages alone, drawn at the notebook's own page size by the same writer, worker and per-page isolation. The
+probe is the guard on the key: a PDF whose page count is not the notebook's is a notebook of its own, never a
+fill, and the links are read at the size of the pages they will be on only after that is decided. The writer never
+writes the notebook: its last slice checks the file and says the pages are made, and the UI process puts them in
+(`pdfimport::fill_tick`), as KOReader's book job adds its pages, so the commit is one more thing the UI does in
+turn and never meets another writer of that notebook. It begins only with the Library in front and at rest (so no
+notebook is open in the editor and no dialog is half way), no book job running (one that waits on a PDF import,
+below, writes no notebook, and lets the fill go in) and no background job on that notebook (`bg_notebook_busy`),
+and runs over a few ticks with the input held (pen and touch, keys and controller
+buttons, the Live view's keys; what still acts, the power button, a turn of the device or a keyboard coming or
+going, writes no notebook) and the book's notice showing how far it got; no background job on that notebook starts
+until it ends (`pdfimport::fill_holds`, read by `next_job`). Each tick reads again what it writes and writes each
+file whole, so even a write that slipped in between two ticks would stay. A notebook renamed, moved or deleted
+while the pages were made (a hash of its name and folder taken as
+the fill is decided, and the notebook read again), or one that no longer holds the PDF's key, is not filled: the
+PDF stays in `import/` for the next scan, which takes it as the file it is. The child that finishes the queue after
+Grimoire closes runs the same slices, so it never commits either: a fill it finishes waits for the next start. The
+commit takes the page ids first (reserved in `notebook.ini`, then kept in the state), then the pictures (shared by
+content with the notebook's, the index saved first), the page files and `bg/pages.ini`, `source.ini`, and
+`notebook.ini`, which lists the pages in book order (`annotate_insert_at`, KOReader's route's rule); before that
+write the notebook shows nothing new. The links and names come after it, for the pages the fill added only: the
+PDF's links that start or end on one of them, through the same fill with the notebook's own counted
+(`pdflinks_fill` with the user's links' seeds as taken, the 2 px rule against its document links, the water level
+trimming only what the fill adds: `pdflinks_water_keeping`), and the outline's names for them. A link between two
+pages the notebook had is never added (the app cannot remove a document link), so deleting the pages a fill added
+takes everything it wrote. The state says `stage=2` once the commit begins, and from then on the next start
+finishes it from the work folder alone with the same page ids, whatever became of the PDF, so a commit cut off at
+any step ends with the notebook filled (three cuts in a row end it, as three stops end an import's slices); one
+more background slice then files the PDF. A fill stopped or failed before its commit leaves the notebook as it
+was. KOReader's Open this book is never held up by a fill: its job runs and the book opens on the reader's page
+as without one, and the fill goes in after, once the notebook is closed. A copy of the PDF dropped meanwhile waits
+for the first, as any copy does, and then finds every page there. A fill's state is `pdf-fill.ini`, a name earlier
+versions never read: they remove the folder as a cut-off import's, so none of them ever takes a fill for an import
+of a notebook of its own.
+
+KOReader hands a PDF over by its path (2.2, issue #142): to a launcher whose Capabilities line says `pdf`, the
+plugin's Open this book writes `import/.book/request.ini` version 2 naming the PDF it has open (`file=`) and draws
+nothing; the launcher's line is what keeps a newer plugin from sending one to an older Grimoire, whose `book_parse`
+refuses any version but 1. Grimoire never trusts the request: `book_parse` reads version 2 strictly (the version
+said by `version=2` alone, every key once at most, one `file=` line taken whole, absolute, UTF-8 and with no
+control character), and the book job's start takes it through the storage walk as the picker does
+(`FsStorage::open_file` with the pick's zones: inside the storage root, no link followed, the root's device, none of
+Grimoire's own folders, a plain file opened without waiting) and gives the PDF to `pdf_import_queue` as a pick.
+From there it is the import's: the same job, sandboxed worker, key, file record and fill rules, read in place, so a
+notebook KOReader made through version 1 is filled by its key (only the pages it lacks, its own pages untouched, no
+record given) and a book opened before 2.2 holds KOReader's gray pages beside the import's colour ones (the owner
+accepted a book holding both: issue #142). The start's open is an early, exact refusal and nothing more: the import
+opens the file again by itself (every open the same walk), so the notebook is chosen from the import's open alone,
+by the record rule above (`key_match`), and the import says which: a new notebook is its job's id, a fill names its
+notebook, and "already imported" carries the notebook's id in the shared result record (`already_notebook`, checked
+to be a notebook before it is used; a fill's commit that finds every page there names the fill's). The book job
+never works the choice out again from a key or a size of its own, so a file that takes the name between the start
+and the import is imported as the file it is, and an edited copy with the key and the size of the original still
+opens its own notebook.
+
+The book job (`annotate.rs`, `step_pdf`) writes nothing itself and holds nothing (`BookStatus.pdf`; app.rs's
+`book_holds` is true for a version 1 job alone). The import runs as a dropped PDF's does, with its own notice and the
+Library usable, because nothing it writes can be reached meanwhile: a new notebook is renamed into place whole by the
+import's job, a fill's commit holds the input itself for its few ticks, and the editor refuses a notebook that is
+being filled. Holding the input for the whole import, as version 1 does for its few seconds, would also turn any wait
+into a lock: a fill's commit waits for the Library to be at rest, What's new opens by itself on the first start after
+an update, and a held Dismiss could then never close it. For the same reason nothing bounds the wait: behind another
+import (an earlier run's, which holds the import lock, or others queued ahead: `BookStatus.waits`) the PDF queues as a
+picked PDF does, with the picker's toast for it. The job follows the import through the end the app gives it
+(`book_pdf_end`: the import's job end for its PDF, or the fill's commit, which `fill_tick` begins by its own rules)
+and names the notebook made, filled or found whole and the page of it that holds the reader's book page (by the count
+the notebook's pages name, when the two engines count differently). `book_tick` then decides by where the user is.
+Still on the Library (`BookStatus.left` is set once the screen has been anything else since the hand-over) with its
+cards in front (`library_cards_in_front`: no sheet, no Files, no Graph): the notebook opens at that page, with version
+1's toasts, a finger resting on the Library or not (the end waits for nothing the user does). Otherwise nothing opens:
+the import's own done toast shows (`pdf_import_said`, which says it here even with the new card on the Library in
+front: it is the one word the user gets of the book they asked for), and the page is kept as the one the notebook
+opens at (`book_pdf_keep_page`: `last_page` alone, and never for the notebook the editor has open). An end that comes
+while the Kindle sleeps or a fill's pages go in is taken after. An import that fails fails the book, and says the
+import's own toast ("PDF needs a password.", "PDF too big: over N MB." and the others of `pdf_import_told`); a request
+that ends before any import (it does not read, or the walk refuses its path) says the book's. An import that is
+neither queued, waiting for the lock nor going in, and told nothing, for 3 s (a fill whose notebook changed meanwhile)
+ends on the notebook that fill was for (`fill_target`, noted while its pages waited), as it is.
+
+The plugin sends version 2 only for what Grimoire takes, so that a book that opened before 2.2 never fails where
+KOReader could have drawn it: there is no way back to version 1 once Grimoire has the request. It keeps version 1
+for DjVu, comics and XPS; for a PDF at a path the walk refuses (`pathRefused` applies fsview's rules to the path as
+written, and asks the storage for links on the way and for the device); for a PDF over the import's 512 MiB; for a
+PDF whose file no longer has the key KOReader keeps for the book (its notebook is found by KOReader's key, the
+import would key it by the file's, and the two would part); and for a PDF that needs a password, which it asks of a
+MuPDF document of its own: MuPDF answers by trying the empty password, which would make the reader's document
+forget the one it was given. That question's calls are all guarded, so a KOReader whose MuPDF has other names
+cannot be stopped by it; a question that fails is logged, and the PDF goes by its path.
+
 ## Your own fonts (2.1.0-beta.2, lane L10)
 
 A font file someone copied into `grimoire/fonts` is untrusted, and stb_truetype, which draws the embedded
@@ -2134,9 +2473,25 @@ its bytes.** Four parts keep it (`fontcheck.rs`, `userfonts.rs`, `font.rs`):
   the cmap's groups could name another glyph where groups overlap), at each location the UI uses (the default, and the bold's when the
   font has a weight axis that reaches 100 above its default: 700, or its heaviest), outlining under the caps
   and drawing at both sizes; a glyph that fails is listed and comes from Terminess, and more than one in a
-  hundred is "Unreadable font.". It works in slices of 20 s of its own CPU time (`s1::FONT_SLICE_CPU_SECS`),
-  each a fresh worker that gets the bytes again and goes on from the glyph index the last reached, 10 minutes
-  in all, then "Took too long to read."; a worker silent for 30 s is killed and is the same. It settles the
+  hundred is "Unreadable font.". The walk goes through the faces the UI itself will make (`SafeFace`, the
+  regular and the bold by the axis) and by the calls the UI makes at a glyph's first use (the face's lookup,
+  its outline, the rasterizer at 160 px), and times each such draw in the worker's CPU time against a glyph
+  limit (`s1::FONT_GLYPH_CPU_MS`, 20 ms, a placeholder until the Scribe's figures are in; a build that is
+  not the Kindle's takes 5 s). A draw over the limit is measured again, up to three times in all, and the
+  smallest counts; one that came out over four times the limit is not measured again. A glyph over the
+  limit that is no letter or digit is listed with the ones that fail and comes from Terminess; a letter or
+  a digit over it, or more listed glyphs than one in a hundred when the ones that fail are not that many by
+  themselves, makes the font one that takes too long. The glyphs listed can
+  therefore differ between two checks of one file when a glyph's draw is near the limit. The writer counts
+  the listed glyphs across slices. It works in slices of 20 s of its own CPU time
+  (`s1::FONT_SLICE_CPU_SECS`), each a fresh worker that gets the bytes again and goes on from the glyph
+  index the last reached, 10 minutes in all; a worker silent for 30 s is killed and counts as out of time
+  too. A check that runs out of time, or finds the font one that takes too long, rests on a measured time,
+  so it is not taken on one reading: a first such check writes no verdict, the file is checked once more, a
+  minute or more later, and only a check that ends the way an earlier check of the same bytes did is "Took
+  too long to read.". The mark `<key>.slow` says how the earlier checks ended and of which bytes, under the
+  verdict's number: one check out of time and one that found slow glyphs are not two that agree, and a mark
+  of another number (an earlier version's) is no mark. It settles the
   font's scale (capitals as tall as Terminess's, 0.592 of the line, between 0.85 and 1.25, then lowered a
   hundredth at a time until 95 of 100 of Grimoire's strings, in every language, are no wider than Terminess
   draws them, measured as `font.rs` measures: advances only), says which languages need letters the font
@@ -2144,13 +2499,38 @@ its bytes.** Four parts keep it (`fontcheck.rs`, `userfonts.rs`, `font.rs`):
   and the preview's pixels; the writer validates every number.
 - **The writer** (`BgKind::FontCheck`, one job for every unchecked file, each read whole through `fsview`'s
   walk) writes `<key>.checking` before a font and the verdict `<key>.font` with the preview after it
-  (FORMAT.md, "Your own fonts"). A worker that dies on a font leaves `<key>.bad` and the others go on; a job
+  (FORMAT.md, "Your own fonts"). The verdict goes where the build keeps verdicts (`VerdictDir` in
+  `userfonts.rs`; so from the verdicts numbered 2 on): on the Kindle a folder of Grimoire's own outside the data root, `/var/local/grimoire`,
+  with a folder for each data root; in a build that names no such folder (`GRIMOIRE_STATE` unset), the
+  cache, as before. The own folder is walked name by name, by descriptor, from its parent: each name is
+  made by the job with mode 0700 when missing (the own folder itself by the first check of a run alone),
+  opened without following a link, and must be a folder of the
+  app's user that no one else can write; verdicts are read and written from that descriptor. Grimoire relies
+  on the parent (`/var/local` on the Kindle) only to hold the own folder's name: it tests the folder it opens
+  at every open, and never trusts the parent's owner or mode. When the entry at the own folder's name is not
+  Grimoire's own, the first check of a run moves it aside within the parent, to
+  `grimoire.not-own-<seconds>-<pid>`, and makes the folder afresh, at most once a run: the UI, which forks a
+  process for each check, gives the first check of a run alone leave to make the own folder or make it
+  afresh, from its own memory, never from a file. The entry is renamed by its name, from the parent's
+  descriptor, as it stands, by a rename that never replaces an entry, and is never followed, opened, read,
+  listed or deleted; its kind, owner and mode, as looked at just before the rename, are logged (an entry
+  another writer of the parent puts at the name in between is the one moved, and is left as it is too).
+  Every font is then checked once more, as after
+  `rm -r /var/local/grimoire`. The folders below the own folder are its own, which no one else can write, and
+  are never moved. When the own folder cannot be used (the move failed, say, the fresh folder is not
+  Grimoire's own either, or, after the first check of a run, it is gone or not Grimoire's own), its file
+  system has too little room, or it takes no write (the job writes and removes a small
+  file there before a font's check), the job ends with status 6 before any worker starts: nothing is
+  marked, and the session checks no more fonts (the ones that have their verdicts go on loading). The previews and the marks stay in the cache, and a verdict counts only with its companion
+  there (a pass with its preview, a refusal with `<key>.no`), so deleting `fonts/.cache` has every font
+  checked again wherever the verdicts are. A worker that dies on a font leaves `<key>.bad` and the others go on; a job
   that itself dies has its `.checking` mark turned into `.bad` by the UI, which queues the rest again. A
   sandbox step that fails, or a worker that cannot start, marks nothing: the job ends with status 4 and the
   session checks no more fonts. A file still being copied (under 5 s old, or changed between two looks 2 s
   apart) waits: status 3, and the Font sheet looks again.
 - **The UI** lists the folder without opening a font (the rows are the check's previews), and loads one only
-  with a passing verdict whose `hash` is the FNV-1a 64 of the bytes it just read; another file under the same
+  with a passing verdict, read from where verdicts are kept and with its preview in the cache, whose `hash`
+  is the SHA-256 (`sha256.rs`) of the bytes it just read; another file under the same
   name, size and time is checked again (`recheck:<key>`). It holds at most 32 MB of font files (the Bold file
   gives way to overprint first), loads none under 100 MB of available memory, and none in Gothic. `font.rs`
   keeps four face slots after the embedded files (the font in use and its bold, the Font sheet's sample and
@@ -2175,7 +2555,9 @@ Tests: `test_fontcheck.rs` (real workers: good TrueType, variable and CFF fonts;
 `rust/tests/fontfix`: truncations, a cmap past the end, composites that include each other, CFF subroutines past the
 format's depth, a symbol cmap, a web font, letters that draw nothing, wild glyphs, a line ten ems tall, random
 byte flips; a killed worker leaves `.bad`; a hung one is slow; slices come to one slice's verdict; a replaced
-file is checked again; the listing; a file still being copied waits; 20,000 glyphs), `test_fontguard.rs` (the
+file is checked again; the listing; a file still being copied waits; 20,000 glyphs; the glyph limit, by a test
+charge and never by a real clock; the mark of a first try), `test_sec_font_verdict.rs` (where verdicts are
+kept, and what a folder that cannot keep them comes to), `test_fontguard.rs` (the
 guard start by start, with the app killed at a custom font's first glyph), `font.rs` (stb's bitmaps byte for
 byte; a custom font draws as the same file embedded; the cache's cap), `fontcheck.rs` and `userfonts.rs` (the
 verdict and guard files read strictly; the strike rules), `test_sandbox_linux.rs` (the check in the real
@@ -2196,7 +2578,7 @@ are routed in `library.rs` as the Graph's are, and two fingers down does nothing
 - **Places.** Import (`grimoire/import`), Documents (`documents`), Downloads and All storage (the root), each
   but All storage with its real path as a second line, and the free space at the top. Rows are 150 px, paged, never scrolled; the
   keys are Left and Right (Up and Down unbound), Esc goes up and cancels at the root. The picker lists folders
-  and PDFs only, by `name_cmp`, folders first.
+  and PDFs only (the picture pick of 2.2, folders and pictures: issue #146), by `name_cmp`, folders first.
 - **Read only outside Grimoire's folders (D26).** Every listing, stat and open is fsview's walk: no link at any
   component, one device, `grimoire/notebooks`, `PDFs` and `trash` refused by identity (so a path cased otherwise
   on a case-insensitive storage cannot reach them), a listing of names and kinds only, read in slices of at most 20 ms a tick (a
@@ -2212,10 +2594,1009 @@ are routed in `library.rs` as the Graph's are, and two fingers down does nothing
   (`pdfimport::import_status`, `bgwork_template::folder_failed`): the PDF rows' when the import's progress changes
   (looked at at most once a second), every row's every 5 s (a folder's lists the folder), and redraws only the rows
   that changed. The staying notice of an import stays off that place (`library_import_place_up`): its rows say it.
-- **"has notes"** is the PDF's book key (KOReader's partial MD5, 12 reads of 1 KiB through the walk) compared with
-  the notebooks' keys (`source=`, else the book their `source.ini` names), read once for the picker's session; the
-  card then offers Open its notebook.
+- **"has notes"** is the PDF's book key (KOReader's partial MD5, 12 reads of 1 KiB through the walk) and its size
+  (one descriptor) compared with the keys the notebooks hold and the records of their files
+  (`pdfimport::key_holders`: `source=`, else the book their `source.ini` names, else the key of its `file=` line;
+  one small read a notebook, once for the picker's session). No file is read whole in the UI, so the row states
+  what the key and the size can say (`pdfimport::key_match`), and the card has three cases. A notebook holds the
+  key with a record of the file's size: "has notes", and the card offers Open its notebook and Import as
+  notebook (the import reads the whole file and gives the exact answer: "PDF already imported." for that very
+  file, a notebook of its own for another). A notebook holds the key with no record (one made before the
+  records, or from KOReader): "has notes", Open its notebook, as before. Only notebooks whose records are of
+  another size hold the key, or none does: no tag, Import as notebook.
 - **Logs** carry counts and timings only ("files: listed N entries (M usable) in T ms"), never a name.
+
+## Files' storage writes (2.2, issue #117)
+
+`fsview.rs` writes since 2.2, inside Grimoire's folders for the user's files only, and `bgwork_copy.rs` copies
+into them. Files' cards rename and delete, and its Trash place restores ("Files: rename, delete and restore (2.2,
+issue #144)", below); the copy is called by a picture's Use as template and Use as photo, and by the Templates and
+Photos sheets' From a file... tile (issue #146, "From a file... and Use as template" below).
+
+- **Where it may write: an allow-list.** Only what is inside `grimoire/import`, `templates`, `photos` and
+  `fonts` (`FsStorage::write_zone`), never the folder itself and never `import/done` itself (what is inside it
+  may be); never a dot-name, nor any other place the zones refuse, nor the rest of the storage (read-only, D26).
+  A restore writes in one more place: a notebook's folder back into `grimoire/notebooks`, by its id, the folder
+  known by its identity. Every path goes through the walk (no link at any component, one device), and the trash
+  and the notebooks folder are checked by `st_dev` and `st_ino` against what `FsStorage::open` noted.
+- **Never an overwrite.** Every rename is `renameat2(RENAME_NOREPLACE)` (by `syscall`, so no C library wrapper is
+  needed). Where the storage refuses the flag or the kernel lacks the call (EINVAL, ENOSYS), and on the Mac, a
+  look for the new name and then `renameat` would not do: Grimoire is not the only writer while it runs (files
+  come over USB, and the copy job renames into the same folders). So the fallback reserves the new name first,
+  atomically (`O_CREAT|O_EXCL|O_NOFOLLOW` for a file, `mkdirat` for a folder: each fails when anything is
+  there), checks just before `renameat` that the name still holds its own reservation (the same device and
+  inode, a file still empty; the kernel never renames over a folder that holds anything), renames over it, and
+  on any failure removes the reservation only while it is still its own. Two writers never both win a name, so
+  the copy job and a rename or restore into the same folder need no busy check between them: one takes the
+  name, the other " 2" or Exists. What remains: a writer that opens the empty reserved file by its name in the
+  moment between that last check and the rename loses what it wrote there, and a crash in that moment leaves an
+  empty file or folder at the new name beside the item, which is untouched. Into the trash's own new folder (a
+  random name, holding only the record) the fallback looks for the name only. The log says once a session when
+  the storage refuses the flag; whether the Scribe's storage does is what docs/TESTING.md's check finds out. A
+  rename that changes only the case, or that the storage says would land on the item itself (a storage that
+  folds case), goes through a temporary name in the same folder, the new name numbered (" 2", " 3"...), and is
+  undone if the second step fails. Cut off half way (a crash, or an undo that fails), the item is left in sight
+  under that numbered name, never at a hidden one.
+- **Check again before acting.** Rename and trash take the stat the listing had (`FsStat`) and refuse when the
+  entry's device, inode, size or time differ (`Changed`, "File changed. Try again." on screen), or when an import
+  holds it (`Busy`, "Importing now."): a PDF or a folder of pictures a queued or running import works on, what is
+  inside it, or the folder a held PDF is in (`FsStorage::busy`, from the job table's paths, `bg_job_paths`, and
+  the PDF import's own list); while a previous run's import still holds the lock, everything in `import/`. The
+  same holds a template or photo picked for a page until the job that copies its picture into the notebook has
+  ended (issue #144).
+- **Names: one function**, `fsview_name_check(old, new, dir)`, the strictest of vfat and MTP (browser.md 8.8):
+  not empty, at most 255 bytes, none of `/ \ : * ? " < > |`, no control character, no leading or trailing space,
+  no trailing dot, no leading dot (a hidden name Files never lists), and a file keeps its extension in any case.
+  It names the first rule broken (`NameRule`), so the screen can say which.
+- **Never a hard delete.** Trash is one rename into a new folder `trash/files-<YYYYMMDD-HHMMSS>-<4 hex>/`, beside
+  its record `.grimoire-trash` (`from=`, `time=`), written with `O_CREAT|O_EXCL|O_NOFOLLOW` and synced before the
+  rename; a failure removes both, so nothing is left. Cut off between the record and the rename (a crash), the
+  item never left: the entry is listed with its record, and Restore removes it, as it does an empty `files-`
+  folder (`Restored::Nothing`, the one case where it puts nothing back). Restore reads the record strictly (a
+  plain file, 4 KiB at most, `O_NOFOLLOW|O_NONBLOCK`), puts the item back where it was when that folder is still
+  there, allowed and not held by an import (a name taken gets " 2", " 3"...), else says why (`FolderGone`,
+  `BadRecord`, `Refused`, `Busy`); a notebook goes back to `notebooks/<id>` from the name `store_delete` gives it
+  or from a record naming that folder, refused while the id is taken. The only removals: the record and its
+  emptied folder after a restore. Pages in the trash are listed, never restored (their place was never kept).
+  The trash is listed by `FsListing` in its slices and read by name alone (`fsview_trash_entries`, newest first
+  by the time in each name); a row's record is read only for the rows on screen (`FsStorage::trash_record`).
+  docs/FORMAT.md, The trash, has the names and the record.
+- **The copy job, `BgKind::CopyFile = 10`** (`bgwork_copy.rs`; 9 is the file previews', below). The request
+  (`copy_request`, UI thread) refuses a source in a place a pick never takes from (a name ending in a dot or a
+  space among them: the walk refuses such a part, issue #160), one no longer the plain file listed, one whose name
+  Files' Rename would not give a file in Grimoire's folders (`fsview_name_check`, as the copy keeps the source's
+  name: said with that rule's words, issue #161), one bigger than its folder takes
+  (`CopyTo::max_bytes`: the template job's own `TEMPLATE_MAX_BYTES`, 16 MB, for templates and photos, the font
+  check's `FONT_FILE_MAX`, 24 MB, for fonts), one whose path does not fit a job's,
+  and one that would leave less than the floor (100 MB after it, `fsview_room_for`; looked at last, since what can
+  never be copied is refused whatever room there is), and queues the job as one the user waits on (id: the folder,
+  `templates`, `photos` or `fonts`; path: the listed stat and the source's storage path, under 600 bytes). The job
+  opens the source again through the walk, checks the name again, that it is the file listed, no bigger than its
+  folder takes, and that
+  there is room, writes `.grimoire-copy-<pid>.part` in the folder (made when missing), checks the source ended as
+  listed, syncs, and renames with no replace to the source's name (" 2" when taken). Any failure removes the
+  temporary file; one a killed copy left is removed by the next copy into that folder, unless its process still
+  runs and has written it within the hour (after a restart its process id is often another process's). It ends 0,
+  or 1 when the copy was not made, or with the number of a cause the screens have a sentence for (`CopyFail`, read
+  back with `bg_last_exit()`): 2 too big for its folder, 3 no longer the file listed (changed, gone, or changed
+  while it was read), 4 a name or a path too long in the folder. Its child's margin is 64 MiB (one 64 KiB buffer).
+  The app's tick takes its end apart from the PDF mirror's (no "PDF saved").
+- **Waits on the UI thread**: each sync of these writes (the record, the folders) is followed by `work_pump()`, as
+  util's atomic write does between its steps, so the pens are read between waits of 15-25 ms each.
+- **Logs** (no names, docs/KINDLE.md): the zone a rename, trash or restore acted in, a notebook's id, a copy's
+  size and time, the reason a copy was refused, an errno when a call failed, and once a session the fallback.
+- **Tests**: `fsview.rs`'s unit tests (the name rules, the trash's names, the record read strictly, what an import
+  holds), `bgjob.rs`'s (the jobs' paths), `bgwork_copy.rs`'s (the job's path), and
+  `rust/tests/test_fsview_writes.rs` (every refusal of the allow-list, a path with a line break, no replace with
+  renameat2's flag and with the fallback forced through `fsview_rename_fallback_force`, another writer at the
+  name between the fallback's check and its rename through `fsview_rename_seam`, a case-only rename, a rename and
+  a trash stopped half way through `fsview_stop_at`, the busy check through real queued jobs, trash and restore of
+  a file, a folder and a notebook in both forms, a name taken, refused restores, the copy request and job with the
+  floor and a failed write through `copy_seams`, a source that changes, and leftovers swept). On the Mac only the
+  fallback runs; CI's Linux job runs the same file with renameat2's flag, and docs/TESTING.md has the Scribe's
+  check of the flag, of one rename into the trash and of inode numbers.
+
+## Files: the place (2.2, issue #124)
+
+`browser.rs` has a second mode beside the picker's. `PickSpec { kinds, title, start, mode }` says what the browser
+was asked for: `PickSpec::import()` is New notebook's From a file... (pick mode, as above), `PickSpec::place()` is
+Files (place mode), opened from the Library's Files card, that card's menu's Open, and the `files` action. It is
+hosted the same way (`LibraryState.files`, `files_open_place`), and closes back to the Library.
+
+- **The root** lists Import, Documents, Downloads, Templates, Photos, Fonts, Kindle fonts (the storage's `fonts/`),
+  PDF copies, Trash and All storage: Import and All storage always, every other place when its folder is there.
+  The free space line stays at the top. Place mode walks with the pick flag off: Grimoire's `PDFs` and `trash` are
+  looked into there (read only), `notebooks` is refused as everywhere. Nothing under `PDFs` or `trash` is offered
+  for import, by a card's rows (the zone a pick would refuse) as by the jobs (which refuse them anyway).
+- **The Files card.** Hidden until settings.ini `files_card` is 1, which the root's last row, "Show Files in
+  Library", sets (in pick mode as in place mode, while the card is hidden). Shown, it is the last card of the
+  Library's top level, after every folder and notebook (`reload` appends it; it is in no folder), so no notebook
+  moves for it; in a big Library that is the last screen of cards. Its `...` (or a hold) opens its menu: Open,
+  Hide from Library, Cancel. Its second line is the free space when it fits the card, read when the Library
+  reloads (one statvfs), not at each draw.
+- **The path bar is Files' alone.** Inside a place, the band under the header is 120 px: the path's parts (Files,
+  the place, each folder) each a target the bar's height that opens it, the folder shown opening the Go to sheet
+  (the places that are there, then the storage's other top folders by name, but a name a row would not take, with a
+  line break; rows that do not fit the screen are left out, All storage reaches them). The tap reads the storage
+  root at once, at most 200 ms in all (`root_listing`: names and kinds, a stat only where the kind is not known); a
+  root that takes longer gives the folders read by then. A path too long for its room keeps Files, one "..." (which
+  opens the last part it stands for) and the last parts. The picker keeps its path line as text, naming a folder by
+  the place that holds it however it was reached (as before Files; the path bar names the place the way in started
+  at, as Back goes), and the Library's own folders are as they were (the owner's narrow reading: the Library's code
+  paths are untouched but for the card, the hold and the hosting seams).
+- **Sort and Show**, two chips on the bar (not in the Trash place, which keeps its own order and lists all it
+  holds), kept in `files_sort` and `files_show`. Sort: by name (`name_cmp`), the newest first or the largest first,
+  folders first each time (by name under Size), ties by name, a row with no stat last (`files_cmp`). Newest and Size
+  need every row's stat: the rows are made from the listing (nothing is read again) into `next`, stat-ed in slices
+  of at most 20 ms a tick, then sorted and shown at once; the rows on screen stay as they are meanwhile, a folder
+  entered so shows no row before, and the Loading notice comes after a second. The listing's cap (5,000) holds.
+  Show: the PDFs, pictures and fonts Grimoire can use (and folders), or every file: the others greyed, and the links
+  by name ("link, not followed"), which fsview's listing keeps in `links` as it leaves them out (within the same
+  5,000 rows, with "Showing the first 5000." when any is left out); a link is never entered, opened or stat-ed
+  through. View, a third chip, is the list or Covers (`files_view`; the browser's own setting, `Browser::set_view`,
+  not a field of `FilesPrefs`: a picker is always a list): "Files: previews and the Covers view", below.
+- **Item cards.** A picture, a font and any other file have cards, as a PDF and a folder do: the details say what
+  the file is, its size and its date, and what is known of it without reading it in the UI process (a font of
+  `grimoire/fonts` whose check passed: its family, from the check's own verdict, `userfont_family`). No user's
+  file is parsed for a card; pages and picture sizes wait for the worker (previews). A PDF offers Import as
+  notebook or Open its notebook as the picker does; a PDF of the PDF copies opens the notebook it was written from
+  (the one whose `export_mirror_path` it is). A picture offers Use as template and Use as photo (issue #146, below);
+  a font Add to fonts (issue #161, below); other files offer nothing else, but Rename and Delete inside Grimoire's
+  own folders, which a picture and a font have there too (below, issue #144). Every act checks the file or folder again first, by its path and its
+  identity ("File changed. Try again.").
+- **The Trash place** lists `grimoire/trash` through the storage writes' trash listing
+  (`fsview_trash_entries`, read by name alone, no stat: the newest first by the time in each entry's name, a name of
+  no known form last): a file or folder trashed from Grimoire's folders (`files-<stamp>-<4 hex>`) by the last part
+  of where its record says it was (`FsStorage::trash_record`, read for the rows on screen only), a notebook
+  (`<id>-<time>`, a folder) by the name its `notebook.ini` there holds (opened through the walk, as the listing is,
+  and cut as the store cuts a name), a page (`<id>-p<page>-<time>`) by its notebook's name, each with its date; a
+  `files-` entry whose record does not read, and a name of another form, as it is. Entries are not entered; a
+  file's, folder's or notebook's has a card with Restore (issue #144), a page's none.
+- **A Library card held** `HOLD_MS` opens its menu as its `...` does (a notebook's, a folder's, the Files card's);
+  the lift after it does nothing.
+- **Actions** `files` (108) and `home` (109) act in the Library, with no default key and no Buttons or Gestures
+  row (they are bound by name, as the Library's New notebook and Share are), from a key or a gesture, over the
+  Library and inside Files alike. `home` goes to the home folder ("Files: home", below).
+- **Seams left for the later Files work**: `BrowseMode` and `FilesPrefs`, `PickSpec.start` (opening at a folder).
+
+## From a file... and Use as template (2.2, issue #146)
+
+A picture from anywhere on the Kindle becomes a template or a photo by a copy into `grimoire/templates` or
+`grimoire/photos`, made by the copy job (`BgKind::CopyFile`, above). Two ways ask for it.
+
+- **A picture's card in Files** offers Use as template and Use as photo, but never the copy into the folder the
+  picture is already in, and neither out of a place a pick never takes from (Grimoire's PDF copies). The card's
+  file is checked again first ("File changed. Try again."), then `copy_request` checks the walk, the file as
+  listed, its size, its path and the floor; a refusal is said at once (What is said, below) and logged with its
+  reason, no job runs and nothing is written. Files stays where it was.
+- **The Templates and Photos sheets end with a From a file... tile** (`tplsheet.rs`): the last tile, after every
+  picture, so that no picture's tile moves for it (with 24 templates upright it is page 2's only tile; in the empty
+  sheet it sits under the text, in the grid's last row). It opens the picture pick, `PickSpec::picture(to)`: pick
+  mode with `PickKind::Picture` alone (the names the template job takes: .png, .jpg, .jpeg, .pgm), the title "From
+  a file...", a root of Documents, Downloads and All storage (no Import: that place is the imports', its rows their
+  statuses and Look again), and a picture's card with that sheet's copy alone, first, then Cancel. The sheet stays
+  open under the pick: Back at the pick's root comes back to it, and so does a copy asked
+  (`BrowserResult::Copying`), after which the tile waits (an hourglass, not tappable) until the copy job is no
+  longer queued or running (`bg_pending`, which counts a child until the app's tick reaps it). Then the folder is
+  read again as the sheet opened on it (the same paper selected) and the new picture, the first file not listed
+  before, is put in view; its tile waits for its preview and fills in when the previews job ends, as a picture
+  copied over USB does. A copy that failed leaves the tiles as they were, and one refused when it was asked for
+  leaves the pick up, for another picture. A sheet opened while a copy into its folder runs waits for it the same
+  way. The copy's end waits for a pen or finger that is down on the sheet (`tplsheet_tick`): reading the folder
+  makes the sheet anew, which would forget the press (its lift would close the sheet as a tap outside does) and
+  move the tiles under it, so the lift comes first, on the sheet as drawn, and the folder is read at the tick after
+  it.
+- **Who hosts the pick.** Over New notebook the Library does, as it hosts New notebook's own From a file...
+  (`files_open_picture`; More layouts... there has templates only). Photos..., and the editor's More layouts...,
+  open from the editor, where the picker had no host: the editor hosts it itself (`EditorState.files`), as it hosts
+  Copy to notebook's picker (`destination`): drawn over the whole screen by `compose`, its contacts, keys (Esc and
+  Back up a level, the page keys its screens), ticks, `files.*` probes and taps routed to it while it is up, the
+  panel and the clock corner taken with it (`sheet_open`, `corner_sheet_open`). The notebook stays open under it as
+  it was: the page, its view, its undo history and the sheet's page of tiles; the page's idle save runs under it as
+  under any sheet (`idle_save`), the rest of the page's tick waits until it closes. A turn and a wake keep it up;
+  it closes with the sheets, the notebook or the screen (`files_drop`, which takes its "Loading..." notice down
+  with it wherever it closes). The pick is handed one setting, whether the Files card is in the Library
+  (`FilesPrefs.card`, for its root's "Show Files in Library" row): Sort and Show are the Files place's. The other
+  way the plan named, a trip to the Library and back with the page kept, was not taken: it closes the notebook (its
+  undo history and view go) and needs the sheet opened again on the way back, for no less code.
+- **What is said.** A copy that is not made says why where a sentence the screens already had names the cause
+  (`copy_refusal`, bgwork_copy.rs), both when it is refused at the request and when its job ends (the job's exit
+  status, `CopyFail`): "Too big (over 16 MB)." for a picture over what the template job takes of a template or a
+  photo, which is refused before a byte is copied and again in the job (so nothing is copied that could never be
+  used, and nothing says it was); "Path too long." for a path that does not fit the job's, or a name too long in
+  the folder; "File changed. Try again." for a file that is no longer the one listed (at the request the folder is
+  read again too). Every other cause says "Couldn't copy file. Is the storage full?": the floor, a write that
+  failed, and the rare ones with no sentence of their own (a link on the way, every name up to " 99" taken), which
+  grimoire.log names. A job's end is said wherever the user is (app.rs, `copy_told`); a copy that went in says
+  "Copied to Templates." (or Photos), unless the sheet of that folder is in front (`library_sheet_folder`,
+  `editor_sheet_folder`), which shows the new picture itself.
+- **Strings**: Use as template, Use as photo, Couldn't copy file. Is the storage full?, Copied to %s. ("From a
+  file...", "Templates", "Photos", "File changed. Try again.", "Too big (over %d MB)." and "Path too long." were
+  there.)
+- **Tests**: `browser.rs`'s unit tests (the picture pick's root and rows; each card's copies), `test_tplsheet.rs`
+  `from_file_tile` (the tile's place and pages, its tap, the wait, the folder read again with the new picture in
+  view, a failed copy) and the empty state's paragraphs above the tile, and the scenarios `files_8_use_as` (Use as
+  template and Use as photo from Files, " 2" for a name taken), `files_9_copy_room` (the floor, through
+  `GRIMOIRE_COPY_FREE_BYTES`), `z_tpl_c_from_file_library` (the tile over New notebook), `z_tpl_d_from_file_full`
+  (a copy whose writes fail, through `GRIMOIRE_COPY_FAIL_AFTER`) and `z_tpl_e_from_file_editor` (the tile over the
+  page for templates and photos, with the page, a stroke and its undo kept, through a turn and a wake). For what is
+  refused: `test_fsview_writes.rs` (the request and the job on a file one byte too big, a path of 590 bytes, a
+  source changed or gone, a name too long once numbered, each with room and without where it matters, and the job's
+  exit status read back), `bgwork_copy.rs`'s `what_a_refused_copy_says`, and `files_9_copy_refused` (Files' two
+  rows and the tile's pick on a picture too big, and a path too long; `tests/files_copy_refused.py` plants them).
+  `test_tplsheet.rs` `a_copy_ends_under_a_contact` and `z_tpl_f_from_file_press` hold the copy's end under a
+  contact, and `z_tpl_g_from_file_keys` the pick's keys over the page.
+- **Fonts** come in the same way, by the same job and the same kind of pick: "Add a font... and Add to fonts",
+  below.
+
+## Templates from a notebook (2.2, issue #195)
+
+The Templates sheet has a From a notebook... tile beside From a file..., over the editor and over New notebook. It
+opens a pick of a notebook and then one of its pages (`NotebookPicker::start_pages`, `notebookpicker.rs`). Over the
+editor the page picked becomes the open page's template; over New notebook, the notebook it creates opens on it.
+The page's key (`store_page_template_key`, from the notebook, the page and its file as it is now,
+and this notebook's page size) is given an id in this notebook's `bg/index.ini` at once, and `BgKind::PageTemplate`
+(`bgwork_template.rs`) draws that page, paper and ink, as the notebook's gray page-size picture. The page takes the
+picture's paper at once, as a template's first use does, and draws white until the child has written it; the
+staying notice says "Making template..." meanwhile, and the page is drawn again when the job ends (`app.rs`,
+`editor_page_template_done`). A page whose own picture is missing is not made into a template (the log says so),
+and neither is one whose id the index does not have. The Templates and Photos sheets now take the Paper row's
+place and its rows exactly (`templates_sheet_rect`): over the editor, the Paper sheet's place and tiles; over New
+notebook, its card and paper grid (`new_notebook_paper_place`), the Templates sheet at the same y as New
+notebook's papers. Either way six columns, three rows, the same tiles, a page of eighteen upright and sideways.
+
+## Add a font... and Add to fonts (2.2, issue #161)
+
+A font file from anywhere on the Kindle, its own fonts folder too, is copied into `grimoire/fonts` by the copy job
+(`BgKind::CopyFile`, `CopyTo::Fonts`, above). There it is a file of that folder as one copied over USB is, and
+"Your own fonts" (above) holds for it: the UI process never parses it before the check has passed its bytes.
+
+- **The Font sheet's Add a font...** is the last item of Your fonts, after every font, so that no font's row
+  moves for it: under the folder's text while the folder is empty, on the page of the last font, alone on the
+  next page when that page is full (`library.font.page` counts it). It opens the font pick, `PickSpec::font()`:
+  pick mode with `PickKind::Font` alone, the title "Add a font...", opening at its root, which has the Kindle's own
+  fonts folder first (Kindle fonts, the storage's `fonts/`, when it is a folder: no row when it is missing or a
+  link), then Documents, Downloads and All storage, and no Import. A folder lists its folders and its `.ttf` and
+  `.otf` files, by name; a font's card is its size and date, Add to fonts first, and Cancel. The sheet stays open
+  under the pick, as the Templates sheet does under the picture pick: Back at the pick's root comes back to it,
+  and so does a copy asked (`BrowserResult::Copying(CopyTo::Fonts)`), after which the row waits (an hourglass,
+  greyed, no tap: `font_copying`) until the copy job is no longer queued or running. Then the folder is read again
+  as the sheet opened on it and the page of the new file, the first not listed before, is shown. Its row says
+  "Checking..." under the notice "Checking 1 font..." and takes no tap; when its check has passed it shows its
+  name drawn in itself (the check's preview) and can be tapped. The added font is listed, not applied: a tap applies it as any row's does (#115). A
+  copy that failed says why and leaves the rows as they were; one refused when it was asked for leaves the pick
+  up. A sheet opened while a copy into `grimoire/fonts` runs waits for it the same way, and the copy's end waits for
+  a pen or finger that is down on the sheet (reading the folder numbers the rows anew). Over a notebook's page
+  (Settings opened from the editor) the sheet has no such row (`font_add_offered`): the Library's picker is drawn
+  on the Library's screen only.
+- **A font's card in Files** offers Add to fonts for a `.ttf` or `.otf` that is not one of `grimoire/fonts`
+  already (in that folder or a folder of it one level down, which is what the Font sheet lists: one deeper is
+  offered), never out of a place a pick never takes from (Grimoire's PDF copies, the trash, whose entries have
+  Restore alone). The card's file is checked again first ("File changed. Try again."). A copy that went in says
+  "Copied to Fonts." unless the Font sheet is in front, in the Library or over a notebook's page
+  (`library_sheet_folder`), which shows it.
+- **The Kindle's fonts folder is read only**, as every folder outside Grimoire's own is (`fsview`'s zones): a
+  font's card there is Add to fonts and Cancel, with no Rename and no Delete, and the storage layer refuses a
+  rename, a delete or any write there whatever a card would offer. Grimoire writes nothing into it, not even a
+  mark or a cache: what the check keeps is kept for `grimoire/fonts`.
+- **The copy gives a font nothing.** The job reads the source as bytes and writes them under the copy job's rules:
+  the walk (no link, one device), the file the user saw (its `FsStat` identity, at the request and in the job,
+  and again at the end of the read), a name the rules allow and no longer than the fonts folder's scan takes of a
+  font's path there (`USERFONT_REL_MAX`, 200 bytes, " 2" included: a longer one would be copied and never listed,
+  so it is refused as "Path too long."), no more than the font check's own limit (refused
+  before a byte is copied: "Too big (over 24 MB)."), the floor, and a rename that never replaces a file (" 2"
+  for a name taken). While it is written the copy is `.grimoire-copy-<pid>.part`, a dot-name, which no listing
+  shows and which the fonts folder's scan takes for no font (`name_kind`), so a copy cut short is never taken for
+  a font: a failed write removes it, and one a power cut left is removed by a later copy into that folder (the
+  copy job's sweep, above). The copy is synced before its rename. Once it is in, the app asks for the folder to be looked at
+  (`userfonts_added`, from `copy_told`) once the file is as old as the check asks of any file before it reads it
+  (`STABLE_AGE_S` and half a second), so that one check passes it; no look is queued before that, as it would only
+  find the file too young. Nothing in the writer or the UI parses, applies, measures or loads the file before its
+  check has passed it: until a verdict for those bytes is where verdicts are kept, the Font sheet lists it by name
+  with no tap, and a load of it is refused. A preview of it in Files' Covers view is made by the sandboxed worker,
+  as for any font in Files (issue #145): a sample, which is no check and gives the file nothing. In the pick, on a
+  card and in the sheet nothing opens a font file: rows are names, sizes and dates; a card names a family only from
+  a passing verdict (`grimoire/fonts` alone); a file of the Kindle's folder is listed by name and size.
+- **Kinds.** The pick and Files' cards offer `.ttf` and `.otf`, the names Files' rows have taken as fonts since
+  issue #124 and the ones the sheet's own text asks for ("Copy .ttf or .otf files into grimoire/fonts over USB.").
+  The Kindle's folder may also hold collections (`.ttc`, `.otc`: the check takes the first face of one copied
+  over USB), web fonts (`.woff`, `.woff2`, which the check refuses), and other files: none of these is offered.
+- **Strings**: Add a font..., Add to fonts. ("Kindle fonts", "Fonts", "Copied to %s." and the copy's refusals
+  were there.)
+- **Tests**: `browser.rs`'s unit tests (the font pick's root with and without the Kindle's folder, a link in its
+  place, its rows and its card inside and outside `grimoire/fonts`; a font's card in Files, the Kindle's folder
+  read only, a collection and a web font as other files), `library.rs`'s `the_font_sheets_add_a_font_row` (the
+  row's place and pages, its tap, the wait and its end, held under a contact, no row over a notebook's page),
+  `rust/tests/test_addfont.rs` (the pick and the real copy job and font check with real workers: no font before its
+  check passes, and only those bytes; a Covers preview, the worker's, which gives a copied font nothing; a font that
+  fails its check; a copy cut short and what a dead copy left; a
+  link, a linked folder and a file swapped between the listing and the tap; too big and the floor; a name taken and
+  names the rules refuse; the Kindle's folder unchanged; the look held until the copy is old enough),
+  `test_fsview_writes.rs` (the name rules at the request and in the job, for every folder), the scenarios
+  `files_19_add_to_fonts` (Files' card, " 2", a file its check refuses, the trash), `files_20_add_font` (the sheet's
+  row, the pick from the Kindle's folder and from Documents, the wait, the check, a name taken, a refused file, no
+  row over a notebook's page), `files_21_add_font_full` (a copy whose writes fail),
+  `files_22_add_font_over_a_notebook` (the sheet over a notebook's page while a copy runs: it waits, lists the
+  font, no toast), `files_23_add_font_sheet_waits` (the sheet opened in the Library while Files' copy runs: it waits,
+  then lists the font), `files_24_add_font_while_checking` (the pick opened while a font's check runs: the sheet's
+  notice is not over it) and `files_5_cards`, and
+  `make l10n-check`'s `fonts-add` runs (the sheet, the pick and both cards in every language, in Classic) and
+  `fonts-card` runs (Files' card in Gothic).
+
+## Files: rename, delete and restore (2.2, issue #144)
+
+The screens on the storage writes above: Files' cards (`browser.rs`) rename a file or folder and move it to the
+trash, and the Trash place puts an entry back. Pick mode (New notebook's From a file..., and the picture pick of the
+Templates and Photos sheets) offers none of it.
+
+- **Where.** A card offers Rename and Delete only on a file or folder inside Grimoire's folders for the user's files:
+  what `FsStorage::can_write` allows (the allow-list, `write_zone`: what is inside `import`, `templates`, `photos` and
+  `fonts`, never the folder itself nor `import/done` itself). Every other place stays read only, and so do PDF copies
+  and the trash itself. The two rows follow the rows a card has for its kind (a folder's Open and its import, a PDF's
+  import, a picture's Use as template and Use as photo, issue #146) and stand above Cancel: a template's card is Use
+  as photo, Rename, Delete, Cancel.
+- **Check first.** Every act checks the card's item again before it does anything (`unchanged`): by its path and its
+  identity. A file must have the device, inode, size and time it had when its card opened; a folder the same device
+  and inode (not its size and time, which change with what is put in it), so another folder renamed to its name is
+  refused. A card whose stat is not known acts on nothing. Refused: "File changed. Try again." and the folder is read
+  again, in the listing's slices. fsview's writes check again themselves (`FsStat::same`) at the moment they act.
+- **Held by an import.** Rename (before the keyboard opens) and Delete ask `FsStorage::busy` (through the writes):
+  what a queued or running import works on, what is inside it, the folder a held PDF is in, and while a previous run's
+  import holds the lock everything in `import/`; and a template or photo picked for a page, until the job that copies
+  its picture into the notebook has ended (`bg_job_pictures`: renamed or deleted before, the page would draw white).
+  Held: "Importing now." and nothing is done. A picture whose copy into templates or photos waits (Use as template,
+  Use as photo) is not held: renamed or deleted before the copy job has opened it, it is not copied, and the copy's
+  end says "File changed. Try again.".
+- **Rename** opens the keyboard (the Library's, hosted by the browser: `Browser.kb`, drawn over Files, its keys
+  refreshed alone; a hardware keyboard's keys reach it through `library_keyboard_area`, and Esc or Back is its Cancel)
+  with the name, titled Name (or Folder for a folder), the caret before a file's extension, so typing edits the stem
+  and the extension stays in sight. A name the keyboard cannot show exactly as it is is not offered to it, and the
+  toast says why: "Name too long." (96 bytes and more: its end would be cut away) or "Name can't contain %s" with
+  `U+XXXX` (a control character, which the keyboard leaves out of its text), so Done can never rename a file to a name
+  nobody typed. Done with the name as it was renames nothing and checks nothing, and neither does an empty name, as
+  the Library's keyboards do. Else Done checks `fsview_name_check` first and says the rule broken, keeping the
+  keyboard up with the name to put right: "Name can't contain %s" (the character; a control character as `U+XXXX`),
+  "Name can't start or end with a space.", "Name can't start or end with a dot." (a leading dot would hide it), "Keep
+  the extension %s." (the old one, with its dot), "Name too long." (over 255 bytes). Then the allow-list for the new
+  name, with the keyboard kept up too: "Name can't contain .sdr" (an ending the Kindle's reader keeps for a book's own
+  folder, which no listing shows) and "That name is taken." (a name Grimoire keeps for itself there: `done` in
+  `import`). Then `FsStorage::rename`, which never replaces: a name taken says "That name is taken." and keeps the
+  keyboard up (no " 2" is offered), and a path of 600 bytes "Path too long.". Renamed: its row has the new name, where
+  that name belongs in the rows' order.
+- **Delete** asks first, as the Library asks before a notebook goes: the card's Delete (after the check, and not for a
+  held item) turns the card into the Library's question, drawn as its sheet (`sheet_rect`, `ui_sheet`): `Delete "name"?`
+  (a long name cut with "..." so the question mark stays), "Delete (moves it to grimoire/trash)" and "Keep it". Keep it,
+  a tap outside the sheet, Esc and Back move nothing. Only its Delete moves the item: the check again,
+  `FsStorage::trash`, then "Moved to grimoire/trash" and its row gone. Restore undoes it. The trash is cleaned over USB,
+  and a `trash` folder removed whole there is made again as Files opens (as every start makes it; a link at its name is
+  left alone and refused), so Delete does not fail until the next start.
+- **The question is seen before it is answered.** The tap that opens it changes at once what the next tap lands on, and
+  the panel shows the question later (a frame takes about 270 ms to show, docs/INK-PERFORMANCE.md), so the second of two
+  taps at one place on the card's Delete would answer a question nobody saw. Two things keep it from that, wherever the
+  card and the question are drawn. The time: the screen says it drew a question (`app_ask`, as it draws one for the
+  first time or at a new place), `app_flush` notes when the frame that carries it goes to the panel (`App.asked`), and a
+  contact answers only if it came down `PEN_REOPEN_MS` or more after that (450 ms, the time the Graph waits before a
+  pen's second tap on a node counts), by the kernel's time of the contact's frame where the kernel says, else by when it
+  was read (`app_asked_seen`). A contact that came down sooner is let go, down to its lift, wherever it landed: it is
+  not Delete, not Keep it, and outside the sheet it does not close the question. Esc and Back are no contacts, and close
+  it at once. The place: the sheet is in the Library's place for it, but moved down or up by the least that keeps its
+  Delete a tap's slop (`ui_px(30)`) clear of the card row that opened it (`question_dy`: the card's Delete, where the
+  finger is), so a tap where the first one was lands on no Delete even once the question has been shown. The Library's own
+  question for a notebook has the same guard on its Delete row (`library_event_in`); its Keep it answers at once, and
+  moves nothing.
+- **The font in use.** Settings names Classic's own font, and its Bold file, by their paths under `grimoire/fonts`
+  (`font=file:<path>`, `font_bold=file:<path>`), so a file gone from that path would leave the next start in
+  Terminess. The browser is told both names before a card acts (`fonts_named`) and knows the item by identity
+  (`font_part`: device and inode of the file the setting names, or of the folder it is in). Delete of such a file, or
+  of the folder that holds one, says "Font in use." before its question and again at the question's Delete, and moves
+  nothing. Rename takes the setting along in the same step: the names as they will be are worked out first (a path
+  Settings cannot keep, over 200 bytes, is refused with "Name too long." before anything is renamed), then
+  `settings.ini` is saved with them and the font applied from its new path, still drawing (`font_follows`). What the
+  font check found goes with every font file renamed in Files, in use or not, and with the files of a renamed folder
+  (`userfonts_renamed`): the verdict and its companions are renamed from the old path's key to the new one's (a key is
+  path, size and time; the rename changes the path alone), so the file is not checked again. The SHA-256 in the
+  verdict still ties it to the bytes, compared at every load.
+- **After a write the folder shown is not read again.** A rename, a delete and a restore tell the listing Files holds
+  what changed (`entry_changed`: the entry's new name, or the entry gone) and make the rows again from it, as Sort and
+  Show do: the folder shown is not listed and none of its rows stat-ed anew, which for a folder of thousands sorted by
+  newest or size would hold the UI for all of it at one go. The other rows keep what they had read (sizes, names,
+  counts), and the screen of rows stays where it was. Only an act that found the item changed reads the folder again
+  (`reread`), a slice a tick with the Loading notice, as any folder is read. A file put there over USB meanwhile shows
+  the next time the folder is opened. Three writes read something else, each at one go on the UI thread: a font file
+  renamed is stat-ed once, and a folder of fonts renamed is listed and its entries stat-ed, for the keys the check's
+  results go to (`userfonts_renamed`); the font in use, renamed, is read and hashed again as it is applied from its new
+  path (`userfonts_apply`; where Settings names no Bold file and the font has no bold weight of its own, `fonts/` and
+  its folders are listed for one); and a notebook restored has the store read the Library's notebooks once
+  (`store_restored`) and the Library under Files once more (`reload`).
+- **The Trash place** lists the trash as before (fsview's trash listing, newest first by the time in each name), each
+  row with its size and date; the root's Trash row has the trash's size beside its path (an empty trash its path
+  alone, and an entry of no bytes no size: a size label rounds up to "1 KB"). Past 5,000 entries (every deleted page
+  is one, and the trash only grows) its listing, `FsListing::start_trash`, reads on to the folder's end in its slices
+  and keeps the newest 5,000 by the time in each name, where any other folder's stops at the first 5,000 the storage
+  gives: what was deleted last is always listed and can be restored ("Showing the first 5000." is said). The sizes
+  come from `FsStorage::trash_sizes` (`TrashSizes`), a walk of the trash in slices of at most 20 ms a tick, begun when
+  the root or the Trash place first shows in a session and again after each write: regular files at any depth by their
+  size (a `files-...` entry counts its item, not its record), no link followed or counted, nothing on another device
+  or deeper than 16 folders entered; an entry's size shows once it is read to its end, the total once the walk is
+  through. A file's, folder's or notebook's entry has a card: its name, size and date, and Restore alone (no Empty, no
+  delete: the trash is cleaned over USB). A page's entry has none (its place in its notebook was never kept).
+- **Restore** (`FsStorage::restore`, after the check): a file or folder goes back where its record says, " 2" when its
+  name is taken there: "Restored to %s." with its folder. A notebook (the name `store_delete` gives it, so the
+  Library's deletes come back too, or the record form) goes back to `notebooks/<id>`; then `store_restored` gives it "
+  2", " 3"... when another notebook of its Library folder has its name (in any ASCII case: their PDF copies would be
+  one file), keeping its modified time (it goes back to its place in the Library's order), and has the Graph's index
+  look again; "Restored to %s." with its Library folder (Notebooks at the top). The store reads the Library once for
+  the names taken and hands that list to the browser. One whose " 2" could not be written is back under its own name,
+  and the toast names its own folder; one whose `notebook.ini` does not read is back in `notebooks/` unlisted, and no
+  toast names a folder for it (the log has each). The browser answers `BrowserResult::NotebookBack` and the Library
+  reads its notebooks again at once (`reload`), under Files. An entry that held nothing (a trash cut off) is removed
+  and says nothing. Refusals: "Couldn't restore. Name taken." (every name to " 99", or the notebook's id), "Couldn't
+  restore. Folder gone.", "Importing now.", else "Couldn't restore." (a record that does not read, a place Grimoire
+  does not write in). A notebook's mirror PDF is made again at its next change.
+- **Words** (Spanish beside each; Japanese is nebuff's): Restore, Importing now., Name can't contain %s, Name can't
+  start or end with a space., Name can't start or end with a dot., Keep the extension %s., Name too long., That name
+  is taken., Couldn't rename., Couldn't move to trash., Couldn't restore., Couldn't restore. Name taken., Couldn't
+  restore. Folder gone., Restored to %s., Font in use. Reused: Rename, Delete, Delete "%s"?, Delete (moves it to %s),
+  Keep it, Moved to %s, File changed. Try again., Path too long., the keyboard's Name and Folder, Notebooks.
+- **Logs** (no names): the storage writes' own lines, and `files: the trash holds N entries, N files, N KB (read in T
+  ms)` once a walk of the trash is through, and `fonts: a rename in Files: what the check found of N font file(s) went
+  with them` (docs/KINDLE.md).
+- **Tests**: `browser.rs`'s unit tests (a folder card's check by identity, each refusal's words, Rename's rules and
+  places, a name nobody typed never given, the allow-list's words, Delete's question, the question answered only once it
+  has been shown and its Delete never under the row that opened it, Delete then Restore, a notebook the Library deleted
+  coming back as " 2", a trash past the cap keeping its newest, a write changing its row with no folder read again, the
+  font in use, a restore the store could not finish, a trash removed over USB), `test_fsview_writes.rs`'s trash sizes
+  (slices, depth, links, the record left out), its listing past the cap and a picture a page still waits for, and the
+  scenarios `files_8_rename` (every rule, a name taken, a good name, an empty one, Cancel), `files_9_trash` (Delete's
+  question, Keep it, a tap outside it, its Delete, the sizes, Restore, a page with no card), `files_10_restore_notebook`
+  (the Library's Delete, Restore, " 2"), `files_11_busy` (an importing PDF), `files_12_swap` (a folder swapped under its
+  card, through the runner's `storage move`), `files_13_es_fit`, `files_14_es_fit_classic` (Spanish, each text checked
+  for fit, upright and sideways, a picture's four rows with each of its copies' names among them),
+  `files_15_font_in_use` (the font in use and its Bold file: Delete refused, Rename with
+  the setting following and the font still drawing), `files_16_font_kept` (the next start), `files_17_es_font_in_use`
+  and `files_18_delete_twice` (two taps at one place on the card's Delete, on a folder's card and a file's on a first
+  row, upright and sideways: the question up and the item where it was; its Delete once it has been shown).
+  `test_sec_font_verdict.rs` has the renamed font's verdict: no new check, in Grimoire's own folder and in the cache,
+  and at the app's next start.
+
+## Files: previews and the Covers view (2.2, issue #145)
+
+Files' View chip shows a folder as its list or as Covers, a grid of previews (`browser.rs`, `bgwork_previews.rs`).
+In 2.1 the sandboxed worker parsed only files the user put in Grimoire's folders or picked; Covers sends it the
+PDFs, pictures and fonts of whatever folder is on screen, so what reaches it is held to the screen, and what it
+may cost is held to a few seconds a file, behind every other job.
+
+- **What reaches the worker**: only the files of the tiles on screen in Covers, a PDF, a picture (`.png`, `.jpg`,
+  `.jpeg`, `.pgm`) or a font (`.ttf`, `.otf`), once their stats are in, and only when the cache has nothing for
+  them (`CoverTiles::step`). A file is asked for once a visit (a folder entered); one whose job ended with nothing
+  to show keeps its kind's icon for the visit. A screen turned away from takes its jobs still queued out of the
+  queue (asked for again if it comes back); a new folder, the list, or Files closed takes all of them. The one job
+  running runs on, since it is short: it ends by itself within one preview's time (below), its preview is kept for
+  the next visit, and nothing has to kill a child and its worker. Nothing is asked for in the list, in the
+  picker's pick mode, at Files' root or in the trash (which stay lists), nor in a session in which a sandbox step
+  already failed. A folder past 5,000 entries keeps the listing's cap, and only its screen is asked for. Nothing
+  of a file is decoded, sniffed or measured in the app or in the writer; with no worker to be had, nothing is
+  previewed.
+- **The job, `BgKind::FilePreviews = 9`**: one file a job, its path the file as listed
+  (`<dev>.<ino>.<size>.<mtime>:<StoragePath>`, as the copy job's), never two of the same file, dropped at exit
+  (`bg_detach_rest`: they were for the screen). The child opens the file again through `fsview`'s walk in place
+  mode (no link, one device, never the notebooks; Grimoire's PDF copies and trash are read, as Files lists them),
+  checks it is the file listed, makes none under the storage's free floor, and has ONE worker run make a 300 x 400
+  gray preview, every record validated as the import and the font check validate theirs: a PDF's first page fitted
+  on a white page (`pdfwork.rs` `R 1 300 400 1`, after the probe; the import's address space, the PDF mapped where
+  the storage allows it, else read whole under its 64 MB cap; the file checked again once the worker is done), a
+  picture fitted and turned upright by its EXIF (`picwork.rs`, read whole up to 64 MB, `PicPool::for_preview`: a
+  pool that never decodes in the writer and gives a picture one run, no fresh worker's second try), a font's fixed
+  sample (`fontcheck.rs`'s `T` command: the face opened as the check opens it, the sample's glyphs walked as the
+  check walks a glyph, each draw held to the check's glyph limit, then "Aa" and "Abc 123" drawn centred in it; the
+  font worker's limits). A sample is no check of the font: it reads and writes no verdict, a font that has not
+  passed its check still waits for it, and the app draws no text with it (the tile is the worker's picture, its
+  name in the UI's own face).
+- **The queue's order** (`bgjob.rs` `rank`): a preview is never a job the user waits on by name. It runs behind
+  what the user asked for (an export, a template's picture, a copy), the map layouts, the PDF mirror, an import
+  (each of its slices, queued again as it ends) and a font check, and ahead only of compaction and the idle
+  warm-ups of page previews; a full queue lets previews go before any of the jobs above them. So a screen of slow
+  files never holds the one background child ahead of real work: a job that outranks previews waits behind the
+  one preview that is running, for that preview's time at most. File previews do not use the second child.
+- **A preview's time** (`preview_limit_ms`): the whole of one preview, from its worker's start (the handshake
+  included) to its last record, by the monotonic clock: its kind's import watchdog (`sandbox.rs` `s1`: what an
+  import waits for one record) divided by the most tiles a screen holds (ten, sideways on a Scribe): 3 s for a
+  PDF's page (the import's page watchdog is 30 s), 6 s for a picture (60 s, and a second worker), 3 s for a font's
+  sample (30 s a record). So a whole screen of files that each run to their limit holds the child no longer than
+  one record of an import may. A file that needs longer has no preview. The numbers are derived, not yet measured
+  on the Scribe (docs/TESTING.md). They are among the rules a mark is made by: the `.info`'s number
+  (`INFO_NUMBER`) is bumped when one changes, and the files an older number marked are asked for again.
+- **What a job ends with**, by the import's rule for what counts as a try (`pdfimport.rs`: a step the sandbox
+  refuses or a worker that cannot be started counts no try; a worker that dies or stalls on a page is a strike,
+  and the page is given up at the second): a preview; a "no preview" mark at once when the worker refuses the
+  file (no file of its kind it reads, a password, a file over its cap: the same bytes give the same answer); a
+  try on record (`once`) the first time a worker ends, lies, is ended by the filter or runs out of time on the
+  file, and the mark only at the second time in a row, at another visit's job; or nothing at all when no worker
+  can be had (a sandbox step failed, none started or answered, the filter ended one before it was asked
+  anything), memory or room is short, the Kindle slept while the page was waited for, or the file changed since
+  it was listed or while it was read (the next visit, with the file listed again, asks again). It ends 0 or 1
+  only.
+- **The cache**, `grimoire/.cache/files/<key>.pgm` and `.info` (docs/FORMAT.md), `<key>` the FNV-1a 64 hash of the
+  storage path, the size and the time, so a changed file gets a preview of its own. Written by the job alone,
+  atomically, the picture first and then the `.info` that says it is whole, never through a link; read by the UI
+  with the plain-file read and a size limit, the `.info` parsed strictly and held to the file as listed (its
+  path, size, time and kind: two paths whose keys meet never share an entry), the picture to the `.info`. The job
+  takes an entry as there only by that same test, so a good `.info` beside a picture that is cut or gone is made
+  again. A preview is a whole 300 x 400 page (120,015 bytes), so 64 MiB holds about 559 previews; marks and tries
+  are a `.info` alone. After a job that wrote, the job tidies the cache (`tidy`): the names alone first (plain
+  files by the listing's own word, no stat), and while they cannot be past a limit and no sweep is due, nothing
+  more is read. **Previews of files that are gone** go with the sweep, sooner than the prune: once a day (the
+  first job that writes when the last sweep is a day old) and whenever the cache is past a limit, each entry's
+  `.info` is read and the entry dropped when the file it names is no longer there as it was (deleted, renamed,
+  trashed, written over, or no longer reached by Files' walk); a sweep takes 2 s at most and goes on from where it
+  stopped at the next job. Past 2,000 files or 64 MiB still, the oldest entries go (by when they were written),
+  down to three quarters of each. Deleting the folder loses nothing.
+- **The grid**: tiles of at least 440 x 520 px (nine upright, ten sideways on a Scribe), each a box of the
+  preview's shape drawn pixel for pixel, the name under it, and under the name what the list's row says of an
+  import (the Import place's statuses: waiting, the page an import is on, failed, imported). A tile shows the
+  hourglass (`ui_tile_loading`) until its file's stat is in and while its preview is to come, then the preview, or
+  its kind's icon for a folder, a file of another kind, a mark, or a job that ended with nothing. A tap and a hold
+  act as on a row: a folder is entered, a file's card opens beside its tile. A tile drawn again under a press
+  keeps its pressed look, so the lift leaves it plain. Memory: a screen's previews, about 120 KB each, dropped as
+  they leave the screen.
+- **A tile that comes back** (Next and Prev, Sort, Show, a rotation): `CoverTiles` keeps a preview's pixels only
+  while its file is on screen, so a file that is back on screen is looked up in the cache again, never left as an
+  icon. The lookups (a `.info` and a 120 KB picture each) run a slice a tick, at most 20 ms and one file at least
+  (`CoverTiles::step`), never a whole screen at once on the UI thread.
+- **How the panel is refreshed**: previews that arrive are never one refresh a file. The tiles that changed (a
+  preview that came, a job that ended without one, a status) are drawn together (`Browser::tiles_due`): at once
+  when the screen's set is complete (no file of it still to be looked up, no job of it queued or running), and
+  until then at most once every 2 s (`COVERS_REFRESH_MS`) counted from the tiles' last drawing. Each time it is
+  one Ui refresh of the union of those tiles, the mode a list's rows fill in with, as a refresh that fills in by
+  itself (`app_invalidate_filling`): counted toward the cleaning Full like any Ui, and never itself promoted to
+  it, so no whole-panel flash lands in the middle of a screen that is arriving; the next refresh a tap asks for
+  is the Full instead. A screen of previews costs one refresh when they come within 2 s, and one more for every
+  2 s they take. Nothing is drawn under an open card: its close (and its opening) refreshes the tiles that
+  changed meanwhile together with the card's rect, whichever row closes it (Cancel, or a picture's Use as
+  template or Use as photo, `copy_in`).
+- **The notice** "Making previews..." (`NoticeKey::Previews`, on the Library's screen that asked) stays while a
+  preview the screen asked for is being made, from its first second on, as "Loading..." does; not while the
+  screen's jobs only wait behind other work, whose own notice shows.
+- **Logs** (docs/KINDLE.md): `bg: file previews of a file (pid N)`, then `file previews: a pdf|picture|font made in
+  T ms (the worker's peak N kB, this job's M kB)`, `... has no preview (refused|slow|ended), marked`, `... gave no
+  preview (slow|ended) ...; one more try at another visit`, `nothing made (<why>)`, `N preview(s) of files that are
+  gone or changed dropped from the cache`, and `the cache pruned: ...`; never a name.
+- **Tests**: `bgwork_previews.rs`'s unit tests (the key, the `.info` parsed strictly, the prune's plan, a preview's
+  time and the `.info`'s number); `app.rs` (a filling refresh is counted and never the Full);
+  `rust/tests/test_file_previews.rs` (a PDF, a picture and a font through the worker, refused files marked at once,
+  a hang or a death a try and then the mark by one worker run within the preview's time, a changed file, an entry
+  that does not read made again, a font's preview no verdict, the sweep of files that are gone, the prune, no
+  preview under the free floor, the queue's order, no worker writing nothing); `test_fontcheck.rs`'s sample and its
+  glyph limit; `test_picwork_fallback.rs`'s worker-only pool; `test_browser.rs` (only the screen's files asked for,
+  a tile that comes back read from the cache in slices, the tiles that changed drawn together, tiles under a card
+  closed by Cancel or by its copy, and under a press; the picture pick a list that asks for nothing);
+  `test_store.rs` (`files_view`); the scenarios `files_8_covers` to `files_13_covers_import` (the view, each way
+  back, a card over arriving previews, the refreshes a screen costs counted from `display.presents`, slow files,
+  the Import place's statuses) and `files_14_covers_use_as` (a picture's card closed by Use as template over
+  arriving previews); and CI's Linux job, a preview of each kind and a filter kill in the real sandbox
+  (`test_sandbox_linux.rs`). docs/TESTING.md has the Scribe's check.
+
+## Files: home (2.2, issue #160)
+
+The place the main menu opens at: the Library's top unless the user sets a Library folder or a folder of the
+Kindle's storage shown in Files. `home.rs` reads the setting; the Library (`library.rs`) opens there and keeps it;
+Files (`browser.rs`) has the rows that set it and the home folder as the top.
+
+- **The setting**, settings.ini `home=`: absent, empty or `notebooks` is the Library's top (no line is written for
+  it); `notebooks/<folder>` is a Library folder by its path (`notebooks/School/2026`); `files/<path>` a folder of
+  the storage by its path from the storage root (`files/documents/Planners`). `Home::parse` takes these shapes
+  alone: under 608 bytes (`HOME_MAX`, `FS_PATH_MAX` + 8), in UTF-8, with no control character, no absolute path and
+  no empty, `.` or `..` part (a Library folder as `store_folder_valid` takes one, a storage path as
+  `StoragePath::new` takes one, never the root). Any other value names no home. No file or folder is looked at to
+  read the line.
+- **What it names is resolved one way only.** The line is anyone's to write (the user, another program, another
+  version; Grimoire runs as root). A Library folder is a name looked up in the Library's own list (`folders`, as
+  `reload` reads it), never a path on the storage. A folder inside Files is reached only through Files' walk
+  (`FsStorage::folder`: each part opened from the one before with no link followed, on the storage's device, in no
+  refused place, not Grimoire's notebooks, never the storage's root, and never the trash or anything in it, which
+  is known by the trash's identity), and Files enters it as a tap would (`Browser::enter_home`). Nothing joins the
+  value into a path and opens it, and nothing is listed, read or made at a home that fails: `home_files` walks to
+  it (`home_folder_there`) before Files is opened.
+- **Where Grimoire opens.** The main menu opens at home as it comes in front until it is used in a run
+  (`LibraryState.home_pending`, which the first contact, gesture or key action on the Library ends): at the start,
+  and again when a notebook KOReader opened at the start closes. After that it comes back as it was left: closing a
+  notebook returns to the Library where the user was, as before (a notebook opened from Files returns to the
+  Library, as before). A Library folder that is home opens the Library in it; a home inside Files opens Files there
+  (place mode, whether or not the Files card is shown) over the Library's top. A home inside Files waits for What's
+  new (open over the Library at the first start after an update: its closing goes home) and, once, for the notebook
+  KOReader hands over (`app_handed_over`): that notebook opens over the Library's cards as before, which the PDF
+  hand-over's own opening needs, and home opens when the main menu next comes in front. A hand-over that opens no
+  notebook (a page that did not open, a book that failed at once) does not hold it: home opens as the start ends
+  (`library_handover_tried`). A start's first screen at a home inside Files in the Covers view asks for no preview
+  until the user first reaches the main menu (a contact, a gesture or a key's action): the cache is read, and a file
+  it has nothing for shows the hourglass (`CoverTiles::hold`, `Browser::hold_previews`); then the previews are asked
+  for as when the folder is opened by hand. With no home set the start
+  is the plain reload it was, with the same screens and refreshes.
+- **Gone or refused.** A line that names no home (`Settings.home_refused`, as settings.ini is read), a Library folder
+  not in the list, or a folder the walk does not reach as one that can be home: the Library's top shows, with one
+  toast, "Home folder not found." (the screen does not say why), and home is Notebooks again in settings.ini at
+  once. The value is not kept, unlike `files_sort`'s (which a later version may have written): kept, it would be
+  tried and said at every start, and for a Library folder that is gone the one Reset row in reach would be Files'
+  Go to sheet, behind a card that is hidden by default. Only a folder gone or refused is put back so: a walk that
+  failed on a read error (`FsErr::Io`, `home_folder_check`) keeps the setting, and the Library's top shows for that
+  run with the same toast and the error in the log. A home that goes away while Grimoire runs (over USB) stays set
+  until Grimoire next goes there. A Files screen that shows it gives way as it is next used: a tap on a folder in it
+  (its row, its card's Open, a part of the path bar) says "Couldn't open folder." and a card's act "File changed.
+  Try again.", and either reads the folder shown again, which, gone, gives way to the nearest folder above that
+  opens (`folder_failed`, `changed_since`, `reread`); Esc there goes up the same way, without asking "Exit
+  Grimoire?", once the home folder no longer opens as a home (it is walked again on the key: a folder gone, or a
+  link in its place; `Browser::at_home_root`). Until then its rows are as they were listed. The next start, the
+  `home` action or the Go to sheet's Home row finds it gone, as above.
+- **Set and reset.** Files' Go to sheet has a first row, "Home: %s" (Notebooks; a Library folder by its own name; a
+  place of Files' root by the place's name, any other folder by its own), that goes there. After its folders comes
+  Set as home, for the folder shown, unless it is home already or can never be (the storage's root, the trash, a
+  folder whose path settings.ini could not keep as it is: `home_folder_ok`), then Reset home to Notebooks while
+  home is anything else, then Cancel. A folder's card in Files has Set as home, or on the folder that is home Reset
+  home to Notebooks in its place (before Rename and Delete). A Library folder's menu has the same row (before Remove
+  folder): the Library has no Go to sheet, so the folder that is home resets from its own menu. A folder set from
+  Files is walked again before it is kept ("Couldn't open folder." when it no longer opens), and a card's folder is
+  checked again first ("File changed. Try again."). Nothing is said: the rows read the other way afterwards. When
+  the screen has no room for every row, the Go to sheet leaves folders out from their end and keeps its Home row,
+  its home rows and Cancel. A picker offers none of it. A Set folder as home row on a file's card was left out: the
+  Go to sheet's row does the same for the folder shown, with one string fewer.
+- **The home folder as the top.** In Files at the folder that is home the header has no Back button (the title
+  stands at the margin, as the Library's does), and Esc, or a Back key, asks "Exit Grimoire?" over Files as at the
+  Library's top while the folder still opens as a home (`files_back`; while the question is up its answers and its
+  keys are its own, `files_in_front`, and
+  Files neither draws nor ticks under it). The path bar still leads up, and a folder inside home has Back, which
+  leads to it. A Library folder that is home keeps its Back button (with no path bar in the Library it is the one
+  way up), and Esc there does what that button does: it goes up, and "Exit Grimoire?" is asked at the Library's top
+  as always. From a home inside Files the path bar's Files and the root's Back lead to the Library; the Go to
+  sheet's Home row, the `home` action and the next start lead back.
+- **The `home` action** (109, no default key) goes home from the Library and from Files: out of Files (or a picker)
+  for the Library's top or a Library folder; to the home folder inside Files, without leaving Files when it is up.
+- **A rename takes home along.** A rename of the home folder, or of a folder it is in, done in Grimoire puts home
+  where that folder is now: Files' Rename (`home_follows`, after `rename_to`) and the Library's Rename folder, Move
+  folder and Merge, Merge into it or Keep both under its new name (`home_follow`). A folder whose name only begins
+  the same is another folder, and a new path settings.ini could not keep leaves home as it was, to be found gone.
+- **A delete in Grimoire puts home back to Notebooks**, at once and with nothing said beyond the delete's own words:
+  Files' Delete of the home folder or of a folder it is in (`trash_card`, then `home_follows`), and the Library's
+  Remove folder on the folder that is home. A Restore in Files' Trash puts the folder back, not home: it is set
+  again by hand. (A folder removed or deleted outside Grimoire is found gone, as above.)
+- **Logs**: `home: the home folder was not found: home is Notebooks again`, `home: the home folder could not be read
+  (<error>): the Library's top for now, home kept`, and as settings.ini is read `settings: home= names no home (N
+  bytes): Notebooks`; never the value, which may hold a name.
+- **Strings**: Home: %s, Set as home, Reset home to Notebooks, Home folder not found. ("Notebooks", "Couldn't open
+  folder.", "File changed. Try again." and "Exit Grimoire?" were there.)
+- **Tests**: `home.rs`'s unit tests (the shapes and the value each is kept as, hostile values, the walk on a tree with
+  links in and out of the storage, a file, the trash, Grimoire's notebooks, refused and hidden folders, other
+  spellings of them, a name with a control character); `test_fsview.rs`'s refused folders by identity and parts
+  ending in a dot or a space; `test_store.rs` `home_key`; `browser.rs`'s (the Go to sheet's and a folder's card's
+  rows, a folder home cannot keep, entering home only through the walk, no Back at home, the Go to sheet's rows
+  sideways, a rename and a delete in Files); `library.rs`'s (opening at home in each kind of place, gone or refused
+  with one toast and the line gone, a read error that keeps it, home until the main menu is used, the action and
+  Esc at home, the Exit question with nothing of Files drawn under it, a Library folder's menu and its Remove
+  folder, Files' rows through the Library, What's new and KOReader's hand-over, a rename, a move and a merge);
+  `test_sec_invariants.rs` `files_home_is_told_as_it_is`; and the scenarios `files_*_home_*` from
+  `files_19_home_set` (set, a restart, reset and its save, gone, a link, a `..`, a Library folder, its rename and the
+  start there, a folder's card in Files, its rename, the start there and its delete, a notebook closed, Spanish in
+  Gothic and Classic with every text checked for fit, the home folder gone or swapped for a link while it is shown,
+  the path bar after the home action, KOReader's PDF hand-over, a hand-over that opens nothing, a gone home at a
+  KOReader start, the Files card hidden, What's new, the Exit question through a turn and a sleep, and a start in
+  Covers). docs/TESTING.md has the Scribe's checks.
+
+## Darker lines in imported PDFs (2.2, issue #173)
+
+Faint planners read poorly on e-ink. An option darkens the lines of a PDF as it is imported: a gamma on the gray
+pages, as KOReader's contrast darkens a page it draws. `pdfwork.rs` has the levels and the arithmetic; `pdfimport.rs`
+carries the level from the UI to the notebook; `library.rs` and `settingsmenu.rs` have the row; `annotate.rs` and the
+KOReader plugin carry the reader's contrast.
+
+- **The levels**, `pdfwork::Gamma`: Off, Medium (1.5) and Strong (2.0). Each level of a gray page becomes 255
+  (level / 255)^gamma, rounded to the nearest whole level, from a table computed in whole numbers (2.0 is
+  round(v^2 / 255), 1.5 is round(sqrt(v^3 / 255))), so every build makes the same bytes and neither ever falls on a
+  half. White stays white and black stays black.
+- **Gray pages only** (the owner's ruling of 2026-11-17). The writer applies the gamma to the gray page it already
+  holds (`darken`, after `Session::render` has settled the page gray or colour): no new parse of the PDF, no new
+  decode, and the worker and its protocol are unchanged. A page kept in colour is left exactly as it is, and a page
+  with gray and colour on it is a colour page. At Off nothing is applied: the pages, the card's thumbnail, the
+  notebook's files and the import's screens and refreshes are those of an import before 2.2, byte for byte
+  (Settings > System has one row more). Blank pages (a page whose worker died twice) are white at every level.
+- **Where it lives**: one setting, settings.ini `pdf_gamma`, the last row of Settings > System, "Darker lines in
+  imported PDFs: %s", which opens a list of the three levels as the eraser's row does, in one column so that they read
+  in their order, Off, Medium, Strong (`draw_pick_cards`). It is the smallest place every way in can follow: the
+  import folder's scan (which asks nothing), Files' Import and New notebook's From a file..., and KOReader's
+  hand-over. The app gives it to `pdfimport` at the start and when it is picked (`set_darker`).
+- **The level travels with the file.** The UI decides it as it queues a file and writes it into the file's mark
+  (`gamma=`): the setting, or a level of the caller's own through `pdf_import_queue_at` (KOReader's request). A pick
+  that waits for the lock keeps its level until a later scan queues it, and a file whose mark is lost is drawn at the
+  setting. The first slice keeps the level in the import's state, so every slice, a resume included, draws at it.
+- **Kept with the notebook**: one `gamma=` line in its `source.ini`, after the file record, a line only away from Off.
+  annotate.rs and every version since 1.1 write the lines of `source.ini` they do not know back as they were, so the
+  line stays through KOReader's version 1 pages, an older version's saves and a raw zip. A fill draws the pages it
+  adds at its notebook's own level (`gamma_among`, read when the fill is decided), whatever the setting or the
+  request says: a notebook made before 2.2 or at Off has no line and is filled at Off, as its import drew it. A
+  notebook KOReader made (version 1) has no line either and is filled at Off, though KOReader drew its pages at the
+  reader's contrast: where that was darker, the pages a fill adds are lighter than KOReader's. The same PDF again
+  with every page is "PDF already imported." at any level: a PDF already imported is not drawn again by a change of
+  the setting.
+- **Read strictly**: settings.ini, a mark, an import's state, a notebook's `source.ini` and KOReader's request each
+  say a level as `1.0`, `1.5` or `2.0` (`Gamma::parse`), and any other value is no gamma. settings.ini writes an
+  unknown value back as it was, as it does `files_sort`'s.
+- **KOReader**: the version 2 request (`file=`, the PDF by its path) gains `gamma=`, the reader's contrast as darker
+  lines. KOReader's contrast is a gamma on the page, the one version 1 drew KOReader's pictures at; the plugin sends
+  `1.5` for a contrast from 1.25 and `2.0` for one from 1.75, and no line for any other (KOReader's own 1, a lighter
+  page, which Grimoire does not draw), so Grimoire's setting decides then, as it does for an older plugin. A request's
+  line wins over the setting, and a fill still draws at the notebook's own level. Version 1 is unchanged. From the
+  file browser (Open with) the plugin reads the contrast the reader would open the book with: the book's own, else
+  the default set for books, else KOReader's. A KOReader before 2023.10 kept a book's contrast as its `gamma`
+  setting (its `kopt_contrast` then held 1/contrast) and the default as 1/contrast, until it moves them itself (a
+  book's `gamma` when the book is next opened, the default by its one-time move of 20230901,
+  `last_migration_date`); the plugin reads them as KOReader does until then, a book's `gamma` first and a default
+  not yet moved turned back, so Open with draws (version 1) and asks (version 2) at the reader's contrast there too.
+- **Not darkened**: Files' previews of a PDF (they show the file), and the pages KOReader draws (Annotate this page,
+  Open this book by version 1), which come at KOReader's own contrast. Template pages made from a PDF (issue #172)
+  do not take the level either: the setting is the import's, and a template is paper under the ink.
+- **Logs**: `import: <id>: darker lines: its gray pages are drawn at gamma 1.5 (the import's)` (or `its notebook's`
+  for a fill), and `book: the request asks for darker lines at gamma 2.0`; the plugin's crash.log line ends `with
+  gamma=2.0`. Never a name.
+- **Strings**: Darker lines in imported PDFs: %s, Darker lines in imported PDFs, and Off, Medium and Strong in the
+  context "darker lines".
+- **Tests**: `pdfwork.rs`'s unit tests (each level against the formula, Off byte for byte, a colour page and a mixed
+  page untouched, only the three values read); `pdfimport.rs`'s (the state's and the mark's line);
+  `test_pdf_darker.rs` (each level's pages are the pages at Off through its table, a colour page's picture the same
+  file at every level, the level a pick, a pick of a level of its own, a pick waiting for the lock and one waiting
+  for a copy of its PDF were queued at, a fill at its notebook's level both ways, the same PDF again, the
+  notebook's line read strictly); `test_store.rs`
+  `pdf_gamma_key`; `library.rs`'s row test; `test_annotate.rs` and `test_koreader_pdf.rs` (the request's line);
+  the plugin's stub test; the scenarios `z_pdf_darker_*` and `y_koreader_pdf_darker_*`. docs/TESTING.md has the
+  Scribe's checks.
+
+## PDFs as templates (2.2, issue #172)
+
+A PDF in `grimoire/templates` (copied in over USB, or by Use as template on a PDF's card in Files) gives one template
+a page. `bgwork_tplpdf.rs` makes the pages, `bgwork_template.rs` lists them, `tplsheet.rs` shows them.
+
+- **Only the worker parses the PDF.** A PDF's pages are drawn by the sandboxed PDF worker an import uses (the same
+  exec, filter, limits and record grammar, validated by the same `Session`), and the writer and the UI never parse
+  PDF syntax. The job opens the PDF once, with no link followed, as a plain file of the templates folder, and that
+  open file is what the worker reads. With no worker to be had (a sandbox step failed, none starts, or one without
+  the sandbox's steps where the sandbox is required) nothing is drawn and nothing is marked: the PDF's tile waits, as
+  a picture's does, and the next look tries again. A sandbox step that fails marks the session broken, the UI's too:
+  the job's child ends with status 4 (`CODE_SANDBOX`), which bgjob.rs turns into the UI's mark, as an import's progress
+  record and a font check's status 4 do. A session marked broken queues no PDF's job until Grimoire starts again.
+- **The stored form** (docs/FORMAT.md, Template PDFs): in the folder's cache, under the key its previews already use
+  (the FNV-1a hash of the PDF's name, size and time), `<hash>.pages` holds the page count, and each page is a picture
+  of the Kindle's page size, `<hash>-p<nnnn>.png` (gray, or RGB for a page with colour, as the import keeps them),
+  with its `.key` and its preview `.pgm` beside it, written in that order (the preview says the page is made), or
+  its `.bad`. These files are written only inside Grimoire's own templates folder, into a cache folder reached with
+  no link on the way, as the previews job writes its own (`write_quiet`, `store_write_pgm`, `write_file_atomic`:
+  a temporary name, fsync, rename). No file of the user's is written, renamed or replaced, and no name is made from
+  the PDF's: the tiles' names are labels, never files. What removes entries of the cache (a PDF's own, and the sweep
+  of files that went, the previews job's too) looks for a link on the way again right before it lists the cache, so
+  a link put there since the job began is never followed by a removal: the window is that one listing.
+- **A page is a picture template.** A page's tile has its picture's path, and from there it is a template as any
+  picture is: `template_install` takes its key from its `.key` and queues its picture for the notebook's page size,
+  made by the picture worker from the page's PNG (`make_template`). Picking a page, drawing it and opening a notebook
+  on it never read the PDF again; the PDF can be gone by then. The PDF itself is never a picture: whatever the cache
+  holds under its own name it has no preview or key of its own (`preview_of`), so its tile is never ready,
+  `template_install` refuses it, and a notebook's picture job refuses a PDF, so the picture worker is never handed one.
+- **When.** The scan that looks at the folder (`template_scan`, as the Templates sheet opens) queues a job for each
+  PDF with work left (at most `TEMPLATE_PDF_QUEUE_MAX`, 8, a look): `BgKind::Template` with no notebook and the PDF's
+  path. It ranks behind imports and font checks, with Files' previews, first queued first run (bgjob.rs `rank`), and
+  runs in slices as an import does (`SLICE_PAGES` pages or `SLICE_WALL_MS` a slice, looked at before a page, never
+  between the tries of one): a slice that leaves pages ends with `CODE_MORE` (3) and is queued again behind whatever
+  ranks higher, so a picture picked meanwhile waits for one slice at most. Each slice asks the worker for the page
+  count again and goes on from the pages made. Jobs still queued when Grimoire ends are dropped, as Files' previews
+  are: the next look queues them again. A look that finds in the cache the count of a PDF no longer in the folder
+  (deleted, renamed or changed since) queues the folder's previews job, which sweeps that PDF's entries.
+- **Limits.** The templates folder's 16 MB (`TEMPLATE_MAX_BYTES`, a picture's), `TEMPLATE_PDF_MAX_PAGES` (50) pages,
+  the import's worker limits (its address space for the file, its CPU, the page watchdog, band mode under little
+  memory), and the free-space floor before every page (room for a page before its worker is asked, and for its
+  picture and preview before they are written). A PDF over the page limit is no template as a whole and is never cut
+  to its first pages: its count is in the log, and the sheet shows its one tile crossed out (The sheet, below).
+  The sheet takes at most `TEMPLATE_PDF_TILES_MAX` (200) tiles of PDF pages in all, four PDFs at the page limit (each
+  tile is looked at when the sheet reads the folder, and every 1.5 s while one waits, so many long PDFs must not slow
+  it): the PDFs are taken in the order of their names, and one that would take the sheet past the cap (its page
+  count, or one tile while its pages are not counted) is left out whole, as one tile the sheet cannot use, with no
+  job queued for it; the log says how many.
+- **What a failure costs.** A PDF that is empty, over 16 MB (marked before any worker starts), that the worker
+  refuses (no PDF Grimoire reads, a password, no page), whose worker lies, whose worker ends or stalls twice while it
+  is opened, or none of whose pages draws, is marked bad as a whole, as a picture is (`<hash>.bad`, and what was made
+  of it goes). A page the worker cannot draw is marked alone (`<hash>-p<nnnn>.bad`), and so is a page whose worker
+  ends or stalls twice on it (a fresh worker tries it once more; a stall right after the Kindle slept is tried again
+  with no strike, as in an import); `DEAD_PAGES_MAX` (2) pages marked so make the whole PDF no template. No worker, no
+  room, the writer out of memory for a page's pixels (no strike either), a write that failed: nothing is marked.
+- **A file changed while its pages are made.** The job checks before it keeps the count and before it keeps each page
+  that the open file is unchanged and still the plain file at the PDF's name (device, inode, size and time to the
+  nanosecond), and its cache entries are keyed by the file it opened. A PDF written over, or another file put at its
+  name, while its pages are made: no page of it drawn after the change is kept, what was made of it goes, nothing is
+  marked, and the next look makes the pages of the file as it is then.
+- **Never an import by itself.** The import watch reads `grimoire/import` alone, and the template job writes only its
+  cache: the template job never makes a notebook of a PDF in the templates folder, never moves it, and never puts it
+  in the import folder. The user may still import one by choice: Import as notebook on its card in Files makes a
+  notebook of it, as it does of any PDF there.
+- **The sheet.** Until its job has counted the pages a PDF is one waiting tile under its name. When the sheet sees the
+  count (when it looks for previews: as a job ends, and every 1.5 s while one runs) it reads the folder again, as
+  after a copy, and the PDF's pages take its place, a tile a page named after the file and the page ("Planner p. 3",
+  the Pages view's "p. %d"; the file's name is cut short before the page's part when both do not fit). Never under a
+  contact: a count seen while a pen or finger is down on the sheet is read after the lift. A PDF before the page in
+  view taking more places does not turn the sheet away: the tile the page was anchored on stays in view (the page
+  that holds it now). The pages' tiles fill in
+  as their pictures are made. A PDF's tile the sheet cannot use stays crossed out in its place at every opening (the
+  tile a picture found unusable while the sheet is open has): the whole PDF's when it is refused (over 50 pages, over
+  16 MB, a password, no PDF) or past the tiles PDFs may give, and a page's that is marked, so the user sees which file
+  or page is not used even while other templates are offered (no string is new). A picture it cannot use is still left
+  out when the sheet opens, as before. With no template to offer, the sheet counts them among the files it cannot use,
+  as for pictures. A template PDF's tiles are templates only: the Photos sheet lists no PDF.
+- **Colour** follows a picture template's: a page with colour is kept in colour, drawn behind the ink as such a
+  template is, and its preview is gray.
+- **Users with no PDF in the folder** see what they saw: the same tiles and jobs, and the sheet's tick asks nothing
+  of the folder for a picture.
+- **Use as template on a PDF** (`browser.rs`): Files' PDF card has it after Import as notebook, never for a PDF already
+  in the templates folder or one of Grimoire's PDF copies, and never in a picker. It is the pictures' copy job and
+  limit: a PDF over 16 MB is refused at the request with "Too big (over 16 MB).". The Templates sheet's From a file...
+  still picks pictures alone.
+- **Strings**: none new ("p. %d" and "Use as template" were there).
+- **Tests**: `test_template_pdfs.rs` (the tiles before and after the count, the stored form and its keys, a page used
+  as a notebook's template with the PDF gone and in colour, the slices through the queue, the cap at 50 and 51 pages,
+  the cap of tiles in all, 16 MB and an empty file with no worker, the worker's refusals, a page that crashes or hangs
+  its worker, two such pages, the writer out of memory, a PDF swapped or written over after its first page or right
+  after its count, a link swapped in for the cache, no room before the first page and in the middle of a slice, no
+  worker, and a sandbox step that fails in the job's own child, a PDF that is never a picture, a removed PDF's pages
+  swept, the import watch, a folder of pictures alone and a picture beside a PDF, the queue's order and the jobs
+  dropped at exit, and the sheet: its reading of the folder after a lift, a PDF's crossed-out tiles, the page in
+  view),
+  `bgwork_tplpdf.rs`'s unit tests (the count's strict reading, a long name's page part), `browser.rs`'s
+  `a_pdfs_card_in_files_offers_its_copy_into_templates`, and the scenarios `z_tpl_h_pdf_pages`, `z_tpl_i_pdf_refused`,
+  `z_tpl_j_pdf_cap` and `z_tpl_k_pdf_use_as`.
+
+## Send a PDF from the Share page (2.2, issue #175)
+
+While the Share screen is open, its page (the index) has a Send a PDF to the Kindle button. The browser sends the
+file; once all of it is in, the Kindle asks "Import "2027 Planner.pdf" (12.3 MB)?" over the Share screen with the
+send's code under it ("Code 4821", which the page that sent it shows too), and only Import keeps it: the PDF goes
+into `grimoire/import`, where the Library's import takes it as any PDF copied in. Share has no password, so anyone on
+the same Wi-Fi can load its page while it is open: the question on the Kindle, with the send's code, is the gate, and
+everything before it is built so that a PDF nobody said yes to leaves nothing behind.
+
+**The request** (upload.rs; httpd.rs's `route_upload`). `POST /upload` with the PDF's bytes as the body and a
+Content-Length, the file's name percent-encoded in `X-Grimoire-Name`, the page's token in `X-Grimoire-Token`. A raw
+body, no multipart form: the server reads the request line and the headers as it does for every request, a
+Content-Length, and looks at the body's first five bytes; the rest of the body is written, unread. Headers are looked
+for in the head alone, never in the body. A
+refusal before the Kindle asks is a status of its own with one short line. Once the Kindle asks, the reply opens:
+200, no Content-Length (the close ends it), and its first line, `code 4821`, the send's code; its last line, sent
+with the answer, says how it ended: `imported`, `declined on the Kindle`, `no answer on the Kindle`, `another PDF was
+sent`, `share is closed`, `the Kindle is asleep`, `no room` or `could not keep it`.
+
+**The send's code.** Each upload the server takes has a code of four digits drawn from the system's randomness
+(`upload::new_code`, each of the 10,000 as likely). It is given in that send's own reply alone, as its first line,
+once the PDF is all in: the page shows "Code 4821" in big type while the Kindle shows the same under its question,
+half again the title's size, so the user can see that the question is about the PDF they sent before tapping Import.
+**The code is never logged, never written to the storage, never in another connection's answer or in a page, and it
+is gone with the send.** Four digits are enough for what it does: it is no password, only a check of one send against
+one question; the server draws it, so no sender chooses it, and a question follows another only after the first was
+answered or taken away and the quiet time below.
+
+**Who may send.** In this order, each refused with a short plain answer: the Share screen keeps the server (403
+`share is closed`: with Share closed and no Live view the server is not running at all); the Host header names the
+Kindle by address (`host_ok`, 400); an Origin header, when there is one, is `http://` and the Host header's text, and
+Sec-Fetch-Site, when there is one, is `same-origin` (`same_origin`, 403); `X-Grimoire-Token` is the page's token
+(401). **Each header these rules read (Host, Origin, Sec-Fetch-Site, the token, Content-Length) is there at most once
+and short enough to read: one there twice or too long is refused, never read as absent** (`header_one`). The token is
+128 random bits, new each time Share opens (`httpd_acquire`), gone when it closes, in the page alone, compared in
+constant time (`same_token`), and never logged or stored. A page of another site the user visits cannot read it (the
+share pages send no CORS headers, and `host_ok` refuses a name rebound to the Kindle's address), cannot send the
+header without a preflight, which the server refuses (OPTIONS answers 405), and an HTML form cannot send it at all.
+
+**Limits.** One Content-Length of digits only (411 without one, or with any `Transfer-Encoding` line: no chunked
+body; 400 with two), at least five bytes (415) and at most `UPLOAD_MAX`, 64 MB (413): the import's limit for one PDF
+where the private mapping is refused (`s1::PDF_MAX_READ_WHOLE`), so every PDF sent can be imported on every Kindle;
+the page refuses a bigger file before sending. One upload at a time: **a second upload while one is under way ends
+both** (the second refused with 409, the first told `another PDF was sent`). **After an upload ends, however it ends,
+no new one is taken for `UPLOAD_QUIET_MS`** (5 s, 503: Import, Cancel, no answer, the browser gone, a second upload,
+a body refused): longer than the toast that ends a question ("Copied to grimoire/import." or "Not imported."), so a
+question that went is seen to go before another can come. A connection sends exactly the length it said: more, with
+the head or once the Kindle asks, is refused (400, or the last line `more than its length`) and nothing is kept. Room
+for it above the storage's floor, 100 MB left after it (`fsview_room_for`, 507). The body within `UPLOAD_STALL_MS`
+(30 s) of each read and `UPLOAD_BODY_MS` (10 minutes) in all (408), read up to 256 KiB a poll; the Kindle asks for
+`UPLOAD_ASK_MS` (2 minutes, then `no answer on the Kindle`). The head within a connection's 4096 bytes, and 16
+connections, as for every request. A refusal sent while the body may still come is followed by reading and dropping
+what still comes for `UPLOAD_DRAIN_MS` (5 s) or until the browser closes, so that the close does not reset the
+connection under the answer.
+
+**Before the yes.** Of the body only its first five bytes are looked at before the user's yes: they must be `%PDF-`,
+checked before any byte is written and refused at the first byte that differs (415). The body is written to one file
+only, `grimoire/.cache/share-upload.part` (`.cache` is a folder Files never lists or enters), made afresh: what is at
+its name is removed first (the entry, never what it points at), then O_CREAT|O_EXCL|O_NOFOLLOW, mode 0600, in a
+`.cache` reached from Grimoire's folder with O_NOFOLLOW. It is never in `import/` and never under a name the import's
+scan takes. **The temporary file is removed whenever its `Part` is dropped without `commit`**: Cancel, Esc, no
+answer, a body that stalls or is too slow, a browser that hangs up before the end of its body or while the Kindle
+asks (an upload's connection closed for any reason ends it, `client_close`), Share left (`httpd_release`), Live
+view's card taking Share's place, sleep (`share_sleep`), a second upload, the server stopping; one a crash left is
+removed at the next start (`upload_sweep`, from `share_init`). The file is not synced before the question (a crash
+before Import loses it anyway, and a long fsync would hold the UI's loop).
+
+**The name is never a path.** `X-Grimoire-Name`, percent-decoded (a `%` without two hex digits refuses it), is shown
+on the Kindle and names the file in `import/`, nothing more, cleaned so that the name shown is what the file is
+called (`upload_name`, `cleaned`): what draws as nothing or turns text goes (Unicode's format characters and
+Default_Ignorable_Code_Point: direction marks and overrides, zero-width characters, invisible fillers, variation
+selectors, tags; `unseen`); a space of another width, or a line or paragraph separator, is a plain space; each
+character a name in Grimoire's folders may not have (/ \ : * ? " < > |, a control character) or that draws as no
+letter of its own (private use, a noncharacter, a byte that was not UTF-8) is `_`. Spaces and dots go from both ends,
+`.pdf` is added where it is missing (any case is kept), and a name past 252 bytes is cut short before its `.pdf`, so
+that " 99" still fits. The result keeps `fsview_name_check`'s rules; a name that cleans to nothing, or none, is
+`Untitled.pdf`.
+
+**The question.** The Share screen draws the Library's question sheet over itself, as Files draws its Delete
+question: `Import "%s" (%s)?` with the name shortened with "..." to fit and the size as the file rows show sizes,
+`Code %s` under it in big type, a Primary Import row and Cancel. While it is up, it and Share's X are the screen's
+only controls; it answers only a tap that comes down after its frame was shown (`app_ask`, `app_asked_seen`, as the
+Delete questions) and lifts on the row it came down on. **Share's X, outside the sheet, is its Cancel and closes
+Share**, at once (a refusal waits for nothing, so a question that comes again after every answer cannot keep Share
+open), and so is Esc, which closes Share as it does without a question; a turn draws it at its new place and asks
+again. Import: `Part::commit` renames the file into `grimoire/import` under the name, or " 2", " 3"... before `.pdf`
+where taken, **never over a file** (fsview's `rename_noreplace`, the folder reached with O_NOFOLLOW), says "Copied to
+grimoire/import.", ends the browser's reply with `imported`, and asks the Library's scan to look as soon as the
+Library is in front (`pdfimport::rescan_soon`); a rename that fails keeps nothing and says why: "Couldn't import PDF.
+Is the storage full?" when the storage is full, else "Couldn't import PDF (see grimoire.log)." (the log has the
+reason). An Import tap in the moment the question ends without it (the browser gone, its time up) says "Not
+imported.". Cancel keeps nothing and ends the reply with `declined on the Kindle`. **A question that ends without an
+answer here, for whatever reason (no answer in two minutes, a second PDF sent, the browser gone), is taken away
+first, with the toast "Not imported.", and only then can another be drawn** (`ask_sync`): a question is never
+replaced in place, even by one that reads the same.
+
+**After the yes** the file is a PDF in `grimoire/import` like one copied over USB: the scan takes it once it holds
+still, and the sandboxed worker parses it ("The safe loader and the PDF import", above); nothing in the UI process
+parses it.
+
+**The page** (web/upload.js, inline in the index after `window.GRIMOIRE_UPLOAD`: the token, the limit and the words;
+served without its comment lines, blank lines and indents, `script_bare`). The script makes the button, so a browser
+without JavaScript shows nothing. A pick sends the file as one XMLHttpRequest (no byte of it passes through the
+script; a lone half of a UTF-16 pair in its name is sent as `_`), shows "Sending PDF: 42%", then, once the reply's
+first line has come, "Confirm on the Kindle." with "Code 4821" in big type under it (never the one without the
+other), then the answer, and the code goes: `imported` "Copied to grimoire/import.", `another PDF was sent` or 409
+"Another PDF is being sent. Try again.", `no room` or 507 "Couldn't import PDF. Is the storage full?", 413 "PDF too
+big: over 64 MB.", 401 and 403 "Open Share on the Kindle, then reload this page.", 503 "Wait 5 seconds, then send
+again.", anything else (Cancel, no answer, not a PDF, a connection lost) "Not imported.".
+
+**The log** says what came and how it ended, never the name, the token, the send's code or a header: `httpd: an
+upload of N KB is coming in`, `... is in; the Kindle asks`, `httpd: an upload was kept: it waits in import/ for the
+import`, `httpd: an upload was refused (<why>)`, `httpd: an upload was not kept (<why>)`, `httpd: an upload was cut
+short; nothing kept`, `httpd: the browser that sent an upload left; nothing kept`, and at a start `share: a sent PDF
+the last run left unanswered was removed`.
+
+What reaches the share server from the network, and who:
+
+| Surface | Open while | Who can use it | Its limits |
+|---|---|---|---|
+| Share's pages and downloads (every GET but `/live`) | the Share screen is open | anyone on the network: no password | Host must name the Kindle by address; 16 connections, a 4096-byte request, 30 s idle; renders forked, 2 at a time, others queued 2 minutes at most |
+| Live view (`/live` and its streams, `POST /live/key`) | Live view is on | a browser paired with the Kindle's one-use code or QR token (pair.c) | sessions in an HttpOnly SameSite=Strict cookie; the key POST is bodyless, its event in a custom header, its preflight refused |
+| Send a PDF (`POST /upload`) | the Share screen is open | anyone who loaded the Share page (its token) | one send at a time, 64 MB at most, one Content-Length and each header the rules read once; the body only into one temporary file; the Kindle asks with the send's code, which only the sending page has; nothing kept without Import on the Kindle; 5 s before the next send after one ends |
+
+**The rules, in short.** While Share is open, a browser that loaded its page may send one PDF at a time; with Share
+closed nothing is taken. The server takes only what the rules above allow, looks at nothing of a body but its first
+five bytes before the user's yes, and writes nothing but the one temporary file until then. Every PDF is asked about
+on the Kindle before anything is kept, under the name its file will have, with its size and the send's code, which
+only the page that sent it shows. A question that ends without an answer is taken away first, and after any send ends
+the next is taken only after `UPLOAD_QUIET_MS`. Only Import keeps a PDF: it goes into `grimoire/import` under a name
+that is never a path and never replaces a file, and the sandboxed import parses it as any PDF copied in. Share's X
+and Esc close Share at any time, which ends a send and takes no more. A page of another site the user visits cannot
+send at all.
+
+- **Strings**: `Import "%s" (%s)?`, Send a PDF to the Kindle, Confirm on the Kindle., Not imported., Another PDF is
+  being sent. Try again., Open Share on the Kindle, then reload this page., `Wait %d seconds, then send again.`,
+  `Code %s` (Import, Cancel, "Sending PDF: {percent}", "Copied to %s.", "PDF too big: over %d MB." and "Couldn't
+  import PDF. Is the storage full?" were there.)
+- **Tests**: upload.rs's unit tests (names, tokens, codes, origins, lengths); `test_share_upload.rs`, the server
+  spoken to over localhost as a browser on the Wi-Fi would (a PDF asked about and kept with its code in its reply
+  alone, " 2", Cancel, every refusal, first bytes split over reads, a refusal read by a browser still sending, names,
+  two at once, a body cut short, a browser gone, Share left and the token with it, the server stopping, sleep, a
+  crash's leftover and a link at its name, slow bodies, no answer, no room, the quiet time (after an Import too), and
+  a log and files without names, tokens or codes); `test_share.rs`'s question (the code drawn under it and in the
+  browser's reply, taps before and after it was shown, both answers, X and Esc, a turn, sleep, no answer, leaving, a
+  question that ends taken away before the next); tests/upload_ui_check.js (the page's script, its code and the word
+  to confirm that comes only with it, from tests/share_check.sh); `test_sec_invariants.rs`
+  `a_pdf_sent_from_the_share_page_is_told_as_it_is`; and the scenarios `share_upload_1_imported` (with the quiet time
+  after an Import), `share_upload_2_cancelled`, `share_upload_3_refused`, `share_upload_4_twice` (the 5 s),
+  `share_upload_5_es_fit_gothic`, `share_upload_5_es_fit_classic` and `share_upload_6_x_closes` (X and Esc while it
+  asks). docs/TESTING.md has the Scribe's checks.
 
 ## Shared building blocks (2.1, lane L0)
 
@@ -2252,19 +3633,24 @@ Lane L0 adds them with nothing visible: each keeps what the Scribe showed before
   ("Álgebra 2" before "Álgebra 10"); equal so, the bytes decide, a total order. For the file browser, the
   order of a PDF import and the font list. The Library's folders keep `cmp_name` and an import folder's
   pictures `natural_cmp`.
-- **One storage layer, `fsview.rs`** (read-only so far; browser.md 8 and 9 in the 2.1 plan). The root is
+- **One storage layer, `fsview.rs`** (its reading side; browser.md 8 and 9 in the 2.1 plan). The root is
   `/mnt/us` on the Kindle (when Grimoire's folder is inside it), elsewhere `GRIMOIRE_STORAGE` (compiled out
   of the Kindle build; never `/`). A `StoragePath` is a checked path relative to it, under 600 bytes, of
   byte names. The walk opens each component with `openat(O_DIRECTORY|O_NOFOLLOW)` from the one before and
   the file with `O_NOFOLLOW|O_NONBLOCK`, so a link anywhere fails and a FIFO never waits; each folder must be
   on the root's device, and Grimoire's notebooks (for a pick also its PDFs and trash) are refused by `st_dev`
   and `st_ino` whatever the case of the name. Zones by name in any case: the system's folders, dot-entries,
-  `*.sdr` and Grimoire's own refused; its import, templates, photos and fonts writable; the rest read-only.
+  `*.sdr`, a name ending in a dot or a space (no name on the Kindle's storage ends so) and Grimoire's own refused;
+  its import, templates, photos and fonts writable; the rest read-only. The refused folders are recognised by
+  identity as well as by name: `FsStorage::open` notes the `st_dev` and `st_ino` of the system's folders at the
+  root and of Grimoire's own refused folders (`FsStorage.refused`), and the walk refuses a folder that has one of
+  them, whatever name reached it. Every caller of the walk has this: Files, the picker, a home, a font the
+  settings name, a PDF KOReader hands over by its path, and the jobs.
   `FsListing` reads names and `d_type` only, at most 5,000, in slices of at most 20 ms with the folder kept
   open between ticks, links and refused entries left out; stats (`fstatat`, no link followed) only for the
   rows asked, in slices. Free space: a big job leaves 100 MB; under 200 MB is "nearly full". The log has
-  counts and timings, never a name. Writes (trash, `renameat2(RENAME_NOREPLACE)`, the allow-list) come with
-  their first user.
+  counts and timings, never a name. Its writes (rename, trash, restore, copy) came in 2.2: "Files' storage
+  writes (2.2)", below.
 - **The Library reads each notebook.ini once.** `reload` lists the notebooks and takes their folders from
   that list (`store_list_folders_from`), as the notebook picker and the share server's index do; it read
   each twice (500 notebooks: 1,000 reads on FUSE at each enter).

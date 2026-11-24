@@ -12,8 +12,10 @@
 # the sheet opens again, and Grimoire stays in Terminess. (2.1.0-beta.2)
 # rust-only
 wait 100
-tap 1535 95
+tap library settings
 wait 50
+tap library settings.cat.1
+wait 100
 tap library font
 wait 50
 expect library.sheet is font

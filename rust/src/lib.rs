@@ -48,6 +48,7 @@ pub mod i18n;
 pub mod json_min;
 pub mod koreader;
 pub mod md5; // MD5 and KOReader's partial MD5, a book's key (2.1)
+pub mod sha256; // SHA-256, the digest of a file's whole contents (2.2.0)
 pub mod latency;
 pub mod linkoutline;
 pub mod pair;
@@ -64,6 +65,7 @@ pub mod shortcut_profiles; // per-device shortcuts: root/shortcuts/<device>.ini 
 pub mod touchgest; // the touch recognizer: contact frames in, touch, pinch and gesture events out
 pub mod update;
 pub mod wifi;
+pub mod wpa; // WPA/WPA2's PSK from a passphrase and a name, so add needs no wpa_passphrase
 pub mod util; // common.h (util.c)
 pub use util as common;
 
@@ -75,6 +77,9 @@ pub mod bgimage;
 pub mod bgjob;
 pub mod bgwork_compact; // compact.h + bg_compact_pages
 pub mod bgwork_template; // templates.h + bg_template, bg_import_folder
+pub mod bgwork_copy; // a file copied into Grimoire's folders for the user's files: BgKind::CopyFile (2.2)
+pub mod bgwork_previews; // Files' previews and the Covers view's tiles: BgKind::FilePreviews and its cache (2.2)
+pub mod bgwork_tplpdf; // PDFs as templates: a PDF in grimoire/templates made into one template a page (2.2)
 pub mod brush;
 pub mod compact; // compact.h's surface (bodies in bgwork_compact.rs)
 pub mod export;
@@ -91,6 +96,7 @@ pub mod musicbuild;
 pub mod nav;
 pub mod doclinks; // doclinks.ini: the links a document brought (2.1, lane L4)
 pub mod pdflinks; // document links from any source: validation, seeds, fills, the water level (2.1, lane L4)
+pub mod weblinks; // weblinks.ini: a document's web links, shown as a card with a QR code (2.2, issue #174)
 pub mod notebookpicker;
 pub mod page;
 pub mod paper;
@@ -108,7 +114,8 @@ pub mod dispmenu;
 pub mod editor;
 pub mod erasersample; // header only (the bytes are in assets.rs)
 pub mod findsheet; // the Find sheet: go to a page by its number or name (Rust only, the Index's phase 1)
-pub mod fsview; // one storage layer: the walk, zones, listing and stats of the Kindle's storage (2.1, read-only)
+pub mod fsview; // one storage layer: the walk, zones, listing and stats of the Kindle's storage (2.1), and its writes in Grimoire's folders (2.2)
+pub mod home; // the home folder: settings.ini's home= read strictly, and what it names (2.2)
 pub mod httpd;
 pub mod inkmode; // header only
 pub mod keyboard;
@@ -122,9 +129,21 @@ pub mod live_keys;
 pub mod pagesview;
 pub mod panel; // header only
 pub mod pensettings;
+pub mod settingsmenu; // Settings' categories and rows as data (Rust only)
 pub mod share;
 pub mod status; // not a port: the clock and battery corner, Rust only (2.0.0-beta.5)
+pub mod globalui; // the global themed UI elements (2.3, issue #209)
+pub mod quick; // the global quick settings panel (2.3)
 pub mod ui;
+pub mod upload; // Send a PDF from the Share page: the request's rules, the name shown, the temporary file (2.2, #175)
+pub mod widgets; // the editor's widget windows and widgets.ini (2.2, issue #200)
+pub mod widgetwasm; // the generic WebAssembly widget host (2.2, issue #200)
+pub mod widgetpkg; // widget packages: manifests, platforms, installs and the packages index (2.2, #200)
+pub mod widgetpkgui; // the Packages page: installed widgets and apps, install from a repository (2.2, #200)
+pub mod apppkg; // app packages: manifests, installs, the apps index and app settings (2.3)
+pub mod appicon; // built-in and bundled .ico icons for app launchers (2.3)
+pub mod apphost; // the full-screen web app host and its safe close (2.3)
+pub mod packagestore; // the Package Store: a GitHub catalog of apps and widgets, with screenshots (Rust only)
 
 // ---- wave 4: the platform and the main loop ----
 pub mod display; // display.h: the types; the functions are the build's platform's
@@ -205,6 +224,7 @@ pub mod prelude {
     pub use crate::nav::*;
     pub use crate::doclinks::*;
     pub use crate::pdflinks::*;
+    pub use crate::weblinks::*;
     pub use crate::notebookpicker::*;
     pub use crate::mapview::*;
     pub use crate::page::*;
@@ -226,6 +246,14 @@ pub mod prelude {
     pub use crate::ui::*;
     pub use crate::update::*;
     pub use crate::wifi::*;
+    pub use crate::widgets::*;
+    pub use crate::widgetwasm::*;
+    pub use crate::widgetpkg::*;
+    pub use crate::widgetpkgui::*;
+    pub use crate::apppkg::*;
+    pub use crate::appicon::*;
+    pub use crate::apphost::*;
+    pub use crate::packagestore::*;
     pub use crate::util::*;
     pub use crate::{buf_printf, cformat, csnprintf, qlog};
 }

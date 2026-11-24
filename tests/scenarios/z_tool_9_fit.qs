@@ -1,12 +1,13 @@
 # settings: status_mode=1
 # The panel with 0 to 3 pinned pens on the 2022 and 2024 Scribes' screen (1860x2480), upright and
 # sideways: always inside the screen with 12 px free above and below it, its buttons at full size
-# (editor.panel_fits), but for two pins sideways (99 px) and three pins (93 px). Each pen is pinned in the
+# (editor.panel_fits), but for one pin sideways (99 px), two (93 px) and three (88 px). Each pen is pinned in the
 # tool picker's Pin mode. (The Scribe 3's and the Colorsoft's screen: z_tool_a_fit_colorsoft.)
 # settings: mirror_pdf=0
 # rust-only
 wait 300
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 510 460
 tap 1564 2254
@@ -34,7 +35,8 @@ expect editor.pins is highlighter
 expect editor.panel_fits is 1
 rotate 1
 wait 300
-expect editor.panel_fits is 1
+expect editor.panel_fits is 0
+expect editor.panel_button is 99
 rotate 0
 wait 300
 expect editor.panel_fits is 1
@@ -54,7 +56,7 @@ expect editor.panel_fits is 1
 rotate 1
 wait 300
 expect editor.panel_fits is 0
-expect editor.panel_button is 99
+expect editor.panel_button is 93
 rotate 0
 wait 300
 expect editor.panel_fits is 1
@@ -74,7 +76,7 @@ expect editor.panel_fits is 1
 rotate 1
 wait 300
 expect editor.panel_fits is 0
-expect editor.panel_button is 93
+expect editor.panel_button is 88
 rotate 0
 wait 300
 expect editor.panel_fits is 1
@@ -97,9 +99,9 @@ expect editor.pins is highlighter,fineliner,marker
 expect editor.panel_fits is 1
 rotate 1
 wait 300
-# Fourteen base buttons plus three pins fit within the margins; buttons are 93 px sideways.
+# Fifteen base buttons plus three pins fit within the margins; buttons are 88 px sideways.
 expect editor.panel_fits is 0
-expect editor.panel_button is 93
+expect editor.panel_button is 88
 shot 01-three-pins-sideways
 rotate 2
 wait 300
@@ -110,7 +112,7 @@ rotate 3
 wait 300
 expect size is 2480x1860
 expect editor.panel_fits is 0
-expect editor.panel_button is 93
+expect editor.panel_button is 88
 rotate 0
 wait 300
 expect editor.panel_fits is 1

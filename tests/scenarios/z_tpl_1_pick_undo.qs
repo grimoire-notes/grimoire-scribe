@@ -8,7 +8,8 @@
 # settings: eraser_mode=1
 # rust-only
 wait 300
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 1564 2254
 wait 400
@@ -76,7 +77,7 @@ pentap panel paper.more
 wait 300
 expect templates.selected is Lined
 shot 06-lined-selected
-pentap 300 2123
+pentap 300 1835
 wait 200
 expect editor.modal is paper
 tap 1562 2125
@@ -85,7 +86,7 @@ expect editor.modal is none
 pentap panel library
 wait 600
 expect screen is library
-tap 326 608
+tap library card.1
 wait 600
 expect editor.page is 2
 expect editor.paper_hex is 0x50f4d83c

@@ -36,7 +36,15 @@ pub struct App {
     pub dpi: f32,
     /// mirrors the panel
     pub screen: Canvas,
+    /// The Settings → Packages → Widgets/Apps page (widgetpkgui.rs), over whatever screen is behind it.
+    pub pkg: WidgetPkgUi,
+    /// The Package Store (packagestore.rs), the Library's catalog of apps and widgets.
+    pub store: PackageStoreUi,
+    /// The full-screen app in front, if any (apphost.rs). Apps are launched from the Library/Apps page.
+    pub app_view: AppRun,
     pub settings: Settings,
+    /// The quick settings panel (quick.rs): the app's, so its pull works on every screen, app included.
+    pub quick: crate::quick::Quick,
     /// the default shortcuts: shortcuts.ini and controller.ini, which every keyboard and controller uses
     /// but one with shortcuts of its own
     pub shortcuts: Shortcuts,
@@ -83,8 +91,13 @@ pub struct App {
     /// redraws. With the settings, what tells whether an action did anything: a finger shape names its action
     /// only when one of the two changed (editor.rs fs_fire, 2.0.0-beta.2).
     pub changes: u32,
+    /// the main loop's rounds so far (app_tick counts them): what a log line kept to one a frame goes by
+    pub frames: u32,
     /// promote to FULL every 30
     pub ui_refreshes_since_full: i32,
+    /// what waits to be flushed is only what fills in by itself (app_invalidate_filling): its Ui is never the one
+    /// promoted to the cleaning Full
+    pub dirty_filling: bool,
     /// what fast refreshes left on the panel that only a flash wipes (display.rs, issue #11): the
     /// editor adds to it and cleans it; every Full, and a Clean over it, wipes it here at the flush
     pub du_wear: DuWear,
@@ -164,6 +177,25 @@ pub struct App {
     /// sends (set over its touch-down too, which the keyboard then takes as a contact on no key; None the rest of
     /// the time).
     pub kb_inject: Option<KbInput>,
+    /// The question on the screen that asks before something is deleted (app_ask), and how far its frame is:
+    /// drawn, or on the panel since when. A contact answers it only once it has been shown (app_asked_seen).
+    pub asked: Asked,
+}
+
+/// A question that asks before something is deleted (`Delete "name"?`, Files' and the Library's) must be seen
+/// before it is answered: the tap that opens it changes what the next tap lands on at once, and the panel shows
+/// the question later, so the second of two taps at one place would answer a question nobody saw. The screen
+/// says it drew one (app_ask), app_flush notes when the frame that carries it goes to the panel, and the screen
+/// lets go a contact that came down before it was shown (app_asked_seen).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Asked {
+    /// no question asked: nothing is held back
+    #[default]
+    No,
+    /// drawn into App.screen, its frame not sent yet
+    Drawn,
+    /// its frame went to the panel then (now_ms)
+    Shown(u32),
 }
 
 
@@ -288,7 +320,7 @@ fn live_block(on: bool) {
 
 fn live_cap_sync(a: &App) {
     let mut cap = LiveCap { on: G_LIVE_APP.load(Ordering::Relaxed), asleep: a.asleep, input_yielded: a.input_yielded, ..Default::default() };
-    if cap.on && a.scr == ScreenId::Editor && a.book.state != BookState::Running {
+    if cap.on && a.scr == ScreenId::Editor && !book_holds(a) {
         cap.editor = true;
         for (e, row) in cap.styles.iter_mut().enumerate() {
             for (side, style) in row.iter_mut().enumerate() {
@@ -420,6 +452,13 @@ fn app_host() -> &'static str {
     }
 }
 
+/// Whether KOReader started this session on a page to annotate or on a book (the launcher's GRIMOIRE_ANNOTATE or
+/// GRIMOIRE_BOOK, with GRIMOIRE_HOST): its notebook opens by itself over the Library's cards (annotate_at_start,
+/// book_tick), so a home inside Files does not open over them first (library.rs, home_waits).
+pub fn app_handed_over() -> bool {
+    !app_host().is_empty() && ["GRIMOIRE_ANNOTATE", "GRIMOIRE_BOOK"].iter().any(|k| getenv(k).as_deref() == Some("1"))
+}
+
 // The sleep screen to use. Hosted, KOReader keeps the Kindle UI paused for its whole session and
 // the launcher never wakes it, so the Kindle's own screensaver (mode 2) cannot show: the page
 // does instead.
@@ -537,21 +576,65 @@ fn book_failed(a: &mut App) {
     app_toast(a, &msg, 8000);
 }
 
+// Whether KOReader's book job holds the input now: while a version 1 job adds the pages KOReader drew (a few
+// seconds, writing the book's notebook itself). A PDF handed over by its path (version 2) never does: the PDF
+// import makes its pages as it makes a dropped PDF's, the Library stays usable meanwhile, and a sheet that is up
+// (What's new, on the first start after an update) closes as it always does.
+fn book_holds(a: &App) -> bool {
+    a.book.state == BookState::Running && !a.book.pdf
+}
+
 // A whole book KOReader sent (annotate.h), its pages added a slice at a time: how far it got, in a
 // toast, then the editor opens on the reader's page.
+//
+// A PDF handed over by its path (version 2, 2.2) is the PDF import's: this only follows it. When it ends with the
+// user still on the Library (never left since the hand-over: BookStatus.left) and its cards in front (no sheet, no
+// Files, no Graph) the notebook opens on the reader's page, as version 1's does. Otherwise nothing opens: the
+// import's own done toast shows, as for a dropped PDF (and also where the Library is in front again with the new
+// card on it), and the reader's page is kept as the page the notebook opens at. An end that comes while the Kindle
+// sleeps, or while a fill's pages go in, is taken once that is over: both end by themselves. It waits for nothing
+// the user does or does not do: not for a finger to lift (a lift that a fill's hold swallowed would never come; the
+// Library forgets what was pressed as it is left, and a lift that reaches the page finds nothing it began).
 fn book_tick(a: &mut App) {
     book_fits_tick();
     if a.book.state != BookState::Running {
         return;
     }
+    if a.book.pdf && a.scr != ScreenId::Library {
+        a.book.left = true; // (the user went on to something else: from here on nothing opens by itself)
+    }
+    if a.book.pdf && (a.asleep || crate::pdfimport::fill_busy().is_some()) {
+        return;
+    }
     book_step(150, &mut a.book);
+    if a.book.state == BookState::Done && a.book.pdf && (a.book.left || !crate::library::library_cards_in_front(a)) {
+        let nb = a.book.nb;
+        // (the notebook the editor has open keeps its place: its page is the user's, and its files the editor's)
+        if !crate::editor::editor_has_open(a, nb.as_str()) && !book_pdf_keep_page(nb.as_str(), a.book.pid) {
+            qlog!("book: %s: the reader's page could not be kept as the page it opens at", nb.as_str());
+        }
+        // (said always: the user asked for this book, and it does not open by itself)
+        if let Some((id, fin)) = book_pdf_told() {
+            pdf_import_said(a, &id, fin, true);
+        }
+        return;
+    }
     if a.book.state == BookState::Done {
         let nb = a.book.nb;
         // (links only: the notebook changed too, so that its mirror PDF, which draws the tabs, is made again)
         let added = a.book.made || a.book.added > 0 || a.book.links;
-        app_notice_clear(a, NoticeKey::Book); // (the notice saying how far it got goes)
+        if a.book.pdf {
+            book_pdf_told(); // (said by the notebook opening, and the book's toast below)
+        } else {
+            app_notice_clear(a, NoticeKey::Book); // (the notice saying how far it got goes)
+        }
         editor_open_notebook_at(a, nb.as_str(), a.book.pid, added);
-        if a.book.added != 0 {
+        if a.book.blank > 0 && a.book.made {
+            // (a PDF KOReader handed over by its path became a new notebook, some of its pages blank: the PDF
+            // import's own words for that, 2.2)
+            let msg = imported_blank_text(a.book.added);
+            app_toast(a, &msg, 5000);
+        } else if a.book.added != 0 {
             let mut msg = String::new();
             if a.book.links_out {
                 // TRANSLATORS: in a toast, once the pages of a book KOReader sent are in its notebook, but some of
@@ -573,9 +656,17 @@ fn book_tick(a: &mut App) {
             bg_mirror_pdf(nb.as_str(), dpi, &dir, false);
         }
     } else if a.book.state == BookState::Failed {
-        app_notice_clear(a, NoticeKey::Book); // (the notice saying how far it got goes)
-        book_failed(a);
-    } else {
+        if !a.book.pdf {
+            app_notice_clear(a, NoticeKey::Book); // (the notice saying how far it got goes)
+        }
+        // A PDF handed over by its path that its import refused says the import's own words, whatever is in front
+        // ("PDF needs a password.", "PDF too big: over N MB.", and the others: pdf_import_told). A path refused
+        // before any import, and every version 1 failure, says the book's.
+        match if a.book.pdf { book_pdf_told() } else { None } {
+            Some((id, fin @ crate::pdfimport::Finished::Failed(_))) => pdf_import_told(a, &id, fin),
+            _ => book_failed(a),
+        }
+    } else if !a.book.pdf {
         book_progress(a, now_ms());
     }
 }
@@ -610,6 +701,8 @@ pub fn app_init(a: &mut App, w: i32, h: i32, dpi: f32) -> i32 {
     // The lasso's clipboard lasts one session: an earlier one's goes before anything can paste it.
     clipboard_clear_at_start();
     settings_load(&mut a.settings);
+    // (darker lines in imported PDFs: the imports this process queues are drawn at the setting, 2.2)
+    crate::pdfimport::set_darker(crate::pdfwork::Gamma::from_index(a.settings.pdf_gamma));
     let mut shortcuts_path = String::new();
     csnprintf!(&mut shortcuts_path, 600, "%s/shortcuts.ini", &store_root());
     // A starter map nobody edited becomes this build's (grimoire.log says so; no toast); edited files stay.
@@ -635,6 +728,9 @@ pub fn app_init(a: &mut App, w: i32, h: i32, dpi: f32) -> i32 {
     bt_init(&store_root(), getenv("GRIMOIRE_BT_SCRIPT").as_deref(), standin.as_deref(),
     );
     wifi_init(getenv("GRIMOIRE_WIFI_SCRIPT").as_deref());
+    // The status bar's Wi-Fi glyph needs the radio's state before Settings or Share asks for it
+    // (the rest of the reads stay with those screens).
+    wifi_request(WifiAction::Status);
     // Settings > Updates (update.h): the launcher says where update.sh and the request file are.
     let mut request = String::new();
     let asked = getenv("GRIMOIRE_UPDATE_REQUEST");
@@ -674,6 +770,8 @@ pub fn app_init(a: &mut App, w: i32, h: i32, dpi: f32) -> i32 {
         );
     }
     ui_init(dpi);
+    crate::globalui::gui_status_style(a.settings.status_size, a.settings.clock_12h);
+    crate::globalui::gui_status_shown(a.settings.status_on);
     if font_init() != 0 {
         return -1;
     }
@@ -714,6 +812,9 @@ pub fn app_init(a: &mut App, w: i32, h: i32, dpi: f32) -> i32 {
     let book = getenv("GRIMOIRE_BOOK");
     book_start(book.as_deref() == Some("1") && !app_host().is_empty(), &mut a.book,
     );
+    // (a home inside Files waited for the notebook KOReader hands over: when none opened and none is coming, it opens
+    // now, 2.2)
+    crate::library::library_handover_tried(a, a.scr != ScreenId::Library || a.book.state == BookState::Running);
     // Beta.1 could leave the passcode off after a restart: the launcher says so (GRIMOIRE_PASSCODE), and
     // the log notes it, with no toast (the owner, 2026-11-04). Current standalone sessions leave it
     // enabled and yield to the native keypad on sleep.
@@ -722,10 +823,17 @@ pub fn app_init(a: &mut App, w: i32, h: i32, dpi: f32) -> i32 {
     if passcode.as_deref() == Some("left-off") {
         qlog!("device passcode: left off by an earlier session");
     }
-    if annotate_failed {
+    if crate::library::library_home_said(a) {
+        // (the start said "Home folder not found." as it went home: that toast stays, as it says why the main menu
+        // is not at home; none of the ones below is put over it, 2.2)
+    } else if annotate_failed {
         app_toast(a, &note, 8000);
     } else if a.book.state == BookState::Failed {
         book_failed(a);
+    } else if a.book.state == BookState::Running && a.book.waits {
+        // The PDF KOReader handed over by its path is behind another import (one of an earlier run, or others
+        // queued ahead of it): it starts after them, and that is said, as for a picked PDF. Nothing is held.
+        app_toast(a, crate::library::library_import_waits_text(), 6000);
     } else if !caps.has_pen {
         // TRANSLATORS: %s is the app's name, Grimoire.
         csnprintf!(&mut msg, 256, tr("No pen found. %s is made for Kindle Scribe; writing needs its pen."), APP_NAME);
@@ -751,6 +859,7 @@ pub fn app_shutdown(a: &mut App) {
     // open notebook (leaving straight from the editor) queues its mirror PDF.
     bg_detach_rest();
     canvas_free(&mut a.koreader_wallpaper);
+    crate::quick::quick_free(a);
     canvas_free(&mut a.toast_under);
     canvas_free(&mut a.chip_under);
     canvas_free(&mut a.screen);
@@ -898,7 +1007,7 @@ fn app_shortcut_action(a: &mut App, action: i32, src: ActionSrc) -> bool {
         return true;
     }
     if action == SHORTCUT_STATUS_CORNER {
-        status_cycle_corner(a);
+        status_corner_shortcut(a);
         return true;
     }
     if a.scr == ScreenId::Penset {
@@ -927,7 +1036,8 @@ fn live_keys_tick(a: &mut App) {
         };
         if !key.down {
             a.live_holds.retain(|h| h.code != key.code || h.cookie != key.cookie);
-        } else if !a.asleep && live_on() {
+        } else if !a.asleep && live_on() && crate::pdfimport::fill_busy().is_none() {
+            // (while a PDF fill's pages go into their notebook a key does nothing, as on the Kindle: app_event_screens)
             let action = httpd_live_key_action(&key, app_place(a));
             note_input(a);
             if app_shortcut_action(a, action, ActionSrc::Key) && action == SHORTCUT_HOLD_ERASER {
@@ -953,6 +1063,12 @@ fn app_event_screens(a: &mut App, ev: &InEvent) {
         return;
     }
     if ev.type_ == InType::Key {
+        // While a PDF fill's pages go into their notebook (2.2, a few ticks), a key or a controller button does
+        // nothing, as pen and touch do nothing then (below): no shortcut, sheet or dialog comes between the commit's
+        // steps. (A key's release still ends Erase while held.)
+        if crate::pdfimport::fill_busy().is_some() {
+            return;
+        }
         // A pad that types (the Pages view's count pad) takes a keyboard's keys first, shortcuts on or off.
         if !a.asleep && !ev.gamepad && editor_modal_key(a, ev) {
             note_input(a);
@@ -1117,8 +1233,10 @@ fn app_event_screens(a: &mut App, ev: &InEvent) {
         live_capture(&mut captured);
     }
     let ev = &captured;
-    // While a book's pages are being added (a few seconds), nothing may open its notebook.
-    if a.book.state == BookState::Running
+    // While a book's pages are being added (a few seconds), nothing may open its notebook; nor while a PDF fill's
+    // pages go into theirs (2.2), so no Library action and no editor meets that commit (its keys: above). A PDF
+    // KOReader handed over by its path holds nothing: its import writes no notebook the user can reach (book_holds).
+    if (book_holds(a) || crate::pdfimport::fill_busy().is_some())
         && (app_pointer_phase(ev) >= 0 || ev.type_ == InType::PinchBegin || ev.type_ == InType::Key || ev.type_ == InType::Gesture)
     {
         return;
@@ -1135,6 +1253,12 @@ fn app_event_screens(a: &mut App, ev: &InEvent) {
     // off; the screen sees the touch as it always does.
     if !a.asleep {
         status_touch(a, ev);
+    }
+    // The system quick settings panel is over every screen: its pull and its contacts come before
+    // the screen's own, and it is drawn again by app_flush.
+    if crate::quick::quick_event(a, ev) {
+        live_block(false);
+        return;
     }
     // A pump inside UI work must not preview the old page or tool before that work finishes.
     let mut before = LiveStyle::default();
@@ -1461,7 +1585,8 @@ fn notice_live(a: &App) {
 /// screen guard leaves it out of its comparison.
 pub fn app_overlay_rect(a: &App) -> Rect {
     let toast = if a.toast_visible { a.toast_rect } else { RECT_EMPTY };
-    rect_union(toast, a.notice.rect)
+    let quick = if a.quick.open { a.quick.rect } else { RECT_EMPTY };
+    rect_union(rect_union(toast, a.notice.rect), quick)
 }
 
 /// Same, with the refresh to use (waking uses a no-flash refresh: faster to get back to work).
@@ -1563,6 +1688,35 @@ fn live_raw_sync() {
     live_set_raw_map(if ok { Some(&m) } else { None });
 }
 
+/// A rect of a.screen presented, with the shared status bar left out of its page tiles: the bar is
+/// LIVE_LAYER_STATUS, and the tiles take the screen as it was under it (globalui's saved bar), so a
+/// browser that hides the bar's layer sees the page where it covered.
+pub(crate) fn live_push_under_status(a: &mut App, r: Rect) {
+    let zone = crate::status::status_live_zone(a);
+    let under = rect_intersect(r, zone);
+    if rect_is_empty(under) {
+        live_push(&a.screen, r);
+        return;
+    }
+    // The layer is the bar as the screen holds it, sent before the tiles take the saved page under it.
+    crate::live::live_layer(crate::live::LIVE_LAYER_STATUS, &a.screen, zone);
+    let stride = a.screen.stride as usize;
+    let mut bar = Vec::with_capacity((under.w as usize) * (under.h as usize));
+    for y in under.y..under.y + under.h {
+        let at = (y as usize) * stride + under.x as usize;
+        bar.extend_from_slice(&a.screen.px[at..at + under.w as usize]);
+    }
+    let put = crate::globalui::gui_status_under_put(&mut a.screen, under);
+    live_push(&a.screen, r);
+    if put {
+        let w = under.w as usize;
+        for (i, y) in (under.y..under.y + under.h).enumerate() {
+            let at = (y as usize) * stride + under.x as usize;
+            a.screen.px[at..at + w].copy_from_slice(&bar[i * w..][..w]);
+        }
+    }
+}
+
 // A rect of a.screen presented, into Live view's frame (live_push): in the editor, the page under its
 // panel instead of the panel (composed again without it, editor_live_under_panel), and the panel as
 // its own layer (live_layer), for the browser to show or not.
@@ -1581,7 +1735,7 @@ fn live_push_screen(a: &mut App, r: Rect) {
         with(|s| s.live_panel = panel);
     }
     if rect_is_empty(under) {
-        live_push(&a.screen, r);
+        live_push_under_status(a, r);
     } else {
         editor_live_under_panel(a, under, r);
     }
@@ -1927,12 +2081,28 @@ fn import_made(a: &App, id: &str) -> bool {
     crate::library::library_shows_folder(a, nb.folder.as_str())
 }
 
+// The toast of a PDF that became a new notebook with some of its pages blank (`pages`: its page count): the PDF
+// import's, and KOReader's hand-over by path's (book_tick).
+fn imported_blank_text(pages: i32) -> String {
+    let mut msg = String::new();
+    // TRANSLATORS: a PDF became a new notebook, but some of its pages could not be read and are
+    // blank; %d is its page count. In a toast: one line of about 1700 px at 44 px in bold, or two.
+    csnprintf!(&mut msg, 256, ng_("Imported notebook (%d page). Some pages couldn't be read.", "Imported notebook (%d pages). Some pages couldn't be read.", pages as i64), pages);
+    msg
+}
+
 // A PDF import ended (pdfimport.rs): what to tell the user. With the Library in front and the new card on it
 // (D20) no toast says "Imported"; elsewhere one does. One that left pages blank says so whatever is in front,
-// as it is news the card does not carry.
-fn pdf_import_done(a: &mut App, id: &str, ok: bool) {
+// as it is news the card does not carry. (`id`: the import's job; a fill's end comes from the UI's own commit.)
+fn pdf_import_told(a: &mut App, id: &str, fin: crate::pdfimport::Finished) {
+    pdf_import_said(a, id, fin, false);
+}
+
+// The same; with `always`, a new notebook's toast shows even where its card is on the Library in front: the end
+// of a PDF KOReader handed over by its path that opens nothing (book_tick), as the user asked for that book and
+// it is the one word they get of it.
+fn pdf_import_said(a: &mut App, id: &str, fin: crate::pdfimport::Finished, always: bool) {
     use crate::pdfimport::{FailWhy, Finished};
-    let fin = crate::pdfimport::finished(id, ok);
     let mut msg = String::new();
     match fin {
         Finished::Nothing => {}
@@ -1942,14 +2112,12 @@ fn pdf_import_done(a: &mut App, id: &str, ok: bool) {
                 app_redraw_mode(a, RefreshMode::Ui); // (waking redraws it too)
             }
             if blank > 0 {
-                // TRANSLATORS: a PDF became a new notebook, but some of its pages could not be read and are
-                // blank; %d is its page count. In a toast: one line of about 1700 px at 44 px in bold, or two.
-                csnprintf!(&mut msg, 256, ng_("Imported notebook (%d page). Some pages couldn't be read.", "Imported notebook (%d pages). Some pages couldn't be read.", pages as i64), pages as i32);
+                msg = imported_blank_text(pages as i32);
             } else if trimmed > 0 {
                 // TRANSLATORS: a PDF became a new notebook, but its document links (a planner's tabs) were more than
                 // a notebook holds and some were left out; %d is its page count. In a toast: one or two lines.
                 csnprintf!(&mut msg, 256, ng_("Imported notebook (%d page). Some links were left out.", "Imported notebook (%d pages). Some links were left out.", pages as i64), pages as i32);
-            } else if !shown {
+            } else if !shown || always {
                 // TRANSLATORS: a folder of page pictures (grimoire/import/<name>) or a PDF became a new notebook.
                 csnprintf!(&mut msg, 256, ng_("Imported notebook (%d page).", "Imported notebook (%d pages).", pages as i64), pages as i32);
             }
@@ -1958,6 +2126,23 @@ fn pdf_import_done(a: &mut App, id: &str, ok: bool) {
             // TRANSLATORS: a toast: the PDF dropped in grimoire/import (or picked) is one Grimoire made a notebook
             // of before. A file of grimoire/import moves to import/done; a file picked elsewhere stays where it is.
             csnprintf!(&mut msg, 256, "%s", tr("PDF already imported."));
+        }
+        Finished::Filled { nb, added, trimmed, .. } => {
+            // The same PDF again filled its notebook's missing pages (2.2), the UI's commit just ended: the card may
+            // show a new first page, and the notebook's mirror PDF is made again. The toast is KOReader's route's own
+            // for pages added to a book's notebook (the pages that could not be read are blank, and the log says which).
+            if a.scr == ScreenId::Library && !a.asleep {
+                app_redraw_mode(a, RefreshMode::Ui);
+            }
+            if trimmed > 0 {
+                csnprintf!(&mut msg, 256, ng_("Added %d book page. Some links were left out.", "Added %d book pages. Some links were left out.", added as i64), added as i32);
+            } else {
+                csnprintf!(&mut msg, 256, ng_("Added %d book page.", "Added %d book pages.", added as i64), added as i32);
+            }
+            if a.settings.mirror_pdf {
+                let (dpi, dir) = (a.dpi, app_mirror_dir());
+                bg_mirror_pdf(&nb, dpi, &dir, false);
+            }
         }
         Finished::Failed(why) => match why {
             FailWhy::Password => {
@@ -1992,7 +2177,7 @@ fn pdf_import_done(a: &mut App, id: &str, ok: bool) {
 // every 10 s, and again after 5 s while a file waits to hold still. No timer runs while the editor is in front.
 pub fn app_import_rescan(a: &mut App, entering: bool) {
     let now = now_ms();
-    if a.asleep || a.scr != ScreenId::Library || !crate::pdfimport::scan_due(now, entering) {
+    if a.asleep || a.scr != ScreenId::Library || crate::pdfimport::fill_busy().is_some() || !crate::pdfimport::scan_due(now, entering) {
         return;
     }
     crate::pdfimport::scan_noted(now);
@@ -2027,6 +2212,27 @@ fn pdf_import_tick(a: &mut App, now: u32) {
             }
         }
     }
+    // A PDF fill whose pages are made goes into its notebook here, in the UI process (2.2), as KOReader's book
+    // job's pages do: it begins only with the Library in front and at rest (so no notebook is open, and no dialog
+    // is half way) and no book job running, takes a few ticks with input held (pen, touch and keys, the Live view's
+    // too), and says how far it got in the book's notice. A book job that follows a PDF import (KOReader's hand-over
+    // by path) writes no notebook itself: a fill goes in during it by these same rules, and the one of its own PDF
+    // ends it.
+    let book = book_pdf_src();
+    let free = a.scr == ScreenId::Library && !a.asleep && !book_holds(a) && crate::library::library_at_rest(a);
+    let fin = crate::pdfimport::fill_tick(free, a.dpi);
+    if let Some((done, total)) = crate::pdfimport::fill_busy() {
+        let mut msg = String::new();
+        csnprintf!(&mut msg, 256, tr("Adding book pages: %d of %d"), done as i32, total as i32);
+        app_notice(a, NoticeKey::Book, &msg);
+    } else if fin != crate::pdfimport::Finished::Nothing {
+        app_notice_clear(a, NoticeKey::Book);
+    }
+    if fin != crate::pdfimport::Finished::Nothing && book.is_some() && crate::pdfimport::fill_told_src() == book {
+        book_pdf_end("", fin);
+    } else {
+        pdf_import_told(a, "", fin);
+    }
     if a.scr == ScreenId::Library {
         app_import_rescan(a, false);
     }
@@ -2055,8 +2261,32 @@ fn poll_jobs(a: &mut App) -> i32 {
         bgimage_retry_missing();
         editor_picture_made(a); // (the open page may be on that picture: a page KOReader sent)
     }
+    if done == BgKind::PageTemplate as i32 {
+        // (a notebook's page drawn as the open page's template: From a notebook..., issue #195)
+        crate::editor::editor_page_template_done(a, done_id.as_str(), r > 0);
+        return 0;
+    }
     if done == BgKind::PdfImport as i32 {
-        pdf_import_done(a, done_id.as_str(), r > 0);
+        // (the PDF KOReader handed over by its path, 2.2: its end opens the reader's page, through the book job)
+        let src = crate::pdfimport::queued_src(done_id.as_str());
+        let fin = crate::pdfimport::finished(done_id.as_str(), r > 0);
+        if src.is_some() && src == book_pdf_src() {
+            book_pdf_end(done_id.as_str(), fin);
+        } else {
+            pdf_import_told(a, done_id.as_str(), fin);
+        }
+        return 0;
+    }
+    if done == BgKind::CopyFile as i32 {
+        // A file copied into templates or photos (2.2, #146: Use as template, Use as photo, a sheet's From a file...)
+        // or into fonts (#161: Add to fonts, the Font sheet's Add a font...): a copy that failed is said wherever
+        // the user is (by its cause where a sentence names it), one that went in by its folder's name (unless its
+        // sheet is in front, which shows it). Never the PDF's toast.
+        copy_told(a, crate::bgwork_copy::CopyTo::of(done_id.as_str()), r);
+        return 0;
+    }
+    if done == BgKind::FilePreviews as i32 {
+        // (a file's preview: Files' Covers view looks at its tiles' jobs at each tick; never the PDF's toast)
         return 0;
     }
     if done == BgKind::FontCheck as i32 {
@@ -2091,6 +2321,39 @@ fn poll_jobs(a: &mut App) -> i32 {
     0
 }
 
+// The end of a copy job (bg_poll's result `r`: 1 done, -1 failed) into folder `to`.
+fn copy_told(a: &mut App, to: Option<crate::bgwork_copy::CopyTo>, r: i32) {
+    use crate::bgwork_copy::{copy_failed, copy_refusal, CopyFail, CopyTo};
+    if r < 0 {
+        // (why, where the job's exit status says it; a job that names no folder of Grimoire's ends before it knows)
+        let msg = to.map_or_else(|| copy_failed().to_string(), |to| copy_refusal(CopyFail::of_exit(bg_last_exit()), to));
+        app_toast(a, &msg, 4000);
+        return;
+    }
+    let Some(to) = to.filter(|_| r > 0) else { return };
+    // A font copied in is a file of the fonts folder as one put there over USB is: the folder is looked at for it,
+    // and the check that decides whether Grimoire ever reads it runs as for every file there (userfonts_added).
+    // The copy itself applies nothing.
+    if to == CopyTo::Fonts {
+        crate::userfonts::userfonts_added(a.dpi);
+    }
+    // (the sheet of that folder in front shows the new picture itself: its From a file... tile; the Font sheet the
+    // new font's row, which says "Checking..." until its check has ended)
+    if crate::library::library_sheet_folder(a) == Some(to) || crate::editor::editor_sheet_folder(a) == Some(to) {
+        return;
+    }
+    let place = match to {
+        CopyTo::Templates => tr("Templates"),
+        CopyTo::Photos => tr("Photos"),
+        CopyTo::Fonts => tr("Fonts"),
+    };
+    let mut msg = String::new();
+    // TRANSLATORS: a toast (about 1700 px at 44 px in bold): a picture was copied into one of Grimoire's folders,
+    // or a font file into its fonts; %s is that folder's name as Files shows it (Templates, Photos, Fonts).
+    csnprintf!(&mut msg, 256, tr("Copied to %s."), place);
+    app_toast(a, &msg, 3000);
+}
+
 // A minute of "Sleep after". In the simulator a scenario can make it shorter
 // (GRIMOIRE_SLEEP_MINUTE_MS), to see the timer run out without waiting minutes for it.
 fn sleep_minute_ms() -> i32 {
@@ -2116,6 +2379,7 @@ fn sleep_minute_ms() -> i32 {
 
 /// timers: autosave, toast, long press, httpd
 pub fn app_tick(a: &mut App, now: u32) {
+    a.frames = a.frames.wrapping_add(1);
     app_tick_screens(a, now);
     live_keys_tick(a);
     live_cap_sync(a);
@@ -2243,6 +2507,25 @@ pub fn app_invalidate(a: &mut App, r: Rect, m: RefreshMode) {
     if rect_is_empty(r) {
         return;
     }
+    a.dirty_filling = false; // (whatever else is waiting, this refresh is one something asked for)
+    invalidate_in(a, r, m);
+}
+
+/// A part of the screen that fills in by itself, nobody having touched anything (Files' Covers tiles as their
+/// previews arrive): a Ui refresh of `r` like any other, and counted like any other, but never the one that
+/// becomes the cleaning Full (app_flush: every 30th Ui), which would flash the whole panel in the middle of a
+/// screen that is still arriving. The count runs on, and the next refresh that anything else asks for (a page
+/// turn, a tap) is the Full instead. Only while nothing else waits to be flushed with it.
+pub fn app_invalidate_filling(a: &mut App, r: Rect) {
+    let r = rect_intersect(r, Rect { x: 0, y: 0, w: a.w, h: a.h });
+    if rect_is_empty(r) {
+        return;
+    }
+    a.dirty_filling = rect_is_empty(a.dirty) || a.dirty_filling;
+    invalidate_in(a, r, RefreshMode::Ui);
+}
+
+fn invalidate_in(a: &mut App, r: Rect, m: RefreshMode) {
     // Keep the strongest mode requested since the last flush.
     if rect_is_empty(a.dirty) || m.strength() > a.dirty_mode.strength() {
         a.dirty_mode = m;
@@ -2279,6 +2562,16 @@ fn app_flush_in(a: &mut App) {
     }
     toast_follow(a); // (a screen that moves its floor redraws, so there is something to flush)
     let mut m = a.dirty_mode;
+    // The quick panel is overlaid for this present, like the toast: its pixels are put back after.
+    let quick_covered = {
+        let mut d = a.dirty;
+        let covered = crate::quick::quick_cover(a, &mut d);
+        a.dirty = d;
+        covered
+    };
+    if quick_covered && m.strength() < RefreshMode::Ui.strength() {
+        m = RefreshMode::Ui;
+    }
     let self_dirty = with(|s| s.self_dirty);
     if !rect_is_empty(self_dirty) {
         if rect_is_empty(a.dirty) || m.strength() < RefreshMode::Ui.strength() {
@@ -2287,9 +2580,11 @@ fn app_flush_in(a: &mut App) {
         a.dirty = rect_union(a.dirty, self_dirty);
         with(|s| s.self_dirty = RECT_EMPTY);
     }
+    // (a refresh of what fills in by itself, alone: counted, and never promoted: app_invalidate_filling)
+    let filling = std::mem::take(&mut a.dirty_filling) && rect_is_empty(self_dirty);
     if m == RefreshMode::Ui {
         a.ui_refreshes_since_full += 1;
-        if a.ui_refreshes_since_full >= 30 {
+        if a.ui_refreshes_since_full >= 30 && !filling {
             m = RefreshMode::Full;
         }
     }
@@ -2333,6 +2628,9 @@ fn app_flush_in(a: &mut App) {
     live_toast_sync(a, overlay, reached, noticed.is_some());
     display_present(&a.screen, a.dirty, m);
     du_wear_presented(&mut a.du_wear, a.dirty, m);
+    if a.asked == Asked::Drawn {
+        a.asked = Asked::Shown(now_ms()); // (a question's frame is on its way to the panel: app_asked_seen)
+    }
     if overlay {
         canvas_blit(&mut a.screen, &a.toast_under, Rect { x: 0, y: 0, w: a.toast_rect.w, h: a.toast_rect.h ,
             }, a.toast_rect.x, a.toast_rect.y,
@@ -2348,6 +2646,9 @@ fn app_flush_in(a: &mut App) {
         canvas_blit(&mut a.screen, &a.chip_under, Rect { x: 0, y: 0, w: chip.w, h: chip.h ,
             }, chip.x, chip.y,
         );
+    }
+    if quick_covered {
+        crate::quick::quick_uncover(a);
     }
     status_presented(a, a.dirty);
     a.dirty = RECT_EMPTY;
@@ -2383,6 +2684,7 @@ fn live_toast_sync(a: &App, drawn: bool, reached: bool, noticed: bool) {
 /// calls leave/enter and redraws fully (REFRESH_FULL)
 pub fn app_switch(a: &mut App, s: ScreenId) {
     // (the C returns for a ScreenId out of range; a Rust ScreenId cannot be)
+    crate::quick::quick_close_silent(a);
     live_reset();
     a.live_processed = 0;
     a.live_processed_ms = 0;
@@ -2412,6 +2714,31 @@ pub fn app_press_release(a: &mut App, pressed: &mut Option<Rect>) -> Rect {
             r
         }
         None => RECT_EMPTY,
+    }
+}
+
+/// A question that asks before something is deleted was just drawn into a.screen for the first time, or at a new
+/// place, and its place invalidated in the same call (Asked): it has not been shown. The next present is the
+/// frame that carries it (app_flush presents all that is dirty); app_asked_seen is false until then.
+pub fn app_ask(a: &mut App) {
+    a.asked = Asked::Drawn;
+}
+
+/// Whether the contact that comes down as `ev` can be an answer to the question app_ask named: the question's
+/// frame has gone to the panel, and the contact came down PEN_REOPEN_MS or more after it did, which is how long
+/// the Graph too waits before a second tap at one place counts (the panel takes about 270 ms of it to show a
+/// frame, docs/INK-PERFORMANCE.md; the second of two taps at one place comes sooner than the rest). By the
+/// kernel's time of the contact's frame where the kernel says (InEvent.k_ms: a contact read late came down when
+/// the kernel saw it, not when the app got to it), else by when it was read. A screen lets go a contact this is
+/// false for, down to its lift: it answers nothing, and the question stays.
+pub fn app_asked_seen(a: &App, ev: &InEvent) -> bool {
+    match a.asked {
+        Asked::No => true,
+        Asked::Drawn => false,
+        Asked::Shown(at) => {
+            let down = if ev.k_ms != 0 { ev.k_ms } else { ev.t_ms };
+            down.wrapping_sub(at) as i32 >= PEN_REOPEN_MS as i32
+        }
     }
 }
 
@@ -2544,8 +2871,8 @@ pub fn app_keyboard_tick(a: &mut App, kb: &mut Keyboard, now: u32) -> KbResult {
 
 // The runner's annotate.* keys: "role", the open page's paper ("document" for a page KOReader sent
 // or an imported one, "template", "" for any other); "luma", the open page as the editor holds it
-// now, its mean (255: white, as a picture still being made draws); the rest are annotate_probe's,
-// for the page open in the editor.
+// now, its mean (255: white, as a picture still being made draws); "gamma", the darker lines the open
+// notebook was made at (2.2); the rest are annotate_probe's, for the page open in the editor.
 fn annotate_app_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
     let mut v = String::new();
     if key == "role" {
@@ -2568,6 +2895,18 @@ fn annotate_app_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i
             Some(mean) => csnprintf!(out, cap, "%d", mean as i32),
             None => csnprintf!(out, cap, "%s", ""),
         };
+        return 0;
+    }
+    if key == "gamma" {
+        // darker lines (2.2): the gamma the open notebook's gray pages were drawn at, as its source.ini says it (1.0
+        // for no line); "" with no notebook open
+        out.clear();
+        if editor_probe(a, "notebook_id", &mut v, 64) == 0 && !v.is_empty() {
+            let mut m = AnnotateMap::default();
+            let g = if annotate_map_load(&v, &mut m) == 0 { crate::pdfimport::gamma_among(m.extra.as_bytes()) } else { crate::pdfwork::Gamma::Off };
+            annotate_map_free(&mut m);
+            csnprintf!(out, cap, "%s", g.name());
+        }
         return 0;
     }
     let page = if editor_probe(a, "page", &mut v, 32) == 0 { atoi(&v) } else { 0 };
@@ -2598,6 +2937,9 @@ pub fn app_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
     if cap == 0 {
         return -1;
     }
+    if key == "quick" || key.starts_with("quick.") {
+        return crate::quick::quick_probe(a, key, out, cap);
+    }
     if let Some(k) = key.strip_prefix("annotate.") {
         return annotate_app_probe(a, k, out, cap);
     }
@@ -2614,6 +2956,10 @@ pub fn app_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
     }
     if let Some(k) = key.strip_prefix("library.") {
         return library_probe(a, k, out, cap);
+    }
+    // the Share screen's question for a PDF sent from its page (2.2, #175): share.ask, share.upload
+    if let Some(k) = key.strip_prefix("share.") {
+        return crate::share::share_probe(a, k, out, cap);
     }
     // The storage the picker browses (the runner's, docs/SIM.md): storage.exists.PATH, storage.size.PATH (-1
     // without it) and storage.names.DIR (sorted, joined by |), PATH relative to the storage root, no link followed.
@@ -2637,9 +2983,9 @@ pub fn app_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
         }
         return 0;
     }
-    // The file picker (the Library's mode, browser.rs): files.*
+    // The file picker (the Library's mode, browser.rs): files.*; over the page the editor's picture pick (2.2, #146)
     if key.starts_with("files.") {
-        return library_probe(a, key, out, cap);
+        return if a.scr == ScreenId::Editor && !crate::library::library_settings_active(a) { editor_probe(a, key, out, cap) } else { library_probe(a, key, out, cap) };
     }
     if let Some(k) = key.strip_prefix("penset.") {
         return pensettings_probe(a, k, out, cap);
@@ -2650,7 +2996,7 @@ pub fn app_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
     }
     // Settings, under their settings.ini names.
     let st = &a.settings;
-    let nums: [(&str, i32); 39] = [
+    let nums: [(&str, i32); 40] = [
         ("settings.invert", st.invert as i32),
         ("settings.mirror_pdf", st.mirror_pdf as i32),
         ("settings.follow_rotation", st.follow_rotation as i32),
@@ -2666,6 +3012,7 @@ pub fn app_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
         ("settings.controller", st.controller as i32),
         ("settings.updates", st.updates),
         ("settings.status_on", st.status_on as i32),
+        ("settings.status_in_notebooks", st.status_in_notebooks as i32),
         ("settings.clock_12h", st.clock_12h as i32),
         ("settings.status_mode", st.status_mode),
         ("settings.shapes", st.shapes as i32),
@@ -2698,7 +3045,11 @@ pub fn app_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
             return 0;
         }
     }
-    if key == "light.intensity" || key == "light.warmth" {
+    if key == "light.intensity" || key == "light.warmth" || key == "light.auto" {
+        if key == "light.auto" {
+            csnprintf!(out, cap, "%d", light_auto());
+            return 0;
+        }
         let (mut li, mut lw) = (0, 0);
         light_get(&mut li, &mut lw);
         csnprintf!(out, cap, "%d", if key == "light.intensity" { li } else { lw });
@@ -2775,6 +3126,15 @@ pub fn app_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
             Some(v) => csnprintf!(out, cap, "%d", v.len() as i32),
             None => csnprintf!(out, cap, "%s", "unread"),
         };
+    } else if key == "wifi.near" {
+        match wifi_nearby() {
+            Some(v) => csnprintf!(out, cap, "%d", v.len() as i32),
+            None => csnprintf!(out, cap, "%s", "none"),
+        };
+    } else if key == "wifi.scanning" {
+        csnprintf!(out, cap, "%d", wifi_scanning() as i32);
+    } else if key == "wifi.scan.failed" {
+        csnprintf!(out, cap, "%d", wifi_scan_failed() as i32);
     } else if key == "wifi.join" {
         // the last switch to a saved network: "pending", "connected", "failed", "" for none
         csnprintf!(out, cap, "%s", match wifi_joining().map(|j| j.1) {
@@ -2885,6 +3245,18 @@ pub fn app_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
         }
     } else if key == "settings.font_bold" {
         csnprintf!(out, cap, "%s", st.font_bold.as_str());
+    } else if key == "settings.pdf_gamma" {
+        // darker lines in imported PDFs as settings.ini says it (2.2): 1.0, 1.5 or 2.0
+        csnprintf!(out, cap, "%s", crate::pdfwork::Gamma::from_index(st.pdf_gamma).name());
+    } else if key == "settings.home" {
+        // the home folder as settings.ini keeps it (2.2): empty for Notebooks, notebooks/<folder>, files/<path>
+        csnprintf!(out, cap, "%s", st.home.as_str());
+    } else if key == "settings.saved.home" {
+        // the home= line settings.ini has on disk now (empty without one), what a start would read: a change saved
+        // when it was made, before quit saves everything (2.2)
+        let text = read_file_max(&format!("{}/settings.ini", store_root()), 1 << 20).unwrap_or_default();
+        let line = text.split(|&c| c == b'\n').find_map(|l| l.strip_prefix(b"home=")).unwrap_or_default();
+        csnprintf!(out, cap, "%s", String::from_utf8_lossy(line).as_ref());
     } else if key == "font" {
         // Classic's font in use: a family's id, or file:<path> while a font of the owner's own draws
         if font_own() && crate::userfonts::userfonts_in_use(st.font_file.as_str()) {
@@ -3109,6 +3481,95 @@ mod tests {
         let mut out = String::new();
         assert_eq!(app_probe(a, key, &mut out, 256), 0, "{key}");
         out
+    }
+
+    /// A question that asks before something is deleted (app_ask) has been shown once a present carried it, and is
+    /// answered only by a contact that came down PEN_REOPEN_MS or more after that present: by the kernel's time
+    /// of the contact where it says, else by when it was read. A flush that presents nothing shows nothing, nor
+    /// does one held back by the sleep screen; a later present does not move the time; with nothing asked,
+    /// nothing is held back.
+    #[test]
+    fn a_question_is_answered_once_its_frame_went_to_the_panel() {
+        let mut a = notice_app();
+        let down = |t_ms: u32, k_ms: u32| InEvent { type_: InType::TouchDown, t_ms, k_ms, ..Default::default() };
+        assert_eq!(a.asked, Asked::No);
+        assert!(app_asked_seen(&a, &down(5, 0)), "nothing asked");
+        app_ask(&mut a);
+        assert_eq!(a.asked, Asked::Drawn);
+        let late = now_ms().wrapping_add(60_000);
+        assert!(!app_asked_seen(&a, &down(late, 0)) && !app_asked_seen(&a, &down(late, late)), "not on the panel: no contact answers");
+        app_flush(&mut a);
+        assert_eq!(a.asked, Asked::Drawn, "a flush with nothing to present showed nothing");
+        let r = Rect { x: 100, y: 100, w: 400, h: 300 };
+        a.asleep = true;
+        app_invalidate(&mut a, r, RefreshMode::Ui);
+        app_flush(&mut a);
+        assert_eq!(a.asked, Asked::Drawn, "the sleep screen is up: nothing went out");
+        a.asleep = false;
+        let before = now_ms();
+        app_flush(&mut a);
+        let Asked::Shown(at) = a.asked else { panic!("the present that carried it: {:?}", a.asked) };
+        assert!(at.wrapping_sub(before) < 5000);
+        assert!(!app_asked_seen(&a, &down(at.wrapping_sub(1), 0)));
+        assert!(!app_asked_seen(&a, &down(at, 0)));
+        assert!(!app_asked_seen(&a, &down(at.wrapping_add(PEN_REOPEN_MS - 1), 0)));
+        assert!(app_asked_seen(&a, &down(at.wrapping_add(PEN_REOPEN_MS), 0)));
+        // the kernel's time of the contact, where it says: read late, it came down before the question was shown
+        assert!(!app_asked_seen(&a, &down(at.wrapping_add(9_000), at.wrapping_sub(3))));
+        assert!(!app_asked_seen(&a, &down(at.wrapping_add(9_000), at.wrapping_add(PEN_REOPEN_MS - 1))));
+        assert!(app_asked_seen(&a, &down(at.wrapping_add(9_000), at.wrapping_add(PEN_REOPEN_MS))));
+        // a later present (a toast going, a row redrawn) is not its frame
+        app_invalidate(&mut a, r, RefreshMode::Ui);
+        app_flush(&mut a);
+        assert_eq!(a.asked, Asked::Shown(at));
+        // asked anew (another question, or this one at a new place): not shown again until its own frame
+        app_ask(&mut a);
+        assert!(!app_asked_seen(&a, &down(at.wrapping_add(PEN_REOPEN_MS), 0)));
+        canvas_free(&mut a.screen);
+    }
+
+    /// A refresh of what fills in by itself (Files' Covers tiles as their previews arrive) is a Ui like any other
+    /// and counted like any other, but never the one promoted to the cleaning Full: the 30th and the ones after
+    /// it stay Ui, and the next refresh something asked for is the Full instead. With anything else waiting to be
+    /// flushed with it, before or after, it is an ordinary refresh.
+    #[test]
+    fn a_filling_refresh_is_counted_and_never_the_cleaning_full() {
+        let mut a = notice_app();
+        let r = Rect { x: 100, y: 500, w: 400, h: 300 };
+        let other = Rect { x: 900, y: 900, w: 50, h: 50 };
+        a.ui_refreshes_since_full = 28;
+        for want in [29, 30, 31, 32] {
+            app_invalidate_filling(&mut a, r);
+            assert!(a.dirty_filling && a.dirty_mode == RefreshMode::Ui && a.dirty == r);
+            app_flush(&mut a);
+            assert_eq!(a.ui_refreshes_since_full, want, "counted, and no Full to start the count again");
+            assert!(!a.dirty_filling && rect_is_empty(a.dirty));
+        }
+        // the next refresh something asked for is the cleaning Full (the count starts again)
+        app_invalidate(&mut a, other, RefreshMode::Ui);
+        assert!(!a.dirty_filling);
+        app_flush(&mut a);
+        assert_eq!(a.ui_refreshes_since_full, 0);
+        // with something else waiting, before it or after it: an ordinary 30th, the Full
+        a.ui_refreshes_since_full = 29;
+        app_invalidate(&mut a, other, RefreshMode::Ui);
+        app_invalidate_filling(&mut a, r);
+        assert!(!a.dirty_filling && a.dirty == rect_union(r, other));
+        app_flush(&mut a);
+        assert_eq!(a.ui_refreshes_since_full, 0);
+        a.ui_refreshes_since_full = 29;
+        app_invalidate_filling(&mut a, r);
+        app_invalidate(&mut a, other, RefreshMode::Ui);
+        assert!(!a.dirty_filling);
+        app_flush(&mut a);
+        assert_eq!(a.ui_refreshes_since_full, 0);
+        // under the 30th it is one more Ui in the count, as any
+        app_invalidate_filling(&mut a, r);
+        app_flush(&mut a);
+        assert_eq!(a.ui_refreshes_since_full, 1);
+        // nothing of it off the screen
+        app_invalidate_filling(&mut a, Rect { x: -500, y: 0, w: 100, h: 100 });
+        assert!(!a.dirty_filling && rect_is_empty(a.dirty));
     }
 
     /// Shown at the next flush; drawn again only for a new text, at most once every 2 s; none of it counted

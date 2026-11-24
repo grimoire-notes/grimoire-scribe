@@ -7,7 +7,7 @@
 # (the clock corner held still: its minute's refresh would land among the counted ones)
 clock 1700000000
 wait 300
-tap 200 400
+tap library card.1
 wait 300
 expect editor.links is 3 3
 expect editor.strokes is 0
@@ -104,4 +104,4 @@ wait 300
 expect editor.links is 2 2
 expect toast is
 # (the panel's refresh, Redo enabled now, joins the boxes' one: a GL16 over the page, never a Full or a DU)
-expect display.presents is fast 1718 760 100 100, ui 295 220 1537 1734
+expect display.presents is fast 1718 760 100 100, ui 295 220 1537 1842

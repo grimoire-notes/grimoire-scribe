@@ -3,7 +3,7 @@
 # family at least once (docs/SIM.md lists them). make c-check skips it (SCEN_SKIP_RUST_ONLY).
 wait 200
 expect running is 1
-expect status.zone is 0 0 165 165
+expect status.zone is 0 0 1860 78
 expect status.shown is 0
 expect gestures.index-map is touch.2.down
 expect gestures.next-page is touch.2.left
@@ -13,6 +13,7 @@ expect settings.landscape_fit is 1
 expect settings.hints is 0
 expect settings.link_areas is 0
 expect notebook.last_page is 0
+expect libindex.reads is 0
 expect main.longest_unpumped_ms not -1
 expect touch.contacts is 0
 expect touch.class is none
@@ -34,7 +35,8 @@ tap library map.back
 expect library.map is 0
 expect main.longest_unpumped_ms is ok
 # the panel's names: a stroke makes Undo a button, found by name and at a point
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 510 460
 tap 1564 2254

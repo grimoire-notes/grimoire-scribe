@@ -14,14 +14,17 @@ use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
-/// a template file bigger than this is not taken
-const TEMPLATE_MAX_BYTES: usize = 16 << 20;
+/// a template file bigger than this is not taken, and neither is a photo (so no copy of one is made into either
+/// folder: bgwork_copy.rs, "Too big (over 16 MB).")
+pub const TEMPLATE_MAX_BYTES: usize = 16 << 20;
 /// files of the templates folder looked at
 const MAX_TEMPLATES: usize = 500;
 /// import folders queued at one start (the job queue holds 16)
 const IMPORT_QUEUE_MAX: usize = 8;
 /// in an import folder: the notebook it becomes ("done <id>" once made)
 const IMPORT_MARK: &str = ".grimoire-import";
+/// a mark (an import folder's, or one of import/.marks) is read up to this size: it is a line or two
+const IMPORT_MARK_MAX: usize = 4 << 10;
 /// starts that try a folder whose pictures stay the same
 const IMPORT_TRIES: i32 = 3;
 /// what a background job's path holds (bgjob.c): a longer one is cut
@@ -139,11 +142,30 @@ fn exists(path: &str) -> bool {
     Path::new(path).exists()
 }
 
+// Whether the entry at path is a folder of its own: a link to a folder is not.
+fn real_dir(path: &str) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
+}
+
 // The entries of dir that are picture files (pictures) or folders (!pictures), in natural order,
-// at most max. 0, or -1 without the folder (errno says why).
+// at most max. 0, or -1 without the folder (errno says why). An entry counts by what it is itself: only a
+// plain file is a picture and only a real folder is a folder. A link (to a file, to a folder, to nothing), a
+// FIFO or anything else is in neither list, as a dot-entry is: a file or a folder that is a link is copied in
+// to be taken. (dir itself may be reached through a link.)
 // (A name that is not UTF-8 is left out: the job queue and the screens take paths as text, so such
 // a file could not be used anyway; a Kindle's storage writes UTF-8 names.)
 fn list_names(dir: &str, pictures: bool, max: usize, out: &mut Vec<String>) -> i32 {
+    list_by(dir, if pictures { Some(picture_name) } else { None }, max, out)
+}
+
+// A file of the templates folder by its name: a picture, or a PDF (2.2, issue #172: bgwork_tplpdf.rs).
+fn template_file_name(n: &str) -> bool {
+    picture_name(n) || crate::bgwork_tplpdf::is_pdf_name(n)
+}
+
+// list_names with the files a name test takes (Some), or the folders (None).
+fn list_by(dir: &str, files: Option<fn(&str) -> bool>, max: usize, out: &mut Vec<String>) -> i32 {
+    let pictures = files.is_some();
     out.clear();
     let Ok(rd) = std::fs::read_dir(dir) else { return -1 };
     for e in rd {
@@ -156,12 +178,14 @@ fn list_names(dir: &str, pictures: bool, max: usize, out: &mut Vec<String>) -> i
         if name.starts_with('.') {
             continue;
         }
-        if pictures && !picture_name(name) {
+        if files.is_some_and(|f| !f(name)) {
             continue;
         }
-        let mut path = String::new();
-        csnprintf!(&mut path, PATH_BUF, "%s/%s", dir, name);
-        if is_dir(&path) == pictures {
+        // (the entry's own type, by a stat of the entry that follows no link: one call an entry. Not
+        // file_type(), which is the type the listing reports: pdfimport.rs list_pdfs asks the same way.)
+        let Ok(md) = e.metadata() else { continue };
+        let ft = md.file_type();
+        if !(if pictures { ft.is_file() } else { ft.is_dir() }) {
             continue;
         }
         out.push(name.to_string());
@@ -185,9 +209,10 @@ fn read_source(path: &str, max: usize) -> Option<Vec<u8>> {
     bgimage_read(path, max)
 }
 
-// The first `max` bytes of a file (all of it if it is shorter), or None.
+// The first `max` bytes of a file (all of it if it is shorter), or None. A plain file only (util.rs
+// open_read_nofollow).
 fn read_head(path: &str, max: usize) -> Option<Vec<u8>> {
-    let f = std::fs::File::open(path).ok()?;
+    let (f, _) = open_read_nofollow(path).ok()?;
     let mut buf: Vec<u8> = Vec::new();
     buf.try_reserve_exact(max).ok()?;
     // (fread gives what it read before a failure)
@@ -272,7 +297,7 @@ fn cpath(path: &str) -> Option<std::ffi::CString> {
 
 // A small file written whole (write, fsync, rename), its path never logged: it is in the owner's
 // own folder, whose name is theirs.
-fn write_quiet(path: &str, text: &str) -> i32 {
+pub(crate) fn write_quiet(path: &str, text: &str) -> i32 {
     let mut tmp = String::new();
     csnprintf!(&mut tmp, PATH_BUF + 64, "%s.tmp", path);
     let Some(ctmp) = cpath(&tmp) else { return -1 };
@@ -454,7 +479,19 @@ them in over USB, or over SSH while Grimoire runs."),
 // ---- template previews ----
 
 /// previews are 1/6 of the page, as the paper sheets' tiles
-const THUMB_DIV: i32 = 6;
+pub(crate) const THUMB_DIV: i32 = 6;
+
+/// The key of a template file's cache entries: the FNV-1a hash of its name, then "/<size>/<mtime>" (a template PDF's
+/// pages are kept under it too: bgwork_tplpdf.rs).
+pub fn preview_hash(name: &str, size: u64, mtime: i64) -> u64 {
+    let mut h: u64 = 14695981039346656037; // FNV-1a
+    let mut tail = String::new();
+    csnprintf!(&mut tail, 64, "/%lld/%lld", size as i64, mtime);
+    for s in name.bytes().chain(tail.bytes()) {
+        h = (h ^ s as u64).wrapping_mul(1099511628211);
+    }
+    h
+}
 
 // The preview of a template file: .cache/<hash of its name, size and time>.pgm (with .key, the
 // hash of its bytes, and .bad for one that does not read), so a file replaced by another gets a
@@ -463,13 +500,7 @@ fn preview_path(dir: &str, name: &str, ext: &str, buf: &mut String, cap: usize) 
     let mut path = String::new();
     csnprintf!(&mut path, PATH_BUF, "%s/%s", dir, name);
     let Ok(st) = std::fs::metadata(&path) else { return false };
-    let mut h: u64 = 14695981039346656037; // FNV-1a
-    let mut tail = String::new();
-    csnprintf!(&mut tail, 64, "/%lld/%lld", st.len() as i64, st.mtime());
-    for s in name.bytes().chain(tail.bytes()) {
-        h = (h ^ s as u64).wrapping_mul(1099511628211);
-    }
-    csnprintf!(buf, cap, "%s/.cache/%016llx.%s", dir, h, ext);
+    csnprintf!(buf, cap, "%s/.cache/%016llx.%s", dir, preview_hash(name, st.len(), st.mtime()), ext);
     true
 }
 
@@ -479,7 +510,17 @@ fn preview_of(path: &str, ext: &str, buf: &mut String, cap: usize) -> bool {
     if path.len() >= TEMPLATE_PATH_MAX {
         return false;
     }
+    // (a template PDF's page is a picture in the cache itself, its preview, key and mark beside it: bgwork_tplpdf.rs)
+    if let Some(stem) = crate::bgwork_tplpdf::page_stem(path) {
+        csnprintf!(buf, cap, "%s.%s", stem, ext);
+        return true;
+    }
     let Some(slash) = path.rfind('/') else { return false };
+    // (a PDF has no preview, key or mark of its own, whatever the cache holds under its name: its pages are its
+    // templates, so the PDF itself is never ready, never installed, and never reaches the picture path)
+    if crate::bgwork_tplpdf::is_pdf_name(&path[slash + 1..]) {
+        return false;
+    }
     preview_path(&path[..slash], &path[slash + 1..], ext, buf, cap)
 }
 
@@ -497,12 +538,16 @@ fn scan_folder(which: &str, out: &mut Vec<Template>, dpi: f32) -> i32 {
     out.clear();
     let mut dir = String::new();
     root_path(which, &mut dir, 600);
+    // (the templates folder takes PDFs too, a template a page: 2.2, issue #172)
+    let pdfs = which == "templates";
     let mut names = Vec::new();
-    if list_names(&dir, true, MAX_TEMPLATES, &mut names) != 0 {
+    if list_by(&dir, Some(if pdfs { template_file_name } else { picture_name }), MAX_TEMPLATES, &mut names) != 0 {
         return -1;
     }
     let mut t: Vec<Template> = Vec::new();
     let mut missing = false;
+    let mut pdf_jobs: Vec<String> = Vec::new();
+    let (mut pdf_left, mut pdf_past) = (crate::bgwork_tplpdf::TEMPLATE_PDF_TILES_MAX, 0);
     let mut toolong = 0;
     for name in &names {
         if dir.len() + 1 + name.len() >= TEMPLATE_PATH_MAX {
@@ -518,6 +563,16 @@ fn scan_folder(which: &str, out: &mut Vec<Template>, dpi: f32) -> i32 {
         strlcpy_q(&mut base, name, STORE_NAME_LEN * 2);
         if let Some(dot) = base.rfind('.') {
             base.truncate(dot);
+        }
+        if pdfs && crate::bgwork_tplpdf::is_pdf_name(name) {
+            // a PDF: a tile a page, as its job made them (or one for the whole PDF until its pages are counted), up to
+            // the tiles the PDFs may give in all
+            match crate::bgwork_tplpdf::scan_pdf(&dir, name, &path, &base, &mut t, &mut pdf_left) {
+                Some(true) => pdf_jobs.push(path),
+                Some(false) => {}
+                None => pdf_past += 1,
+            }
+            continue;
         }
         copy_name(&mut tp.name, &base);
         let (mut pv, mut kp) = (String::new(), String::new());
@@ -544,9 +599,15 @@ fn scan_folder(which: &str, out: &mut Vec<Template>, dpi: f32) -> i32 {
     if toolong != 0 {
         qlog!("%s: %d file(s) with too long a name left out", which, toolong);
     }
-    if missing {
+    if pdf_past != 0 {
+        qlog!("templates: %d PDF(s) left out: their pages would take the sheet past %d tiles of PDF pages", pdf_past, crate::bgwork_tplpdf::TEMPLATE_PDF_TILES_MAX as i32);
+    }
+    // (the folder's previews job also sweeps the cache: queued too for the entries of a PDF no longer there)
+    if missing || (pdfs && pdf_entries_left(&dir, &names)) {
         bg_queue(BgKind::Template, Some(""), Some(&dir), dpi, false);
     }
+    // (each PDF with pages to make is a job of its own, behind the pictures' previews: bgwork_tplpdf.rs)
+    crate::bgwork_tplpdf::queue_jobs(&pdf_jobs, dpi);
     *out = t;
     0
 }
@@ -557,6 +618,8 @@ fn scan_folder(which: &str, out: &mut Vec<Template>, dpi: f32) -> i32 {
 /// missing are made in the background (one BG_TEMPLATE job with no notebook): scan again when
 /// bg_poll_kind reports a BG_TEMPLATE done. A file whose path is longer than TEMPLATE_PATH_MAX is
 /// left out. (template_list_free empties a list.) 0, or -1 without the folder.
+/// A PDF in the folder (2.2, issue #172) is a template a page, each page's path its picture in the
+/// cache, once its own job has counted them (bgwork_tplpdf.rs: until then one template that waits).
 pub fn template_scan(out: &mut Vec<Template>, dpi: f32) -> i32 {
     scan_folder("templates", out, dpi)
 }
@@ -594,6 +657,36 @@ pub fn template_list_free(t: &mut Vec<Template>) {
         canvas_free(&mut tp.thumb);
     }
     t.clear();
+}
+
+// Whether the templates folder's cache (`dir`/.cache) holds the page count of a template PDF that is not among the
+// folder's files listed (`names`): one deleted, renamed or changed since its pages were made. Its entries are then the
+// previews job's to sweep. (One listing of the cache; a stat for each PDF only when it holds a count. A folder past
+// MAX_TEMPLATES files lists only some: nothing is asked then.)
+fn pdf_entries_left(dir: &str, names: &[String]) -> bool {
+    if names.len() >= MAX_TEMPLATES {
+        return false;
+    }
+    let Ok(rd) = std::fs::read_dir(format!("{dir}/.cache")) else { return false };
+    let counts: Vec<String> = rd
+        .flatten()
+        .filter_map(|e| {
+            let n = e.file_name().into_string().ok()?;
+            n.strip_suffix(".pages").filter(|h| h.len() == 16).map(str::to_string)
+        })
+        .collect();
+    if counts.is_empty() {
+        return false;
+    }
+    let listed: Vec<String> = names
+        .iter()
+        .filter(|n| crate::bgwork_tplpdf::is_pdf_name(n))
+        .filter_map(|n| {
+            let st = std::fs::metadata(format!("{dir}/{n}")).ok()?;
+            Some(crate::bgwork_tplpdf::hash_hex(preview_hash(n, st.len(), st.mtime())))
+        })
+        .collect();
+    counts.iter().any(|h| !listed.contains(h))
 }
 
 /// What template_scan found of each of the n templates brought up to date (a preview made since,
@@ -636,7 +729,7 @@ fn make_previews(dir: &str) -> i32 {
         return -1;
     }
     let mut names = Vec::new();
-    if list_names(dir, true, MAX_TEMPLATES, &mut names) != 0 {
+    if list_by(dir, Some(if photo { picture_name } else { template_file_name }), MAX_TEMPLATES, &mut names) != 0 {
         return -1;
     }
     let nn = names.len();
@@ -656,7 +749,8 @@ fn make_previews(dir: &str) -> i32 {
         let file = pv.rfind('/').map_or(&pv[..], |s| &pv[s + 1..]);
         strlcpy_q(&mut keep[i], file, 32);
         keep[i].truncate(16); // the hash, without the extension
-        if (exists(&pv) && exists(&kp)) || exists(&bp) {
+        // (a PDF's pages are its own job's, bgwork_tplpdf.rs: here its entries are only kept)
+        if (exists(&pv) && exists(&kp)) || exists(&bp) || crate::bgwork_tplpdf::is_pdf_name(&names[i]) {
             continue;
         }
         csnprintf!(&mut path, PATH_BUF, "%s/%s", dir, &names[i]);
@@ -723,8 +817,26 @@ fn make_previews(dir: &str) -> i32 {
         canvas_free(&mut full);
         canvas_free(&mut small);
     }
-    // Previews of files that are gone.
-    if let Ok(rd) = std::fs::read_dir(&cache) {
+    sweep_cache(&cache, &keep);
+    qlog!(
+        "%s: %d preview(s) made, %d file(s) that are no picture Grimoire can use, %d left for a later scan \
+(out of memory, a file that did not read, or no sandboxed worker)",
+        if photo { "photos" } else { "templates" },
+        made,
+        bad,
+        later
+    );
+    0
+}
+
+// Previews of files that are gone: the entries of the cache folder whose names begin with none of the hashes in
+// keep (each file's, "" for none) go. (The folder is looked at for a link again right before the listing its
+// removals follow, whenever its job looked first: the window between the look and the removals is this one listing.)
+fn sweep_cache(cache: &str, keep: &[String]) {
+    if !no_link_below(&store_root(), cache) {
+        return;
+    }
+    if let Ok(rd) = std::fs::read_dir(cache) {
         use std::os::unix::ffi::OsStrExt;
         for e in rd {
             let Ok(e) = e else { break };
@@ -736,18 +848,33 @@ fn make_previews(dir: &str) -> i32 {
             if kept {
                 continue;
             }
-            let _ = std::fs::remove_file(Path::new(&cache).join(&name));
+            let _ = std::fs::remove_file(Path::new(cache).join(&name));
         }
     }
-    qlog!(
-        "%s: %d preview(s) made, %d file(s) that are no picture Grimoire can use, %d left for a later scan \
-(out of memory, a file that did not read, or no sandboxed worker)",
-        if photo { "photos" } else { "templates" },
-        made,
-        bad,
-        later
-    );
-    0
+}
+
+/// In a child, after a template PDF's job (bgwork_tplpdf.rs): the templates folder's cache swept as the previews
+/// job sweeps it, so the pages of a PDF that changed or went do not stay behind.
+pub(crate) fn templates_cache_sweep() {
+    let mut dir = String::new();
+    root_path("templates", &mut dir, 600);
+    let cache = format!("{dir}/.cache");
+    let mut names = Vec::new();
+    if !no_link_below(&store_root(), &cache) || list_by(&dir, Some(template_file_name), MAX_TEMPLATES, &mut names) != 0 {
+        return;
+    }
+    // (a folder past MAX_TEMPLATES files lists only some: nothing is swept then, rather than the others' entries)
+    if names.len() >= MAX_TEMPLATES {
+        return;
+    }
+    let keep: Vec<String> = names
+        .iter()
+        .filter_map(|n| {
+            let st = std::fs::metadata(format!("{dir}/{n}")).ok()?;
+            Some(crate::bgwork_tplpdf::hash_hex(preview_hash(n, st.len(), st.mtime())))
+        })
+        .collect();
+    sweep_cache(&cache, &keep);
 }
 
 // ---- templates into notebooks ----
@@ -893,12 +1020,16 @@ pub fn photo_install(nb: &NotebookInfo, path: &str, kind: &mut PaperKind, why: &
 
 fn install_picture(nb: &NotebookInfo, path: &str, kind: &mut PaperKind, why: &mut &'static str, photo: bool) -> i32 {
     *why = "the file does not read";
-    // On the UI thread: its key, from the hash of its bytes and the page size; the picture is made
-    // in the background. The previews job, which reads every template whole anyway, keeps the hash
-    // and whether the file is a picture Grimoire takes; only a small file it has not seen yet is
-    // read here (whole, once).
+    // On the UI thread: its key, from the hash the previews job keeps beside the preview (it reads every
+    // template whole anyway) and the page size; the picture is made in the background. None of the file's
+    // bytes are read here: one the previews job has not seen yet is not ready (PREVIEW_NOT_MADE).
     if path.len() >= JOB_PATH_MAX {
         *why = "too long a path for a background job";
+        return -1;
+    }
+    // (a template PDF is no picture: each of its pages is a template of its own, bgwork_tplpdf.rs)
+    if crate::bgwork_tplpdf::is_pdf_name(path.rsplit('/').next().unwrap_or("")) {
+        *why = "a PDF is no picture (its pages are the templates)";
         return -1;
     }
     let Ok(st) = std::fs::metadata(path) else { return -1 };
@@ -974,13 +1105,13 @@ pub fn template_start_notebook(nb: &mut NotebookInfo, path: &str, why: &mut &'st
     -1
 }
 
-// The notebook's card (thumb.pgm, of its first page) when that page is on picture pic, drawn again
-// once the picture is made: the editor drew it on white paper if the notebook was left before (a
-// first page written on in the seconds a picture takes on the Kindle, or a page KOReader sent,
-// looked at and left while its picture was fitted: a document page, whose picture is made here
-// as a template's is). The editor may have the notebook open still, and write the card itself as
-// this draws it (leaving page 1, which it saves first, or closing): then the card is drawn again
-// from page 1 as it is now, up to three times.
+// The notebook's card (thumb.pgm, of the page the notebook opens at: its last_page) when that page
+// is on picture pic, drawn again once the picture is made: the editor drew it on white paper if the
+// notebook was left before (a page written on in the seconds a picture takes on the Kindle, or a page
+// KOReader sent, looked at and left while its picture was fitted: a document page, whose picture is
+// made here as a template's is). The editor may have the notebook open still, and write the card itself
+// as this draws it (leaving the page, which it saves first, or closing): then the card is drawn again
+// from that page as it is now, up to three times.
 fn redraw_card(nb: &NotebookInfo, pic: u32, dpi: f32) {
     let (mut pw, mut ph) = (0, 0);
     store_notebook_page_size(nb, &mut pw, &mut ph);
@@ -991,8 +1122,9 @@ fn redraw_card(nb: &NotebookInfo, pic: u32, dpi: f32) {
         let was = store_read_thumb_file(nb.id.as_str());
         let mut p: Option<Box<Page>> = None;
         let mut t = Canvas::default();
-        let mut rc = 0; // (page 1 not on the picture: nothing to draw)
-        if store_read_page(nb, 0, &mut p) != 0 {
+        let at = clampi(nb.last_page, 0, nb.npages() - 1);
+        let mut rc = 0; // (that page not on the picture: nothing to draw)
+        if store_read_page(nb, at, &mut p) != 0 {
             rc = -1;
         } else if p.as_ref().is_some_and(|pg| paper_is_image(pg.paper) && paper_image_id(pg.paper) == pic) {
             rc = if canvas_init(&mut t, pw / 3, ph / 3) == 0 { 0 } else { -1 };
@@ -1099,7 +1231,17 @@ fn annotate_source(id: &str, src: &str) -> bool {
 }
 
 /// bgjob.h: the work of a BG_TEMPLATE job, in the child; 0 = done.
+/// With no notebook and a PDF's path: a slice of that template PDF's pages (bgwork_tplpdf.rs; CODE_MORE while pages
+/// are left). Its worker sets its own address space: the writer's is not capped around it, as an import's is not.
 pub fn bg_template(id: &str, src: &str, dpi: f32) -> i32 {
+    if crate::bgwork_tplpdf::is_pdf_name(src.rsplit('/').next().unwrap_or("")) {
+        if id.is_empty() {
+            return crate::bgwork_tplpdf::bg_template_pdf(src);
+        }
+        // (never a notebook's picture made of a PDF: the picture worker is never handed one)
+        qlog!("templates: %s: a PDF is no picture (its pages are the templates); nothing made", id);
+        return -1;
+    }
     let cap = cap_memory();
     let rc = if id.is_empty() { make_previews(src) } else { make_template(id, src, dpi) }; // no notebook: the folder's previews
     uncap_memory(&cap);
@@ -1109,6 +1251,76 @@ pub fn bg_template(id: &str, src: &str, dpi: f32) -> i32 {
     if !id.is_empty() {
         // (the notebook's PDF page streams go, as its page previews are made again: pdfcache.rs)
         pdf_cache_forget(id);
+    }
+    rc
+}
+
+/// BgKind::PageTemplate (2.2, issue #195): page `index` of notebook `src`, in the path as
+/// "<src>:<index>:<key>", drawn whole (paper and ink) as the picture notebook `dest`'s bg/index.ini gives that
+/// key. The Templates sheet's From a notebook... gave dest the id before it queued this. 0, or -1: the page
+/// does not read, a picture it is drawn on is missing, or the id is not in the index.
+pub fn bg_page_template(dest: &str, path: &str, dpi: f32) -> i32 {
+    let Some((rest, key)) = path.rsplit_once(':') else { return -1 };
+    let Some((src, index)) = rest.split_once(':') else { return -1 };
+    let (Ok(index), Ok(key)) = (index.parse::<i32>(), u64::from_str_radix(key, 16)) else { return -1 };
+    let cap = cap_memory();
+    let rc = make_page_template(dest, src, index, key, dpi);
+    uncap_memory(&cap);
+    rc
+}
+
+fn make_page_template(dest: &str, src: &str, index: i32, key: u64, dpi: f32) -> i32 {
+    let mut dir = String::new();
+    let mut ix = BgIndex::default();
+    let mut pic = 0u32;
+    if bgimage_dir(dest, &mut dir, 700) != 0 || bgindex_load(&dir, &mut ix) != 0 || !bgindex_find(&ix, key, &mut pic) {
+        bgindex_free(&mut ix);
+        qlog!("templates: %s: no picture was given to this page template; nothing made", dest);
+        return -1;
+    }
+    bgindex_free(&mut ix);
+    let mut file = String::new();
+    bgimage_file(&dir, pic, &mut file, 800);
+    if exists(&file) {
+        return 0; // (the same page as it was picked before: the picture is there)
+    }
+    let mut srcnb = NotebookInfo::default();
+    if store_load_info(src, &mut srcnb) != 0 {
+        qlog!("templates: %s: the notebook a page template comes from does not open", dest);
+        return -1;
+    }
+    let mut page = None;
+    if store_read_page(&srcnb, index, &mut page) != 0 {
+        return -1;
+    }
+    let Some(page) = page else { return -1 };
+    let (mut pw, mut ph) = (0, 0);
+    let mut dstnb = NotebookInfo::default();
+    if store_load_info(dest, &mut dstnb) != 0 {
+        return -1;
+    }
+    store_notebook_page_size(&dstnb, &mut pw, &mut ph);
+    let mut c = Canvas::default();
+    if canvas_init(&mut c, page.w, page.h) != 0 {
+        return -1;
+    }
+    bgimage_take_missing(); // (what drew white before)
+    page_render(&mut c, &page, Rect::new(0, 0, page.w, page.h), dpi);
+    if bgimage_take_missing() {
+        qlog!("templates: %s: the page's paper picture is missing; no template made", dest);
+        return -1;
+    }
+    // (fitted to this notebook's page as a template's picture is, and gray: a page is drawn gray)
+    let srcpic = BgPicture { px: c.px, w: c.w, h: c.h, ch: 1 };
+    let mut fit = BgPicture::default();
+    if bgimage_normalize(&srcpic, pw, ph, &mut fit) != 0 {
+        return -1;
+    }
+    let rc = bgimage_write_png(&file, &fit);
+    if rc == 0 {
+        qlog!("templates: %s: bg/%06x.png made from page %d (%dx%d)", dest, pic, index, pw, ph);
+    } else {
+        qlog!("templates: %s: bg/%06x.png could not be made from page %d", dest, pic, index);
     }
     rc
 }
@@ -1125,14 +1337,15 @@ pub fn bg_template(id: &str, src: &str, dpi: f32) -> i32 {
 // resumes with its pictures gone (H7).
 // (by descriptor, never through a link: util.rs remove_work_dir)
 fn remove_work<P: AsRef<Path>>(work: P) {
-    remove_work_dir(work.as_ref(), &[c"pdf-import.ini"]);
+    remove_work_dir(work.as_ref(), &[c"pdf-import.ini", c"pdf-fill.ini"]);
 }
 
-// The notebook id written in an import folder's mark, or false (none, or "done").
+// The notebook id written in an import folder's mark, or false (none, or "done"). A mark is a line: one
+// longer than IMPORT_MARK_MAX is not read.
 fn read_mark(src: &str, id: &mut String, done: &mut bool) -> bool {
     let mut path = String::new();
     csnprintf!(&mut path, PATH_BUF, "%s/%s", src, IMPORT_MARK);
-    let t = read_file(&path);
+    let t = read_file_max(&path, IMPORT_MARK_MAX);
     *done = t.as_ref().is_some_and(|t| t.starts_with(b"done"));
     let mut ok = false;
     if let Some(t) = &t {
@@ -1174,6 +1387,8 @@ fn drop_mark(src: &str) {
 // start, and its failure shows once.
 const ATTEMPTS_MAX: usize = 64;
 const TRIES_REFUSED: i32 = 99;
+/// import/.attempts is read up to this size (it is at most ATTEMPTS_MAX lines of 37 bytes and a header)
+const ATTEMPTS_FILE_MAX: usize = 64 << 10;
 
 #[derive(Clone, Copy)]
 pub(crate) struct Attempt {
@@ -1233,7 +1448,7 @@ fn attempts_load() -> Vec<Attempt> {
     let mut path = String::new();
     root_path("import/.attempts", &mut path, 700);
     let mut a: Vec<Attempt> = Vec::new();
-    let Some(t) = read_file(&path) else { return a };
+    let Some(t) = read_file_max(&path, ATTEMPTS_FILE_MAX) else { return a };
     let t = &t[..t.iter().position(|&c| c == 0).unwrap_or(t.len())];
     // (strtok_r on "\n": empty lines are not lines)
     for line in t.split(|&c| c == b'\n').filter(|l| !l.is_empty()) {
@@ -1834,8 +2049,13 @@ fn build_notebook(id: &str, src: &str, final_: &str, names: &[String]) -> i32 {
 
 // The import itself, under the lock. A failed one leaves no notebook, and the folder as it was.
 fn import_folder(src: &str) -> i32 {
-    if !is_dir(src) {
-        qlog!("import: the folder is gone (an earlier run imported it)");
+    if !real_dir(src) {
+        // (nothing is made, no failure is shown and no try is counted, either way)
+        if std::fs::symlink_metadata(src).is_err() {
+            qlog!("import: the folder is gone (an earlier run imported it)");
+        } else {
+            qlog!("import: the folder is no folder of its own; left as it is");
+        }
         return IMPORT_DONE;
     }
     let mut id = String::new();
@@ -2049,6 +2269,10 @@ pub fn import_pick_queue(path: &StoragePath, name: Option<&str>, folder: Option<
         }
     }
     let busy = match lock_take() {
+        Lock::Busy(e) if e != libc::EWOULDBLOCK => {
+            qlog!("import: the import lock cannot be taken (%s); a picked folder is refused", &strerror(e));
+            return Queued::Refused("lock");
+        }
         Lock::Busy(_) => true,
         Lock::Fresh => {
             import_leftovers(true, &mut Vec::new());
@@ -2116,7 +2340,7 @@ pub(crate) fn reconcile_pictures() -> usize {
     if !lost.is_empty() {
         // a pick among them: its mark (in import/.marks) says waiting, so the lock taken afresh queues it again
         for m in std::fs::read_dir(format!("{}/import/.marks", store_root())).into_iter().flat_map(|rd| rd.flatten().take(256)) {
-            let Some(t) = read_file(&m.path().to_string_lossy()) else { continue };
+            let Some(t) = read_file_max(&m.path().to_string_lossy(), IMPORT_MARK_MAX) else { continue };
             let Some(mk) = crate::pdfimport::mark_parse(&t) else { continue };
             if mk.state == crate::pdfimport::MarkState::Making && mk.pick && lost.iter().any(|l| *l == mk.id) {
                 crate::pdfimport::mark_write_public(&crate::pdfimport::Mark { state: crate::pdfimport::MarkState::Waiting, id: String::new(), at: wall_time(), ..mk });
@@ -2311,6 +2535,14 @@ mod tests {
         for d in ["zeta", "alpha-10", "alpha-9", ".dot", "done.png"] {
             std::fs::create_dir(format!("{dir}/{d}")).unwrap();
         }
+        // what is no plain file and no real folder is in neither list: a link to a folder, to a picture and
+        // to nothing, and a FIFO
+        std::os::unix::fs::symlink(format!("{dir}/zeta"), format!("{dir}/linkdir")).unwrap();
+        std::os::unix::fs::symlink(format!("{dir}/page-2.PNG"), format!("{dir}/link.png")).unwrap();
+        std::os::unix::fs::symlink(format!("{dir}/nowhere.png"), format!("{dir}/ghost.png")).unwrap();
+        let pipe = std::ffi::CString::new(format!("{dir}/pipe.png")).unwrap();
+        // SAFETY: mkfifo reads the NUL-terminated path we own.
+        assert_eq!(unsafe { libc::mkfifo(pipe.as_ptr(), 0o644) }, 0);
         let mut names = Vec::new();
         assert_eq!(list_names(&dir, true, 100, &mut names), 0);
         assert_eq!(names, ["b.jpeg", "c.pgm", "Page-1.jpg", "page-2.PNG", "page-10.png"]);
@@ -2322,6 +2554,69 @@ mod tests {
         assert_eq!(list_names(&format!("{dir}/missing"), true, 2, &mut names), -1);
         assert!(names.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A file's head is read when the entry at its name is a plain file.
+    #[test]
+    fn a_head_is_read_from_a_plain_file_only() {
+        let dir = scratch("head");
+        let file = format!("{dir}/a.png");
+        std::fs::write(&file, b"0123456789").unwrap();
+        assert_eq!(read_head(&file, 4).as_deref(), Some(&b"0123"[..]));
+        assert_eq!(read_head(&file, 64).as_deref(), Some(&b"0123456789"[..]));
+        let link = format!("{dir}/link.png");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        assert_eq!(read_head(&link, 4), None);
+        assert_eq!(read_head(&format!("{dir}/missing.png"), 4), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // An import folder's mark is read up to its limit: a longer file is not read.
+    #[test]
+    fn a_mark_has_a_limit() {
+        let r = scratch("mark-limit");
+        assert_eq!(store_init(&r), 0);
+        let src = format!("{r}/import/Pages");
+        std::fs::create_dir_all(&src).unwrap();
+        let mut want = String::new();
+        store_make_id(&mut want);
+        let (mut id, mut done) = (String::new(), false);
+        // a mark as an import writes it, then one just at the limit: both read
+        let mark = format!("{src}/{IMPORT_MARK}");
+        let mut text = format!("{want}\n").into_bytes();
+        std::fs::write(&mark, &text).unwrap();
+        assert!(read_mark(&src, &mut id, &mut done) && id == want && !done);
+        text.resize(IMPORT_MARK_MAX, b'\n');
+        std::fs::write(&mark, &text).unwrap();
+        id.clear();
+        assert!(read_mark(&src, &mut id, &mut done) && id == want);
+        // one byte past it: not read
+        text.push(b'\n');
+        std::fs::write(&mark, &text).unwrap();
+        id.clear();
+        assert!(!read_mark(&src, &mut id, &mut done) && id.is_empty() && !done);
+        let _ = std::fs::remove_dir_all(&r);
+    }
+
+    // import/.attempts is read up to its limit: a longer file is not read.
+    #[test]
+    fn the_attempts_have_a_limit() {
+        let r = scratch("attempts-limit");
+        assert_eq!(store_init(&r), 0);
+        std::fs::create_dir_all(format!("{r}/import")).unwrap();
+        // one record, then the same record in a file past the limit
+        let attempts = format!("{r}/import/.attempts");
+        let mut text = b"# Grimoire: import folders tried (docs/FORMAT.md)\n00000000000000aa 00000000000000bb 2\n".to_vec();
+        std::fs::write(&attempts, &text).unwrap();
+        let a = attempts_load();
+        assert_eq!(a.len(), 1);
+        assert_eq!((a[0].name, a[0].pictures, a[0].tries), (0xaa, 0xbb, 2));
+        while text.len() <= ATTEMPTS_FILE_MAX {
+            text.extend_from_slice(b"# a line that is no record\n");
+        }
+        std::fs::write(&attempts, &text).unwrap();
+        assert!(attempts_load().is_empty());
+        let _ = std::fs::remove_dir_all(&r);
     }
 
     #[test]

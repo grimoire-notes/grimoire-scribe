@@ -2,11 +2,13 @@
 // clipboard.rs, history.rs ActKind::Lasso, nav.rs nav_target_across; docs/beta2/LASSO-DESIGN.md 10).
 //
 // The polygon against an exact test; enclosure on handwriting-like strokes (dots and crossbars come,
-// an underline through the lasso does not, a stroke whose tail is erased is judged by what shows); link
+// an underline through the lasso does not, a stroke whose tail is erased is judged by what shows); the
+// selection's halo along what shows of a stroke (issue #187); link
 // selection; which erase strokes go with the ink; seeds; targets across notebooks; where a paste goes;
 // layers (a history's too, and the refusal at 255); placing equals drawing the page whole, plain and
-// scoped; the move oracle; the clipboard file; lasso undo and redo; and the time a move and a paste take
-// on a 1,000-stroke page (printed: cargo test --release --test test_lasso -- --nocapture).
+// scoped; a resize's widths, scaled with the group, and a resize and the opposite one (issue #204); the
+// move oracle; the clipboard file; lasso undo and redo; and the time a move and a paste take on a 1,000-stroke
+// page (printed: cargo test --release --test test_lasso -- --nocapture).
 #![allow(clippy::needless_range_loop)]
 mod testlib;
 use grimoire::prelude::*;
@@ -189,6 +191,248 @@ fn enclosure_on_handwriting() {
     page_add(&mut gone, ink(&[(100.0, 100.0), (200.0, 100.0)], 1));
     page_add(&mut gone, eraser(&[(90.0, 100.0), (210.0, 100.0)], 4.0));
     check!(!stroke_visible(&gone, 0, DPI));
+}
+
+/// The selection's halo goes along what shows of a stroke under its erasing (issue #187): a stroke with a gap
+/// erased gives the runs either side of it, one erased wholly none, one no erasing reaches (an eraser before
+/// it, or scoped to a floor after it) no runs at all (drawn whole, as before); an exact-area piece standing at
+/// its stroke's place is covered by the same erasing. What the runs leave out is paper on the page drawn, and
+/// ink shows at each run's end.
+fn halo_follows_what_shows() {
+    let mut p = page_new(800, 600, PAPER_BLANK);
+    page_add(&mut p, eraser(&[(100.0, 400.0), (300.0, 400.0)], 3.0)); // 0: before the ink it lies on
+    page_add(&mut p, ink(&[(100.0, 100.0), (300.0, 100.0)], 1)); // 1: a gap erased in its middle
+    page_add(&mut p, ink(&[(100.0, 200.0), (300.0, 200.0)], 2)); // 2: erased wholly
+    page_add(&mut p, ink(&[(100.0, 400.0), (300.0, 400.0)], 3)); // 3: only the eraser before it
+    page_add(&mut p, ink(&[(100.0, 500.0), (300.0, 500.0)], 4)); // 4: an eraser scoped to a floor after it
+    page_add(&mut p, eraser(&[(200.0, 70.0), (200.0, 130.0)], 3.0)); // 5: the gap in 1
+    page_add(&mut p, eraser(&[(80.0, 200.0), (320.0, 200.0)], 4.0)); // 6: all of 2
+    page_add(&mut p, floor_marker_new(7)); // 7
+    let mut e = eraser(&[(200.0, 470.0), (200.0, 530.0)], 3.0);
+    e.ext[1] = 7;
+    page_add(&mut p, e); // 8: scoped to the floor at 7: it never touched 4
+    let floors = page_floors(&p);
+    let f = floors.as_deref();
+    let er = page_erasers(&p);
+    let vis = |s: &Stroke, i: usize| stroke_visible_runs(&p, f, s, i, DPI, &er);
+    let c = render(&p);
+    let paper = paper_of(&p);
+    let px = |x: f32, y: f32| c.px[(y.round() as i32 * c.stride + x.round() as i32) as usize];
+    let pp = |x: f32, y: f32| paper[(y.round() as i32 * p.w + x.round() as i32) as usize];
+    // a gap: two runs, from either end, and the page shows paper between them, ink at their ends
+    let Some(r1) = vis(&p.strokes[1], 1) else {
+        check!(false);
+        return;
+    };
+    check!(r1.len() == 2);
+    check!(r1[0][0].0 == 100.0 && r1[1].last().unwrap().0 == 300.0);
+    let (a, b) = (r1[0].last().unwrap().0, r1[1][0].0);
+    check!(a < 200.0 && b > 200.0);
+    check!(((a.ceil() as i32 + 1)..(b.floor() as i32)).all(|x| px(x as f32, 100.0) == pp(x as f32, 100.0)));
+    // (a run stops within half a millimetre and the ink's radius of where the ink stops: the estimate counts a
+    // sample erased only when the whole width of the ink there is)
+    let near = (mm_to_px(0.5, DPI) + 4.0).ceil() as i32;
+    let inked = |x0: f32| (-near..=near).any(|d| px(x0 + d as f32, 100.0) < pp(x0 + d as f32, 100.0));
+    check!(inked(a) && inked(b));
+    // erased wholly: nothing shows, and the page shows paper all along it
+    check!(vis(&p.strokes[2], 2) == Some(Vec::new()));
+    check!((100..=300).all(|x| px(x as f32, 200.0) == pp(x as f32, 200.0)));
+    // an eraser before it, or one scoped to a floor after it, covers none of it: drawn whole
+    check!(vis(&p.strokes[3], 3).is_none() && vis(&p.strokes[4], 4).is_none());
+    // an exact-area piece standing at stroke 1's place (its left part, to the gap's middle): one run, its end cut
+    let piece = ink(&[(100.0, 100.0), (200.0, 100.0)], 1);
+    let rp = vis(&piece, 1);
+    check!(rp.as_ref().is_some_and(|r| r.len() == 1 && r[0][0].0 == 100.0 && r[0].last().unwrap().0 == a));
+    // standing at the end of the page, no erasing comes after it
+    check!(vis(&piece, p.strokes.len()).is_none());
+}
+
+/// The halo as the page draws the erasing (issue #187, lasso.rs stroke_shown_runs): each run's samples have the
+/// stroke's ink near them on the page drawn, and between runs the page is paper. Ink erased by several passes,
+/// none of which alone covers its width (a wide marker line, a thin line scrubbed out across by a small eraser),
+/// or by passes a resize moved apart, shows nothing and gets no halo there, though the enclosure's estimate
+/// (stroke_visible_runs) has it showing; a narrow gap's run ends have ink at their own place, so the halo's band
+/// stays out of the gap's middle; ink drawn over the erased place after the erasing is not the erased stroke's.
+fn halo_follows_the_page() {
+    let marker = |pts: &[(f32, f32)]| poly(TOOL_MARKER, pts, 2.8, 7);
+    let mut p = page_new(1400, 1000, PAPER_BLANK);
+    page_add(&mut p, marker(&[(100.0, 100.0), (700.0, 100.0)])); // 0: its middle erased by 7 passes of 2 mm
+    page_add(&mut p, ink(&[(100.0, 300.0), (700.0, 300.0)], 1)); // 1: scrubbed out across by 1 mm passes 9 px apart
+    page_add(&mut p, ink(&[(100.0, 500.0), (700.0, 500.0)], 2)); // 2: a 1 mm gap
+    page_add(&mut p, ink(&[(100.0, 700.0), (700.0, 700.0)], 3)); // 3: erased whole by 3 passes, 40 px apart, 5 mm
+    for k in 0..7 {
+        let y = 82.0 + 6.0 * k as f32;
+        page_add(&mut p, eraser(&[(300.0, y), (500.0, y)], 2.0));
+    }
+    for k in 0..23 {
+        let x = 300.0 + 9.0 * k as f32;
+        page_add(&mut p, eraser(&[(x, 270.0), (x, 330.0)], 1.0));
+    }
+    page_add(&mut p, eraser(&[(400.0, 470.0), (400.0, 530.0)], 1.0));
+    for k in 0..3 {
+        let y = 660.0 + 40.0 * k as f32;
+        page_add(&mut p, eraser(&[(80.0, y), (720.0, y)], 5.0));
+    }
+    // ink drawn over line 3's place after the erasing
+    page_add(&mut p, ink(&[(400.0, 650.0), (400.0, 750.0)], 4));
+    let check_page = |p: &Page, what: &[(usize, Option<(f32, f32)>)]| -> u32 {
+        let c = render(p);
+        let paper = paper_of(p);
+        let d = Drawn { canvas: &c, paper: &paper, paper_stride: p.w, shows: 6, mass: 249 };
+        let er = page_erasers(p);
+        let mut bad = 0;
+        for &(i, gone) in what {
+            let st = &p.strokes[i];
+            let got = stroke_shown_runs(p, None, st, i, DPI, &er, &d);
+            let est = stroke_visible_runs(p, None, st, i, DPI, &er);
+            let at = |x: f32, y: f32| (y.round() as i32 * p.w + x.round() as i32) as usize;
+            let inked = |x: f32, y: f32, r: f32| {
+                let rr = r.ceil() as i32 + 1;
+                (-rr..=rr).any(|dy| (-rr..=rr).any(|dx| paper[at(x + dx as f32, y + dy as f32)] as i32 - c.px[at(x + dx as f32, y + dy as f32)] as i32 > 6))
+            };
+            match (gone, &got) {
+                // (an erased stretch x0..x1: the runs stay out of it, every run sample has ink near it, and the
+                // estimate had a sample there showing)
+                (Some((x0, x1)), Some(runs)) => {
+                    let all: Vec<&(f32, f32, f32)> = runs.iter().flatten().collect();
+                    let est_in = est.as_ref().is_none_or(|r| r.iter().flatten().any(|q| q.0 > x0 && q.0 < x1));
+                    bad += all.iter().any(|q| q.0 > x0 && q.0 < x1) as u32;
+                    bad += all.iter().any(|q| !inked(q.0, q.1, q.2)) as u32;
+                    // (the halo's band, the ink's radius and 3 px each side, stays out of the stretch's middle)
+                    bad += all.iter().any(|q| (q.0 - (x0 + x1) / 2.0).abs() <= q.2 + 3.0) as u32;
+                    bad += !est_in as u32 * (i != 2) as u32;
+                    eprintln!("  stroke {i}: {} runs, ends {:?}; the estimate had it showing there: {est_in}", runs.len(), runs.iter().map(|r| (r[0].0, r.last().unwrap().0)).collect::<Vec<_>>());
+                }
+                // (erased whole)
+                (None, Some(runs)) => bad += !runs.is_empty() as u32,
+                _ => bad += 1,
+            }
+        }
+        bad
+    };
+    check!(check_page(&p, &[(0, Some((300.0, 500.0))), (1, Some((300.0, 498.0))), (2, Some((400.0 - 0.5, 400.0 + 0.5))), (3, None)]) == 0);
+    // a word erased by four passes of a 2 mm eraser 12 px apart, lifted with them and put down 1.15 times as large
+    // (the points scaled, the widths kept, as a resize put a group down before issue #204): the page shows nothing
+    // of it, though the estimate, which counts it erased only where one pass covers the whole width of its ink,
+    // has 6 of its samples showing
+    let mut q = page_new(800, 600, PAPER_BLANK);
+    page_add(&mut q, ink(&[(100.0, 180.0), (130.0, 220.0), (160.0, 180.0), (190.0, 220.0), (220.0, 180.0), (250.0, 220.0), (280.0, 180.0)], 9));
+    for j in 0..4 {
+        page_add(&mut q, eraser(&[(80.0, 182.0 + 12.0 * j as f32), (300.0, 182.0 + 12.0 * j as f32)], 2.0));
+    }
+    let g = lasso_lift(&q, &[0], Vec::new(), DPI);
+    let mut dst = page_new(800, 600, PAPER_BLANK);
+    let (drawn, _) = place_and_append(&mut dst, &g, Spot { dx: 0.0, dy: 0.0, scale: 1.15 });
+    let c = render(&dst);
+    check!(c.px == drawn.px);
+    let paper = paper_of(&dst);
+    let d = Drawn { canvas: &c, paper: &paper, paper_stride: dst.w, shows: 6, mass: 249 };
+    let (f, er) = (page_floors(&dst), page_erasers(&dst));
+    let i = (0..dst.strokes.len()).find(|&i| stroke_is_ink(&dst.strokes[i])).unwrap();
+    check!(c.px.iter().zip(paper.iter()).all(|(a, b)| (*b as i32) - (*a as i32) <= 6));
+    check!(stroke_visible_runs(&dst, f.as_deref(), &dst.strokes[i], i, DPI, &er).is_some_and(|r| r.iter().map(|x| x.len()).sum::<usize>() == 6));
+    check!(stroke_shown_runs(&dst, f.as_deref(), &dst.strokes[i], i, DPI, &er, &d) == Some(Vec::new()));
+    // an erase stroke scoped to a floor after the ink restores it: no erasing reaches it, drawn whole
+    let mut e = eraser(&[(200.0, 470.0), (200.0, 530.0)], 3.0);
+    e.ext[1] = 7;
+    let mut r = page_new(400, 600, PAPER_BLANK);
+    page_add(&mut r, ink(&[(100.0, 500.0), (300.0, 500.0)], 4));
+    page_add(&mut r, floor_marker_new(7));
+    page_add(&mut r, e);
+    let (c, paper) = (render(&r), paper_of(&r));
+    let d = Drawn { canvas: &c, paper: &paper, paper_stride: r.w, shows: 6, mass: 249 };
+    let (f, er) = (page_floors(&r), page_erasers(&r));
+    check!(stroke_shown_runs(&r, f.as_deref(), &r.strokes[0], 0, DPI, &er, &d).is_none());
+}
+
+/// One pass of the precise eraser across ink wider than the pass (issue #187): a 2.8 mm marker line cut by a 2 mm
+/// pass (also on a slant, and drawn with points as close as a pen's), the highlighter (5.6 mm) by a 2 mm and a 4 mm
+/// pass, and the marker by a 1 mm pass that falls between two samples of its spine (a millimetre apart at most,
+/// where its points are far apart). The page shows paper across the cut, and the halo goes along the ink either
+/// side of it and not over it: two runs, their band (the ink's radius and 3 px) short of the cut's middle and
+/// reaching its edge, ink at each run's end. Every place in the cut has the ink either side of it within its ink's
+/// radius, so the halo, judged by that, bridged the cut; it is judged by the ink across the stroke too, and between
+/// the spine's samples where erasing reaches (lasso.rs stroke_shown_runs). Ink an eraser passes beside without
+/// touching it, of every tool, light or firm, has nothing hidden, as before.
+fn halo_across_a_narrow_cut() {
+    // (tool, ink mm, eraser mm, from, to, the cut's place along the line, its points 1.5 px apart as a pen's are
+    // or 75 px: the spine's samples there 10.7 px apart, one at 400 and the next at 405.4 and 416.1)
+    let cases: [(ToolKind, f32, f32, (f32, f32), (f32, f32), f32, bool); 6] = [
+        (TOOL_MARKER, 2.8, 2.0, (100.0, 150.0), (700.0, 150.0), 0.5, false),
+        (TOOL_HIGHLIGHTER, 5.6, 2.0, (100.0, 150.0), (700.0, 150.0), 0.5, false),
+        (TOOL_HIGHLIGHTER, 5.6, 4.0, (100.0, 150.0), (700.0, 150.0), 0.5, false),
+        (TOOL_MARKER, 2.8, 2.0, (100.0, 60.0), (700.0, 260.0), 0.5, false),
+        (TOOL_MARKER, 2.8, 1.0, (100.0, 150.0), (700.0, 150.0), (411.0 - 100.0) / 600.0, false),
+        (TOOL_MARKER, 2.8, 2.0, (100.0, 150.0), (700.0, 150.0), 0.5, true),
+    ];
+    for (k, &(t, w, e, a, b, f, dense)) in cases.iter().enumerate() {
+        let mut p = page_new(800, 320, PAPER_BLANK);
+        let pts: Vec<(f32, f32)> = if dense { (0..=50).map(|j| (a.0 + (b.0 - a.0) * j as f32 / 50.0, a.1 + (b.1 - a.1) * j as f32 / 50.0)).collect() } else { vec![a, b] };
+        page_add(&mut p, poly(t, &pts, w, 5 + k as u32));
+        let l = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+        let (ux, uy) = ((b.0 - a.0) / l, (b.1 - a.1) / l);
+        let cut = (a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f);
+        page_add(&mut p, eraser(&[(cut.0 + 90.0 * uy, cut.1 - 90.0 * ux), (cut.0 - 90.0 * uy, cut.1 + 90.0 * ux)], e));
+        let (c, paper) = (render(&p), paper_of(&p));
+        let d = Drawn { canvas: &c, paper: &paper, paper_stride: p.w, shows: 6, mass: 249 };
+        let er = page_erasers(&p);
+        let (r, re) = (mm_to_px(w, DPI) / 2.0, mm_to_px(e, DPI) / 2.0);
+        let at = |x: f32, y: f32| (y.round() as i32 * p.w + x.round() as i32) as usize;
+        let along = |q: &(f32, f32, f32)| (q.0 - cut.0) * ux + (q.1 - cut.1) * uy;
+        // paper all across the ink at the cut's middle, and the estimate, which counts ink erased only where one pass
+        // covers its whole width, has it showing whole
+        let clear = (-2..=2).all(|s| (-(r as i32) - 1..=r as i32 + 1).all(|n| {
+            let (x, y) = (cut.0 + s as f32 * ux - n as f32 * uy, cut.1 + s as f32 * uy + n as f32 * ux);
+            c.px[at(x, y)] == paper[at(x, y)]
+        }));
+        check!(clear);
+        check!(stroke_visible_runs(&p, None, &p.strokes[0], 0, DPI, &er).is_none());
+        let got = stroke_shown_runs(&p, None, &p.strokes[0], 0, DPI, &er, &d);
+        let Some(runs) = got else {
+            eprintln!("  case {k}: drawn whole, across the cut");
+            check!(false);
+            continue;
+        };
+        check!(runs.len() == 2);
+        if runs.len() != 2 {
+            continue;
+        }
+        let (e0, e1) = (*runs[0].last().unwrap(), runs[1][0]);
+        eprintln!("  case {k}: ends {:.1} and {:.1} from the cut's middle (ink radius {r:.1}, the eraser's {re:.1})", along(&e0), along(&e1));
+        check!(runs[0][0].0 == a.0 && runs[0][0].1 == a.1 && runs[1].last().unwrap().0 == b.0 && runs[1].last().unwrap().1 == b.1);
+        check!(runs.iter().flatten().all(|q| along(q).abs() > q.2 + 3.0));
+        check!(along(&e0) + e0.2 + 3.0 >= -re - 1.0 && along(&e1) - e1.2 - 3.0 <= re + 1.0);
+        check!(paper[at(e0.0, e0.1)] as i32 - c.px[at(e0.0, e0.1)] as i32 > 6 && paper[at(e1.0, e1.1)] as i32 - c.px[at(e1.0, e1.1)] as i32 > 6);
+    }
+    // an eraser beside the ink, its dabs a pixel and a half clear of the ink's radius, reaching every place of it
+    // (the pencil's lightest line, a hairline mostly paper between its grains, shows less than one black pixel near
+    // some of its samples and is broken near erasing as before: from half pressure)
+    let mut misses = 0;
+    for t in (0..TOOL_COUNT as i32).map(ToolKind).filter(|&t| t != TOOL_ERASER) {
+        let light = if t == TOOL_PENCIL { 0.5 } else { 0.15 };
+        for &pr in &[light, 0.5, 1.0] {
+            let mut prm = ToolParams::default();
+            tool_params_default(t, &mut prm);
+            let mut s = stroke_new(t, &prm, 11);
+            for j in 0..=40 {
+                stroke_append(&mut s, &PenSample { x: 100.0 + 15.0 * j as f32, y: 150.0, pressure: pr, t_ms: j * 8, ..Default::default() }, DPI);
+            }
+            let r = dab_radius(&s, &s.pts[0], DPI);
+            let re = mm_to_px(1.0, DPI) / 2.0;
+            let mut p = page_new(800, 320, PAPER_BLANK);
+            page_add(&mut p, s);
+            let y = 150.0 + r + re + 1.5;
+            page_add(&mut p, eraser(&[(80.0, y), (720.0, y)], 1.0));
+            let (c, paper) = (render(&p), paper_of(&p));
+            let d = Drawn { canvas: &c, paper: &paper, paper_stride: p.w, shows: 6, mass: 249 };
+            let er = page_erasers(&p);
+            if let Some(runs) = stroke_shown_runs(&p, None, &p.strokes[0], 0, DPI, &er, &d) {
+                eprintln!("  tool {} at pressure {pr}: {} runs beside an eraser that does not touch it", t.0, runs.len());
+                misses += 1;
+            }
+        }
+    }
+    check!(misses == 0);
 }
 
 // ---- 3. links ----
@@ -408,6 +652,221 @@ fn placing_equals_drawing_whole() {
         let pr = paper_of(&over);
         check!(page_render_from(&mut f, &over, whole(&over), DPI, n0, Some((&pr, over.w))));
         check!(f.px == full.px);
+    }
+}
+
+// A resize (issue #204): each stroke's widths scale with its points, ink, white ink and the erasing that goes
+// with it alike, so the group is put down as a picture of itself, larger or smaller. With the widths kept, an
+// erased word came back as traces at 1.1 times, and a group shrunk to half had its gaps cut as wide as before,
+// over ink that showed. Past the range a page file keeps, the page in memory keeps the width scaled, the brush
+// draws it at the range's end, and the page file keeps that end, which draws the same.
+fn a_resize_scales_widths_with_the_group() {
+    // pixels of c in a rect (page px) darker than the paper by more than t levels
+    let off = |c: &Canvas, paper: &[u8], (x0, y0, x1, y1): (i32, i32, i32, i32), t: i32| -> usize {
+        let mut n = 0;
+        for y in y0.max(0)..y1.min(c.h) {
+            for x in x0.max(0)..x1.min(c.w) {
+                let a = (y * c.w + x) as usize;
+                n += (paper[a] as i32 - c.px[a] as i32 > t) as usize;
+            }
+        }
+        n
+    };
+    // the run of columns about x where no ink within r rows of y shows: a gap's width
+    let gap = |c: &Canvas, paper: &[u8], x: i32, y: i32, r: i32| -> i32 {
+        let clear = |x: i32| off(c, paper, (x, y - r, x + 1, y + r + 1), 32) == 0;
+        if !clear(x) {
+            return 0;
+        }
+        let (mut a, mut b) = (x, x);
+        while a > 0 && clear(a - 1) {
+            a -= 1;
+        }
+        while b < c.w - 1 && clear(b + 1) {
+            b += 1;
+        }
+        b - a + 1
+    };
+    let mut src = page_new(700, 600, PAPER_BLANK);
+    // a word erased whole by two passes of a 3 mm eraser with a pixel or two to spare; a line cut by a 2 mm
+    // eraser; a line cut by white ink (five strokes of a white ballpoint)
+    page_add(&mut src, ink(&[(100.0, 180.0), (130.0, 220.0), (160.0, 180.0), (190.0, 220.0), (220.0, 180.0), (250.0, 220.0), (280.0, 180.0)], 1));
+    page_add(&mut src, eraser(&[(80.0, 192.0), (300.0, 192.0)], 3.0));
+    page_add(&mut src, eraser(&[(80.0, 208.0), (300.0, 208.0)], 3.0));
+    page_add(&mut src, ink(&[(100.0, 350.0), (500.0, 350.0)], 2));
+    page_add(&mut src, eraser(&[(300.0, 320.0), (300.0, 380.0)], 2.0));
+    page_add(&mut src, ink(&[(100.0, 480.0), (500.0, 480.0)], 3));
+    for j in 0..5u32 {
+        let x = 290.0 + 6.0 * j as f32;
+        page_add(&mut src, poly(TOOL_ERASER, &[(x, 455.0), (x, 505.0)], 0.8, erase_seed(TOOL_BALLPOINT, 7 + j)));
+    }
+    // (the erased word: nothing of it a pixel more than 6 levels off the paper, the halo's measure, INK_SHOWS)
+    let (c, paper) = (render(&src), paper_of(&src));
+    check!(off(&c, &paper, (90, 165, 290, 235), 6) == 0);
+    let (cut0, white0) = (gap(&c, &paper, 300, 350, 8), gap(&c, &paper, 302, 480, 8));
+    check!(cut0 >= 10 && white0 >= 20);
+    let g0 = lasso_lift(&src, &[0, 3, 5], Vec::new(), DPI);
+    check!(g0.carried == 8);
+    let (ax, ay) = (g0.box_.x as f32, g0.box_.y as f32);
+    for k in [1.1f32, 1.5, 2.0, 0.5] {
+        let mut g = g0.clone();
+        lasso_scale_widths(&mut g, k);
+        let mut dst = page_new(1500, 1300, PAPER_BLANK);
+        // (about the box's top-left corner, as a resize by the bottom-right handle)
+        let (drawn, placed) = place_and_append(&mut dst, &g, Spot { dx: ax - ax * k, dy: ay - ay * k, scale: k });
+        check!(placed.plain == 1 && placed.scoped == 0);
+        let (c, paper) = (render(&dst), paper_of(&dst));
+        check!(c.px == drawn.px);
+        let at = |x: f32, y: f32| ((ax + (x - ax) * k).round() as i32, (ay + (y - ay) * k).round() as i32);
+        let ((x0, y0), (x1, y1)) = (at(90.0, 165.0), at(290.0, 235.0));
+        let traces = off(&c, &paper, (x0, y0, x1, y1), 6);
+        let ((cx, cy), (wx, wy)) = (at(300.0, 350.0), at(302.0, 480.0));
+        let r = (8.0 * k).ceil() as i32;
+        let (cut, white) = (gap(&c, &paper, cx, cy, r), gap(&c, &paper, wx, wy, r));
+        eprintln!("  scaled {k}: {traces} pixels of the erased word show; the cut {cut} px wide (at 1: {cut0}), the white ink's {white} (at 1: {white0})");
+        check!(traces == 0);
+        // (the gaps scaled with the group, within a few pixels of the brush's rim)
+        check!((cut as f32 - cut0 as f32 * k).abs() <= 4.0);
+        check!((white as f32 - white0 as f32 * k).abs() <= 4.0);
+        // the ink itself drawn wider, as the erasing is
+        let line = g.strokes.iter().find(|s| s.seed == 2).unwrap();
+        check!((line.params.size_max_mm - 0.6 * k).abs() < 1e-4);
+        let cut_by = g.strokes.iter().find(|s| stroke_is_erase(s) && stroke_render_tool(s) == TOOL_ERASER && s.pts[0].x == 300.0).unwrap();
+        check!((cut_by.params.size_max_mm - 2.0 * k).abs() < 1e-4);
+    }
+    // made larger over ink: its floor scoped, as a move's would be, the ink there never lightened, and the erased
+    // word adding nothing over it
+    let k = 1.5;
+    let mut g = g0.clone();
+    lasso_scale_widths(&mut g, k);
+    let mut over = page_new(1500, 1300, PAPER_BLANK);
+    page_add(&mut over, poly(TOOL_MARKER, &[(60.0, 210.0), (700.0, 210.0)], 3.0, 40));
+    let before = render(&over);
+    let (drawn, placed) = place_and_append(&mut over, &g, Spot { dx: ax - ax * k, dy: ay - ay * k, scale: k });
+    check!(placed.scoped == 1 && page_layered(&over));
+    let full = render(&over);
+    check!(drawn.px == full.px);
+    check!(full.px.iter().zip(&before.px).all(|(a, b)| a <= b));
+    let at = |x: f32, y: f32| ((ax + (x - ax) * k).round() as i32, (ay + (y - ay) * k).round() as i32);
+    let ((x0, y0), (x1, y1)) = (at(90.0, 165.0), at(290.0, 235.0));
+    check!(off(&full, &before.px, (x0, y0, x1, y1), 6) == 0);
+    // past the range a page file keeps (0.10 to 12 mm): kept scaled in memory (so the opposite resize gives it back,
+    // below), drawn at the range's end, and written at it, so the page read back draws as the page did; floor markers
+    // as they were; a scale of 1 changes nothing
+    let mut g = Group::default();
+    g.strokes.push(poly(TOOL_HIGHLIGHTER, &[(10.0, 10.0), (90.0, 10.0)], 5.6, 1));
+    g.strokes.push(eraser(&[(10.0, 30.0), (90.0, 30.0)], 0.3));
+    g.strokes.push(floor_marker_new(1));
+    let marker = g.strokes[2].params;
+    let mut big = g.clone();
+    lasso_scale_widths(&mut big, 3.0);
+    check!((big.strokes[0].params.size_max_mm - 16.8).abs() < 1e-4 && (big.strokes[1].params.size_max_mm - 0.9).abs() < 1e-4);
+    check!(big.strokes[2].params == marker);
+    let mut small = g.clone();
+    lasso_scale_widths(&mut small, 0.2);
+    check!((small.strokes[0].params.size_max_mm - 1.12).abs() < 1e-4 && (small.strokes[1].params.size_min_mm - 0.06).abs() < 1e-5);
+    let mut same = g.clone();
+    lasso_scale_widths(&mut same, 1.0);
+    check!(same.strokes.iter().zip(&g.strokes).all(|(a, b)| a.params == b.params));
+    // (the widths as the file holds them, before any reader clamps them: FORMAT.md, version 1, the stroke records
+    // from byte 20, each 64 bytes and 18 a point, its parameters from its byte 8)
+    let file_widths = |b: &[u8]| -> Vec<[f32; 2]> {
+        let f = |at: usize| f32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]);
+        let n = |at: usize| u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]) as usize;
+        let (mut at, mut out) = (20, Vec::new());
+        for _ in 0..n(16) {
+            out.push([f(at + 8), f(at + 12)]);
+            at += 64 + 18 * n(at + 60);
+        }
+        out
+    };
+    for (grp, want) in [(&big, [12.0f32, 0.9]), (&small, [1.12, 0.1])] {
+        let mut p = page_new(100, 100, PAPER_BLANK);
+        for s in &grp.strokes[..2] {
+            page_add(&mut p, Box::new((**s).clone()));
+        }
+        let mut bytes = Vec::new();
+        check!(page_serialize(&p, &mut bytes) == 0);
+        check!(file_widths(&bytes).iter().zip(want).all(|(w, k)| (w[0] - k).abs() < 1e-4 && (w[1] - k).abs() < 1e-4));
+        let mut back = None;
+        check!(page_deserialize(&bytes, &mut back) == 0);
+        let Some(back) = back else { continue };
+        for (k, (a, b)) in back.strokes.iter().zip(&p.strokes).enumerate() {
+            check!((a.params.size_min_mm - want[k]).abs() < 1e-4 && (a.params.size_max_mm - want[k]).abs() < 1e-4);
+            check!((2..ToolParams::COUNT).all(|i| a.params.get(i) == b.params.get(i)));
+        }
+        // (drawn as with the widths the file keeps; compared in memory, as a point's pressure is rounded in the file)
+        let mut kept = p.clone();
+        for (k, s) in kept.strokes.iter_mut().enumerate() {
+            (s.params.size_min_mm, s.params.size_max_mm) = (want[k], want[k]);
+        }
+        check!(render(&kept).px == render(&p).px);
+    }
+}
+
+// A resize and the opposite one give the page back (issue #204), as they did with the widths kept: made twice as
+// large and back, a word one pass of the default precise eraser (8 mm) took away with a few pixels to spare shows
+// nothing again, though at twice the size its erasing is drawn at 12 mm; made a twentieth as large and back, a
+// pencil line is as thin as it was, though at a twentieth it is drawn at 0.10 mm. A width clamped at each resize
+// lost its value: the eraser 6 mm after the first (the word's loops back) and the pencil 2 mm after the second.
+fn a_resize_and_its_opposite_give_the_page_back() {
+    let off = |c: &Canvas, paper: &[u8], (x0, y0, x1, y1): (i32, i32, i32, i32), t: i32| -> usize {
+        let mut n = 0;
+        for y in y0.max(0)..y1.min(c.h) {
+            for x in x0.max(0)..x1.min(c.w) {
+                let a = (y * c.w + x) as usize;
+                n += (paper[a] as i32 - c.px[a] as i32 > t) as usize;
+            }
+        }
+        n
+    };
+    let mut src = page_new(1400, 1200, PAPER_BLANK);
+    // the word, 80 px tall, and the one pass across it; a pencil line (0.13 to 0.35 mm) cut by a 2 mm eraser
+    page_add(&mut src, ink(&[(100.0, 160.0), (140.0, 240.0), (180.0, 160.0), (220.0, 240.0), (260.0, 160.0), (300.0, 240.0)], 1));
+    page_add(&mut src, poly(TOOL_ERASER, &[(80.0, 200.0), (320.0, 200.0)], 8.0, erase_seed(TOOL_ERASER, 3)));
+    let mut pencil = poly(TOOL_PENCIL, &[(100.0, 350.0), (500.0, 350.0)], 0.35, 2);
+    pencil.params.size_min_mm = 0.13;
+    page_add(&mut src, pencil);
+    page_add(&mut src, eraser(&[(300.0, 320.0), (300.0, 380.0)], 2.0));
+    let (c, paper) = (render(&src), paper_of(&src));
+    let word = (90, 150, 310, 250);
+    check!(off(&c, &paper, word, 6) == 0);
+    let g0 = lasso_lift(&src, &[0, 2], Vec::new(), DPI);
+    check!(g0.carried == 2);
+    // (both resizes about the same corner, the first box's, so the points come back where they were)
+    let (ax, ay) = (g0.box_.x as f32, g0.box_.y as f32);
+    let spot = |k: f32| Spot { dx: ax - ax * k, dy: ay - ay * k, scale: k };
+    // the selection resized k1 times and then k2: with the widths scaled (now), or kept (before issue #204)
+    let resized = |k1: f32, k2: f32, scale: bool| -> Box<Page> {
+        let mut g = g0.clone();
+        if scale {
+            lasso_scale_widths(&mut g, k1);
+        }
+        let mut mid = page_new(1400, 1200, PAPER_BLANK);
+        place_and_append(&mut mid, &g, spot(k1));
+        let ink_at: Vec<usize> = (0..mid.strokes.len()).filter(|&i| stroke_is_ink(&mid.strokes[i])).collect();
+        let mut g = lasso_lift(&mid, &ink_at, Vec::new(), DPI);
+        check!(ink_at.len() == 2 && g.carried == 2);
+        if scale {
+            lasso_scale_widths(&mut g, k2);
+        }
+        let mut end = page_new(1400, 1200, PAPER_BLANK);
+        place_and_append(&mut end, &g, spot(k2));
+        end
+    };
+    for (k1, k2) in [(2.0f32, 0.5f32), (0.05, 20.0)] {
+        let (now, kept) = (resized(k1, k2, true), resized(k1, k2, false));
+        check!(now.strokes.len() == 4 && kept.strokes.len() == 4);
+        // every width as it was, and every point where the widths kept put it
+        for (a, b) in now.strokes.iter().zip(&kept.strokes) {
+            check!((a.params.size_min_mm / b.params.size_min_mm - 1.0).abs() < 1e-5 && (a.params.size_max_mm / b.params.size_max_mm - 1.0).abs() < 1e-5);
+            check!(a.pts == b.pts);
+        }
+        let (c, kc) = (render(&now), render(&kept));
+        let differ = c.px.iter().zip(&kc.px).filter(|(a, b)| a != b).count();
+        let traces = off(&c, &paper_of(&now), word, 6);
+        eprintln!("  resized {k1} then {k2}: {traces} pixels of the erased word show, {differ} pixels differ from the widths kept");
+        check!(traces == 0 && differ == 0);
     }
 }
 
@@ -736,12 +1195,17 @@ fn dense_page_timing() {
 fn test_lasso() {
     run!(polygon_matches_exact_test);
     run!(enclosure_on_handwriting);
+    run!(halo_follows_what_shows);
+    run!(halo_follows_the_page);
+    run!(halo_across_a_narrow_cut);
     run!(links_come_along);
     run!(erase_strokes_go_with_their_ink);
     run!(seeds_kept_when_free);
     run!(targets_across_notebooks);
     run!(layers_skip_the_page_and_its_history);
     run!(placing_equals_drawing_whole);
+    run!(a_resize_scales_widths_with_the_group);
+    run!(a_resize_and_its_opposite_give_the_page_back);
     run!(move_oracle);
     run!(clipboard_round_trip_and_refusals);
     run!(lasso_undo_redo);

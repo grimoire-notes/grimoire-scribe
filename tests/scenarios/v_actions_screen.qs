@@ -15,7 +15,8 @@ expect toast is Warmth 7 of 24
 key 10 0
 expect toast is Warmth 8 of 24
 wait 200
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 1564 2254
 wait 200
@@ -31,7 +32,11 @@ key 16 0
 expect settings.pinch_zoom is 0
 key 16 0
 expect settings.pinch_zoom is 1
-expect editor.panel_rect is 1704 220 128 1734
+expect editor.panel_rect is 1704 220 128 1842
+expect display.presents not clear
+# Let the startup's timed repaints pass before counting the screens the actions below make: a slow
+# machine can otherwise land one between the invert and its check.
+wait 4000
 expect display.presents not clear
 key 17 0
 expect settings.theme is classic

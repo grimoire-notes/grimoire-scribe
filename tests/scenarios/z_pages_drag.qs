@@ -36,7 +36,7 @@ expect display.presents not -1
 touch move 1000 640
 expect editor.pages.context is 0
 expect editor.pages.drag is 2 before 3
-expect display.presents is ui 430 214 1000 1705
+expect display.presents is ui 430 292 1000 1627
 # The same gap (page 2's right half, then page 3's left half): the bar stays, nothing is refreshed
 touch move 1040 700
 expect display.presents is
@@ -46,7 +46,7 @@ expect display.presents is
 # Another gap: the bar's old place and its new one, each on its own fast refresh (nothing between them)
 touch move 1600 1249
 expect editor.pages.drag is 2 before 7
-expect display.presents is fast 1230 214 12 674, fast 1842 912 12 674
+expect display.presents is fast 1230 292 12 648, fast 1842 964 12 648
 shot 01-dragging
 touch up 1600 1249
 wait 200
@@ -85,8 +85,8 @@ wait 200
 expect editor.page_ids is 1,2,3,4,5,6,7,8,9,10,11,12
 expect editor.pages.undo is 0
 expect editor.pages.context is 0
-expect display.presents is fast 1230 214 12 674
-expect display.stale.1224.214.24.674 is 0
+expect display.presents is fast 1230 292 12 648
+expect display.stale.1224.292.24.648 is 0
 # Lifted over the top bar: nothing
 touch down 318 551
 wait 700

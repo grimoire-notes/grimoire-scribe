@@ -9,7 +9,8 @@
 # sheet's other state, with no templates.) The taps are z_tpl_6_es_fit's; they land in both styles.
 # copy: tests/fixtures/tpl-many templates
 wait 300
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 expect library.sheet is new
 tap library paper.more
@@ -20,11 +21,11 @@ waitbg
 wait 300
 expect templates.ready is 50
 shot 01-templates
-tap 1640 2123
+tap 1640 2250
 wait 200
 expect templates.page is 2
 shot 02-templates-page-2
-tap 300 2123
+tap 300 2250
 wait 100
 expect library.sheet is new
 tap 300 2250
@@ -32,18 +33,19 @@ wait 100
 expect library.sheet is none
 rotate 1
 wait 300
-tap 1585 95
+tap library add
+tap library add.new-notebook
 wait 100
 expect library.sheet is new
 tap library paper.more
 wait 200
 expect library.sheet is templates
 shot 03-templates-sideways
-tap 2260 1694
+tap 1990 1696
 wait 200
 expect templates.page is 2
 shot 04-templates-sideways-page-2
-tap 300 1694
+tap 570 1696
 wait 100
 tap 570 1700
 wait 100
@@ -51,7 +53,8 @@ expect library.sheet is none
 rotate 0
 wait 300
 # Over the editor's page, from its Paper sheet, upright and sideways.
-tap 965 95
+tap library add
+tap library add.new-notebook
 wait 100
 tap 1564 2254
 wait 400
@@ -63,7 +66,7 @@ pentap panel paper.more
 wait 200
 expect editor.modal is templates
 shot 05-templates-editor
-pentap 300 2123
+pentap 300 1835
 wait 200
 expect editor.modal is paper
 tap panel paper.cancel
@@ -76,11 +79,11 @@ expect editor.modal is paper
 tap panel paper.more
 wait 200
 expect editor.modal is templates
-tap 2260 1694
+tap 2260 1734
 wait 200
 expect templates.page is 2
 shot 06-templates-editor-sideways-page-2
-tap 300 1694
+tap 300 1734
 wait 200
 tap panel paper.cancel
 wait 200

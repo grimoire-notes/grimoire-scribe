@@ -24,6 +24,16 @@ check() {  # check NAME COMMAND...: ok when the command succeeds
     shift
     if "$@"; then echo "ok   $name"; else echo "FAIL $name"; fail=1; fi
 }
+refuse() {  # refuse DESC ARGS...: kindle-dev must refuse the run
+    desc=$1
+    shift
+    if "$REPO/tools/kindle-dev" --zip "$ZIP" "$@" >"$W/refuse.log" 2>&1; then
+        echo "FAIL $desc (it went through)"
+        fail=1
+    else
+        echo "ok   $desc"
+    fi
+}
 DEV=$MNT/documents/Grimoire\ \(dev\).sh
 
 # The default install into a scratch mount (no Kindle, no MTP: --mount points at the folder).
@@ -79,6 +89,58 @@ PY
     check "the patched launcher's head parses" sh -n "$W/head.sh"
 fi
 
+# --prod updates the release launcher in place: the zip's own documents/Grimoire.sh, byte for
+# byte (no name, no dev root, no GRIMOIRE_DEV), because a dev root there would hide the release's
+# notebooks. A zip of another version than this branch's VERSION is refused.
+if "$REPO/tools/kindle-dev" --mount "$MNT" --zip "$ZIP" --prod >"$W/prod.log" 2>&1; then
+    echo "ok   --prod installs the release launcher"
+else
+    echo "FAIL --prod installs the release launcher"
+    cat "$W/prod.log"
+    fail=1
+fi
+check "--prod writes documents/Grimoire.sh" test -f "$MNT/documents/Grimoire.sh"
+check "--prod installs the zip's launcher unchanged" python3 -I - "$ZIP" "$MNT/documents/Grimoire.sh" <<'PY'
+import sys
+import zipfile
+
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    release = archive.read("documents/Grimoire.sh")
+if open(sys.argv[2], "rb").read() != release:
+    raise SystemExit("documents/Grimoire.sh is not the zip's own launcher")
+PY
+python3 -I - "$ZIP" "$W/other-version.zip" <<'PY'
+import sys
+import zipfile
+
+src, dst = sys.argv[1:3]
+with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w") as zout:
+    for item in zin.infolist():
+        data = zin.read(item.filename)
+        if item.filename == "README.txt":
+            rest = data.split(b"\n", 1)[1]
+            data = b"Grimoire 0.0.0-other: another version\n" + rest
+        zout.writestr(item, data)
+PY
+if "$REPO/tools/kindle-dev" --mount "$MNT" --zip "$W/other-version.zip" --prod >"$W/prod-refuse.log" 2>&1; then
+    echo "FAIL --prod refuses a zip of another version (it went through)"
+    fail=1
+else
+    echo "ok   --prod refuses a zip of another version"
+fi
+check "the refused zip left the release launcher alone" python3 -I - "$ZIP" "$MNT/documents/Grimoire.sh" <<'PY'
+import sys
+import zipfile
+
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    release = archive.read("documents/Grimoire.sh")
+if open(sys.argv[2], "rb").read() != release:
+    raise SystemExit("a refused zip replaced the release launcher")
+PY
+# --prod is the release, not a copy of it: a name or a root would make it one.
+refuse "--prod refuses --name" --prod --mount "$MNT" --name 'Grimoire (dev)'
+refuse "--prod refuses --root" --prod --mount "$MNT" --root /mnt/us/grimoire-dev
+
 # A --name and --root of its own land in the header.
 if "$REPO/tools/kindle-dev" --mount "$MNT" --zip "$ZIP" --name 'Grimoire (test)' \
     --root /mnt/us/grimoire-test >"$W/custom.log" 2>&1; then
@@ -93,16 +155,6 @@ check "--root lands in the header" \
     grep -qxF 'GRIMOIRE_US=${GRIMOIRE_DEV_US:-/mnt/us/grimoire-test}' "$MNT/documents/Grimoire (test).sh"
 
 # Nothing that could write over the release gets through.
-refuse() {  # refuse DESC ARGS...: kindle-dev must refuse the run
-    desc=$1
-    shift
-    if "$REPO/tools/kindle-dev" --zip "$ZIP" "$@" >"$W/refuse.log" 2>&1; then
-        echo "FAIL $desc (it went through)"
-        fail=1
-    else
-        echo "ok   $desc"
-    fi
-}
 refuse "refuses --name Grimoire" --name Grimoire
 refuse "refuses --name grimoire - reset pen calibration, any spelling" --name "GRIMOIRE - reset pen CALIBRATION"
 refuse "refuses --root /mnt/us (not strictly under it)" --root /mnt/us

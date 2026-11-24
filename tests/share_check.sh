@@ -39,8 +39,9 @@ if [ -f "$ROOT/settings.ini" ]; then
     mv "$B/settings.ini" "$ROOT/settings.ini"
 fi
 echo "http_port=$PORT" >> "$ROOT/settings.ini"
-# Renders slowed down a little (as on the Kindle) so concurrent requests really queue.
-GRIMOIRE_HTTPD_DELAY_MS=150 GRIMOIRE_ROOT="$ROOT" GRIMOIRE_SCRIPT="$B/c_share_long.qs" \
+# Renders slowed down (as on the Kindle) so concurrent requests really queue, and long enough that
+# every state in tests/download_check.py is still seen when its round of status polls is slow.
+GRIMOIRE_HTTPD_DELAY_MS=1000 GRIMOIRE_ROOT="$ROOT" GRIMOIRE_SCRIPT="$B/c_share_long.qs" \
     GRIMOIRE_SHOTS=$BUILD/shots/c_share "$HEADLESS" 2>"$B/app.log" &
 APP=$!
 URL=http://127.0.0.1:$PORT
@@ -116,6 +117,7 @@ check "pdf attachment header" "grep -qi 'content-disposition: attachment' $B/pdf
 check "pdf renders (sips)" "sips -s format png $B/nb.pdf --out $B/nb-pdf.png >/dev/null 2>&1"
 python3 -I tests/download_check.py "$URL" "$ID" "$B/nb.pdf"
 node tests/download_ui_check.js
+node tests/upload_ui_check.js
 check "PDF progress UI on both pages" "grep -q GRIMOIRE_DOWNLOAD_WORDS $B/index.html && grep -q GRIMOIRE_DOWNLOAD_WORDS $B/nb.html"
 curl -fsS "$URL/nb/$ID/1.png" -o "$B/p1.png"
 check "page png" "file $B/p1.png | grep -q 'PNG image data, 1860 x 2480'"
@@ -249,9 +251,8 @@ stop_app
 X=$B/markup-root
 rm -rf "$X" "$B/markup-l10n" && cp -R "$ROOT" "$X" && mkdir -p "$B/markup-l10n"
 python3 -I tests/l10n_markup.py make po/es.mo "$B/markup-l10n/es.mo"
-# (Every word is long here, so the Library's top bar has its buttons as wide as they grow: the
-# middle of Share is at 1220.)
-printf 'wait 300\ntap 1220 95\nwait 400\nexpect screen is share\nwait 30000\nquit\n' > "$B/markup.qs"
+# (Every word is long here: the Add menu still opens by name, and Share is its third row.)
+printf 'wait 300\ntap library add\nwait 400\ntap library add.share\nwait 600\nexpect screen is share\nwait 30000\nquit\n' > "$B/markup.qs"
 GRIMOIRE_LANG=es GRIMOIRE_L10N_DIR="$B/markup-l10n" GRIMOIRE_ROOT="$X" GRIMOIRE_SCRIPT="$B/markup.qs" \
     GRIMOIRE_SHOTS="$B/markup-shots" "$HEADLESS" 2>"$B/app-markup.log" &
 APP=$!
@@ -344,7 +345,8 @@ fi
 # the port only: only the simulator's own "(simulator)" lines may hold an address.
 L=$BUILD/shots/share_layouts
 rm -rf "$L" && mkdir -p "$L"
-printf 'wait 300\ntap 1345 95\nwait 400\nshot portrait\nrotate 1\nwait 400\nshot landscape\nquit\n' > "$B/layout.qs"
+# (The Add menu opens by name: the top bar moved with the global status bar.)
+printf 'wait 300\ntap library add\nwait 400\ntap library add.share\nwait 600\nshot portrait\nrotate 1\nwait 400\nshot landscape\nquit\n' > "$B/layout.qs"
 for theme in gothic classic; do
     for spec in "one|wlan0=192.168.100.200" \
                 "two|wlan0=192.168.100.200,usb0=192.168.15.244" \

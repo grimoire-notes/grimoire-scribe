@@ -3,15 +3,18 @@
 # env: GRIMOIRE_SIM_ADDRS=wlan0=192.168.0.20
 # env: GRIMOIRE_CHECK_FIT=1
 wait 200
-tap 1345 95
+tap library add
+tap library add.share
 wait 200
 expect screen is share
 tap share wifi
 wait 300
+expect screen is library
+expect library.sheet is wifi
 expect wifi.open is 1
 expect wifi.state is off
 shot 01-wifi-off
-tap share wifi.on
+tap library wifi.radio
 wait 300
 expect wifi.state is connected
 expect wifi.failed is 0
@@ -19,10 +22,11 @@ shot 02-wifi-connected
 rotate 1
 expect wifi.open is 1
 shot 03-wifi-landscape
-tap share wifi.off
+tap library wifi.radio
 wait 300
 expect wifi.state is off
-tap share wifi.done
+key 1 0
+wait 300
 expect screen is share
 expect wifi.open is 0
 tap share done

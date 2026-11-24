@@ -53,7 +53,10 @@ binaries (`BUILD=build/c`). Never run a GUI binary as a check, and never touch t
 check.
 
 The unit tests read `GRIMOIRE_TEST_TMP` as the C's do (test_store writes to its `../out`); `make test`
-sets it to `build/test/tmp`. Without it `tl_tmp()` is a `grimoire-test` folder in the system's
+sets it to `build/test/tmp`, which each half (`test-host`, `test-sim`) empties before it starts, as
+`make c-test` empties `build/c/test/tmp`: the tests name their folders there by process id, and a
+process id comes round again (issue #85). So no two test runs at once in one worktree: give a second
+its own `BUILD`. Without it `tl_tmp()` is a `grimoire-test` folder in the system's
 temporary directory (the C's `/tmp` put `../out` at `/out`), and `.cargo/config.toml` sets
 `RUST_TEST_THREADS=1`, so a plain `cargo test` here runs one test at a time and passes, as
 `cargo test --features sim` does.
@@ -68,6 +71,7 @@ The C build's `-D` switches are cargo features:
 | `GRIMOIRE_SIM` (headless) | `--features sim` | sim_sdl (the headless runner) |
 | neither (host tools, unit tests) | no feature | platform_none |
 | none: Rust only | `--features external-platform` | another crate's (not with `kindle` or `sim`) |
+| none: Rust only, a Linux kernel under another system's name | `--features external-platform,linux-kernel` | another crate's, with the sandbox's worker steps (below) |
 
 `#ifdef GRIMOIRE_SIM` becomes `#[cfg(feature = "sim")]`, `#ifdef GRIMOIRE_KINDLE` becomes
 `#[cfg(feature = "kindle")]`. display.rs, input.rs and light.rs hold their headers' types and
@@ -88,9 +92,36 @@ one with the feature on, implements `Platform` on a type of its own, and from it
 
 1. calls `platform::register(&ITS_PLATFORM)` (a `&'static` reference; once);
 2. sets `GRIMOIRE_ROOT` to the data directory (and, when that directory is on a file system without
-   advisory locks, `GRIMOIRE_LOCKS` to a folder that has them: `util::lock_file_path`);
+   advisory locks, `GRIMOIRE_LOCKS` to a folder that has them: `util::lock_file_path`). A platform with a
+   folder of its own that only the app's user can write names it in `GRIMOIRE_STATE` (an absolute path: the
+   font check's verdicts are kept there; unset or empty, they stay in `fonts/.cache`; any other value is a
+   folder that cannot be made, and no font is then checked), and one that knows its CPU
+   sets `GRIMOIRE_FONT_GLYPH_US`, the CPU time one glyph's draw may take in the font check (docs/SIM.md);
 3. calls `mainloop::main(args)` on the thread that stays the app's only thread, and exits with
    what it returns.
+
+A worker (`<binary> --work ...`, sandbox.rs) is a fresh exec of that binary: its `main` hands `--work`
+to `mainloop::main` before it starts a thread or opens anything, as the in-tree binaries do. On Linux
+the worker's filter lets it wait and wake only on private futexes and map nothing executable, which one
+thread of Rust and a C library never needs more than; a platform's start-up code must not need more
+there.
+
+A platform whose target gives its system another name than Linux, but which runs a Linux kernel, turns on
+`linux-kernel` as well. The worker's steps are built for `target_os = "linux"` only, so without it such a
+worker has plain process isolation. With it the worker holds the steps that need no root (oom_score_adj, no
+new privileges, the parent-death signal, the limits, the allow-list) as a required sandbox holds its steps,
+and says `S 2` in its handshake, which only a build with the feature takes, and only where the whole sandbox
+is not required; it leaves out the ones that need root (namespaces, chroot, uid) unless the writer requires
+the whole sandbox (`GRIMOIRE_SANDBOX=require`, as root), which makes the jail and takes only `S 1`, as on
+Linux. (That configuration has not been run on such a device: the device run was without root.) Two things
+differ there from the Kindle's worker: the address-space limit starts from the address space the worker held
+before its first step when that is larger than the image the limit assumes (an allocator may reserve gigabytes
+when a program starts, `as_limit`; memory it hands out from those reserved regions is not counted by the limit),
+and prctl answers ENOSYS (an allocator that names its regions with prctl goes on without the names,
+`LINUX_KERNEL_ENOSYS`). build.rs refuses the feature for a target whose triple does not name linux, and for an
+architecture sandbox.rs has no system-call table for.
+Where no worker can be had, its writer never parses untrusted bytes itself: pictures wait, as on the Kindle
+(`writer_never_parses`). grimoire.log says `work: sandboxed without root (...)`.
 
 The rules of this file hold for it as they do for the in-tree platforms: the platform's methods are
 called from that one thread and from the forked children; `input_poll` is the loop's one place to
@@ -111,6 +142,14 @@ And it says what the device is called (`sys_device_name`). The English and the t
 Kindle; on a platform with another name every looked-up text has that name in its place, "Kindle
 Scribe" as a whole (i18n.rs, the device's name). No string changes for it. The simulator's
 `GRIMOIRE_SIM_DEVICE_NAME` is that name for the scenarios.
+
+A platform reads its own system files (under /proc or /sys, a locale file) with
+`util::read_system_file`, which follows links as any read does. `util::read_file` is for the data
+folder: since 2.2.0 it takes a plain file at the name itself (a link there reads as a file that is
+not there) and never waits, with `util::read_file_max` for the small text files (docs/DESIGN.md,
+On-disk layout). The data folder and the folders on the way to a file may sit behind links, as
+before. Platform code kept outside this crate that calls `util::read_file` on a system file compiles
+as it did and reads differently: such a call becomes `util::read_system_file`.
 
 ## The map
 

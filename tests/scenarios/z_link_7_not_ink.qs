@@ -5,7 +5,7 @@
 # env: GRIMOIRE_SIM_ADDRS=en0=192.168.0.20
 # root: z_bar_0_make
 wait 300
-tap 200 400
+tap library card.1
 wait 300
 expect editor.page is 1
 expect editor.strokes is 0
@@ -41,7 +41,7 @@ expect editor.picking is new
 expect editor.link_area is 1000 600 500 200
 expect editor.live_matches_render is 1
 # The Pages view's Back is Link to... again; its Cancel: no link, and still no ink
-tap 125 95
+tap 125 170
 wait 100
 expect editor.modal is linkto
 expect editor.linkto is pick
@@ -65,14 +65,15 @@ expect toast is
 pentap panel library
 waitbg
 # Live view on, then the same lasso
-tap 1345 95
+tap library add
+tap library add.share
 wait 300
-tap 318 2100
+tap share live
 wait 300
 expect live.on is 1
-tap 1538 2100
+tap share done
 wait 300
-tap 200 400
+tap library card.1
 wait 300
 expect screen is editor
 key 38 0

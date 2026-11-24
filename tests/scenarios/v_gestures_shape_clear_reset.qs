@@ -3,7 +3,9 @@
 # settings: mirror_pdf=0
 # root: s_shape_1_record
 wait 200
-tap 1535 95
+tap library settings
+wait 100
+tap library settings.cat.4
 wait 100
 tap library gestures
 wait 100
@@ -39,7 +41,7 @@ expect gestures.shape_count is 1
 tap library gestures.reset.cancel
 wait 100
 expect gestures.shape_count is 1
-tap 930 1909
+tap 930 1700
 wait 100
 tap library gestures.reset.confirm
 wait 100
