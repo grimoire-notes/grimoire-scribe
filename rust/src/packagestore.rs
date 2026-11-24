@@ -2024,8 +2024,15 @@ fn draw_trust(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let top = area.y + icon_sz + ui_px(34.0);
     draw_description(c, Rect::new(area.x, top, area.w, ui_px(360.0)), &StorePackage { description: warn, ..p.clone() });
     let mut meta = String::new();
-    if !p.license.is_empty() {
-        csnprintf!(&mut meta, 400, "{} {}", tr("License:"), &p.license);
+    // Show license from manifest if catalog license is empty
+    let license = if p.license.is_empty() && ui.manifest.is_some() {
+        let manifest_license = &ui.manifest.as_ref().unwrap().license;
+        if !manifest_license.is_empty() { manifest_license } else { "" }
+    } else {
+        &p.license
+    };
+    if !license.is_empty() {
+        csnprintf!(&mut meta, 400, "{} {}", tr("License:"), license);
         font_draw_left(c, FontFace::Regular, ui_small_size(), Rect::new(area.x, top + ui_px(380.0), area.w, ui_px(42.0)), &meta, 80);
     }
     let button = Rect::new(area.x, area.y + area.h - ui_px(110.0), area.w, ui_px(100.0));
