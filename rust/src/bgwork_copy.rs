@@ -152,7 +152,7 @@ pub(crate) fn job_parse(path: &str) -> Option<(FsStat, StoragePath)> {
     let (head, src) = path.split_once(':')?;
     let f: Vec<&str> = head.split('.').collect();
     let [dev, ino, size, mtime] = f[..] else { return None };
-    let st = FsStat { dev: dev.parse().ok()?, ino: ino.parse().ok()?, size: size.parse().ok()?, mtime: mtime.parse().ok()?, mode: 0 };
+    let st = FsStat { dev: dev.parse().ok()?, ino: ino.parse().ok()?, size: size.parse().ok()?, mtime: mtime.parse().ok()?, mtime_nsec: 0, mode: 0 };
     Some((st, StoragePath::new(src.as_bytes()).filter(|p| !p.is_root())?))
 }
 
@@ -368,7 +368,7 @@ fn copy(to: &str, path: &str) -> Result<u64, Fail> {
 fn file_stat(f: &std::fs::File) -> Result<FsStat, String> {
     use std::os::unix::fs::MetadataExt;
     let m = f.metadata().map_err(|e| strerror(e.raw_os_error().unwrap_or(libc::EIO)))?;
-    Ok(FsStat { dev: m.dev(), ino: m.ino(), size: m.size(), mtime: m.mtime(), mode: m.mode() })
+    Ok(FsStat { dev: m.dev(), ino: m.ino(), size: m.size(), mtime: m.mtime(), mtime_nsec: m.mtime_nsec(), mode: m.mode() })
 }
 
 /// The temporary file, made afresh (O_CREAT|O_EXCL|O_NOFOLLOW): one a dead run of the same process id left goes

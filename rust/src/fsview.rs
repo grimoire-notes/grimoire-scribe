@@ -184,12 +184,13 @@ pub struct FsStat {
     pub ino: u64,
     pub size: u64,
     pub mtime: i64,
+    pub mtime_nsec: i64,
     pub mode: u32,
 }
 
 impl FsStat {
     fn of(st: &libc::stat) -> FsStat {
-        FsStat { dev: st.st_dev as u64, ino: st.st_ino as u64, size: st.st_size as u64, mtime: st.st_mtime as i64, mode: st.st_mode as u32 }
+        FsStat { dev: st.st_dev as u64, ino: st.st_ino as u64, size: st.st_size as u64, mtime: st.st_mtime as i64, mtime_nsec: st.st_mtime_nsec as i64, mode: st.st_mode as u32 }
     }
     fn kind(&self) -> FsKind {
         match self.mode & libc::S_IFMT as u32 {

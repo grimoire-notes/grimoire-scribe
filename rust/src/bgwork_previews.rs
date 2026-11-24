@@ -380,7 +380,7 @@ fn fd_stat(fd: &OwnedFd) -> Option<FsStat> {
     if unsafe { libc::fstat(fd.as_raw_fd(), &mut md) } != 0 {
         return None;
     }
-    Some(FsStat { dev: md.st_dev as u64, ino: md.st_ino as u64, size: md.st_size as u64, mtime: md.st_mtime as i64, mode: md.st_mode as u32 })
+    Some(FsStat { dev: md.st_dev as u64, ino: md.st_ino as u64, size: md.st_size as u64, mtime: md.st_mtime as i64, mtime_nsec: md.st_mtime_nsec as i64, mode: md.st_mode as u32 })
 }
 
 fn make(path: &str) -> Result<(PreviewKind, Outcome), String> {
