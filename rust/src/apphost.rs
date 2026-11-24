@@ -154,7 +154,7 @@ pub const APP_CHARGE_SQUARE_BYTES: u64 = 256;
 /// The height the texts of the kit's elements are charged at: the kit draws them at its own sizes, all under it.
 pub const APP_CHARGE_LABEL_PX: i64 = 48;
 /// The side the kit's icons of one size are charged at: a row's icon, a select's chevron, the mark that clears a
-/// text field.
+/// text field. (And the least a text field's own icon is charged at: that one is as tall as the field.)
 pub const APP_CHARGE_SMALL_ICON_PX: i64 = 64;
 /// A row's switch: its two round frames, of one size.
 pub const APP_CHARGE_SWITCH: u64 = 30_000;
@@ -1258,7 +1258,10 @@ fn install_imports(linker: &mut Linker<HostState>) -> Result<(), String> {
         pay_shape(&mut caller, x, y, w, h, edge, 2)?;
         let icon = icon_name(&mut caller, icon_ptr, icon_len)?;
         if !icon.is_empty() {
-            pay_icon(&mut caller, x, y, w, h, 1)?;
+            // (its icon is as tall as the field, whatever the field's width, and never smaller than the kit's
+            // small icons: globalui.rs, gui_text_field)
+            let tall = drawn(caller.data(), x, y, w, h).h as i64;
+            charge(&mut caller, icon_charge(tall.max(APP_CHARGE_SMALL_ICON_PX)))?;
         }
         // (the mark that clears a field with text in it is of one size)
         charge(&mut caller, icon_charge(APP_CHARGE_SMALL_ICON_PX))?;
@@ -1886,7 +1889,8 @@ fn icon_charge(side: i64) -> u64 {
 }
 
 /// Takes the charge for the icon of a command from the call's budget: an icon as large as the smaller side of
-/// the command's rectangle, or the `part`th of it.
+/// the command's rectangle, or the `part`th of it. (A text field's icon is charged by the field's height, where
+/// the import is: the kit draws it that tall.)
 fn pay_icon(caller: &mut Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, part: i32) -> Result<(), wasmi::Error> {
     let r = drawn(caller.data(), x, y, w, h);
     charge(caller, icon_charge((r.w.min(r.h) / part) as i64))

@@ -1229,6 +1229,12 @@ fn an_import_takes_its_charge_from_the_calls_budget() {
     let field = |w: i32, h: i32, icon: i32, text: i32, hint: i32| call("text_field", &[0, 0, w, h, 0, icon, 0, text, 0, hint]);
     near(charged("field", field(900, 100, 0, 0, 0), field(0, 0, 0, 0, 0)), 2 * frame(900, 100, 50 + 32), "a text field");
     near(charged("field.icon", field(900, 100, 4, 0, 0), field(900, 100, 0, 0, 0)), 100 * 100 * 2 + 4 * 4, "its icon");
+    // (a text field's icon is as tall as the field, whatever the field's width, so it is paid for by the field's
+    // height: 1,024 px at most, as any icon, and 64 px at least, as the kit's small icons)
+    near(charged("field.icon.narrow", field(1, 1314, 4, 0, 0), field(1, 1314, 0, 0, 0)), 1024 * 1024 * 2 + 4 * 4, "the icon of a field 1 px wide and 1,314 px high");
+    near(charged("field.icon.tall", field(40, 500, 4, 0, 0), field(40, 500, 0, 0, 0)), 500 * 500 * 2 + 4 * 4, "the icon of a field 40 px wide and 500 px high");
+    near(charged("field.icon.flat", field(900, 10, 4, 0, 0), field(900, 10, 0, 0, 0)), 64 * 64 * 2 + 4 * 4, "the icon of a field 10 px high");
+    near(charged("field.icon.none", field(0, 0, 4, 0, 0), field(0, 0, 0, 0, 0)), 64 * 64 * 2 + 4 * 4, "the icon of a field of no size");
     near(charged("field.texts", field(900, 100, 0, 5, 6), field(900, 100, 0, 0, 0)), 5 * 48 * 32 + 16 * 5 * 5 + 6 * 48 * 32 + 16 * 6 * 6, "its text and its hint");
     // A row: its card (one frame), its icon and its switch (each of one size), and its label on up to two lines.
     let row = |w: i32, h: i32, icon: i32, label: i32, switch: i32| call("row", &[0, 0, w, h, 0, icon, 0, label, 0, switch]);
@@ -1403,6 +1409,8 @@ fn the_hosts_work_for_a_call_is_paid_from_the_calls_budget() {
         ("4,096 selects over the body", repeat(all, &call("select", &[0, 0, 1860, 2480, 8, 8, 16, 8])), &letters),
         ("4,096 app tiles over the body", repeat(all, &call("app_tile", &[0, 0, 1860, 2480, 0, 4, 8, 8, 1])), b"gear    a label"),
         ("4,096 text fields over the body", repeat(all, &call("text_field", &[0, 0, 1860, 2480, 0, 4, 8, 8, 16, 8])), b"gear    typed   hint    "),
+        ("3,400 text fields 1 px wide and 1,314 px high, each with its icon", repeat(3400, &call("text_field", &[-1, 0, 1, 1314, 0, 4, 0, 0, 0, 0])), b"gear"),
+        ("15 text fields 1 px wide and 1,314 px high, each with its icon", repeat(15, &call("text_field", &[-1, 0, 1, 1314, 0, 4, 0, 0, 0, 0])), b"gear"),
         ("4,096 icons of 1,024 px", repeat(all, &call("icon", &[0, 4, 0, 0, 1280, 1280, 0])), b"gear"),
         ("4,096 icons of every size from 1,024 px down", repeat(all, &seq(&[i(0), i(4), i(0), i(0), seq(&[i(1280), counter(), i(1100), vec![0x70, 0x6b]]), seq(&[i(1280), counter(), i(1100), vec![0x70, 0x6b]]), i(0), invoke("icon")])), b"gear"),
         ("64 texts of 1,024 letters 768 px high", repeat(64, &call("text", &[0, 0, 60_000, 2000, 0, 1024, 768_000, 0, 0, 0])), &letters),
@@ -1434,6 +1442,10 @@ fn the_hosts_work_for_a_call_is_paid_from_the_calls_budget() {
         ("a page full of small text", repeat(70, &call("text", &[20, 0, 1820, 34, 0, 90, 34_000, 0, 0, 0])), &line_of_text, 4),
         ("a hundred keys", seq(&[call("fill_rect", &[0, 0, 1860, 2480, 255]), repeat(100, &call("button", &[0, 0, 160, 160, 0, 3, 0, 0, 0]))]), b"sin", 4),
         ("thirty rows on a card", seq(&[call("card", &[20, 20, 1820, 2440, 0]), repeat(30, &call("row", &[60, 60, 1740, 70, 4, 4, 0, 4, 0, 1]))]), b"rowsgear", 10),
+        // (a text field's icon is as tall as the field: fourteen fields with an icon of 1,024 px are the most a call
+        // pays for, and a search field of a screen's own size is paid for two hundred times over)
+        ("14 text fields 1 px wide and 1,314 px high, each with its icon", repeat(14, &call("text_field", &[-1, 0, 1, 1314, 0, 4, 0, 0, 0, 0])), b"gear", 1),
+        ("a search field with its icon", call("text_field", &[40, 40, 900, 100, 0, 6, 8, 5, 16, 6]), b"search  query   Search", 200),
     ];
     for (k, (name, draw, data, times_over)) in honest_passes.into_iter().enumerate() {
         let (_, error, used) = pass_of(&format!("test.paid.{k}"), draw, data);
