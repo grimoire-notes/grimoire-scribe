@@ -39,7 +39,7 @@
 use crate::globalui::{gui_app_tile, gui_chip, gui_fab, gui_select, gui_status_bar, gui_status_h, gui_surface, gui_text_field};
 use crate::prelude::*;
 use crate::wasmhost::on_screen;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use wasmi::{Caller, Config, Engine, Linker, Module, Store, StoreLimits};
@@ -87,6 +87,10 @@ pub const APP_STATUS_MAX: usize = 256;
 pub const APP_TOAST_MAX: usize = 256;
 /// The bytes of the connected network's name that `wifi_ssid` writes: the longest a network's name is.
 pub const APP_SSID_MAX: usize = 32;
+/// The delay `request_redraw` may name, in milliseconds; one outside is taken as the nearer end. The shortest
+/// is how often an app can have itself drawn again, and the screen refreshed, by asking.
+pub const APP_REDRAW_MIN_MS: i32 = 100;
+pub const APP_REDRAW_MAX_MS: i32 = 86_400_000;
 /// A text is drawn and measured at most this many pixels high; a larger height is taken as this one. Five
 /// digits this high are as wide as the screen.
 pub const APP_TEXT_PX_MAX: i32 = 768;
@@ -144,7 +148,9 @@ struct HostState {
     toast: Option<(String, u32)>,
     dirty: bool,
     limits: StoreLimits,
-    redraw_at: Option<Instant>,
+    /// when the module asked to be drawn again, by the app's clock (`now_ms`); None while no request stands.
+    /// One request stands at a time, the soonest asked for, until the host's tick takes it (`redraw_taken`).
+    redraw_at: Option<u32>,
     screen_w: i32,
     screen_h: i32,
     clock_12h: bool,
@@ -613,8 +619,10 @@ pub fn apphost_tick(a: &mut App, now: u32) {
     if apphost_failed(a) {
         return;
     }
-    let due = a.app_view.runtime.as_ref().is_some_and(|r| r.redraw_due(Instant::now()));
-    if due {
+    // A request that is due is taken, and the app is drawn and the screen refreshed once for it. A pass that
+    // wants another asks again, and gets it no sooner than APP_REDRAW_MIN_MS later; while no request is due
+    // nothing is drawn and nothing is refreshed.
+    if a.app_view.runtime.as_mut().is_some_and(|r| r.redraw_taken(now)) {
         apphost_draw(a);
         app_invalidate_all(a, RefreshMode::Fast);
     }
@@ -625,7 +633,6 @@ pub fn apphost_tick(a: &mut App, now: u32) {
             app_invalidate(a, Rect::new(0, 0, a.w, gui_status_h()), RefreshMode::Ui);
         }
     }
-    let _ = now;
 }
 
 /// The runner's control point for an app: the body's centre (apps receive absolute taps too).
@@ -914,8 +921,20 @@ impl AppRuntime {
         }
     }
 
-    fn redraw_due(&self, now: Instant) -> bool {
-        self.store.data().redraw_at.is_some_and(|at| at <= now)
+    /// Whether the module asked for a drawing pass that is due at `now`, by the app's clock (`now_ms`, which
+    /// wraps: the longest delay is far under half its range). Nothing is due for a module that has stopped.
+    pub fn redraw_due(&self, now: u32) -> bool {
+        self.error.is_none() && self.store.data().redraw_at.is_some_and(|at| now.wrapping_sub(at) as i32 >= 0)
+    }
+
+    /// `redraw_due`, and the request is taken: the host's tick asks this once and then draws the app, so one
+    /// request brings one drawing pass and one refresh, whatever the pass does.
+    pub fn redraw_taken(&mut self, now: u32) -> bool {
+        let due = self.redraw_due(now);
+        if due {
+            self.store.data_mut().redraw_at = None;
+        }
+        due
     }
 
     /// What the app shows in place of going on, once a call of its module has failed.
@@ -1164,8 +1183,13 @@ fn install_imports(linker: &mut Linker<HostState>) -> Result<(), String> {
         Ok(())
     }).map_err(e)?;
     linker.func_wrap(ABI, "request_redraw", |mut caller: Caller<'_, HostState>, after_ms: i32| {
-        let ms = after_ms.clamp(16, 86_400_000) as u64;
-        caller.data_mut().redraw_at = Some(Instant::now() + Duration::from_millis(ms));
+        let at = now_ms().wrapping_add(after_ms.clamp(APP_REDRAW_MIN_MS, APP_REDRAW_MAX_MS) as u32);
+        let st = caller.data_mut();
+        // (one request stands, the soonest asked for: a later call does not put an earlier one off)
+        st.redraw_at = Some(match st.redraw_at {
+            Some(was) if was.wrapping_sub(at) as i32 <= 0 => was,
+            _ => at,
+        });
     }).map_err(e)?;
     linker.func_wrap(ABI, "close", |mut caller: Caller<'_, HostState>| {
         caller.data_mut().close_requested = true;
@@ -1625,6 +1649,7 @@ fn write_mem(caller: &mut Caller<'_, HostState>, ptr: i32, cap: i32, bytes: &[u8
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn only_a_bottom_to_middle_two_finger_swipe_closes() {

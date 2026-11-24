@@ -591,6 +591,20 @@ pub fn counts() -> Vec<u8> {
     Wasm::new(seq(&[counted(), call("status", &[DIGITS_AT, 6]), call("fill_rect", &[40, 40, 200, 100, 0])])).bytes()
 }
 
+/// A module that counts its drawing passes as `counts` does and asks, in each, to be drawn again `after_ms`
+/// later.
+pub fn asks(after_ms: i32) -> Wasm {
+    Wasm::new(seq(&[counted(), call("status", &[DIGITS_AT, 6]), call("fill_rect", &[40, 40, 200, 100, 0]), call("request_redraw", &[after_ms])]))
+}
+
+/// A module that counts its drawing passes and asks to be drawn again only where it is touched: `after_ms` after
+/// each phase of a touch, and never in a drawing pass.
+pub fn asks_when_touched(after_ms: i32) -> Wasm {
+    let mut w = Wasm::new(seq(&[counted(), call("status", &[DIGITS_AT, 6]), call("fill_rect", &[40, 40, 200, 100, 0])]));
+    w.pointer = call("request_redraw", &[after_ms]);
+    w
+}
+
 /// A module whose `app_draw` never ends: a loop with no way out.
 pub fn loops() -> Vec<u8> {
     Wasm::new(forever(&[])).bytes()
@@ -624,6 +638,11 @@ pub fn packages() -> Vec<Package> {
         package("test.app.counts", "Counts", &[], false, counts()),
         // (it shows the status bar, and draws black from far outside its body)
         package("test.app.wide", "Wide", &[], true, wide()),
+        // (each counts its drawing passes: Ticker asks for the next a second later, Asks as soon as an app may, and
+        // Once only when it is touched, half a second after)
+        package("test.app.ticker", "Ticker", &[], false, asks(1000).bytes()),
+        package("test.app.asks", "Asks", &[], false, asks(0).bytes()),
+        package("test.app.once", "Once", &[], false, asks_when_touched(500).bytes()),
     ]
 }
 

@@ -8,7 +8,7 @@
 # (the status bar's clock held still: its minute's refresh would land among the counted ones)
 clock 1700000000
 wait 3600
-expect library.apps is test.app.counts test.app.loop test.app.wide
+expect library.apps is test.app.asks test.app.counts test.app.loop test.app.once test.app.ticker test.app.wide
 # Loop's drawing pass never ends. The call is ended when its instructions are used up: the app is closed, a
 # toast says that it stopped, and Home is back. No app is left open with nothing drawn.
 tap library apps

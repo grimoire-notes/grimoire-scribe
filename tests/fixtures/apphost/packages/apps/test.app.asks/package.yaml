@@ -1,0 +1,15 @@
+name: Asks
+id: test.app.asks
+type: app
+version: 1.0.0
+author: Grimoire tests
+description: A module of the app host's tests.
+platforms: [all]
+artifact:
+  path: app.wasm
+  sha256: e3ac4d272a5381d5e932d809df33e80fb9eb8372d992889f6d3815732fd8cfc6
+  size: 1411
+capabilities: []
+spec:
+  runtime: wasm
+  status_bar: false

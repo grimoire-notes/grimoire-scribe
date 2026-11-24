@@ -261,8 +261,18 @@ status_bar_height() -> i32
 `storage:app-local` ([Capabilities](#capabilities)). `setting` returns the
 saved value for one manifest setting; a missing or invalid value reads as its default. `status`
 sets a line a test or a debug view can read. `request_redraw` asks to be drawn again after the
-delay (16 ms to 24 hours); timers and polling belong behind it rather than a busy loop. `close`
+delay (100 ms to 24 hours; a value outside is taken as the nearer end); timers and polling belong
+behind it rather than a busy loop. `close`
 asks the host to run `app_stop`, save and return Home. `toast` shows a short Grimoire message.
+
+One redraw request stands at a time: the soonest asked for, whichever call of the module asked (a
+drawing pass, a touch, a key), so a later call does not put an earlier one off. When its time has
+come, the app is drawn once and the whole screen refreshed once, and the request is gone: a pass
+that wants another asks again. An app that asks in every pass is so drawn, and the screen
+refreshed, at most ten times a second; an app that asks for nothing is drawn only when it is
+touched, a key is pressed or Grimoire itself redraws. A refresh of an e-ink panel takes a few
+hundred milliseconds and its share of the battery: ask for the next pass when there is something
+new to show (the next minute for a clock, the next poll for a request in flight).
 
 `battery_percent` returns -1 when the device cannot tell. `wifi_connected` returns 1, 0 or -1.
 `wifi_ssid` returns the connected network's name, empty when there is none. `time_text` and
@@ -359,6 +369,7 @@ The host calls a module's `app_draw` (a drawing pass), `app_pointer`, `app_key`,
 | an icon's name | 64 bytes, longer than any icon's; a longer one is not read and names no icon, so the grid is drawn, as for any name Grimoire does not know |
 | a key passed to `setting` | 64 bytes, the longest a setting's key can be; a longer one is no setting's and returns `0` |
 | what `wifi_ssid` writes | 32 bytes at most, the longest a network's name is |
+| `request_redraw`'s delay | 100 ms to 86,400,000 ms (24 hours); a value outside is taken as the nearer end, so an app has itself drawn again, and the screen refreshed, at most ten times a second |
 | a text's height, `px_milli` | 1 to 768,000 (768 px); a value outside is taken as the nearer end, by `text`, `text_at`, `text_width` and `text_height` alike |
 | an icon | 1,024 px each way; in a larger rectangle it is drawn at that size, in the middle. The icons of `button`, `row`, `app_tile`, `fab` and `text_field` are held to it too |
 | a line's width | 0.1 to 4,096 px; a value outside is taken as the nearer end |
@@ -404,7 +415,9 @@ the Library. Removing the package while it runs does the same before deleting it
   exactly the numbers its rule is about. `tests/scenarios/z_app_host.qs` opens them with app time on
   the script's clock: one whose drawing pass never ends, which is stopped when its instruction
   budget is used up, one that counts its drawing passes, and one that shows the status bar and
-  draws from far outside its body.
+  draws from far outside its body. `tests/scenarios/z_app_redraw.qs` opens the three that ask to
+  be drawn again (a second later, as soon as an app may, and only when touched) and counts their
+  drawing passes and the screen's refreshes.
 - `rust/tests/test_app_host.rs` holds the same rules as unit tests of the host, and compares a
   drawing pass of one of every command with the kit's own drawing, pixel for pixel.
 

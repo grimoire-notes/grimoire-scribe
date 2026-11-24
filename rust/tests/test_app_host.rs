@@ -970,6 +970,64 @@ fn an_icon_name_longer_than_any_icons_names_no_icon() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+#[test]
+fn request_redraw_has_a_shortest_and_a_longest_delay_and_one_request_stands() {
+    let root = fresh_root("redraw");
+    let mut c = patterned(SCREEN.0, SCREEN.1);
+    assert_eq!((APP_REDRAW_MIN_MS, APP_REDRAW_MAX_MS), (100, 86_400_000));
+    // (times are the app's clock, `now_ms`: milliseconds that wrap)
+    let after = |t: u32, ms: i32| t.wrapping_add(ms as u32);
+    for (k, (asked, given)) in [(MIN, 100), (-5, 100), (0, 100), (1, 100), (16, 100), (99, 100), (100, 100), (101, 101), (5000, 5000), (86_400_000, 86_400_000), (86_400_001, 86_400_000), (MAX, 86_400_000)].into_iter().enumerate() {
+        let mut rt = installed(&format!("test.redraw.{k}"), &[], &asks(asked));
+        let t0 = now_ms();
+        assert!(!rt.redraw_due(after(t0, APP_REDRAW_MAX_MS)), "nothing is asked for before the first pass");
+        rt.draw(&mut c, WHOLE, 0);
+        let t1 = now_ms();
+        assert!(!rt.redraw_due(after(t0, given - 1)), "request_redraw({asked}) is not due before {given} ms");
+        assert!(rt.redraw_due(after(t1, given)), "request_redraw({asked}) is due after {given} ms");
+        // The request is taken once, when it is due and not before; the pass after it asks again.
+        assert!(!rt.redraw_taken(after(t0, given - 1)));
+        assert!(rt.redraw_taken(after(t1, given)));
+        assert!(!rt.redraw_taken(after(t1, given)) && !rt.redraw_due(after(t1, APP_REDRAW_MAX_MS)), "taken once");
+        rt.draw(&mut c, WHOLE, 0);
+        assert!(rt.redraw_due(after(now_ms(), given)), "the next pass asks again");
+    }
+    // One request stands, the soonest asked for, whichever call asked first.
+    for (k, (first, then)) in [(5000, 300), (300, 5000)].into_iter().enumerate() {
+        let mut rt = installed(&format!("test.redraw.two.{k}"), &[], &Wasm::new(seq(&[call("request_redraw", &[first]), call("request_redraw", &[then])])));
+        let t0 = now_ms();
+        rt.draw(&mut c, WHOLE, 0);
+        let t1 = now_ms();
+        assert!(!rt.redraw_due(after(t0, 299)) && rt.redraw_due(after(t1, 300)), "{first} then {then}: due after 300 ms");
+        assert!(rt.redraw_taken(after(t1, 300)));
+        assert!(!rt.redraw_due(after(t1, APP_REDRAW_MAX_MS)), "{first} then {then}: one request, taken");
+    }
+    // What a touch or a key asked for stands through the drawing pass that follows it, which asks for nothing,
+    // and through any number of passes; it is due at its time, and taken once.
+    let mut rt = installed("test.redraw.touched", &[], &asks_when_touched(700));
+    rt.draw(&mut c, WHOLE, 0);
+    assert!(!rt.redraw_due(after(now_ms(), APP_REDRAW_MAX_MS)), "a pass that asks for nothing leaves nothing due");
+    let t0 = now_ms();
+    rt.pointer(0, 5, 5, 0);
+    let t1 = now_ms();
+    for _ in 0..3 {
+        rt.draw(&mut c, WHOLE, 0);
+    }
+    assert!(!rt.redraw_due(after(t0, 699)) && rt.redraw_due(after(t1, 700)));
+    // (a second touch, later, does not put the first one's request off)
+    rt.pointer(2, 5, 5, 0);
+    assert!(rt.redraw_due(after(t1, 700)));
+    assert!(rt.redraw_taken(after(t1, 700)));
+    rt.draw(&mut c, WHOLE, 0);
+    assert!(!rt.redraw_due(after(now_ms(), APP_REDRAW_MAX_MS)), "taken once: the pass it brought asks for nothing");
+    // A module that asked and then stopped is not drawn again: nothing is due for it.
+    let mut rt = installed("test.redraw.stops", &[], &Wasm::new(seq(&[call("request_redraw", &[100]), call("status", &[0, APP_STATUS_MAX as i32 + 1])])));
+    rt.draw(&mut c, WHOLE, 0);
+    assert_eq!(rt.error(), Some(STOPPED));
+    assert!(!rt.redraw_due(after(now_ms(), APP_REDRAW_MAX_MS)) && !rt.redraw_taken(after(now_ms(), APP_REDRAW_MAX_MS)));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A sequence of numbers that is the same on every run (xorshift), for passes of numbers nobody chose.
 struct Dice(u64);
 
