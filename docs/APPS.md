@@ -222,18 +222,18 @@ a failure.
 
 Headers are one `Name: value` per line, at most 32 lines of at most 2048 bytes each (and 32 KiB
 together). A header line is a name, a colon and a value: the name is one or more HTTP token
-characters (letters, digits and ``! # $ % & ' * + - . ^ _ ` | ~``), the colon follows the name
-directly, and the value has no control character. Spaces after the colon are fine, white space
-around a line is not part of it, and an empty line is skipped. A request with any other line, a
-longer line or more lines is refused whole: `http_start` returns -1 and nothing is sent. A line
-with an empty value sends no header: curl then leaves out its own header of that name, if it has
-one.
+characters (the ASCII letters and digits, and ``! # $ % & ' * + - . ^ _ ` | ~``), the colon
+follows the name directly, and the value has no control character. Spaces after the colon are
+fine, white space around a line is not part of it, and an empty line is skipped. A request with
+any other line, a longer line or more lines is refused whole: `http_start` returns -1 and nothing
+is sent. A line with an empty value sends no header: curl then leaves out its own header of that
+name, if it has one.
 
 The upload is at most 2 MiB. The answer is at most 8 MiB (8,388,608 bytes). A longer answer ends
 the request: at once when the server states its length, and otherwise once it has grown past the
 limit (each `http_poll` checks its size so far, and curl 8.4 or later checks as it downloads).
-Such a request has no status code (`http_status` is -1), no answer, and `The answer is too
-large.` as its `http_error`.
+Such a request has no status code (`http_status` is -1), no answer, and its `http_error` is
+`The answer is too large.`
 
 `http_poll` returns 0 while the request runs and 1 when it has finished; after that `http_status`
 is the HTTP status code (or -1 on a transport failure), `http_body` is the answer, and
