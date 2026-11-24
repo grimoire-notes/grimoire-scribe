@@ -3007,7 +3007,7 @@ mod tests {
         let module = Module::new(&engine, &b"\0asm\x01\0\0\0"[..]).unwrap();
         let mut store = Store::new(&engine, st);
         let instance = Linker::new(&engine).instantiate_and_start(&mut store, &module).unwrap();
-        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None, used: 0 }
+        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None, used: 0, drawn: 0 }
     }
 
     /// Ticks the host until its request has ended, with no poll of the app's.
@@ -3384,7 +3384,7 @@ mod tests {
         let mut linker = Linker::new(&engine);
         install_imports(&mut linker).unwrap();
         let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
-        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None, used: 0 }
+        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None, used: 0, drawn: 0 }
     }
 
     /// The module's memory, to place a request's texts in and to read what a call wrote.
