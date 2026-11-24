@@ -3,6 +3,9 @@
 # settings: link_areas=1
 # settings: shape_quads=0
 # env: GRIMOIRE_CHECK_FIT=1
+# (the status bar's clock held still: a new minute between a drawing and a look at editor.screen_composed
+# would make the two differ)
+clock 1700000000
 wait 200
 tap library add
 tap library add.new-notebook

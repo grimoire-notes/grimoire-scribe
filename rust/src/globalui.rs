@@ -128,7 +128,7 @@ pub fn gui_header(
     back: bool,
     actions: &[(IconKind, i32)],
 ) -> (GuiHeader, Vec<(Rect, i32)>) {
-    gui_status_bar(c, aw, wall_time());
+    gui_status_bar(c, aw, sys_wall_clock());
     let m = gui_margin();
     let top = gui_status_h();
     let th = gui_head_h();
@@ -656,7 +656,10 @@ pub fn gui_battery(c: &mut Canvas, r: Rect, percent: i32) {
 
 /// The app's status bar: the time and date at the left, then (when the device has them) Wi-Fi,
 /// Bluetooth and the battery percent at the right. Every screen draws it above its header; a tap in
-/// it is a tap on no control (the caller adds no hit).
+/// it is a tap on no control (the caller adds no hit). `now` is the platform's clock (light.rs
+/// sys_wall_clock), as the minute checks that draw it again read it (library_tick,
+/// library_app_minute): the simulator's script holds that clock still (docs/SIM.md, `clock`), and a
+/// bar that read the machine's own would refresh in the middle of a scenario that counts refreshes.
 pub fn gui_status_bar(c: &mut Canvas, aw: i32, now: i64) {
     gui_status_bar_in(c, aw, now, true, true);
 }

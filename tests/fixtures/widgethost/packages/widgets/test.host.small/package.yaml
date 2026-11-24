@@ -1,0 +1,19 @@
+name: Small
+id: test.host.small
+type: widget
+version: 1.0.0
+author: Grimoire tests
+description: A module of the widget host's tests.
+platforms: [all]
+artifact:
+  path: module.bin
+  sha256: db9516bf984766322e31accdba54f284c0e965f254535fc7246567f1282fbce2
+  size: 389
+capabilities: [editor:overlay, storage:widget-local]
+spec:
+  runtime: wasm
+  size:
+    mode: resizable
+    default: [220, 160]
+    min: [120, 80]
+    max: [400, 300]

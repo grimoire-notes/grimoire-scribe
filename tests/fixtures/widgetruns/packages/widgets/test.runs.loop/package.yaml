@@ -1,0 +1,16 @@
+name: Loop
+id: test.runs.loop
+type: widget
+version: 1.0.0
+author: Grimoire tests
+description: A module of the widget host's tests.
+platforms: [all]
+artifact:
+  path: module.bin
+  sha256: 83f9277b45596de3d581c0714cc0216982a3fcbeec6b79375be99d51e02d9aec
+  size: 322
+capabilities: [editor:overlay, storage:widget-local]
+spec:
+  runtime: wasm
+  size:
+    mode: fixed

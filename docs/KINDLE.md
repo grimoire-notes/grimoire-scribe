@@ -828,6 +828,39 @@ timings, memory, reasons):
   does by itself); deleting it puts that right.
 - `bg: N file preview(s) dropped (Grimoire ends)`: previews still queued when Grimoire closed; none is made after.
 
+## Packages' pictures (2.3)
+
+An installed app's bundled icon and the Package Store's icons and screenshots are decoded by the sandboxed
+worker in the background (docs/DESIGN.md, "Packages' pictures"), never by Grimoire itself, and kept in
+`grimoire/.cache/packages/`, which may be deleted at any time (the pictures are made again). A picture shows a
+moment after its screen; until then, and when it cannot be made, the launcher shows the app's built-in icon and
+the Store its package glyph. A picture's job waits behind what Grimoire does in the background for someone who
+asked by name (an export, a map's layout, the PDF mirror, an import, a font check), runs in turn with Files'
+previews, and ahead of compaction and the idle page previews; it is given 6 s at most. In the Package Store the
+pictures of the page in front are asked for first. grimoire.log says, for each picture that was not in the cache
+(never a file's name: the form, timings, reasons):
+
+- `bg: package pictures of a file (pid N)`, then `bg: package pictures pid N done` or `FAILED`.
+- `package pictures: app-icon|icon|screenshot made in T ms`: T is the whole job (the worker's start, the file
+  read, the picture decoded, the cache written).
+- `package pictures: app-icon|icon|screenshot gave no picture (slow|ended) in T ms; one more try at another look`:
+  the worker ran out of the picture's time on the file, or ended on it, for the first time. The screen keeps its
+  glyph; the file is tried once more when Grimoire next starts (an app's icon) or the Store next shows it.
+- `package pictures: app-icon|icon|screenshot has no picture (refused|slow|ended), marked, in T ms`: the worker
+  refused the file (no `.ico` or picture it reads, sides over the limits), or it was the second try in a row that
+  ran out of time or ended. The screen keeps its glyph, and the file is not tried again until it changes.
+- `package pictures: nothing made (<why>)`: no sandboxed worker could be had, no memory, the storage is nearly
+  full, or the file changed since it was asked for (among others: it is not there, or is a link). Nothing is
+  written; a later look asks again.
+- `package pictures: the cache of icons|shots pruned: N file(s) removed`: past 1,200 files or 24 MiB of icons, or
+  32 files or 48 MiB of screenshots, the oldest go.
+- `bg: N package picture(s) dropped (Grimoire ends)`: pictures still queued when Grimoire closed; none is made
+  after.
+- `bg: the sandbox refused a package picture's worker a step: no worker is asked for again until Grimoire starts
+  again`: after a `nothing made (no sandboxed worker can be had)` whose worker could not take a sandbox step. No
+  picture is asked for again in that run, and the launcher and the Store keep their glyphs. Send the lines
+  around it.
+
 ## Touch gestures and the touch trace
 
 Two fingers are gestures on the notebook page (docs/SHORTCUTS.md, gestures.ini by hand): down opens
@@ -1515,6 +1548,12 @@ Settings > Updates off inside the copy: an update from it would run KPM over the
 release's `documents/Grimoire.sh` and `/mnt/us/grimoire` are never touched;
 `tools/kindle-dev-ssh --release` is the explicit way to put a build on the release launcher: it
 warns and keeps the launcher it replaces as `documents/Grimoire.sh.bak`.
+
+`make prod` is the release itself, updated over MTP with no copy and no patch: it builds this
+branch's zip and copies its own `documents/Grimoire.sh` over the installed one, so
+`/mnt/us/grimoire`, its notebooks and Settings > Updates stay as they are. The build is the
+branch's: a zip whose `README.txt` names another version than this branch's `VERSION` (a
+downloaded release, or a stale `build/dist`) is refused instead of installed.
 
 Limits of the dev copy:
 

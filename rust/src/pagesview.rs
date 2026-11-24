@@ -701,7 +701,7 @@ pub fn pagesview_draw(v: &mut PagesView, a: &mut App, nb: &NotebookInfo, nav: &N
             for (i,id) in [PG_BACK,PG_GRAPH,PG_LIST,PG_TAB].into_iter().enumerate(){hits_add(&mut v.hits,tabs[i],id,0);}
         }
     }
-    gui_status_bar(c, aw, wall_time());
+    gui_status_bar(c, aw, sys_wall_clock());
 
     let (cols, rows, cw, ch, th) = geom(a,v);
     let per = cols * rows;

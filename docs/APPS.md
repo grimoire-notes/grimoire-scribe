@@ -21,7 +21,14 @@ installer as **Settings → Packages**. The store does not replace the package m
 packages are still managed there.
 
 The catalog is cached at `grimoire/package-store/index.json`, and its images at
-`grimoire/package-store/assets/`, so the last store still opens without a network. Grimoire's
+`grimoire/package-store/assets/`, so the last store still opens without a network. The Store itself
+never decodes an image: the catalog's icons and screenshots are decoded by the sandboxed picture
+worker, as the pictures of Files are ([DESIGN.md](DESIGN.md), "Packages' pictures"), and the
+Store draws the gray pictures the worker left in `grimoire/.cache/packages/`. So an icon or a
+screenshot shows a moment after its page; until then, and when the worker refuses a picture or
+cannot run, a card and the detail page show the package glyph and the screenshot's frame its
+glyph. A catalog icon is an `.ico`, a PNG or a JPEG of at most 256 KiB, shown at most 256 px a
+side; a screenshot is a PNG or a JPEG of at most 8 MiB, kept at most 2,560 px a side. Grimoire's
 catalog is [grimoire-notes/package-store-contents](https://github.com/grimoire-notes/package-store-contents); the
 repository's README documents the format, and `tools/check.py` validates a catalog before it is
 published. A mirror can be used with `GRIMOIRE_PACKAGE_STORE_URL`.
@@ -64,10 +71,17 @@ and SHA-256 before anything is written, and an update is staged before it replac
 
 `spec.icon` may name one of Grimoire's built-in icons, or a `.ico` bundled beside `package.yaml`.
 A bundled icon is a second package file: the installer fetches it from the manifest's folder, checks
-its `spec.icon_sha256` and `spec.icon_size` (at most 256 KiB), and saves it with the artifact. The
-launcher decodes PNG entries and classic 1, 4, 8, 24 and 32-bit BMP entries to a small grayscale
-bitmap for the home app row, All Apps, the package manager's list and its detail page. A built-in
-name still works, and is the fallback if the icon file is missing or unreadable.
+its `spec.icon_sha256` and `spec.icon_size` (at most 256 KiB), and saves it with the artifact. Its
+path is never one inside the app's `state/` folder, whatever case the manifest writes that name in
+(the storage takes `State/` for `state/`). The
+launcher never reads the icon file: the sandboxed picture worker decodes its PNG entries (8 bits a
+channel, gray or RGB, with or without alpha; none with a palette or 16 bits) and
+classic 1, 4, 8, 24 and 32-bit BMP entries (at most 256 px a side; the largest entry of at most
+64 px is taken, else the smallest) to a small grayscale bitmap, kept in
+`grimoire/.cache/packages/icons/`, which the home app row, All Apps, the package manager's list
+and its detail page draw ([DESIGN.md](DESIGN.md), "Packages' pictures"). A built-in name still
+works, and the launcher shows it (or the grid) until the icon's picture is made, and for good if
+the icon file is missing, the worker refuses it, or the worker cannot run.
 
 The index is `packages/apps-index.json`:
 
@@ -212,16 +226,60 @@ http_cancel()
 ```
 
 `http_start` returns 0 when curl started, -1 for a bad argument or a failed start, -2 when the
-manifest lacks `network:http`, and -3 while another request is in flight. The method is
-`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` or another uppercase token. Headers are one
-`Name: value` per line. The upload is at most 2 MiB; the answer is at most 8 MiB. `http_poll`
-returns 0 while it runs and 1 when it has finished; after that `http_status` is the HTTP status
-code (or -1 on a transport failure), `http_body` is the answer, and `http_error` is curl's one-line
-failure when there is one. Poll it after a `request_redraw`; none of these calls blocks drawing or
-touching the screen.
+manifest lacks `network:http`, and -3 while another request is in flight. The method is 1 to 16
+ASCII letters, such as `GET`, `POST`, `PUT`, `PATCH`, `DELETE` or `HEAD`: lower case is read as
+upper case, and white space around the method is not part of it (with it, the method's text is at
+most 64 bytes). Any other method is a bad argument.
 
-The host does not provide filesystem or shell access. An app should send a `User-Agent` header;
-the host adds `Grimoire-App/2.3` as a default.
+The address begins with `http://` or `https://`, is at most 4096 bytes, has no space and no
+control character, and is taken as written: brackets and braces in it are part of the address.
+Any other address is a bad argument: `http_start` returns -1 and nothing is sent. A space in an
+address is written `%20`. Redirects are followed, at most 5 of them, and only to `http` and
+`https` addresses; a request that is redirected further, or elsewhere, ends as a failure. A
+request goes to the address it names: a proxy set in Grimoire's environment is not used.
+
+Headers are one `Name: value` per line, at most 32 lines of at most 2048 bytes each (and 32 KiB
+together). A header line is a name, a colon and a value: the name is one or more HTTP token
+characters (the ASCII letters and digits, and ``! # $ % & ' * + - . ^ _ ` | ~``), the colon
+follows the name directly, and the value has no control character. Spaces after the colon are
+fine, white space around a line is not part of it, and an empty line is skipped. A request with
+any other line, a longer line or more lines is refused whole: `http_start` returns -1 and nothing
+is sent. A line with an empty value sends no header: curl then leaves out its own header of that
+name, if it has one.
+
+A request without a `User-Agent` line is sent with `User-Agent: Grimoire-App/2.3`. A request
+with a `User-Agent` line of its own is sent with that line in its place, never with both. An app
+should send its own.
+
+A `HEAD` request has no upload: with one, `http_start` returns -1. It ends when the answer's
+header lines have arrived, and those lines are its answer: `http_body` is the status line, the
+header lines and the empty line behind them, as the server sent them, of each answer in turn
+when redirects were followed. The length those lines state is not counted against the answer's
+limit.
+
+The upload is at most 2 MiB and is sent as it is. A request with an upload and no `Content-Type`
+line of its own is sent with curl's `Content-Type: application/x-www-form-urlencoded`: an app
+that uploads anything else says so with its own line.
+
+The answer is at most 8 MiB (8,388,608 bytes). A longer answer ends
+the request: at once when the server states its length, and otherwise once it has grown past the
+limit, whether or not the app polls. Such a request has no status code (`http_status` is -1), no
+answer, and its `http_error` is `The answer is too large.`
+
+A request has 30 seconds, its redirects included: one that has not ended by then ends as a
+failure.
+
+`http_poll` returns 0 while the request runs and 1 when it has finished; after that `http_status`
+is the HTTP status code, `http_body` is the answer and `http_error` is empty. A request that curl
+ended with a failure (no connection, the time limit, a connection that closed before the whole
+answer had arrived) has no status code (`http_status` is -1) and no answer, and its `http_error`
+is curl's one-line failure: the part of an answer that had arrived is not given. Poll it after a
+`request_redraw`; none of these calls blocks drawing or touching the screen. The host looks after
+a request between the app's polls: a request that has ended keeps its outcome for the next
+`http_poll`, until the next request starts (`http_start` returns 0) or `http_cancel`. An
+`http_start` that returns anything else leaves that outcome as it was.
+
+The host does not provide filesystem or shell access.
 
 ## Returning Home
 

@@ -7,7 +7,7 @@
 # the link shows (its area drawn dashed): the lasso selects both, as before 2.2. Round such ink with no link, it
 # selects nothing (z_lasso_29).
 wait 300
-tap 200 400
+tap library card.1
 wait 300
 expect editor.page is 1
 expect editor.links is 3 3

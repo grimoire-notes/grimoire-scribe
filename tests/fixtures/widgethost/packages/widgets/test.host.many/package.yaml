@@ -1,0 +1,17 @@
+name: Many
+id: test.host.many
+type: widget
+version: 1.0.0
+author: Grimoire tests
+description: A module of the widget host's tests.
+platforms: [all]
+artifact:
+  path: module.bin
+  sha256: 6b9368eb27fc4d8a95ce68ab1eb637057ca8f101c3562f26257ade40b34df360
+  size: 7157
+capabilities: [editor:overlay, storage:widget-local]
+spec:
+  runtime: wasm
+  size:
+    mode: fixed
+    default: [400, 300]

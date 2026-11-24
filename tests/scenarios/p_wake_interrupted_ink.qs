@@ -2,6 +2,9 @@
 # settings: mirror_pdf=0
 # A missed sleep announcement must still end a held stroke on the real wake. Its delayed
 # release must not join the next stroke or leave handwriting mode active under menus.
+# (the status bar's clock held still: a new minute between a drawing and a look at editor.screen_composed
+# would make the two differ)
+clock 1700000000
 wait 200
 tap library add
 tap library add.new-notebook
