@@ -90,7 +90,8 @@ struct HostState {
 }
 
 /// The limits of one app HTTP request (docs/APPS.md, HTTP). The answer's limit is given to curl,
-/// watched by `http_poll` while curl runs, and held again when the answer is read.
+/// set on the files curl may write, watched by `http_watch` while curl runs, and held again when
+/// the answer is read.
 const HTTP_ADDRESS_MAX: usize = 4096;
 const HTTP_HEADER_LINES_MAX: usize = 32;
 const HTTP_HEADER_LINE_MAX: usize = 2048;
@@ -160,7 +161,8 @@ impl Drop for HttpFiles {
 }
 
 /// One app HTTP request, run by curl in the background. The app polls it from
-/// `request_redraw` frames, so no network contact ever blocks drawing or touch.
+/// `request_redraw` frames, so no network contact ever blocks drawing or touch. The host's tick
+/// looks after it between the app's polls, and when the app does not poll (`http_watch`).
 struct HttpJob {
     child: std::process::Child,
     files: HttpFiles,
@@ -710,6 +712,8 @@ impl AppRuntime {
     }
 
     fn tick(&mut self) {
+        // A request in flight is looked after whether or not the app polls it, or still runs.
+        self.store.data_mut().http_watch();
         if self.error.is_some() {
             return;
         }
@@ -1018,7 +1022,8 @@ fn http_args(method: &str, url: &str, header_lines: &[&str], body_path: &str, re
 ///   of the address space the soft limit only, never above the hard one nor over a lower one
 ///   already set, as child_caps_apply sets them.
 /// - No file curl writes is longer than the answer's limit and one byte, and a write past that is
-///   an error to curl, not a signal. `http_poll` reads an answer file of that length as too large.
+///   an error to curl, not a signal. `http_watch` reads an answer file of that length as too
+///   large.
 ///
 /// An error here keeps curl from starting.
 fn http_child_rules(parent: libc::pid_t, caps: ChildCaps, oom: &[u8]) -> std::io::Result<()> {
@@ -1144,10 +1149,14 @@ impl HostState {
         }
     }
 
-    fn http_poll(&mut self) -> i32 {
-        let Some(job) = self.http.as_mut() else { return -1 };
+    /// Looks after the request in flight: reaps a curl that has ended, reads its outcome once and
+    /// removes its files, and ends a curl whose answer file has grown past the limit. The host's
+    /// tick calls this, so a request the app never polls leaves no child and no file behind, and
+    /// `http_poll` calls it before it answers.
+    fn http_watch(&mut self) {
+        let Some(job) = self.http.as_mut() else { return };
         if job.done {
-            return 1;
+            return;
         }
         match job.child.try_wait() {
             Ok(Some(status)) => {
@@ -1172,24 +1181,27 @@ impl HostState {
                 }
                 // The answer is in memory now: its files are not kept until the next request.
                 job.files.remove();
-                1
             }
             // An answer whose length was not stated is watched as it grows.
             Ok(None) if job.answer_len() > HTTP_ANSWER_MAX => {
                 job.stop();
                 job.too_large();
                 job.files.remove();
-                1
             }
-            Ok(None) => 0,
+            Ok(None) => {}
             Err(e) => {
                 job.done = true;
                 job.error = format!("Could not wait for curl: {e}");
                 job.code = -1;
                 job.files.remove();
-                1
             }
         }
+    }
+
+    /// What an app's poll is told: -1 with no request, 0 while it runs, 1 once it has ended.
+    fn http_poll(&mut self) -> i32 {
+        self.http_watch();
+        self.http.as_ref().map_or(-1, |job| i32::from(job.done))
     }
 
     fn http_cancel(&mut self) {
@@ -1847,6 +1859,73 @@ mod tests {
         drop(st);
         others.sort();
         assert_eq!(request_files(&dir), others);
+    }
+
+    /// An open app's runtime around `st`, with a module that has nothing in it: what the host's
+    /// tick needs.
+    fn runtime(st: HostState) -> AppRuntime {
+        let engine = Engine::default();
+        let module = Module::new(&engine, &b"\0asm\x01\0\0\0"[..]).unwrap();
+        let mut store = Store::new(&engine, st);
+        let instance = Linker::new(&engine).instantiate_and_start(&mut store, &module).unwrap();
+        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None }
+    }
+
+    /// Ticks the host until its request has ended, with no poll of the app's.
+    fn tick_to_end(rt: &mut AppRuntime) {
+        let end = Instant::now() + Duration::from_secs(45);
+        while !rt.store.data().http.as_ref().unwrap().done {
+            assert!(Instant::now() < end, "the request did not end");
+            std::thread::sleep(Duration::from_millis(5));
+            rt.tick();
+        }
+    }
+
+    // The host's tick looks after a request the app never polls: an ended child is reaped, its
+    // outcome read and its files removed, and an answer file past the limit ends the request.
+    // A poll after that is told what is known already.
+    #[test]
+    fn the_hosts_tick_looks_after_a_request_between_the_apps_polls() {
+        let dir = scratch("tick");
+        let none = Vec::<String>::new();
+
+        // A request that ends by itself, started as curl is.
+        let script = format!("{FIND_ANSWER}printf answer > \"$out\"; printf 200");
+        let mut rt = runtime(host_standing_in(&dir, &script));
+        assert_eq!(rt.store.data_mut().http_start("POST", "http://127.0.0.1:9/", "", b"upload"), 0);
+        let pid = child_pid(rt.store.data());
+        tick_to_end(&mut rt);
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), none);
+        let answered = (200, b"answer".to_vec(), String::new());
+        assert_eq!(outcome(rt.store.data()), answered);
+        assert_eq!(rt.store.data_mut().http_poll(), 1);
+        assert_eq!(outcome(rt.store.data()), answered);
+
+        // A request whose answer file grows past the limit while its child runs.
+        let pid = stand_in(rt.store.data_mut(), &dir, "exec sleep 60", "", Some(HTTP_ANSWER_MAX));
+        rt.tick();
+        assert!(!rt.store.data().http.as_ref().unwrap().done && !gone(pid));
+        let answer = rt.store.data().http.as_ref().unwrap().files.path("body");
+        std::fs::OpenOptions::new().write(true).open(&answer).unwrap().set_len(HTTP_ANSWER_MAX + 1).unwrap();
+        rt.tick();
+        assert_eq!(outcome(rt.store.data()), (-1, Vec::new(), "The answer is too large.".to_string()));
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), none);
+        assert_eq!(rt.store.data_mut().http_poll(), 1);
+
+        // The request of an app that has stopped with an error is looked after too.
+        rt.error = Some("stopped".to_string());
+        let pid = stand_in(rt.store.data_mut(), &dir, "exit 0", "200", Some(5));
+        tick_to_end(&mut rt);
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), none);
+        assert_eq!(outcome(rt.store.data()), (200, vec![0u8; 5], String::new()));
+
+        // With no request there is nothing to look after.
+        rt.store.data_mut().http_cancel();
+        rt.tick();
+        assert_eq!(rt.store.data_mut().http_poll(), -1);
     }
 
     /// Serves one request at a local address: reads it whole (its head, and the upload its
