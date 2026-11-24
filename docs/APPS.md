@@ -225,6 +225,11 @@ Gray is `0` (black) to `255` (paper white). `face` is 0 regular, 1 bold, 2 title
 0 off or 1 on. The UI calls draw the same themed elements Settings, the Library and the editor use,
 so an app follows the owner's Gothic/Classic theme, fonts and scale.
 
+The body is all an app draws on. Every command is clipped to it, whatever coordinates and sizes the
+module passes: what reaches past an edge of the body is cut off there, and nothing is drawn on the
+status bar while it is shown. `clip` makes the part drawn on smaller, never larger: it is the part
+of the rectangle that lies inside the body, and `clip_clear` gives the whole body back.
+
 ### State, settings and system
 
 ```text
@@ -374,7 +379,8 @@ the Library. Removing the package while it runs does the same before deleting it
   `rust/tests/test_app_fixtures.rs` checks it is what the writer makes), so each can pass the host
   exactly the numbers its rule is about. `tests/scenarios/z_app_host.qs` opens them with app time on
   the script's clock: one whose drawing pass never ends, which is stopped when its instruction
-  budget is used up, and one that counts its drawing passes.
+  budget is used up, one that counts its drawing passes, and one that shows the status bar and
+  draws from far outside its body.
 - `rust/tests/test_app_host.rs` holds the same rules as unit tests of the host, and compares a
   drawing pass of one of every command with the kit's own drawing, pixel for pixel.
 

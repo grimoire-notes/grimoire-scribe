@@ -594,3 +594,117 @@ fn a_module_that_loops_for_ever_stops_when_its_instructions_are_used_up() {
     assert!(rt.fuel_used() > 1_000_000 && rt.fuel_used() < APP_CALL_FUEL);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Drawing passes that reach outside the body with every command there is: from far above and left of it to far
+/// below and right of it, across each of its edges, and through a `clip` that names more than the body.
+/// (Sizes that no sum overflows with: those are the next rule's.)
+fn passes_that_reach_out(body: Rect) -> Vec<(&'static str, Vec<Cmd>)> {
+    let every = |x: i32, y: i32, w: i32, h: i32| -> Vec<Cmd> {
+        vec![
+            Cmd::Fill(x, y, w, h, 0),
+            Cmd::Outline(x, y, w, h, 30, 0),
+            Cmd::Round(x, y, w, h, 60, 0, 1, 0),
+            Cmd::Round(x, y, w, h, 60, 40, 0, 25),
+            Cmd::Line(x as f32, y as f32, (x + w) as f32, (y + h) as f32, 40.0, 0),
+            Cmd::Line((x + w) as f32, y as f32, x as f32, (y + h) as f32, 9.0, 0),
+            Cmd::Text(x, y, w, h, "Words that reach past the edge of the body they are drawn in", 90_000, 1, 0, 0),
+            Cmd::Text(x, y, w, h, "Centered words", 120_000, 0, 1, 0),
+            Cmd::TextAt(x, y, "Words at a place of their own, set by their baseline", 80_000, 0, 0),
+            Cmd::TextAt(x + w - 200, y + h, "The end of a line", 80_000, 5, 0),
+            Cmd::Icon("gear", x, y, w, h, 0),
+            Cmd::Button(x, y, w, h, "A label", "", 1),
+            Cmd::Button(x, y, w, h, "A label", "files", 0),
+            Cmd::Chip(x, y, w, h, "A chip", 1),
+            Cmd::Row(x, y, w, h, "gear", "A row", 1, 1),
+            Cmd::Surface(x, y, w, h, 1, 0),
+            Cmd::Surface(x, y, w, h, 0, 20),
+            Cmd::Select(x, y, w, h, "Sort", "Name"),
+            Cmd::AppTile(x, y, w, h, "clock", "Clock", 1),
+            Cmd::Fab(x, y, w, h, "download"),
+            Cmd::Card(x, y, w, h, 1),
+            Cmd::TextField(x, y, w, h, "search", "typed", "hint"),
+        ]
+    };
+    let (bw, bh) = (body.w, body.h);
+    let far: Vec<Cmd> = every(-1000, -1000, bw + 2000, bh + 2000);
+    let mut edges = Vec::new();
+    for (x, y) in [(-150, -150), (bw - 150, -150), (-150, bh - 150), (bw - 150, bh - 150), (-290, 400), (bw - 10, 400), (400, -290), (400, bh - 10)] {
+        edges.extend(every(x, y, 300, 300));
+    }
+    // (wholly outside: above the body, where the status bar is when it is shown, and on each other side)
+    let mut outside = Vec::new();
+    for (x, y) in [(100, -400), (-400, 100), (bw + 100, 100), (100, bh + 100)] {
+        outside.extend(every(x, y, 300, 300));
+    }
+    outside.push(Cmd::Fill(40, 40, 60, 60, 0));
+    // A clip that names more than the body, and the clip taken away, leave the body as the part drawn on.
+    let mut clipped = vec![Cmd::Clip(-5000, -5000, 20_000, 20_000)];
+    clipped.extend(every(-1000, -1000, bw + 2000, bh + 2000));
+    clipped.push(Cmd::Clip(-300, -300, 600, 600));
+    clipped.extend(every(-200, -200, 500, 500));
+    clipped.push(Cmd::ClipClear);
+    clipped.extend(every(-1000, -1000, bw + 2000, bh + 2000));
+    // (and a clip that has no part in the body draws nothing from then on, until it is taken away)
+    clipped.push(Cmd::Clip(0, -500, bw, 400));
+    clipped.push(Cmd::Fill(-5000, -5000, 20_000, 20_000, 128));
+    vec![("far", far), ("edges", edges), ("outside", outside), ("clipped", clipped)]
+}
+
+#[test]
+fn whatever_an_app_draws_lands_in_its_body() {
+    let root = fresh_root("body");
+    // The body under the status bar, where the bar is shown; the whole screen; and a body that is a part of a
+    // larger canvas on every side.
+    let inner = Rect { x: 300, y: 200, w: 900, h: 1400 };
+    for (b, body) in [body_under_the_bar(), WHOLE, inner].into_iter().enumerate() {
+        for (i, (name, cmds)) in passes_that_reach_out(body).into_iter().enumerate() {
+            let mut rt = installed(&format!("test.body.{b}.{i}"), &BOTH, &pass(&cmds));
+            for theme in [UiTheme::Gothic, UiTheme::Classic] {
+                ui_set_theme(theme);
+                let before = patterned(SCREEN.0, SCREEN.1);
+                let mut c = before.clone();
+                rt.draw(&mut c, body, 0);
+                assert_eq!(rt.error(), None, "{name}");
+                assert_eq!(changed_outside(&before, &c, body), 0, "{name} in {theme:?}, a body at {},{}: pixels outside the body changed", body.x, body.y);
+                assert_eq!(c.clip, before.clip, "{name}: the canvas keeps its clip");
+                assert_ne!(inked(&c, body), 0, "{name} in {theme:?}: the pass drew in the body");
+            }
+        }
+    }
+    // The last command of "far" and of "clipped" covers the body: it is filled to its edges, and no farther.
+    ui_set_theme(UiTheme::Gothic);
+    let body = body_under_the_bar();
+    let mut rt = installed("test.body.black", &BOTH, &pass(&[Cmd::Clip(-5000, -5000, 20_000, 20_000), Cmd::Fill(-5000, -5000, 20_000, 20_000, 0), Cmd::ClipClear, Cmd::Fill(-9, -9, 10, 10, 255)]));
+    let before = patterned(SCREEN.0, SCREEN.1);
+    let mut c = before.clone();
+    rt.draw(&mut c, body, 0);
+    assert_eq!(changed_outside(&before, &c, body), 0);
+    assert_eq!(inked(&c, body), (body.w * body.h - 1) as usize, "the body is black to its edges, but for the one white pixel of the last command");
+    assert_eq!(c.px[(body.y * c.stride + body.x) as usize], 255);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn drawing_keeps_to_the_clip_it_is_given_too() {
+    let root = fresh_root("clip");
+    let body = body_under_the_bar();
+    let black = pass(&[Cmd::Fill(-5000, -5000, 20_000, 20_000, 0), Cmd::Clip(-5000, -5000, 20_000, 20_000), Cmd::Fill(-5000, -5000, 20_000, 20_000, 0), Cmd::ClipClear, Cmd::Fill(-5000, -5000, 20_000, 20_000, 0)]);
+    let mut rt = installed("test.clip", &BOTH, &black);
+    // The caller composes a part of the screen that holds a corner of the body: only that corner is drawn.
+    let part = Rect { x: 100, y: 20, w: 500, h: 300 };
+    let before = patterned(SCREEN.0, SCREEN.1);
+    let mut c = before.clone();
+    canvas_set_clip(&mut c, part);
+    rt.draw(&mut c, body, 0);
+    let corner = rect_intersect(part, body);
+    assert_eq!(changed_outside(&before, &c, corner), 0);
+    assert_eq!(inked(&c, corner), (corner.w * corner.h) as usize);
+    assert!((corner.y..corner.y + corner.h).all(|y| (corner.x..corner.x + corner.w).all(|x| c.px[(y * c.stride + x) as usize] == 0)));
+    assert_eq!(c.clip, part);
+    // A part that holds none of the body (the status bar's strip): nothing is drawn.
+    let mut c = before.clone();
+    canvas_set_clip(&mut c, Rect { x: 0, y: 0, w: SCREEN.0, h: body.y });
+    rt.draw(&mut c, body, 0);
+    assert_eq!(changed_outside(&before, &c, RECT_EMPTY), 0);
+    let _ = std::fs::remove_dir_all(&root);
+}

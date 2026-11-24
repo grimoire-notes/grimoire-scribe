@@ -20,6 +20,9 @@
 //! ```
 //!
 //! `phase` is 0 down, 1 move, 2 up; `source` is 0 touch, 1 pen. Coordinates are body-local.
+//! The body is all a module draws on: every command is drawn with the canvas clipped to it, whatever
+//! coordinates and sizes it carries, and the `clip` call makes that part smaller, never larger
+//! (`AppRuntime::draw`). The shared status bar, when it is shown, is above the body.
 //! `app_stop` is called exactly once when the app is leaving, whether by gesture, `close()`, an
 //! update, or removal. It is the safe place to save state.
 //!
@@ -650,7 +653,7 @@ impl AppRuntime {
         })
     }
 
-    /// Calls `app_draw` and renders its commands into `body`.
+    /// Calls `app_draw` and renders its commands into `body`, and nowhere else on the canvas.
     pub fn draw(&mut self, c: &mut Canvas, body: Rect, elapsed_ms: i32) {
         if self.error.is_some() {
             return;
@@ -677,8 +680,12 @@ impl AppRuntime {
         let commands = std::mem::take(&mut self.store.data_mut().commands);
         self.status = std::mem::take(&mut self.store.data_mut().status);
         self.texts = std::mem::take(&mut self.store.data_mut().texts);
-        canvas_fill(c, body, 255);
+        // Nothing below draws outside the body: the canvas is clipped to it (and to what the caller already
+        // clipped to) until the commands are drawn, and a `clip` of the module's is a part of that.
         let saved_clip = c.clip;
+        let in_body = rect_intersect(saved_clip, body);
+        canvas_set_clip(c, in_body);
+        canvas_fill(c, body, 255);
         for cmd in commands {
             match cmd {
                 DrawCmd::Fill(r, gray) => canvas_fill(c, abs(body, r), gray),
@@ -733,8 +740,8 @@ impl AppRuntime {
                     self.texts.push(text);
                     self.texts.push(hint);
                 }
-                DrawCmd::Clip(r) => canvas_set_clip(c, abs(body, r)),
-                DrawCmd::ClipClear => canvas_set_clip(c, saved_clip),
+                DrawCmd::Clip(r) => canvas_set_clip(c, rect_intersect(abs(body, r), in_body)),
+                DrawCmd::ClipClear => canvas_set_clip(c, in_body),
             }
         }
         c.clip = saved_clip;

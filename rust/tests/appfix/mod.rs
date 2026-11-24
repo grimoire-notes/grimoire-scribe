@@ -596,6 +596,13 @@ pub fn loops() -> Vec<u8> {
     Wasm::new(forever(&[])).bytes()
 }
 
+/// A module that draws far outside its body: black from far above and left of it to far below and right of it,
+/// then the same through a `clip` as wide, and again with the clip taken away.
+pub fn wide() -> Vec<u8> {
+    let black = call("fill_rect", &[-5000, -5000, 20_000, 20_000, 0]);
+    Wasm::with(seq(&[black.clone(), call("clip", &[-5000, -5000, 20_000, 20_000]), black.clone(), call("clip_clear", &[]), black, call("status", &[0, 4])]), b"wide").bytes()
+}
+
 /// A package of the scenarios' data root: its id, name, manifest and module.
 pub struct Package {
     pub id: &'static str,
@@ -615,6 +622,8 @@ pub fn packages() -> Vec<Package> {
         package("test.app.loop", "Loop", &[], false, loops()),
         // (it counts its drawing passes)
         package("test.app.counts", "Counts", &[], false, counts()),
+        // (it shows the status bar, and draws black from far outside its body)
+        package("test.app.wide", "Wide", &[], true, wide()),
     ]
 }
 
