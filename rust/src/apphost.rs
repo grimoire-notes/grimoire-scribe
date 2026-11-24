@@ -110,6 +110,11 @@ const HTTP_USER_AGENT: &str = "Grimoire-App/2.3";
 /// (childcaps.rs): the margin a child with no number of its own has there.
 const HTTP_CHILD_MARGIN: u64 = 256 << 20;
 
+/// The variables curl takes a proxy from for an http or https address. A request's curl starts
+/// without them (`http_no_proxy`): a request goes to the address it names, whatever Grimoire's
+/// own environment holds.
+const HTTP_PROXY_VARIABLES: [&str; 5] = ["http_proxy", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"];
+
 /// The kinds of a request's files: the endings of their names.
 const HTTP_FILE_KINDS: [&str; 4] = ["body", "status", "err", "request"];
 
@@ -1053,6 +1058,14 @@ fn http_args(method: &str, url: &str, header_lines: &[&str], body_path: &str, re
     args
 }
 
+/// Takes the proxy variables out of the environment the child of `cmd` starts with. The rest of
+/// Grimoire's environment is passed on as it is.
+fn http_no_proxy(cmd: &mut Command) {
+    for name in HTTP_PROXY_VARIABLES {
+        cmd.env_remove(name);
+    }
+}
+
 /// The rules a request's child starts under, set in the child between the fork and curl's start,
 /// as the tree's other children carry them (wifi.rs, sandbox.rs, childcaps.rs). Everything it uses
 /// was worked out before the fork: here there are only system calls, no allocation and no lock.
@@ -1182,6 +1195,7 @@ impl HostState {
             cmd.args(first);
         }
         cmd.args(&args).stdin(std::process::Stdio::null()).stdout(status_file).stderr(err_file);
+        http_no_proxy(&mut cmd);
         let caps = child_caps_plan(child_vm_base(child_vm_bytes()), HTTP_CHILD_MARGIN);
         let oom = caps.oom_adj.to_string();
         // SAFETY: getpid has no preconditions.
@@ -1888,6 +1902,37 @@ mod tests {
         assert!(gone(pid));
         // SAFETY: closes the descriptor this test made.
         unsafe { libc::close(kept) };
+    }
+
+    // The child of a request starts without the variables curl takes a proxy from, and with the
+    // rest of the environment: of a command that was given all five and one more variable, and of
+    // a request's own child, whatever this test's environment holds.
+    #[test]
+    fn the_child_of_a_request_has_no_proxy_variable() {
+        let names = |text: &str| -> Vec<String> { text.lines().filter_map(|l| l.split_once('=')).map(|(name, _)| name.to_string()).collect() };
+        let proxies = ["http_proxy", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"];
+        assert_eq!(HTTP_PROXY_VARIABLES, proxies);
+
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "env"]);
+        for name in proxies {
+            cmd.env(name, "http://127.0.0.1:9/");
+        }
+        cmd.env("GRIMOIRE_TEST_KEPT", "1");
+        http_no_proxy(&mut cmd);
+        let given = names(&String::from_utf8(cmd.output().unwrap().stdout).unwrap());
+        assert!(proxies.iter().all(|p| !given.iter().any(|n| n == p)), "{given:?}");
+        assert!(given.iter().any(|n| n == "GRIMOIRE_TEST_KEPT") && given.iter().any(|n| n == "PATH"), "{given:?}");
+
+        let dir = scratch("no-proxy");
+        let mut st = host_standing_in(&dir, &format!("{FIND_ANSWER}env > \"$out\"; printf 200"));
+        assert_eq!(st.http_start("GET", "http://127.0.0.1:9/", "", b""), 0);
+        poll_to_end(&mut st);
+        let (code, body, error) = outcome(&st);
+        assert_eq!((code, error), (200, String::new()));
+        let given = names(&String::from_utf8(body).unwrap());
+        assert!(proxies.iter().all(|p| !given.iter().any(|n| n == p)), "{given:?}");
+        assert!(given.iter().any(|n| n == "PATH"), "{given:?}");
     }
 
     // The size limit a request's child starts under holds with no poll at all: the answer file of a

@@ -219,7 +219,8 @@ The address begins with `http://` or `https://`, is at most 4096 bytes, has no s
 control character, and is taken as written: brackets and braces in it are part of the address.
 Any other address is a bad argument: `http_start` returns -1 and nothing is sent. A space in an
 address is written `%20`. Redirects are followed, at most 5 of them, and only to `http` and
-`https` addresses; a request that is redirected further, or elsewhere, ends as a failure.
+`https` addresses; a request that is redirected further, or elsewhere, ends as a failure. A
+request goes to the address it names: a proxy set in Grimoire's environment is not used.
 
 Headers are one `Name: value` per line, at most 32 lines of at most 2048 bytes each (and 32 KiB
 together). A header line is a name, a colon and a value: the name is one or more HTTP token
