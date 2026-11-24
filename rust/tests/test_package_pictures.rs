@@ -349,7 +349,29 @@ fn a_file_through_a_link_or_outside_its_folder_is_never_read() {
     check!(std::fs::read_dir(&kept).unwrap().count() == 2);
     picture_forget(&s);
     check!(std::fs::read_dir(&kept).unwrap().count() == 2);
+    // nor does the prune list or remove anything there, called by itself with limits that would empty the folder
+    check!(picture_cache_tidy(PicForm::AppIcon, 0, 0) == 0);
+    check!(std::fs::read_dir(&kept).unwrap().count() == 2);
     std::fs::remove_file(picture_cache_dir(PicForm::AppIcon)).unwrap();
+    // the same with a link higher up: `.cache/packages`, then `.cache` (the folder put back where it was each time)
+    std::fs::rename(&kept, picture_cache_dir(PicForm::AppIcon)).unwrap();
+    check!(picture(&s).is_some());
+    for at in [".cache/packages", ".cache"] {
+        let (real, moved) = (format!("{g}/{at}"), format!("{elsewhere}/moved"));
+        std::fs::rename(&real, &moved).unwrap();
+        std::os::unix::fs::symlink(&moved, &real).unwrap();
+        // (the folder's files, looked at through the link)
+        let files = || std::fs::read_dir(picture_cache_dir(PicForm::AppIcon)).map(|rd| rd.count()).unwrap_or(0);
+        check!(files() == 2);
+        check!(matches!(picture_cached(&s), Cached::Nothing));
+        check!(picture_cache_tidy(PicForm::AppIcon, 0, 0) == 0 && files() == 2);
+        picture_forget(&s);
+        check!(files() == 2);
+        std::fs::remove_file(&real).unwrap();
+        std::fs::rename(&moved, &real).unwrap();
+    }
+    // with no link on the way the same call empties it
+    check!(picture_cache_tidy(PicForm::AppIcon, 0, 0) == 2 && cache_names(PicForm::AppIcon).is_empty());
 }
 
 // What the UI takes of the cache: an entry whose `.info` is exactly the text for the file asked for, and a picture

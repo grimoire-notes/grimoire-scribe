@@ -572,10 +572,14 @@ fn worker_picture(data: &[u8], form: PicForm) -> Result<(i32, i32, Vec<u8>), Fai
 /// past either, its oldest entries go (both files of an entry together, by their newest time), down to three
 /// quarters of each (`prune_plan`). The names alone first: while the folder cannot be past a limit by the most its
 /// files can hold, nothing more is read. Entries that are no plain file are left to themselves (never followed,
-/// never counted). How many files went.
+/// never counted). A cache folder reached through a link is not this cache's: nothing in it is listed or removed
+/// (checked here, whoever calls, as the read, the job and `picture_forget` each check). How many files went.
 pub fn picture_cache_tidy(form: PicForm, max_files: usize, max_bytes: u64) -> usize {
     use std::os::unix::ffi::OsStrExt;
     let dir = &picture_cache_dir(form);
+    if !no_link_below(&store_root(), dir) {
+        return 0;
+    }
     let Ok(rd) = std::fs::read_dir(dir) else { return 0 };
     let mut names: Vec<std::ffi::OsString> = Vec::new();
     for e in rd.flatten() {
