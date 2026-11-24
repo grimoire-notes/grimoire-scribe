@@ -814,6 +814,12 @@ fn after_icon_update_all(ui: &mut WidgetPkgUi, data: &[u8], a: &mut App) {
 
 /// Polls the install's curl and runs the open keyboard's hold and settle timers, as every screen's
 /// tick does. Called from the library tick.
+/// Whether the Packages page can be drawn again by itself now (an app's icon that came from the worker): not under
+/// a press, whose lift draws, nor under its keyboard, which the page does not move under.
+pub(crate) fn packages_ui_at_rest(a: &App) -> bool {
+    a.pkg.pressed.is_none() && !a.pkg.kb.open
+}
+
 pub fn packages_ui_tick(a: &mut App, now: u32) {
     if !a.pkg.open {
         return;

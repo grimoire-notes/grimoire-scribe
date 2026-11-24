@@ -805,6 +805,32 @@ pub fn canvas_downsample_keep_lines(dst: &mut Canvas, src: &Canvas, weight: f32)
     }
 }
 
+/// The smallest rect that holds every pixel in which `b` differs from `a`: empty when they are the same picture, the
+/// whole of `b` when they are not the same size. (What a frame drawn again changed of the one before it.)
+pub fn canvas_changed_rect(a: &Canvas, b: &Canvas) -> Rect {
+    let (w, h, stride) = (b.w.max(0) as usize, b.h.max(0) as usize, b.stride.max(0) as usize);
+    if (a.w, a.h, a.stride) != (b.w, b.h, b.stride) || a.px.len() != b.px.len() || stride < w || b.px.len() < stride * h {
+        return Rect { x: 0, y: 0, w: b.w, h: b.h };
+    }
+    fn row(c: &Canvas, y: usize, stride: usize, w: usize) -> &[u8] {
+        &c.px[y * stride..y * stride + w]
+    }
+    let differs = |y: &usize| row(a, *y, stride, w) != row(b, *y, stride, w);
+    let Some(y0) = (0..h).find(differs) else { return RECT_EMPTY };
+    let y1 = (y0..h).rev().find(differs).unwrap_or(y0);
+    let (mut x0, mut x1) = (w, 0);
+    for y in y0..=y1 {
+        let (ra, rb) = (row(a, y, stride, w), row(b, y, stride, w));
+        if let Some(x) = (0..x0).find(|&x| ra[x] != rb[x]) {
+            x0 = x;
+        }
+        if let Some(x) = (x1..w).rev().find(|&x| ra[x] != rb[x]) {
+            x1 = x;
+        }
+    }
+    Rect { x: x0 as i32, y: y0 as i32, w: (x1 + 1 - x0) as i32, h: (y1 + 1 - y0) as i32 }
+}
+
 /// Scales src into box keeping its aspect (box filter down, nearest up), centered in box.
 pub fn canvas_blit_fit(dst: &mut Canvas, src: &Canvas, box_: Rect) {
     let sc = (box_.w as f32 / src.w as f32).min(box_.h as f32 / src.h as f32);
@@ -970,6 +996,31 @@ mod tests {
         let mut c = Canvas::default();
         assert_eq!(canvas_init(&mut c, w, h), 0);
         c
+    }
+
+    // What changed between two frames: nothing; one pixel; the box around pixels far apart; the edges; and the
+    // whole of the second when the two are not the same size.
+    #[test]
+    fn the_changed_rect_holds_every_changed_pixel_and_no_more() {
+        let a = canvas(40, 30);
+        let mut b = a.clone();
+        assert_eq!(canvas_changed_rect(&a, &b), RECT_EMPTY);
+        b.px[(7 * b.stride + 5) as usize] = 0;
+        assert_eq!(canvas_changed_rect(&a, &b), Rect { x: 5, y: 7, w: 1, h: 1 });
+        b.px[(20 * b.stride + 31) as usize] = 9;
+        assert_eq!(canvas_changed_rect(&a, &b), Rect { x: 5, y: 7, w: 27, h: 14 });
+        b.px[(12 * b.stride + 2) as usize] = 9;
+        assert_eq!(canvas_changed_rect(&a, &b), Rect { x: 2, y: 7, w: 30, h: 14 });
+        assert_eq!(canvas_changed_rect(&b, &a), Rect { x: 2, y: 7, w: 30, h: 14 });
+        let mut c = a.clone();
+        c.px[0] = 1;
+        c.px[(29 * c.stride + 39) as usize] = 1;
+        assert_eq!(canvas_changed_rect(&a, &c), Rect { x: 0, y: 0, w: 40, h: 30 });
+        canvas_fill(&mut c, Rect { x: 0, y: 0, w: 40, h: 30 }, 255);
+        canvas_fill(&mut c, Rect { x: 10, y: 4, w: 6, h: 3 }, 100);
+        assert_eq!(canvas_changed_rect(&a, &c), Rect { x: 10, y: 4, w: 6, h: 3 });
+        assert_eq!(canvas_changed_rect(&canvas(40, 31), &a), Rect { x: 0, y: 0, w: 40, h: 30 });
+        assert_eq!(canvas_changed_rect(&Canvas::default(), &Canvas::default()), RECT_EMPTY);
     }
 
     fn at(c: &Canvas, x: i32, y: i32) -> u8 {

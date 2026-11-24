@@ -15,7 +15,8 @@ use crate::sha256::sha256_of;
 pub const APP_PKG_INDEX: &str = "packages/apps-index.json";
 pub const APP_PKG_DIR: &str = "packages/apps";
 pub const APP_PKG_COUNT_MAX: usize = 64;
-/// A bundled app icon is one small `.ico`; its pixels are decoded by appicon.rs.
+/// A bundled app icon is one small `.ico`; its pixels are decoded by the safe loader's picture worker (pkgpics.rs,
+/// issue #236), never here or in appicon.rs.
 pub const APP_ICON_MAX: usize = 256 * 1024;
 const APP_SETTINGS_FILE_MAX: usize = 64 * 1024;
 const APP_SETTINGS_VALUE_MAX: usize = 64;
@@ -108,6 +109,15 @@ pub fn app_package_icon_path(it: &WidgetInstall) -> Option<String> {
         return None;
     }
     Some(format!("{}/{icon}", app_package_dir(&it.id)))
+}
+
+/// The picture the worker made of an installed app's bundled icon goes from its cache (pkgpics.rs) as the app is
+/// removed or replaced. The icon's file is looked at (one stat), never read.
+fn forget_icon_picture(it: &WidgetInstall) {
+    use crate::pkgpics::{picture_forget, PicForm, PicSrc};
+    if let Some(src) = app_package_icon_path(it).and_then(|path| PicSrc::of(&path, PicForm::AppIcon)) {
+        picture_forget(&src);
+    }
 }
 
 /// Validates an app manifest for this build and device. `canvas_w`/`canvas_h` are accepted for the
@@ -397,6 +407,9 @@ pub fn app_package_install(manifest: &str, artifact: &[u8], icon: Option<&[u8]>,
     }
     let old = format!("{dir}.previous");
     let _ = std::fs::remove_dir_all(&old);
+    if let Some(was) = index.iter().find(|x| x.id == p.id) {
+        forget_icon_picture(was);
+    }
     if std::fs::metadata(&dir).is_ok() && std::fs::rename(&dir, &old).is_err() {
         let _ = std::fs::remove_dir_all(&stage);
         return Err("Could not move the installed version aside.".into());
@@ -444,6 +457,9 @@ pub fn app_package_remove(id: &str, keep_state: bool) -> Result<(), String> {
         return Err("That id is not an app package's.".into());
     }
     let dir = app_package_dir(id);
+    if let Some(was) = app_package_installed(id) {
+        forget_icon_picture(&was);
+    }
     if keep_state {
         let state = format!("{dir}/state");
         if std::fs::metadata(&state).is_ok() {
