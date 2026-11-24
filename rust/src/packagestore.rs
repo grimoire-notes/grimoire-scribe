@@ -40,6 +40,13 @@ const H_REPO: i32 = 815;
 const H_UNINSTALL: i32 = 816;
 const H_UNINSTALL_YES: i32 = 817;
 const H_QUERY_CLEAR: i32 = 818;
+const H_DESC_MORE: i32 = 819;
+const H_DESC_PREV: i32 = 820;
+const H_DESC_NEXT: i32 = 821;
+const H_LICENSE: i32 = 822;
+const H_LICENSE_PREV: i32 = 823;
+const H_LICENSE_NEXT: i32 = 824;
+const H_AGREE: i32 = 825;
 /// A card of the Installed tab in a hit: `H_CARD`'s argument from this number up is an index into
 /// `PackageStoreUi::installed` rather than the catalog.
 const INSTALLED_CARD: i32 = 10_000;
@@ -49,6 +56,7 @@ const INDEX_TOKENS: usize = 32 * 1024;
 const PACKAGE_MAX: usize = 200;
 const SCREENSHOT_MAX: usize = crate::pkgpics::SHOT_FILE_MAX;
 const INSTALL_ICON_MAX: usize = crate::apppkg::APP_ICON_MAX;
+const LICENSE_MAX: usize = 256 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StoreView {
@@ -63,6 +71,10 @@ pub enum StoreView {
     InstallRepo,
     /// asking before a package is uninstalled
     Remove,
+    /// reading a package's license, installed or offered
+    License,
+    /// accepting a package's license before it is installed
+    Agree,
 }
 
 /// Which field the Store's keyboard edits.
@@ -140,6 +152,8 @@ enum FetchStage {
     Screenshot,
     InstallIcon,
     ListIcon,
+    /// a repository's license file, for the License page
+    License,
 }
 
 struct FetchJob {
@@ -238,6 +252,17 @@ pub struct PackageStoreUi {
     shot_for: String,
     shot_tried: bool,
     shot_index: i32,
+    /// the package page's description is shown whole (its Read more was tapped)
+    desc_more: bool,
+    /// the description reader's page (0-based)
+    desc_page: i32,
+    /// the license text the repository answered with, and what is said while there is none
+    license_text: String,
+    license_note: String,
+    license_urls: Vec<String>,
+    license_try: usize,
+    /// the license page (0-based), for a license longer than one page
+    license_page: i32,
     /// the pictures asked of the worker and not there yet
     pic_waits: Vec<PicWait>,
     pub refreshing: bool,
@@ -268,6 +293,13 @@ impl PackageStoreUi {
 
     fn clear_selection(&mut self) {
         self.selected = None;
+        self.desc_more = false;
+        self.desc_page = 0;
+        self.license_text.clear();
+        self.license_note.clear();
+        self.license_urls.clear();
+        self.license_try = 0;
+        self.license_page = 0;
         self.manifest = None;
         self.manifest_url.clear();
         self.manifest_yaml.clear();
@@ -1554,6 +1586,21 @@ fn after_update_manifest(a: &mut App, data: &[u8]) {
     let h = a.h - status_reserved(a);
     match accept_manifest(&mut a.store, data, w, h) {
         Ok(p) => {
+            // The update would install terms the user never agreed to: it waits for an accept in the
+            // Store's package page, where the license can be read first.
+            let was = a.store.selected_package().map(installed_license).unwrap_or_default();
+            if !was.is_empty() && !p.license.is_empty() && !was.eq_ignore_ascii_case(&p.license) {
+                let mut msg = String::new();
+                csnprintf!(
+                    &mut msg,
+                    500,
+                    tr("The update changes the license from %s to %s. Open the package in the Store and accept it there."),
+                    &was,
+                    &p.license
+                );
+                update_failed(a, msg);
+                return;
+            }
             a.store.manifest = Some(p);
             a.store.update_status = tr("Downloading update...").to_string();
             a.store.update_error.clear();
@@ -1714,11 +1761,23 @@ fn tick_install(a: &mut App) -> bool {
                     install_pending(a, Some(&icon));
                 }
             }
+            FetchStage::License => {
+                let text = String::from_utf8_lossy(&data).into_owned();
+                if text.trim().is_empty() {
+                    start_next_license(a);
+                } else {
+                    a.store.license_text = text;
+                    a.store.license_page = 0;
+                    a.store.license_note.clear();
+                }
+            }
             _ => {}
         },
         Err(e) => {
             if a.store.update_installing {
                 update_failed(a, e);
+            } else if job.stage == FetchStage::License {
+                start_next_license(a);
             } else if job.stage == FetchStage::Branch {
                 // The GitHub API is an optimization: a failed lookup falls back to main's package.yaml.
                 let input = a.store.repo_input.clone();
@@ -1829,6 +1888,13 @@ fn open_detail(a: &mut App, n: i32) {
     // (nor the cards' pictures still queued for the worker)
     unqueue_list_pictures(&mut a.store);
     a.store.selected = Some(pkg.id.clone());
+    a.store.desc_more = false;
+    a.store.desc_page = 0;
+    a.store.license_text.clear();
+    a.store.license_note.clear();
+    a.store.license_urls.clear();
+    a.store.license_try = 0;
+    a.store.license_page = 0;
     a.store.view = StoreView::Detail;
     a.store.status.clear();
     a.store.error.clear();
@@ -1838,6 +1904,141 @@ fn open_detail(a: &mut App, n: i32) {
     a.store.icon_tried = false;
     a.store.shot_tried = false;
     start_selected_assets(a);
+    redraw(a);
+}
+
+/// The license the installed version was installed under (the manifest saved with it), or nothing
+/// when the package is not installed.
+fn installed_license(p: &StorePackage) -> String {
+    if installed_kind(&p.id).is_none() {
+        return String::new();
+    }
+    let m = if p.kind == "app" {
+        app_package_installed_manifest(&p.id)
+    } else {
+        widget_package_installed_manifest(&p.id)
+    };
+    m.map(|m| m.license.trim().to_string()).filter(|l| !l.is_empty()).unwrap_or_default()
+}
+
+/// The Trust page's continue: the license is put in front of the user when the package has one
+/// (always for a first install, and for an update only when the license differs from the one the
+/// installed version was accepted under). With nothing to accept the download starts at once.
+fn after_trust(a: &mut App) {
+    let Some(p) = a.store.selected_package().cloned() else { return };
+    let mut new = a.store.manifest.as_ref().map_or(String::new(), |m| m.license.trim().to_string());
+    if new.is_empty() {
+        new = p.license.trim().to_string();
+    }
+    let was = installed_license(&p);
+    if new.is_empty() || (!was.is_empty() && was.eq_ignore_ascii_case(&new)) {
+        start_artifact(a);
+    } else {
+        open_agree(a);
+    }
+}
+
+/// The license of the version on offer, to read and accept before anything is downloaded.
+fn open_agree(a: &mut App) {
+    let Some(p) = a.store.selected_package().cloned() else { return };
+    let urls = match a.store.manifest.as_ref() {
+        Some(m) => crate::widgetpkgui::installed_license_candidates(&a.store.manifest_url, m),
+        None => {
+            let mut out = Vec::new();
+            if let Some((base, _)) = p.manifest_url.rsplit_once('/') {
+                out.extend(crate::widgetpkgui::license_urls(base));
+            }
+            if let Some(repo) = widget_github_repo(&p.repository) {
+                for branch in ["main", "master"] {
+                    out.extend(crate::widgetpkgui::license_urls(&format!("https://raw.githubusercontent.com/{repo}/{branch}")));
+                }
+            }
+            out
+        }
+    };
+    let ui = &mut a.store;
+    ui.view = StoreView::Agree;
+    ui.install_job = None;
+    ui.license_page = 0;
+    ui.license_text.clear();
+    ui.license_urls = urls;
+    ui.license_try = 0;
+    ui.license_note.clear();
+    if offline() {
+        ui.license_note = tr("Connect to the Internet to read the license's text.").to_string();
+        redraw(a);
+    } else if ui.license_urls.is_empty() {
+        ui.license_note = tr("The package names no license text the Store could read.").to_string();
+        redraw(a);
+    } else {
+        start_next_license(a);
+    }
+}
+
+/// Opens the selected package's license: the installed version's when it is installed (the one the
+/// install agreed to), else the one the Store offers. The text comes from the repository (its
+/// `license_url`, or the LICENSE file beside the manifest); the license's name shows while it is read.
+fn open_license(a: &mut App) {
+    let Some(p) = a.store.selected_package().cloned() else { return };
+    let installed = if p.kind == "app" {
+        app_package_installed_manifest(&p.id)
+    } else {
+        widget_package_installed_manifest(&p.id)
+    };
+    let source = installed_for(&p).map(|it| it.source_url).unwrap_or_default();
+    let mut urls = Vec::new();
+    match installed.as_ref() {
+        Some(m) => urls = crate::widgetpkgui::installed_license_candidates(&source, m),
+        None => {
+            if let Some((base, _)) = p.manifest_url.rsplit_once('/') {
+                urls.extend(crate::widgetpkgui::license_urls(base));
+            }
+            if let Some(repo) = widget_github_repo(&p.repository) {
+                for branch in ["main", "master"] {
+                    urls.extend(crate::widgetpkgui::license_urls(&format!("https://raw.githubusercontent.com/{repo}/{branch}")));
+                }
+            }
+        }
+    }
+    let ui = &mut a.store;
+    ui.view = StoreView::License;
+    ui.install_job = None;
+    ui.license_page = 0;
+    ui.license_text.clear();
+    ui.license_urls = urls;
+    ui.license_try = 0;
+    ui.license_note.clear();
+    if offline() {
+        ui.license_note = tr("Connect to the Internet to read the license's text.").to_string();
+        redraw(a);
+    } else if ui.license_urls.is_empty() {
+        ui.license_note = tr("The repository has no license text the Store could read.").to_string();
+        redraw(a);
+    } else {
+        start_next_license(a);
+    }
+}
+
+/// Asks for the next license file the repository may keep. With none left the page says so (the
+/// license's name still shows).
+fn start_next_license(a: &mut App) {
+    let mut started = false;
+    {
+        let ui = &mut a.store;
+        while ui.license_try < ui.license_urls.len() {
+            let url = ui.license_urls[ui.license_try].clone();
+            ui.license_try += 1;
+            ui.license_note = tr("Reading the license...").to_string();
+            if begin_fetch(ui, FetchSlot::Install, FetchStage::License, &url, LICENSE_MAX, "").is_ok() {
+                started = true;
+                break;
+            }
+        }
+        if !started {
+            ui.license_text.clear();
+            ui.license_note = tr("The repository has no license text the Store could read.").to_string();
+        }
+    }
     redraw(a);
 }
 
@@ -1907,6 +2108,12 @@ fn tapped(a: &mut App, h: Hit) {
         H_BACK => {
             match a.store.view {
                 StoreView::List => close(a),
+                StoreView::Agree => {
+                    a.store.view = StoreView::Trust;
+                    a.store.install_job = None;
+                    a.store.drop_waits(&|stage| stage == FetchStage::License);
+                    redraw(a);
+                }
                 StoreView::Trust | StoreView::Error if a.store.repo_install => {
                     a.store.view = StoreView::List;
                     a.store.error.clear();
@@ -1917,7 +2124,7 @@ fn tapped(a: &mut App, h: Hit) {
                     a.store.selected = None;
                     redraw(a);
                 }
-                StoreView::Trust | StoreView::Error | StoreView::Qr | StoreView::Remove => {
+                StoreView::Trust | StoreView::Error | StoreView::Qr | StoreView::Remove | StoreView::License => {
                     a.store.view = StoreView::Detail;
                     a.store.error.clear();
                     a.store.install_job = None;
@@ -1960,6 +2167,28 @@ fn tapped(a: &mut App, h: Hit) {
             a.store.page = 0;
             redraw(a);
         }
+        H_DESC_MORE => {
+            a.store.desc_more = !a.store.desc_more;
+            a.store.desc_page = 0;
+            redraw(a);
+        }
+        H_DESC_PREV => {
+            a.store.desc_page = (a.store.desc_page - 1).max(0);
+            redraw(a);
+        }
+        H_DESC_NEXT => {
+            a.store.desc_page += 1;
+            redraw(a);
+        }
+        H_LICENSE => open_license(a),
+        H_LICENSE_PREV => {
+            a.store.license_page = (a.store.license_page - 1).max(0);
+            redraw(a);
+        }
+        H_LICENSE_NEXT => {
+            a.store.license_page += 1;
+            redraw(a);
+        }
         H_UNINSTALL => {
             a.store.view = StoreView::Remove;
             redraw(a);
@@ -1982,7 +2211,12 @@ fn tapped(a: &mut App, h: Hit) {
             redraw(a);
         }
         H_INSTALL => begin_install(a),
-        H_TRUST => start_artifact(a),
+        H_TRUST => after_trust(a),
+        H_AGREE => {
+            a.store.install_job = None;
+            a.store.drop_waits(&|stage| stage == FetchStage::License);
+            start_artifact(a);
+        }
         H_QR => {
             a.store.view = StoreView::Qr;
             redraw(a);
@@ -2067,6 +2301,9 @@ pub fn store_pointer(a: &mut App, ph: i32, ev: &InEvent) {
 // ---- layout and drawing ----
 
 const PAGER_H: i32 = 110;
+
+/// How many words of a package's description the page shows before it offers Read more.
+const DESC_WORDS: usize = 60;
 
 struct StorePage {
     content: Rect,
@@ -2397,6 +2634,12 @@ fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
         return;
     };
     let area = page.content;
+    // Reading the whole description: the page is the text, a page at a time, and the specs, the
+    // buttons and the screenshot are out of its way.
+    if ui.desc_more {
+        draw_description_page(c, ui, area, &p);
+        return;
+    }
     let gap = gui_gap();
     let wide = area.w > area.h;
     let icon_sz = if wide { ui_px(150.0) } else { ui_px(140.0) };
@@ -2416,6 +2659,9 @@ fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     }
     if !p.repository.is_empty() {
         actions.push((tr("Repository URL").to_string(), IconKind::Link, H_QR, ButtonStyle::Plain));
+    }
+    if !installed_license(&p).is_empty() || !p.license.is_empty() {
+        actions.push((tr("License").to_string(), IconKind::Paper, H_LICENSE, ButtonStyle::Plain));
     }
     let action_h = ui_px(96.0);
     let action_gap = ui_px(12.0);
@@ -2454,20 +2700,18 @@ fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let rows_n = action_rows.len().max(1) as i32;
     let actions_h = rows_n * action_h + (rows_n - 1) * action_gap;
     let meta_h = ui_px(228.0);
-    let (info, shot, desc_h) = if wide {
+    let status_h = if ui.status.is_empty() { 0 } else { ui_px(50.0) };
+    let (info, shot) = if wide {
         let info = Rect::new(area.x, area.y, area.w * 43 / 100, area.h);
         let shot = Rect::new(area.x + info.w + gap * 2, area.y, area.w - info.w - gap * 2, area.h);
-        let desc_h = (info.h - header_h - ui_px(18.0) - actions_h - meta_h - ui_px(52.0))
-            .clamp(ui_px(260.0), ui_px(760.0));
-        (info, shot, desc_h)
+        (info, shot)
     } else {
-        let desc_h = ui_px(460.0);
-        let fixed = header_h + ui_px(18.0) + desc_h + ui_px(8.0) + meta_h + ui_px(16.0) + actions_h + ui_px(14.0);
+        let fixed = header_h + ui_px(18.0) + ui_px(460.0) + ui_px(8.0) + meta_h + status_h + ui_px(16.0) + actions_h + ui_px(14.0);
         let max_info = (area.h - gap - ui_px(520.0)).max(ui_px(760.0));
         let info_h = fixed.min(max_info).max(ui_px(760.0));
         let info = Rect::new(area.x, area.y, area.w, info_h);
         let shot = Rect::new(area.x, info.y + info.h + gap, area.w, (area.y + area.h - info.y - info.h - gap).max(ui_px(240.0)));
-        (info, shot, desc_h)
+        (info, shot)
     };
     let icon_r = Rect::new(info.x, info.y, icon_sz, icon_sz);
     ui_frame(c, icon_r, gui_radius(), 255, true, 0);
@@ -2487,16 +2731,36 @@ fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let sub = format!("{} · {} · {}", kind_word(&p), p.version, p.category);
     font_draw_left(c, FontFace::Regular, ui_small_size(), Rect::new(tx, info.y + ui_px(76.0), tw, ui_px(36.0)), &sub, 90);
     let y = info.y + header_h + ui_px(18.0);
-    draw_description(c, Rect::new(info.x, y, info.w, desc_h), &p);
-    let meta_y = y + desc_h + ui_px(8.0);
-    draw_meta(c, Rect::new(info.x, meta_y, info.w, meta_h), &p);
-    let ay = if wide {
-        info.y + info.h - actions_h
+    // The description stops short of the spec rows and of the line above the actions, so a long one
+    // pushes neither off the page: past DESC_WORDS words it is cut and offers Read more.
+    let ay = info.y + info.h - actions_h;
+    let below = (ay - status_h - ui_px(8.0)).max(y);
+    let desc_h = (below - meta_h - ui_px(8.0) - y).clamp(0, ui_px(760.0));
+    let words: Vec<&str> = p.description.split_whitespace().collect();
+    let cut = words.len() > DESC_WORDS;
+    let btn_h = if cut && desc_h >= ui_px(120.0) { ui_px(46.0) } else { 0 };
+    let body = if cut && !ui.desc_more {
+        let mut t = words[..DESC_WORDS].join(" ");
+        t.push_str("...");
+        t
     } else {
-        (meta_y + meta_h + ui_px(14.0)).min(info.y + info.h - actions_h)
+        p.description.clone()
     };
+    let text_h = (desc_h - btn_h - if btn_h > 0 { ui_px(6.0) } else { 0 }).max(0);
+    draw_description(c, Rect::new(info.x, y, info.w, text_h), &StorePackage { description: body, ..p.clone() });
+    if btn_h > 0 {
+        let label = if ui.desc_more { tr("Show less") } else { tr("Read more") };
+        let w = (font_measure(FontFace::Bold, ui_small_size(), label) + ui_px(56.0)).max(ui_px(170.0)).min(info.w);
+        let b = Rect::new(info.x, y + desc_h - btn_h, w, btn_h);
+        ui_frame(c, b, btn_h / 2, 255, true, 0);
+        ui_frame(c, b, btn_h / 2, 0, false, ui_px(3.0));
+        ui_text(c, FontFace::Bold, ui_small_size(), ui_small_size(), b, label, 1, true, 0);
+        hits_add(&mut ui.hits, b, H_DESC_MORE, 0);
+    }
+    let meta_y = y + desc_h + ui_px(8.0);
+    draw_meta(c, Rect::new(info.x, meta_y, info.w, (below - meta_y).clamp(0, meta_h)), &p);
     if !ui.status.is_empty() {
-        font_draw_left(c, FontFace::Regular, ui_small_size(), Rect::new(info.x, ay - ui_px(50.0), info.w, ui_px(44.0)), &ui.status, 90);
+        font_draw_left(c, FontFace::Regular, ui_small_size(), Rect::new(info.x, ay - status_h, info.w, ui_px(44.0)), &ui.status, 90);
     }
     let mut row_y = ay;
     for row in &action_rows {
@@ -2511,6 +2775,50 @@ fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
         row_y += action_h + action_gap;
     }
     draw_shot(c, ui, shot, &p);
+}
+
+/// The whole description, a page at a time: the package page's other parts are not drawn, so a long
+/// text is never cut off, and Show less goes back to the package page.
+fn draw_description_page(c: &mut Canvas, ui: &mut PackageStoreUi, area: Rect, p: &StorePackage) {
+    let px = ui_text_size();
+    let line_h = (font_ascent(FontFace::Regular, px) + font_descent(FontFace::Regular, px)).max(1) + ui_px(6.0);
+    let bar_h = ui_px(76.0);
+    let row1 = Rect::new(area.x, area.y + area.h - 2 * bar_h - ui_px(10.0), area.w, bar_h);
+    let row2 = Rect::new(area.x, area.y + area.h - bar_h, area.w, bar_h);
+    let body = Rect::new(area.x, area.y, area.w, (row1.y - ui_px(14.0) - area.y).max(line_h));
+    let lines = crate::widgetpkgui::license_lines(&p.description, px, body.w);
+    let per = (body.h / line_h).max(1);
+    let pages = (((lines.len() as i32) + per - 1) / per).max(1);
+    let page = ui.desc_page.clamp(0, pages - 1);
+    ui.desc_page = page;
+    let from = page as usize * per as usize;
+    let to = (from + per as usize).min(lines.len());
+    for (i, line) in lines[from..to].iter().enumerate() {
+        font_draw_left(c, FontFace::Regular, px, Rect::new(body.x, body.y + i as i32 * line_h, body.w, line_h), line, 0);
+    }
+    if pages > 1 {
+        let bw = ui_px(110.0);
+        let prev = Rect::new(row1.x, row1.y, bw, row1.h);
+        let next = Rect::new(row1.x + row1.w - bw, row1.y, bw, row1.h);
+        gui_icon_button(c, prev, IconKind::Prev, if page > 0 { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        gui_icon_button(c, next, IconKind::Next, if page + 1 < pages { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        if page > 0 {
+            hits_add(&mut ui.hits, prev, H_DESC_PREV, 0);
+        }
+        if page + 1 < pages {
+            hits_add(&mut ui.hits, next, H_DESC_NEXT, 0);
+        }
+        font_draw_centered(
+            c,
+            FontFace::Fixed,
+            ui_small_size(),
+            Rect::new(prev.x + prev.w, row1.y, (next.x - prev.x - prev.w).max(0), row1.h),
+            &format!("{}/{}", page + 1, pages),
+            0,
+        );
+    }
+    gui_button_row(c, row2, IconKind::Back, tr("Show less"), ButtonStyle::Plain);
+    hits_add(&mut ui.hits, row2, H_DESC_MORE, 0);
 }
 
 fn draw_trust(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
@@ -2544,25 +2852,184 @@ fn draw_trust(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
         if p.kind == "app" { "app" } else { "widget" }
     );
     let top = area.y + icon_sz + ui_px(34.0);
-    draw_description(c, Rect::new(area.x, top, area.w, ui_px(360.0)), &StorePackage { description: warn, ..p.clone() });
-    let mut meta = String::new();
-    // Show license from manifest if catalog license is empty
-    let license = if p.license.is_empty() && ui.manifest.is_some() {
-        let manifest_license = &ui.manifest.as_ref().unwrap().license;
-        if !manifest_license.is_empty() { manifest_license } else { "" }
-    } else {
-        &p.license
-    };
-    if !license.is_empty() {
-        csnprintf!(&mut meta, 400, "{} {}", tr("License:"), license);
-        font_draw_left(c, FontFace::Regular, ui_small_size(), Rect::new(area.x, top + ui_px(380.0), area.w, ui_px(42.0)), &meta, 80);
-    }
     let button = Rect::new(area.x, area.y + area.h - ui_px(110.0), area.w, ui_px(100.0));
-    gui_button(c, button, IconKind::Download, tr("I trust this author, continue"), ButtonStyle::Primary);
-    hits_add(&mut ui.hits, button, H_TRUST, 0);
     let cancel = Rect::new(area.x, button.y - ui_px(72.0), area.w, ui_px(58.0));
+    // An update whose license differs from the one the package was installed under says so here: the
+    // accept asks for the new terms, and the License page holds the text to read first.
+    let was = installed_license(&p);
+    let now = if m.license.is_empty() { p.license.clone() } else { m.license.clone() };
+    let mut notice = String::new();
+    if !was.is_empty() && !now.is_empty() && !was.eq_ignore_ascii_case(&now) {
+        csnprintf!(
+            &mut notice,
+            500,
+            tr("This update changes the license from %s to %s. Read it before you accept."),
+            &was,
+            &now
+        );
+    }
+    let notice_h = if notice.is_empty() { 0 } else { ui_px(110.0) };
+    let notice_r = Rect::new(area.x, cancel.y - ui_px(14.0) - notice_h, area.w, notice_h);
+    // Laid out from the buttons up, so the description takes what is left and never their room.
+    let desc_h = (notice_r.y - ui_px(14.0) - top).max(0);
+    draw_description(c, Rect::new(area.x, top, area.w, desc_h), &StorePackage { description: warn, ..p.clone() });
+    if !notice.is_empty() {
+        ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), notice_r, &notice, 3, true, 0);
+    }
+    gui_button_row(c, button, IconKind::Download, tr("I trust the author, continue"), ButtonStyle::Primary);
+    hits_add(&mut ui.hits, button, H_TRUST, 0);
     ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), cancel, tr("Back to the package"), 1, true, 120);
     hits_add(&mut ui.hits, cancel, H_BACK, 0);
+}
+
+/// Reading and accepting the license a package is installed under. The page is the text, and the
+/// install only starts with the accept at its bottom: an update whose license differs passes here
+/// again, so new terms are never installed under an old acceptance.
+fn draw_agree(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
+    let page = store_page(c, aw, ah, tr("Accept the license"), true, false);
+    draw_header_hits(ui, &page);
+    let area = page.content;
+    let Some(p) = ui.selected_package().cloned() else {
+        ui.view = StoreView::List;
+        return;
+    };
+    let mut name = ui.manifest.as_ref().map_or(String::new(), |m| m.license.trim().to_string());
+    if name.is_empty() {
+        name = p.license.trim().to_string();
+    }
+    let head = if name.is_empty() { tr("License") } else { name.as_str() };
+    font_draw_left(c, FontFace::Bold, ui_title_size() * 0.8, Rect::new(area.x, area.y, area.w, ui_px(76.0)), head, 0);
+    let was = installed_license(&p);
+    let mut note = String::new();
+    if !was.is_empty() && !was.eq_ignore_ascii_case(&name) {
+        csnprintf!(
+            &mut note,
+            400,
+            tr("The update changes the license from %s to %s. Read it and accept it to update %s."),
+            &was,
+            &name,
+            &p.name
+        );
+    } else {
+        csnprintf!(&mut note, 400, tr("Read the license and accept it to install %s."), &p.name);
+    }
+    let note_r = Rect::new(area.x, area.y + ui_px(80.0), area.w, ui_px(80.0));
+    ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), note_r, &note, 2, true, 80);
+    let px = ui_text_size();
+    let line_h = (font_ascent(FontFace::Regular, px) + font_descent(FontFace::Regular, px)).max(1) + ui_px(2.0);
+    let accept = Rect::new(area.x, area.y + area.h - ui_px(110.0), area.w, ui_px(100.0));
+    let cancel = Rect::new(area.x, accept.y - ui_px(72.0), area.w, ui_px(58.0));
+    let pager = Rect::new(area.x, cancel.y - ui_px(14.0) - PAGER_H, area.w, PAGER_H);
+    let top = note_r.y + note_r.h + ui_px(12.0);
+    let body_h = (pager.y - ui_px(10.0) - top).max(line_h);
+    let text = if ui.license_text.is_empty() { ui.license_note.as_str() } else { ui.license_text.as_str() };
+    let lines = crate::widgetpkgui::license_lines(text, px, area.w);
+    let per = (body_h / line_h).max(1);
+    let pages = (((lines.len() as i32) + per - 1) / per).max(1);
+    let pg = ui.license_page.clamp(0, pages - 1);
+    ui.license_page = pg;
+    let from = pg as usize * per as usize;
+    let to = (from + per as usize).min(lines.len());
+    let gray = if ui.license_text.is_empty() { 80 } else { 0 };
+    for (i, line) in lines[from..to].iter().enumerate() {
+        font_draw_left(c, FontFace::Regular, px, Rect::new(area.x, top + i as i32 * line_h, area.w, line_h), line, gray);
+    }
+    if pages > 1 {
+        let bw = ui_px(110.0);
+        let prev = Rect::new(pager.x, pager.y, bw, pager.h);
+        let next = Rect::new(pager.x + pager.w - bw, pager.y, bw, pager.h);
+        gui_icon_button(c, prev, IconKind::Prev, if pg > 0 { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        gui_icon_button(c, next, IconKind::Next, if pg + 1 < pages { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        if pg > 0 {
+            hits_add(&mut ui.hits, prev, H_LICENSE_PREV, 0);
+        }
+        if pg + 1 < pages {
+            hits_add(&mut ui.hits, next, H_LICENSE_NEXT, 0);
+        }
+        font_draw_centered(
+            c,
+            FontFace::Fixed,
+            ui_small_size(),
+            Rect::new(prev.x + prev.w, prev.y, (next.x - prev.x - prev.w).max(0), prev.h),
+            &format!("{}/{}", pg + 1, pages),
+            0,
+        );
+    }
+    gui_button_row(c, accept, IconKind::Check, tr("I accept the license"), ButtonStyle::Primary);
+    hits_add(&mut ui.hits, accept, H_AGREE, 0);
+    ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), cancel, tr("Don't install"), 1, true, 120);
+    hits_add(&mut ui.hits, cancel, H_BACK, 0);
+}
+
+fn draw_license(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
+    let page = store_page(c, aw, ah, tr("License"), true, false);
+    draw_header_hits(ui, &page);
+    let area = page.content;
+    let Some(p) = ui.selected_package().cloned() else {
+        ui.view = StoreView::Detail;
+        return;
+    };
+    let was = installed_license(&p);
+    // (the page is only opened from the package page: its entry is the installed one there, or the
+    // catalog's newer one, whose license is what an update would install)
+    let offered = p.license.clone();
+    let head = if !was.is_empty() {
+        was.as_str()
+    } else if !offered.is_empty() {
+        offered.as_str()
+    } else {
+        tr("License")
+    };
+    font_draw_left(c, FontFace::Bold, ui_title_size() * 0.8, Rect::new(area.x, area.y, area.w, ui_px(76.0)), head, 0);
+    let mut note = String::new();
+    if !was.is_empty() && !offered.is_empty() && !was.eq_ignore_ascii_case(&offered) {
+        csnprintf!(&mut note, 500, tr("This update changes the license from %s to %s."), &was, &offered);
+    } else if !was.is_empty() {
+        csnprintf!(&mut note, 500, tr("The license %s is installed under."), &p.name);
+    } else {
+        csnprintf!(&mut note, 500, tr("The license %s is published under."), &p.name);
+    }
+    let note_r = Rect::new(area.x, area.y + ui_px(80.0), area.w, ui_px(80.0));
+    ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), note_r, &note, 2, true, 80);
+    let px = ui_text_size();
+    let line_h = (font_ascent(FontFace::Regular, px) + font_descent(FontFace::Regular, px)).max(1) + ui_px(2.0);
+    let top = note_r.y + note_r.h + ui_px(12.0);
+    let bottom = area.y + area.h;
+    let body_h = (bottom - PAGER_H - top).max(line_h);
+    let text = if ui.license_text.is_empty() { ui.license_note.as_str() } else { ui.license_text.as_str() };
+    let lines = crate::widgetpkgui::license_lines(text, px, area.w);
+    let per = (body_h / line_h).max(1);
+    let pages = (((lines.len() as i32) + per - 1) / per).max(1);
+    let pg = ui.license_page.clamp(0, pages - 1);
+    ui.license_page = pg;
+    let from = pg as usize * per as usize;
+    let to = (from + per as usize).min(lines.len());
+    let gray = if ui.license_text.is_empty() { 80 } else { 0 };
+    for (i, line) in lines[from..to].iter().enumerate() {
+        font_draw_left(c, FontFace::Regular, px, Rect::new(area.x, top + i as i32 * line_h, area.w, line_h), line, gray);
+    }
+    if pages > 1 {
+        let y = bottom - PAGER_H;
+        let bw = ui_px(110.0);
+        let prev = Rect::new(area.x, y, bw, PAGER_H);
+        let next = Rect::new(area.x + area.w - bw, y, bw, PAGER_H);
+        gui_icon_button(c, prev, IconKind::Prev, if pg > 0 { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        gui_icon_button(c, next, IconKind::Next, if pg + 1 < pages { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        if pg > 0 {
+            hits_add(&mut ui.hits, prev, H_LICENSE_PREV, 0);
+        }
+        if pg + 1 < pages {
+            hits_add(&mut ui.hits, next, H_LICENSE_NEXT, 0);
+        }
+        font_draw_centered(
+            c,
+            FontFace::Fixed,
+            ui_small_size(),
+            Rect::new(prev.x + prev.w, y, (next.x - prev.x - prev.w).max(0), PAGER_H),
+            &format!("{}/{}", pg + 1, pages),
+            0,
+        );
+    }
 }
 
 fn draw_remove(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
@@ -2669,6 +3136,8 @@ pub fn store_draw(a: &mut App) {
         StoreView::Busy => draw_busy(c, ui, *w, *h),
         StoreView::InstallRepo => draw_install_repo(c, ui, *w, *h),
         StoreView::Remove => draw_remove(c, ui, *w, *h),
+        StoreView::License => draw_license(c, ui, *w, *h),
+        StoreView::Agree => draw_agree(c, ui, *w, *h),
     }
     if ui.kb.open {
         let screen = Rect::new(0, 0, *w, *h);
@@ -2688,6 +3157,8 @@ pub fn store_probe(ui: &PackageStoreUi, key: &str) -> Option<String> {
         StoreView::Qr => "qr",
         StoreView::InstallRepo => "install-repo",
         StoreView::Remove => "remove",
+        StoreView::License => "license",
+        StoreView::Agree => "agree",
     };
     Some(match key {
         "view" => view.to_string(),
@@ -2714,6 +3185,11 @@ pub fn store_probe(ui: &PackageStoreUi, key: &str) -> Option<String> {
         "icon.loaded" => (!ui.icon.image.px.is_empty() as i32).to_string(),
         "list.icons" => ui.list_icons.iter().filter(|icon| !icon.px.is_empty()).count().to_string(),
         "status" => ui.status.clone(),
+        "desc.more" => (ui.desc_more as i32).to_string(),
+        "desc.page" => ui.desc_page.to_string(),
+        "license" => ui.license_text.chars().take(120).collect::<String>(),
+        "license.note" => ui.license_note.clone(),
+        "license.page" => ui.license_page.to_string(),
         "error" => ui.error.clone(),
         "page" => ui.page.to_string(),
         _ => return None,
@@ -2738,6 +3214,13 @@ pub fn store_control_point(ui: &PackageStoreUi, name: &str) -> Option<(f32, f32)
         "next" => H_NEXT,
         "shot.prev" => H_SHOT_PREV,
         "shot.next" => H_SHOT_NEXT,
+        "license" => H_LICENSE,
+        "license.prev" => H_LICENSE_PREV,
+        "license.next" => H_LICENSE_NEXT,
+        "accept" => H_AGREE,
+        "desc.more" => H_DESC_MORE,
+        "desc.prev" => H_DESC_PREV,
+        "desc.next" => H_DESC_NEXT,
         _ => {
             if let Some(n) = name.strip_prefix("filter.") {
                 let i = n.parse::<i32>().ok()?;

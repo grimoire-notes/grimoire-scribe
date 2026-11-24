@@ -193,10 +193,15 @@ address is typed on the regular keyboard (its Done installs, as Done answers eve
 The Package Store is the home app row's fourth built-in app, `library app.store`. Its controls are
 `store.close`, `store.back`, `store.refresh`, `store.filter.N` (0 all, 1 apps, 2 widgets),
 `store.package.ID`, `store.prev`, `store.next`, `store.shot.prev`, `store.shot.next`,
-`store.install`, `store.trust`, `store.qr` and `store.retry`. Its state is read with
-`library.store.view` (`list`, `detail`, `trust`, `busy`, `error` or `qr`), `.open`, `.filter`,
-`.packages`, `.visible` (ids in catalog order), `.selected`, `.featured`, `.screenshots`, `.shot`,
-`.shot.loaded`, `.shot.coming`, `.icon.loaded`, `.list.icons`, `.status`, `.error` and `.page`. `GRIMOIRE_PACKAGE_STORE_URL`
+`store.install`, `store.trust`, `store.accept`, `store.qr` and `store.retry`, the package page's
+`store.license` (read the license), `store.desc.more` (Read more / Show less) and
+`store.license.prev`/`store.license.next`/`store.desc.prev`/`store.desc.next` (their pages). Its
+state is read with `library.store.view` (`list`, `detail`, `trust`, `agree` (accepting the
+license before an install or a license-changing update), `license`, `busy`, `error` or `qr`),
+`.open`, `.filter`, `.packages`, `.visible` (ids in catalog order), `.selected`, `.featured`,
+`.screenshots`, `.shot`, `.shot.loaded`, `.shot.coming`, `.icon.loaded`, `.list.icons`,
+`.status`, `.error`, `.page`, `.license` (the license text read so far), `.license.note` (what
+is said while there is none, or why), `.license.page`, `.desc.more` and `.desc.page`. `GRIMOIRE_PACKAGE_STORE_URL`
 points the Store at another catalog; `GRIMOIRE_PACKAGE_STORE_OFFLINE=1` reads only the saved
 catalog and its cached images (tests/scenarios/z_package_store.qs).
 The Store's icons and screenshots, and an installed app's bundled icon, are decoded by the
