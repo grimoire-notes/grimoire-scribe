@@ -96,6 +96,8 @@ const HTTP_HEADER_LINE_MAX: usize = 2048;
 const HTTP_REDIRECTS_MAX: u32 = 5;
 const HTTP_ANSWER_MAX: u64 = 8 * 1024 * 1024;
 const HTTP_TOO_LARGE: &str = "The answer is too large.";
+/// The User-Agent of a request that has no `User-Agent` line of its own.
+const HTTP_USER_AGENT: &str = "Grimoire-App/2.3";
 /// The address space a request's curl may take beyond Grimoire's own at the request's start
 /// (childcaps.rs): the margin a child with no number of its own has there.
 const HTTP_CHILD_MARGIN: u64 = 256 << 20;
@@ -972,7 +974,8 @@ fn http_header_lines(headers: &str) -> Option<Vec<&str>> {
 /// The arguments curl is started with for one request. `-q` is first, so no configuration file
 /// is read. The address and every redirect are http or https, at most HTTP_REDIRECTS_MAX
 /// redirects are followed, the address is taken as written (`-g`), and the answer is at most
-/// HTTP_ANSWER_MAX bytes. Each header line is one `-H`; the address is last.
+/// HTTP_ANSWER_MAX bytes. The default User-Agent is `-A`'s, so a `User-Agent` line of the request
+/// takes its place and is not sent beside it. Each header line is one `-H`; the address is last.
 fn http_args(method: &str, url: &str, header_lines: &[&str], body_path: &str, request_path: Option<&str>) -> Vec<String> {
     let redirects = HTTP_REDIRECTS_MAX.to_string();
     let answer = HTTP_ANSWER_MAX.to_string();
@@ -982,7 +985,7 @@ fn http_args(method: &str, url: &str, header_lines: &[&str], body_path: &str, re
         "-L", "--max-redirs", &redirects,
         "--max-time", "30", "--max-filesize", &answer,
         "-X", method, "-o", body_path, "-w", "%{http_code}",
-        "-H", "User-Agent: Grimoire-App/2.3",
+        "-A", HTTP_USER_AGENT,
     ].map(String::from).to_vec();
     for line in header_lines {
         args.extend(["-H".to_string(), line.to_string()]);
@@ -1313,7 +1316,7 @@ mod tests {
             "-L", "--max-redirs", "5",
             "--max-time", "30", "--max-filesize", "8388608",
             "-X", "POST", "-o", "/s/http/1.body", "-w", "%{http_code}",
-            "-H", "User-Agent: Grimoire-App/2.3",
+            "-A", "Grimoire-App/2.3",
             "-H", "Accept: text/plain",
             "-H", "X-A: 1",
             "--data-binary", "@/s/http/1.request",
@@ -1326,7 +1329,7 @@ mod tests {
             "-L", "--max-redirs", "5",
             "--max-time", "30", "--max-filesize", "8388608",
             "-X", "GET", "-o", "/s/http/2.body", "-w", "%{http_code}",
-            "-H", "User-Agent: Grimoire-App/2.3",
+            "-A", "Grimoire-App/2.3",
             "http://example.org/",
         ]);
         assert_eq!(HTTP_ANSWER_MAX, 8_388_608);
@@ -1845,6 +1848,27 @@ mod tests {
             assert_eq!(lines.iter().filter(|l| **l == line).count(), 1, "{line:?} in {head}");
         }
         assert_eq!(upload, "hello");
+    }
+
+    // One User-Agent line arrives with a real request: the host's default, or the request's own
+    // line in its place, however its name is written. A line with an empty value sends none.
+    #[test]
+    fn a_real_request_carries_one_user_agent_line_and_its_own_when_it_has_one() {
+        let dir = scratch("user-agent");
+        let mut st = host(&dir);
+        let mut agents = |headers: &str| -> Vec<String> {
+            let (at, served) = serve_once(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_vec());
+            assert_eq!(st.http_start("GET", &format!("{at}/"), headers, b""), 0, "{NEEDS_CURL}");
+            poll_to_end(&mut st);
+            assert_eq!(outcome(&st), (200, b"ok".to_vec(), String::new()));
+            let request = served.join().unwrap();
+            request.split("\r\n").filter(|l| l.to_ascii_lowercase().starts_with("user-agent")).map(String::from).collect()
+        };
+        assert_eq!(agents(""), ["User-Agent: Grimoire-App/2.3"]);
+        assert_eq!(agents("Accept: text/plain"), ["User-Agent: Grimoire-App/2.3"]);
+        assert_eq!(agents("User-Agent: mine/1"), ["User-Agent: mine/1"]);
+        assert_eq!(agents("Accept: text/plain\nuser-agent: mine/2\nX-A: 1"), ["user-agent: mine/2"]);
+        assert_eq!(agents("User-Agent:"), Vec::<String>::new());
     }
 
     // A real answer over the limit, with its length stated and without: the request ends with the
