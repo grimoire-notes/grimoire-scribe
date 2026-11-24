@@ -385,6 +385,9 @@ the drawing commands of a touch or a key are not kept for the next drawing pass.
 A module may pass any numbers as places and sizes. What it draws with numbers near its body is
 drawn exactly as given; the bounds of the last four rows lie far outside what a screen holds, and
 are there so that no sum the drawing makes overflows and nothing is drawn at a size without bound.
+The font has a greatest size of its own, for every caller: no glyph's bitmap is made larger than
+4,096 px each way or 4 MiB in all ([DESIGN.md](DESIGN.md), Classic's fonts). An app's text and
+icons, held to the sizes above, are far under it.
 
 A module has one linear memory and at most one table. Memory past 48 MiB and table entries past
 65,536 are not given: `memory.grow` and `table.grow` fail, as WebAssembly defines it (they return
