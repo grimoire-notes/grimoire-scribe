@@ -3626,6 +3626,10 @@ cache and checked (`pkgpics.rs`, `appicon.rs`, `packagestore.rs`).
   (`picture_request`). An app's icons are kept in a small table of the UI's so that a draw is one stat a file
   (`appicon.rs` `KEPT`); the Store keeps its own (`pic_waits`). The Library's tick asks and takes in
   (`app_icons_step`, `tick_pictures`); nothing is asked for in a session in which a sandbox step already failed.
+  The Store asks for the pictures of what is in front first: while a package's page is up, its icon and its
+  screenshot before the list's icons, and the list's jobs still queued leave the queue for them
+  (`unqueue_list_pictures`; a running one runs on) and are asked for again as places free up. So a page has its
+  pictures after one running job at most, however many cards the catalog has.
 - **The job, `BgKind::PackagePictures = 12`**: one picture a job, its path
   `<form>.<size>.<mtime>:<the file's path from Grimoire's folder>` (form `a` an app's icon, `i` a Store icon,
   `s` a screenshot), at most 4 queued or running at a time (`PICTURES_AT_ONCE`; the queue holds 16), dropped at
