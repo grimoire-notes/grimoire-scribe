@@ -1,0 +1,15 @@
+name: Later
+id: test.app.later
+type: app
+version: 1.0.0
+author: Grimoire tests
+description: A module of the app host's tests.
+platforms: [all]
+artifact:
+  path: app.wasm
+  sha256: 95f313d034a7500b728310a2dd4bf7e33b5d5ed2fd2c20e0ba793dc01782195f
+  size: 1297
+capabilities: []
+spec:
+  runtime: wasm
+  status_bar: false

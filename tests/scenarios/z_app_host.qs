@@ -8,7 +8,7 @@
 # (the status bar's clock held still: its minute's refresh would land among the counted ones)
 clock 1700000000
 wait 3600
-expect library.apps is test.app.asks test.app.counts test.app.loop test.app.once test.app.ticker test.app.wide
+expect library.apps is test.app.asks test.app.counts test.app.later test.app.loop test.app.once test.app.ticker test.app.wide
 # Loop's drawing pass never ends. The call is ended when its instructions are used up: the app is closed, a
 # toast says that it stopped, and Home is back. No app is left open with nothing drawn.
 tap library apps
@@ -66,4 +66,22 @@ shot 03-wide
 swipe 2 930 2200 0 -1000
 wait 300
 expect library.app.open is 0
+# Later's first drawing pass draws its rectangle and asks to be drawn again 100 ms later; its second never ends.
+# The first pass is shown and the app is open. When the second is stopped, the host's next round closes the
+# app, as it does one whose first pass is stopped: the same toast, and Home is back.
+tap library apps
+wait 300
+tap library app.test.app.later
+wait 50
+expect library.app.open is 1
+expect library.app.id is test.app.later
+expect library.app.error is
+expect library.app.status is later
+expect display.dark.40.40.200.100 is 20000
+wait 200
+expect library.app.open is 0
+expect toast is The app stopped: all fuel consumed by WebAssembly
+expect screen is library
+expect library.sheet is none
+shot 04-later-stopped
 quit

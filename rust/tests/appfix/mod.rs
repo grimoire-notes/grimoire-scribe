@@ -610,6 +610,18 @@ pub fn loops() -> Vec<u8> {
     Wasm::new(forever(&[])).bytes()
 }
 
+/// Where `later` keeps whether it has drawn (an i32).
+pub const DRAWN_AT: i32 = 200;
+
+/// A module whose first drawing pass says "later" in the status line, fills a black rectangle of 200x100 at 40,40
+/// and asks to be drawn again 100 ms later, and whose every later drawing pass never ends: a loop with no way out.
+pub fn later() -> Wasm {
+    // (i32.load of the word at DRAWN_AT; if it is set, the loop; then i32.store of 1 there)
+    let stuck = seq(&[i(DRAWN_AT), vec![0x28, 0x02, 0x00, 0x04, 0x40], forever(&[]), vec![0x0b]]);
+    let mark = seq(&[i(DRAWN_AT), i(1), vec![0x36, 0x02, 0x00]]);
+    Wasm::with(seq(&[stuck, mark, call("status", &[0, 5]), call("fill_rect", &[40, 40, 200, 100, 0]), call("request_redraw", &[100])]), b"later")
+}
+
 /// A module that draws far outside its body: black from far above and left of it to far below and right of it,
 /// then the same through a `clip` as wide, and again with the clip taken away.
 pub fn wide() -> Vec<u8> {
@@ -643,6 +655,8 @@ pub fn packages() -> Vec<Package> {
         package("test.app.ticker", "Ticker", &[], false, asks(1000).bytes()),
         package("test.app.asks", "Asks", &[], false, asks(0).bytes()),
         package("test.app.once", "Once", &[], false, asks_when_touched(500).bytes()),
+        // (its first drawing pass asks for another, which never ends)
+        package("test.app.later", "Later", &[], false, later().bytes()),
     ]
 }
 

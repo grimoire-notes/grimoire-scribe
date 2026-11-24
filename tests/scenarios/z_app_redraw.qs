@@ -8,7 +8,7 @@
 # (the status bar's clock held still: its minute's refresh would land among the counted ones)
 clock 1700000000
 wait 3600
-expect library.apps is test.app.asks test.app.counts test.app.loop test.app.once test.app.ticker test.app.wide
+expect library.apps is test.app.asks test.app.counts test.app.later test.app.loop test.app.once test.app.ticker test.app.wide
 # Ticker counts its drawing passes in its status line and asks, in each, to be drawn again a second later. An
 # app whose request is due is drawn again and the screen refreshed once; while nothing is due, nothing is drawn
 # and nothing is refreshed. (Each `waitfor` ends in the round the pass it names ran in, so the next pass is due

@@ -479,8 +479,9 @@ the Library. Removing the package while it runs does the same before deleting it
   `rust/tests/test_app_fixtures.rs` checks it is what the writer makes), so each can pass the host
   exactly the numbers its rule is about. `tests/scenarios/z_app_host.qs` opens them with app time on
   the script's clock: one whose drawing pass never ends, which is stopped when its instruction
-  budget is used up, one that counts its drawing passes, and one that shows the status bar and
-  draws from far outside its body. `tests/scenarios/z_app_redraw.qs` opens the three that ask to
+  budget is used up, one that counts its drawing passes, one that shows the status bar and
+  draws from far outside its body, and one whose first drawing pass asks for a second that never
+  ends, which is closed when that pass is stopped. `tests/scenarios/z_app_redraw.qs` opens the three that ask to
   be drawn again (a second later, as soon as an app may, and only when touched) and counts their
   drawing passes and the screen's refreshes.
 - `rust/tests/test_app_host.rs` holds the same rules as unit tests of the host, and compares a
