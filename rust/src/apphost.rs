@@ -91,6 +91,7 @@ struct HostState {
 
 /// The limits of one app HTTP request (docs/APPS.md, HTTP). The answer's limit is given to curl,
 /// watched by `http_poll` while curl runs, and held again when the answer is read.
+const HTTP_ADDRESS_MAX: usize = 4096;
 const HTTP_HEADER_LINES_MAX: usize = 32;
 const HTTP_HEADER_LINE_MAX: usize = 2048;
 const HTTP_REDIRECTS_MAX: u32 = 5;
@@ -942,6 +943,14 @@ fn install_imports(linker: &mut Linker<HostState>) -> Result<(), String> {
     Ok(())
 }
 
+/// True for the address of a request: it begins with `http://` or `https://`, is at most
+/// HTTP_ADDRESS_MAX bytes, and has no control character and no space.
+fn http_address_ok(url: &str) -> bool {
+    (url.starts_with("https://") || url.starts_with("http://"))
+        && url.len() <= HTTP_ADDRESS_MAX
+        && !url.chars().any(|c| c.is_control() || c == ' ')
+}
+
 /// True for a header line of a request: a name, a colon and a value. The name is one or more
 /// HTTP token characters (RFC 9110's tchar) and begins the line, the colon follows it directly,
 /// the value has no control character, and the line is at most HTTP_HEADER_LINE_MAX bytes.
@@ -1078,8 +1087,7 @@ impl HostState {
         if method.is_empty()
             || method.len() > 16
             || !method.bytes().all(|b| b.is_ascii_uppercase())
-            || !(url.starts_with("https://") || url.starts_with("http://"))
-            || url.len() > 4096
+            || !http_address_ok(url)
             || headers.len() > 32 * 1024
             || body.len() > 2 * 1024 * 1024
         {
@@ -1452,6 +1460,50 @@ mod tests {
 
     const NEEDS_CURL: &str = "this test starts curl: it must be on the PATH";
 
+    // The address of a request is http or https, at most 4096 bytes, and has no control character
+    // and no space. A request with another address starts nothing and makes no file or folder.
+    #[test]
+    fn a_request_with_a_refused_address_starts_nothing() {
+        let longest = format!("http://example.org/{}", "a".repeat(HTTP_ADDRESS_MAX - 19));
+        assert_eq!(longest.len(), HTTP_ADDRESS_MAX);
+        for url in [
+            "http://example.org/",
+            "https://example.org/a?b=[1]&c={x,y}#d",
+            "http://[::1]:8080/",
+            "https://example.org/a%20b",
+            "https://example.org/caf\u{e9}",
+            longest.as_str(),
+        ] {
+            assert!(http_address_ok(url), "{url:?}");
+        }
+        let too_long = format!("{longest}a");
+        let refused = [
+            "",
+            "example.org",
+            "ftp://example.org/",
+            " http://example.org/",
+            "http://example.org/a b",
+            "http://example.org/ ",
+            "http://example.org/a\tb",
+            "http://example.org/a\nb",
+            "http://example.org/a\rb",
+            "http://example.org/a\u{0}b",
+            "http://example.org/a\u{1b}b",
+            "http://example.org/a\u{7f}b",
+            "http://example.org/a\u{85}b",
+            too_long.as_str(),
+        ];
+        let dir = scratch("refused-address");
+        let mut st = host(&dir);
+        for url in refused {
+            assert!(!http_address_ok(url), "{url:?}");
+            assert_eq!(st.http_start("POST", url, "X-A: 1", b"upload"), -1, "{url:?}");
+            assert!(st.http.is_none(), "{url:?}");
+            assert!(!std::path::Path::new(&format!("{dir}/state")).exists(), "{url:?}");
+        }
+        assert_eq!(st.http_poll(), -1);
+    }
+
     // A refused request starts nothing and makes no file: every case here is one line that is not a
     // header line, a line over the length limit, or more lines than the limit.
     #[test]
@@ -1663,12 +1715,15 @@ mod tests {
         let dir = scratch("ways-out");
         let none = Vec::<String>::new();
 
-        // A start that fails after the request's files were made: an address with a NUL byte is
-        // an argument no program can be started with.
+        // A start that fails after the request's files were made: the program to start is not
+        // there. (The request folder is: the start came as far as making it.)
         let mut st = host(&dir);
-        assert_eq!(st.http_start("POST", "http://127.0.0.1:9/\0", "X-A: 1", b"upload"), -1);
+        st.http_stand_in = vec![format!("{dir}/no-such-program")];
+        assert_eq!(st.http_start("POST", "http://127.0.0.1:9/", "X-A: 1", b"upload"), -1);
         assert!(st.http.is_none());
+        assert!(std::path::Path::new(&format!("{dir}/state/http")).is_dir());
         assert_eq!(request_files(&dir), none);
+        st.http_stand_in.clear();
 
         // A request in flight has its files; another start is refused and changes nothing.
         let (_listener, silent) = silent_address();
