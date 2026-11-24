@@ -193,7 +193,9 @@ with `show_status_bar`.
 ## The `grimoire` ABI
 
 All strings are UTF-8 in the module's linear memory; a `ptr, len` pair names one. Coordinates and
-sizes are screen pixels in the app body.
+sizes are screen pixels in the app body. Each call of the module runs with a fixed instruction
+budget, from which the host's work for the imports it calls is paid as well, and is held to the
+[limits](#limits) below.
 
 ### Drawing and Grimoire's UI
 
@@ -356,7 +358,7 @@ The host calls a module's `app_draw` (a drawing pass), `app_pointer`, `app_key`,
 
 | limit | |
 |---|---|
-| a call's budget | 30,000,000, counted in instructions |
+| a call's budget | 30,000,000, counted in instructions: the module's own, and the host's work for its imports ([below](#what-a-calls-budget-pays-for)) |
 | the module's memories | 1, of at most 48 MiB (768 pages) |
 | the module's tables | 1, of at most 65,536 entries |
 | drawing commands in one call (the eighteen calls from `fill_rect` to `clip_clear`, all kinds together; `text_width` and `text_height` draw nothing and are not counted) | 4,096 |
@@ -393,6 +395,66 @@ A call that needs more than its budget is stopped, and so is a call in which the
 itself: the app is closed, Home comes back, and a toast says why ("The app stopped: all fuel
 consumed by WebAssembly" for the budget). A module whose start does not end within the budget is not
 started. An `app_stop` that is stopped ends the app all the same.
+
+The limits leave room. The fixture app of `tests/fixtures/apppkg/` draws 3 commands and has 22 bytes
+read in a pass, which takes about 175,000 from its budget (0.6%). The pass of one of every command
+that `rust/tests/test_app_host.rs` draws, a page of a settings screen and a small board, is 47
+commands and 348 bytes read, and takes about 2,300,000 (8%).
+
+### What a call's budget pays for
+
+A call's budget is counted in instructions, and it pays for two things: the instructions the module
+runs, and the work the host does for the imports the module calls. The second is no instruction of
+the module's, so each import takes a charge for it from the same budget: a fixed one for every
+call, and one by size where the work grows with what the import is given. A charge counts the part
+of a rectangle that lies inside the body: what a call draws outside it costs nothing by its area.
+
+| import | what a call of it takes from the budget |
+|---|---|
+| every import | 500 |
+| `fill_rect`, `outline_rect` | and 1 for every 32 pixels of the rectangle |
+| `round_rect` | the same, and 2 for each pixel of it that is within its radius (half its smaller side at most), or the thickness it is given, and 2 px of its left or right side: those pixels are worked out one by one |
+| `line` | and, for each row of the body the line crosses, 16 and 2 for each pixel of its width along that row |
+| `text`, `text_at` | and, for each byte, 32 for each pixel of its height (a part of a pixel counts as one) up to 64 px; above 64 px, half the square of the height for each byte, since a tall letter costs by its area. In the bold, the title and the caps face, the cube of the height over 128 more for each byte: where such a face has no bold of its own, each letter is printed over again and again, more times the taller it is. A `text` wider than its room is cut short by steps that each measure it again: 16 times the square of its bytes more, counted to 256 bytes |
+| `text_width` | and 32 for each byte measured |
+| `icon` | and 2 for each pixel of the square of its side (the smaller side of its rectangle, 1,024 px at most), wherever it is drawn, and 4 for each byte of its name |
+| `card`, `surface`, `row`, `app_tile`, `button` | and, for each frame the element draws (one for a card and a row, two for a surface and an app tile, three for a button), 1 for every 32 pixels of it and 2 for each pixel within 32 px of its left or right side. The outline of a `surface` that is not filled: within its thickness and 32 px |
+| `chip`, `select`, `text_field`, `fab` | the same with round ends: two frames (one for `fab`), and 2 for each pixel within half the element's smaller side and 32 px of its left or right side |
+| the texts of those elements | each as a `text` 48 px high that is fitted to its room, whether or not it is cut: 16 times the square of its bytes, counted to 256 bytes, and all its bytes for the label of a `button` or a `row`, which may be broken into two lines by steps that measure all of it |
+| the icons of those elements | a `button`'s, an `app_tile`'s and a `text_field`'s as an `icon` as large as the element's smaller side, and a `fab`'s as one half that size; a `row`'s icon, a `select`'s chevron and the mark that clears a `text_field` as an icon of 64 px; a `row`'s switch 30,000; and 4 for each byte of an icon's name |
+| `status`, `toast`, `setting` | and 4 for each byte read from the module's memory or written to it |
+| `state_get`, `state_set`, `http_body`, `http_error` | and 1 for every 4 bytes copied |
+| `time_text`, `date_text`, `battery_percent`, `battery_charging`, `http_poll` | and 20,000: each asks the system for what it answers |
+| `http_start` | and, for a request that is read (the capability declared, none in flight, its lengths within their limits), 7,500,000 for the start of its curl and 1 for every 4 bytes of the request, whether or not the request then starts |
+
+A call whose budget cannot pay a charge ends exactly as a call that ran out of instructions: the app
+is closed with the same words, and nothing of the pass is drawn. A call of an import the app has no
+capability for pays the fixed charge and returns. The charges are the same in both themes: where
+the themes draw an element differently (a chip's ends are round in one and cut in the other), the
+charge is for the one that takes more work. One charge follows the font: whether a `text` is wider
+than its room, and so pays for being cut short, is measured in the font it is drawn in.
+
+The charges were set by measuring, in a release build on a desktop machine, what each import's work
+costs beside a module's own instructions. There, the longest drawing a budget pays for takes about
+two and a half times as long as the same budget spent on instructions alone, and a loop of any one
+import is over in a third of that time. They have not been measured on a Kindle.
+
+Some sums, for a sense of scale:
+
+- a rectangle over the whole body under the status bar (1860x2402): 500 + 139,616, about 140,000
+  (0.5% of the budget);
+- a line of 90 letters 34 px high: 90 x 34 x 32 + 500 = 98,420; a page full of them, 70 lines: about
+  6,900,000 (23%);
+- a clock's `12:34` 400 px high: 5 x 400 x 400 / 2 + 500 = 400,500 in the regular face, and
+  5 x 400 x 400 x 400 / 128 = 2,500,000 more in the bold one (10% together);
+- a key of 160x160 with a label of 3 bytes: 500 + 3 x (800 + 20,480) + 3 x 48 x 32 + 16 x 9 =
+  69,092; a hundred of them: about 6,900,000 (23%);
+- a row 1,740 px wide and 120 high with an icon, a switch and a label of 20 bytes: about 97,700;
+  thirty of them: about 2,900,000 (10%);
+- a round rectangle over the whole screen with corners of 30 px: about 462,000 (1.5%); one whose
+  radius is half the screen, where every pixel is worked out by itself: about 9,400,000, so a call
+  has room for three;
+- an icon of 96 px: 500 + 96 x 96 x 2 = 18,932; one of 1,024 px: about 2,100,000 (7%).
 
 ## Returning Home
 

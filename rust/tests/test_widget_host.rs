@@ -707,6 +707,8 @@ fn the_hosts_work_for_a_pass_is_paid_from_the_calls_budget() {
         ("512 texts of 32 letters at heights 512 to 257, no letter twice at a height", repeat(512, &tall), letters),
         ("16 buttons 9,000 px wide with labels of 512 one-letter words", repeat(16, &code(&button(1, 0, 0, 9000, 300, 0, 1023, 0))), &words),
         ("16 texts of 1,024 bytes cut short to 300 px", repeat(16, &code(&text(0, 0, 300, 100, 0, 1024, 40, 0))), &words),
+        // (one call, the last thing its pass does: it is the charge itself that ends the pass, wasmhost::charge)
+        ("one text of 1,024 bytes 512 px high", code(&text(0, 0, 60_000, 600, 0, 1024, 512, 0)), &words),
     ];
     for (i, (name, draw, data)) in long.into_iter().enumerate() {
         let mut w = Wasm::new(draw);

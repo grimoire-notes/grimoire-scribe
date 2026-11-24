@@ -603,6 +603,35 @@ fn a_module_that_loops_for_ever_stops_when_its_instructions_are_used_up() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Draws these commands on `body`, on a copy of `screen` (with `clip` as the canvas's clip, when one is given): as
+/// one drawing pass where the call's budget pays for all of them, and else as the passes of their halves, and so
+/// on down to a single command. `ran` gets each pass that ran: the screen before it and after it. A pass the
+/// budget does not pay for stops with the budget used up and draws nothing. Returns how many of the commands
+/// were drawn.
+fn drawn_within_the_budget(ids: &mut usize, screen: &Canvas, cmds: &[Cmd], body: Rect, clip: Option<Rect>, ran: &mut dyn FnMut(&Canvas, &Canvas)) -> usize {
+    *ids += 1;
+    let mut rt = loaded(&format!("test.paid-for.{ids}"), &BOTH, &pass(cmds));
+    let mut c = screen.clone();
+    if let Some(clip) = clip {
+        canvas_set_clip(&mut c, clip);
+    }
+    let clip = c.clip;
+    rt.draw(&mut c, body, 0);
+    assert_eq!(c.clip, clip, "the canvas keeps its clip");
+    if rt.error().is_none() {
+        ran(screen, &c);
+        return cmds.len();
+    }
+    assert_eq!(rt.error(), Some(STOPPED), "{cmds:?}");
+    assert!(used_up(&rt), "{cmds:?}: stopped with {} of the budget used", rt.fuel_used());
+    assert!(c.px == screen.px, "{cmds:?}: a pass that is stopped draws nothing");
+    if cmds.len() == 1 {
+        return 0;
+    }
+    let (first, rest) = cmds.split_at(cmds.len() / 2);
+    drawn_within_the_budget(ids, screen, first, body, Some(clip), ran) + drawn_within_the_budget(ids, screen, rest, body, Some(clip), ran)
+}
+
 /// Drawing passes that reach outside the body with every command there is: from far above and left of it to far
 /// below and right of it, across each of its edges, and through a `clip` that names more than the body.
 /// (Sizes that no sum overflows with: those are the next rule's.)
@@ -664,18 +693,20 @@ fn whatever_an_app_draws_lands_in_its_body() {
     // The body under the status bar, where the bar is shown; the whole screen; and a body that is a part of a
     // larger canvas on every side.
     let inner = Rect { x: 300, y: 200, w: 900, h: 1400 };
-    for (b, body) in [body_under_the_bar(), WHOLE, inner].into_iter().enumerate() {
-        for (i, (name, cmds)) in passes_that_reach_out(body).into_iter().enumerate() {
-            let mut rt = loaded(&format!("test.body.{b}.{i}"), &BOTH, &pass(&cmds));
+    let screen = patterned(SCREEN.0, SCREEN.1);
+    let mut ids = 0;
+    for body in [body_under_the_bar(), WHOLE, inner] {
+        for (name, cmds) in passes_that_reach_out(body) {
             for theme in [UiTheme::Gothic, UiTheme::Classic] {
                 ui_set_theme(theme);
-                let before = patterned(SCREEN.0, SCREEN.1);
-                let mut c = before.clone();
-                rt.draw(&mut c, body, 0);
-                assert_eq!(rt.error(), None, "{name}");
-                assert_eq!(changed_outside(&before, &c, body), 0, "{name} in {theme:?}, a body at {},{}: pixels outside the body changed", body.x, body.y);
-                assert_eq!(c.clip, before.clip, "{name}: the canvas keeps its clip");
-                assert_ne!(inked(&c, body), 0, "{name} in {theme:?}: the pass drew in the body");
+                // (each list is drawn as the passes the call's budget pays for: every one of its commands is drawn)
+                let mut ink = 0;
+                let drawn = drawn_within_the_budget(&mut ids, &screen, &cmds, body, None, &mut |before, after| {
+                    assert_eq!(changed_outside(before, after, body), 0, "{name} in {theme:?}, a body at {},{}: pixels outside the body changed", body.x, body.y);
+                    ink += inked(after, body);
+                });
+                assert_eq!(drawn, cmds.len(), "{name} in {theme:?}: the budget pays for each of these commands");
+                assert_ne!(ink, 0, "{name} in {theme:?}: the passes drew in the body");
             }
         }
     }
@@ -786,9 +817,9 @@ fn a_call_at_a_limit_runs_and_one_past_it_stops_as_out_of_instructions() {
     for ((name, at), (_, past)) in texts_of(-1).into_iter().zip(texts_of(MAX)) {
         cases.push((format!("{name} of every length an i32 can say"), at, past));
     }
-    // All the texts of a call: sixty-four of the longest, of every kind in turn, and then one byte more.
-    let kinds = texts_of(one);
-    let most: Vec<u8> = (0..APP_CALL_TEXT_MAX / APP_TEXT_MAX).flat_map(|k| kinds[k % kinds.len()].1.clone()).collect();
+    // All the texts of a call: sixty-four of the longest, measured (the call's budget pays for those: it does not
+    // pay for sixty-four of the longest labels), and then one byte more, of each kind in turn.
+    let most = times(APP_CALL_TEXT_MAX / APP_TEXT_MAX, &call("text_width", &[0, one, 20_000, 0]));
     for (name, more) in texts_of(1) {
         cases.push((format!("all the texts of a call, the last {name}"), most.clone(), seq(&[most.clone(), more])));
     }
@@ -826,6 +857,8 @@ fn a_call_at_a_limit_runs_and_one_past_it_stops_as_out_of_instructions() {
         let mut rt = loaded(&format!("test.past.{i}"), &BOTH, &roomy(seq(&[call("status", &[0, 4]), past])));
         rt.draw(&mut c, WHOLE, 0);
         assert_eq!(rt.error(), Some(STOPPED), "{name}: a call one past the limit stops");
+        // (it is the limit that stopped it: most of the call's budget is left)
+        assert!(rt.fuel_used() < APP_CALL_FUEL / 2, "{name}: {} of the budget", rt.fuel_used());
         // Nothing of the stopped pass is drawn or kept, and the module is not called again.
         assert_eq!(changed_outside(&before, &c, RECT_EMPTY), 0, "{name}");
         assert_eq!((rt.text().as_str(), rt.status()), ("", ""), "{name}");
@@ -1028,6 +1061,505 @@ fn request_redraw_has_a_shortest_and_a_longest_delay_and_one_request_stands() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// What a call's budget is charged for `with` beside `without` (two modules of the same instructions with other
+/// numbers): the fuel a pass of the one used less the fuel a pass of the other used, on the whole screen.
+fn charged_by(id: &str, capabilities: [&[&str]; 2], with: Vec<u8>, without: Vec<u8>) -> u64 {
+    let mut c = patterned(SCREEN.0, SCREEN.1);
+    let mut used = Vec::new();
+    for (k, (code, caps)) in [(with, capabilities[0]), (without, capabilities[1])].into_iter().enumerate() {
+        let mut rt = loaded(&format!("test.charge.{}.{k}", id.replace(['_', ' '], "-")), caps, &roomy(code));
+        rt.draw(&mut c, WHOLE, 0);
+        assert_eq!(rt.error(), None, "{id}");
+        used.push(rt.fuel_used());
+    }
+    used[0].saturating_sub(used[1])
+}
+
+fn charged(id: &str, with: Vec<u8>, without: Vec<u8>) -> u64 {
+    charged_by(id, [&BOTH, &BOTH], with, without)
+}
+
+/// A charge is the one expected. (The two passes compared are the same instructions with other numbers, and the
+/// interpreter counts some tens of instructions more or less for the numbers a function holds.)
+fn near(charged: u64, expected: u64, what: &str) {
+    assert!(charged.abs_diff(expected) <= 64, "{what}: charged {charged}, expected {expected}");
+}
+
+#[test]
+fn an_import_takes_its_charge_from_the_calls_budget() {
+    let root = fresh_root("charges");
+    // (the numbers of docs/APPS.md, "What a call's budget pays for")
+    assert_eq!((APP_CALL_FUEL, APP_CHARGE_CALL, APP_CHARGE_SYSTEM, APP_CHARGE_REQUEST), (30_000_000, 500, 20_000, 7_500_000));
+    assert_eq!((APP_CHARGE_FILL_PX, APP_CHARGE_EDGE_PX, APP_CHARGE_CORNER, APP_CHARGE_LINE_ROW), (32, 2, 32, 16));
+    assert_eq!((APP_CHARGE_TEXT, APP_CHARGE_TALL_PX, APP_CHARGE_BOLD, APP_CHARGE_SQUARE, APP_CHARGE_SQUARE_BYTES, APP_CHARGE_LABEL_PX), (32, 64, 128, 16, 256, 48));
+    assert_eq!((APP_CHARGE_ICON_PX, APP_CHARGE_SMALL_ICON_PX, APP_CHARGE_SWITCH, APP_CHARGE_MEASURE, APP_CHARGE_BYTE, APP_CHARGE_COPY_BYTES), (2, 64, 30_000, 32, 4, 4));
+    let (body, fixed) = ((SCREEN.0 * SCREEN.1) as u64, 500);
+
+    // Every call of an import: 500, and the instructions of the call itself (a few tens). The calls that ask the
+    // system for something: 20,000 more.
+    let nothing: Vec<(&str, Vec<i32>)> = vec![
+        ("text_width", vec![0, 0, 34_000, 0]),
+        ("text_height", vec![34_000, 0]),
+        ("clip", vec![0, 0, 100, 100]),
+        ("clip_clear", vec![]),
+        ("state_get", vec![4096, 0]),
+        ("state_set", vec![0, 0]),
+        ("setting", vec![0, 0, 4096, 64]),
+        ("status", vec![0, 0]),
+        ("request_redraw", vec![1000]),
+        ("show_status_bar", vec![0]),
+        ("toast", vec![0, 0, 1500]),
+        ("now", vec![]),
+        ("now_ms", vec![]),
+        ("wifi_connected", vec![]),
+        ("wifi_ssid", vec![4096, 64]),
+        ("screen_width", vec![]),
+        ("screen_height", vec![]),
+        ("ui_scale_milli", vec![]),
+        ("theme", vec![]),
+        ("status_bar_height", vec![]),
+        ("http_status", vec![]),
+        ("http_body_len", vec![]),
+        ("http_body", vec![4096, 64]),
+        ("http_error", vec![4096, 64]),
+        ("http_cancel", vec![]),
+    ];
+    for (import, args) in &nothing {
+        let one = call(import, args);
+        let n = charged(import, times(2, &one), one.clone());
+        assert!((fixed..fixed + 128).contains(&n), "{import}: {n}");
+    }
+    for import in ["time_text", "date_text"] {
+        let one = call(import, &[4096, 64]);
+        let n = charged(import, times(2, &one), one.clone());
+        assert!((20_500..20_628).contains(&n), "{import}: {n}");
+    }
+    for import in ["battery_percent", "battery_charging", "http_poll"] {
+        let one = call(import, &[]);
+        let n = charged(import, times(2, &one), one.clone());
+        assert!((20_500..20_628).contains(&n), "{import}: {n}");
+    }
+
+    // A rectangle and an outline: 1 for every 32 pixels of the part inside the body (here the whole screen).
+    let fill = |x: i32, y: i32, w: i32, h: i32| call("fill_rect", &[x, y, w, h, 0]);
+    near(charged("fill", fill(10, 10, 320, 200), fill(10, 10, 0, 0)), 320 * 200 / 32, "a rectangle");
+    near(charged("fill.part", fill(-50, -30, 320, 200), fill(10, 10, 0, 0)), 270 * 170 / 32, "the part of it inside the body");
+    near(charged("fill.body", fill(-5000, -5000, 20_000, 20_000), fill(0, 0, 0, 0)), body / 32, "the body");
+    near(charged("fill.most", fill(MIN, MIN, MAX, MAX), fill(-5000, -5000, 20_000, 20_000)), 0, "the body, however large the rectangle");
+    near(charged("fill.outside", fill(1860, 0, 500, 500), fill(0, 0, 0, 0)), 0, "a rectangle outside the body");
+    near(charged("outline", call("outline_rect", &[10, 10, 320, 200, 4, 0]), call("outline_rect", &[10, 10, 0, 0, 4, 0])), 320 * 200 / 32, "an outline");
+    // A round rectangle: and 2 for each pixel within its radius, or its outline's thickness, and 2 px of its
+    // left and right sides.
+    let round = |w: i32, h: i32, radius: i32, filled: i32, t: i32| call("round_rect", &[0, 0, w, h, radius, 0, filled, t]);
+    let flat = 400 * 300 / 32;
+    near(charged("round", round(400, 300, 50, 1, 0), round(0, 0, 50, 1, 0)), flat + 300 * (2 * 52) * 2, "a radius of 50");
+    near(charged("round.none", round(400, 300, 0, 1, 0), round(0, 0, 0, 1, 0)), flat + 300 * (2 * 2) * 2, "no radius");
+    near(charged("round.most", round(400, 300, 5000, 1, 0), round(0, 0, 0, 1, 0)), flat + 300 * (2 * 152) * 2, "a radius is half the smaller side at most");
+    near(charged("round.all", round(400, 300, MAX, 1, 0), round(400, 240, MAX, 1, 0)), 400 * 60 / 32 + (300 * 304 - 240 * 244) * 2, "a taller rectangle has more of them");
+    near(charged("round.thick", round(400, 300, 0, 0, 20), round(0, 0, 0, 0, 20)), flat + 300 * (2 * 22) * 2, "an outline 20 thick");
+    near(charged("round.thickest", round(400, 300, 0, 0, MAX), round(0, 0, 0, 0, MAX)), flat + 300 * 400 * 2, "an outline thicker than the rectangle");
+    // A line: for each row it crosses, 16 and 2 for each pixel of its width along the row.
+    near(charged("line.level", line(0.0, 100.0, 400.0, 100.0, 4.0, 0), line(-500.0, -500.0, -400.0, -500.0, 4.0, 0)), 7 * (16 + 404 * 2), "a level line 4 wide: 7 rows of 404 pixels");
+    near(charged("line.slant", line(0.0, 0.0, 300.0, 400.0, 4.0, 0), line(-500.0, -500.0, -400.0, -500.0, 4.0, 0)), 404 * (16 + 11 * 2), "a slanted line: 404 rows of 11 pixels");
+    near(charged("line.wide", line(0.0, 0.0, 1860.0, 2480.0, 9000.0, 0), line(-500.0, -500.0, -400.0, -500.0, 4.0, 0)), 2480 * (16 + 1860 * 2), "a line as wide as a line may be: the body");
+    near(charged("line.none", line(f32::NAN, 0.0, 300.0, 400.0, 4.0, 0), line(-500.0, -500.0, -400.0, -500.0, 4.0, 0)), 0, "no line");
+
+    // A text: for each byte, 32 for each pixel of its height to 64 px, and above that half the square of the
+    // height; and 16 for the square of its bytes, counted to 256, when it is wider than its room.
+    let text = |w: i32, len: i32, px_milli: i32| call("text", &[0, 0, w, 100, 0, len, px_milli, 0, 0, 0]);
+    let none = text(60_000, 0, 40_000);
+    near(charged("text", text(60_000, 10, 40_000), none.clone()), 10 * 40 * 32, "ten letters 40 px high");
+    near(charged("text.part", text(60_000, 10, 34_500), none.clone()), 10 * 35 * 32, "a part of a pixel counts as one");
+    near(charged("text.least", text(60_000, 10, -7), none.clone()), 10 * 32, "a height under a pixel is paid as one");
+    near(charged("text.64", text(60_000, 4, 64_000), none.clone()), 4 * 64 * 32, "64 px");
+    near(charged("text.tall", text(60_000, 4, 128_000), none.clone()), 4 * 128 * 128 / 2, "128 px");
+    near(charged("text.tallest", text(60_000, 4, 768_000), none.clone()), 4 * 768 * 768 / 2, "768 px");
+    near(charged("text.taller", text(60_000, 4, MAX), none.clone()), 4 * 768 * 768 / 2, "a height over 768 px is drawn, and paid, as 768");
+    near(charged("text.cut", text(20, 10, 40_000), none.clone()), 10 * 40 * 32 + 16 * 10 * 10, "ten letters wider than their room");
+    near(charged("text.cut.long", text(20, 400, 1000), none.clone()), 400 * 32 + 16 * 256 * 256, "its bytes are counted to 256 in the square");
+    near(charged("text.fits.long", text(60_000, 400, 1000), none.clone()), 400 * 32, "a long text that fits pays no square");
+    // A text in the bold, the title or the caps face: and, for each byte, the cube of its height over 128. The
+    // other faces are charged as the regular one.
+    let faced = |len: i32, px_milli: i32, face: i32| call("text", &[0, 0, 60_000, 100, 0, len, px_milli, face, 0, 0]);
+    for face in [1, 2, 3] {
+        near(charged(&format!("text.face{face}.small"), faced(10, 40_000, face), faced(0, 40_000, face)), 10 * 40 * 32 + 10 * 40 * 40 * 40 / 128, "40 px");
+        near(charged(&format!("text.face{face}.128"), faced(4, 128_000, face), faced(0, 128_000, face)), 4 * 128 * 128 / 2 + 4 * 128 * 128, "128 px");
+        near(charged(&format!("text.face{face}.768"), faced(4, 768_000, face), faced(0, 768_000, face)), 4 * 768 * 768 / 2 + 4 * 768 * 768 * 6, "768 px");
+        near(charged(&format!("text.face{face}.most"), faced(4, MAX, face), faced(0, MAX, face)), 4 * 768 * 768 / 2 + 4 * 768 * 768 * 6, "a height over 768 px is paid as 768");
+    }
+    for face in [0, 4, 5, 6, -1] {
+        near(charged(&format!("text.plain{}.768", face + 1), faced(4, 768_000, face), faced(0, 768_000, face)), 4 * 768 * 768 / 2, "a face that is not printed over");
+    }
+    near(charged("text_at.bold", call("text_at", &[0, 100, 0, 4, 768_000, 3, 0]), call("text_at", &[0, 100, 0, 0, 768_000, 3, 0])), 4 * 768 * 768 / 2 + 4 * 768 * 768 * 6, "a text at a place in the caps face");
+    let at = |len: i32, px_milli: i32| call("text_at", &[0, 100, 0, len, px_milli, 0, 0]);
+    near(charged("text_at", at(10, 40_000), at(0, 40_000)), 10 * 40 * 32, "a text at a place");
+    near(charged("text_at.long", at(40, 768_000), at(0, 768_000)), 40 * 768 * 768 / 2, "at 768 px");
+    near(charged("text_at.many", at(400, 1000), at(0, 1000)), 400 * 32, "is never cut: no square, however long it is");
+    // What text_width measures: 32 for each byte.
+    near(charged("text_width", call("text_width", &[0, 100, 34_000, 0]), call("text_width", &[0, 0, 34_000, 0])), 100 * 32, "a hundred bytes measured");
+    near(charged("text_width.tall", call("text_width", &[0, 100, 768_000, 0]), call("text_width", &[0, 0, 768_000, 0])), 100 * 32, "at any height");
+
+    // An icon: 2 for each pixel of the square of its side (the smaller side of its rectangle, 1,024 px at most),
+    // and 4 for each byte of its name.
+    let icon = |len: i32, w: i32, h: i32| call("icon", &[0, len, 0, 0, w, h, 0]);
+    near(charged("icon", icon(0, 96, 96), icon(0, 0, 0)), 96 * 96 * 2 - 2, "an icon of 96 px (one of no size pays for 1 px)");
+    near(charged("icon.side", icon(0, 96, 4000), icon(0, 0, 0)), 96 * 96 * 2 - 2, "the smaller side");
+    near(charged("icon.small", icon(0, 40, 40), icon(0, 0, 0)), 40 * 40 * 2 - 2, "a small one");
+    near(charged("icon.most", icon(0, 4000, 4000), icon(0, 0, 0)), 1024 * 1024 * 2 - 2, "1,024 px at most");
+    near(charged("icon.name", icon(40, 96, 96), icon(0, 96, 96)), 40 * 4, "its name");
+    near(charged("icon.name.long", icon(65, 96, 96), icon(0, 96, 96)), 0, "a name longer than any is not read");
+
+    // The kit's elements. A button: three frames (its fill, its outline, its inner line), each its pixels by
+    // rows and those within 32 px of its sides one by one; its label as a text 48 px high with all its bytes in
+    // the square; and its icon, when it has one, as large as its smaller side.
+    let frame = |w: u64, h: u64, edge: u64| w * h / 32 + h * w.min(2 * edge) * 2;
+    let button = |w: i32, h: i32, label: i32, icon: i32| call("button", &[0, 0, w, h, 0, label, 0, icon, 0]);
+    near(charged("button", button(400, 120, 0, 0), button(0, 0, 0, 0)), 3 * frame(400, 120, 32), "a button");
+    near(charged("button.label", button(400, 120, 10, 0), button(400, 120, 0, 0)), 10 * 48 * 32 + 16 * 10 * 10, "its label");
+    near(charged("button.label.long", button(400, 120, 400, 0), button(400, 120, 0, 0)), 400 * 48 * 32 + 16 * 400 * 400, "all a label's bytes are in the square");
+    near(charged("button.icon", button(400, 120, 0, 4), button(400, 120, 0, 0)), 120 * 120 * 2 + 4 * 4, "its icon, and the icon's name");
+    // A chip, a select and a text field have round ends: two frames, each worked out pixel by pixel within half
+    // the smaller side and 32 px of its sides. A label of one line counts its bytes to 256 in the square.
+    let chip = |w: i32, h: i32, label: i32| call("chip", &[0, 0, w, h, 0, label, 0]);
+    near(charged("chip", chip(260, 80, 0), chip(0, 0, 0)), 2 * frame(260, 80, 40 + 32), "a chip");
+    near(charged("chip.label", chip(260, 80, 400), chip(260, 80, 0)), 400 * 48 * 32 + 16 * 256 * 256, "its label");
+    let select = |w: i32, h: i32, caption: i32, value: i32| call("select", &[0, 0, w, h, 0, caption, 0, value]);
+    near(charged("select", select(660, 100, 0, 0), select(0, 0, 0, 0)), 2 * frame(660, 100, 50 + 32), "a select");
+    near(charged("select.texts", select(660, 100, 4, 6), select(660, 100, 0, 0)), 4 * 48 * 32 + 16 * 4 * 4 + 6 * 48 * 32 + 16 * 6 * 6, "its caption and its value");
+    let field = |w: i32, h: i32, icon: i32, text: i32, hint: i32| call("text_field", &[0, 0, w, h, 0, icon, 0, text, 0, hint]);
+    near(charged("field", field(900, 100, 0, 0, 0), field(0, 0, 0, 0, 0)), 2 * frame(900, 100, 50 + 32), "a text field");
+    near(charged("field.icon", field(900, 100, 4, 0, 0), field(900, 100, 0, 0, 0)), 100 * 100 * 2 + 4 * 4, "its icon");
+    near(charged("field.texts", field(900, 100, 0, 5, 6), field(900, 100, 0, 0, 0)), 5 * 48 * 32 + 16 * 5 * 5 + 6 * 48 * 32 + 16 * 6 * 6, "its text and its hint");
+    // A row: its card (one frame), its icon and its switch (each of one size), and its label on up to two lines.
+    let row = |w: i32, h: i32, icon: i32, label: i32, switch: i32| call("row", &[0, 0, w, h, 0, icon, 0, label, 0, switch]);
+    near(charged("row", row(900, 120, 0, 0, -1), row(0, 0, 0, 0, -1)), frame(900, 120, 32), "a row");
+    near(charged("row.switch", row(900, 120, 0, 0, 1), row(900, 120, 0, 0, -1)), 30_000, "its switch");
+    near(charged("row.icon", row(900, 120, 4, 0, -1), row(900, 120, 0, 0, -1)), 64 * 64 * 2 + 4 * 4, "its icon");
+    near(charged("row.label", row(900, 120, 0, 300, -1), row(900, 120, 0, 0, -1)), 300 * 48 * 32 + 16 * 300 * 300, "its label");
+    // A surface: its fill, and its outline as thick as it is given. A card: one frame. An app tile: two frames,
+    // its icon as large as its smaller side, its label on one line. A floating button: one frame with round
+    // ends, and an icon half its size.
+    let surface = |w: i32, h: i32, filled: i32, t: i32| call("surface", &[0, 0, w, h, filled, t]);
+    near(charged("surface", surface(500, 160, 0, 3), surface(0, 0, 0, 3)), frame(500, 160, 32) + frame(500, 160, 35), "a surface with an outline 3 thick");
+    near(charged("surface.thick", surface(500, 160, 0, 5000), surface(0, 0, 0, 5000)), frame(500, 160, 32) + frame(500, 160, 5032), "a thick outline");
+    near(charged("surface.filled", surface(500, 160, 1, 5000), surface(0, 0, 1, 5000)), 2 * frame(500, 160, 32), "a filled one has no outline of the module's");
+    near(charged("card", call("card", &[0, 0, 500, 200, 0]), call("card", &[0, 0, 0, 0, 0])), frame(500, 200, 32), "a card");
+    let tile = |w: i32, h: i32, label: i32| call("app_tile", &[0, 0, w, h, 0, 0, 0, label, 0]);
+    near(charged("tile", tile(220, 260, 0), tile(0, 0, 0)), 2 * frame(220, 260, 32) + 220 * 220 * 2 - 2, "an app tile and its icon");
+    near(charged("tile.label", tile(220, 260, 5), tile(220, 260, 0)), 5 * 48 * 32 + 16 * 5 * 5, "its label");
+    near(charged("fab", call("fab", &[0, 0, 160, 160, 0, 0]), call("fab", &[0, 0, 0, 0, 0, 0])), frame(160, 160, 80 + 32) + 80 * 80 * 2 - 2, "a floating button and its icon");
+
+    // The status line, a toast and a setting's key: 4 for each byte. The saved state, and what a request reads
+    // and gives: 1 for every 4 bytes.
+    near(charged("status", call("status", &[0, 100]), call("status", &[0, 0])), 4 * 100, "the status line");
+    near(charged("toast", call("toast", &[0, 100, 1500]), call("toast", &[0, 0, 1500])), 4 * 100, "a toast");
+    near(charged("toast.long", call("toast", &[0, 2000, 1500]), call("toast", &[0, 0, 1500])), 4 * 256, "of which 256 bytes are read");
+    near(charged("setting", call("setting", &[0, 40, 4096, 64]), call("setting", &[0, 0, 4096, 64])), 4 * 40, "a setting's key");
+    near(charged("setting.long", call("setting", &[0, 65, 4096, 64]), call("setting", &[0, 0, 4096, 64])), 0, "no key is that long: nothing is read");
+    near(charged("state_set", call("state_set", &[0, 4000]), call("state_set", &[0, 0])), 4000 / 4, "the state written");
+    let read = |cap: i32| seq(&[call("state_set", &[0, 4000]), call("state_get", &[8192, cap])]);
+    near(charged("state_get", read(8000), read(0)), 4000 / 4, "the state read");
+    near(charged("state_get.some", read(1200), read(0)), 1200 / 4, "as much of it as is asked for");
+    // A request that is read (the capability declared, none in flight, its lengths within their limits) pays for
+    // the start of a curl and for its bytes, whether or not it then starts: this one's address is refused, and
+    // nothing is started. Without the capability nothing is read and nothing is paid beside the call.
+    let request = call("http_start", &[0, 3, 0, 4, 0, 0, 0, 2000]);
+    let n = charged_by("request", [&BOTH, &[STORAGE]], request.clone(), request);
+    near(n, 7_500_000 + (3 + 4 + 2000) / 4, "a request");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_settings_value_and_a_requests_answer_are_paid_for_by_their_bytes() {
+    use std::io::{Read, Write};
+    let root = fresh_root("answers");
+    let mut c = patterned(SCREEN.0, SCREEN.1);
+    // A setting's value: 4 for each byte written, as many as the module has room for. (One module: its key
+    // handler asks with the room the key's code says, so two calls differ by the charge alone.)
+    let value = "v".repeat(60);
+    let mut w = roomy(Vec::new());
+    w.key = seq(&[i(0), i(4), i(4096), arg(0), invoke("setting"), vec![0x1a]]);
+    w.data = vec![(0, b"long".to_vec())];
+    let module = w.bytes();
+    let m = format!("{}settings:\n  - key: long\n    label: Long\n    type: choice\n    choices: [{value}, short]\n    default: {value}\n", manifest("test.answers.setting", "Test", &[], false, &module));
+    app_package_install(&m, &module, None, "", SCREEN.0, SCREEN.1).unwrap();
+    let mut rt = AppRuntime::open("test.answers.setting", SCREEN.0, SCREEN.1, false).unwrap();
+    let mut used = |room: i32| {
+        rt.key(room, 0, true);
+        assert_eq!(rt.error(), None);
+        rt.fuel_used()
+    };
+    // (a function's first call also pays for making it ready to run: the calls compared come after it)
+    used(0);
+    let none = used(0);
+    assert_eq!(used(64) - none, 4 * 60, "the whole value");
+    assert_eq!(used(4000) - none, 4 * 60);
+    assert_eq!(used(25) - none, 4 * 25, "as much of it as there is room for");
+
+    // A request's answer and its error text: 1 for every 4 bytes written. A server on this machine answers one
+    // request with 4,000 bytes; the app starts the request in a touch, polls it in its drawing passes, and reads
+    // the answer in a key's call, into the room the key's code says.
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        let mut asked = [0u8; 2048];
+        let _ = s.read(&mut asked);
+        let _ = s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: 4000\r\nConnection: close\r\n\r\n{}", "x".repeat(4000)).as_bytes());
+    });
+    let request = |url: &str, read: &'static str| {
+        let mut w = roomy(seq(&[call("http_poll", &[]), invoke("http_poll"), i(48), vec![0x6a], vec![0x21, COUNTER as u8], i(600), arg(COUNTER), vec![0x3a, 0x00, 0x00], call("status", &[600, 1])]));
+        w.pointer = call("http_start", &[0, 3, 4, url.len() as i32, 0, 0, 0, 0]);
+        w.key = seq(&[i(8192), arg(0), invoke(read), vec![0x1a]]);
+        w.data = vec![(0, format!("GET {url}").into_bytes())];
+        w
+    };
+    let ended = |rt: &mut AppRuntime, c: &mut Canvas| {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(45);
+        loop {
+            rt.draw(c, WHOLE, 0);
+            assert_eq!(rt.error(), None);
+            // (the status line is what http_poll answered, as a digit: 0 while the request runs, 1 once it has ended)
+            if rt.status() == "1" {
+                return;
+            }
+            assert!(std::time::Instant::now() < end, "the request did not end (this test starts curl: it must be on the PATH)");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+    let mut rt = installed("test.answers.body", &BOTH, &request(&format!("http://127.0.0.1:{port}/"), "http_body"));
+    rt.pointer(0, 1, 1, 0);
+    assert_eq!(rt.error(), None);
+    // (the start of a request that is read: the fixed charge of the call, the start of its curl and its bytes)
+    assert!(rt.fuel_used() >= APP_CHARGE_REQUEST + APP_CHARGE_CALL && rt.fuel_used() < APP_CHARGE_REQUEST + APP_CHARGE_CALL + 400, "{}", rt.fuel_used());
+    ended(&mut rt, &mut c);
+    server.join().unwrap();
+    let mut used = |room: i32| {
+        rt.key(room, 0, true);
+        assert_eq!(rt.error(), None);
+        rt.fuel_used()
+    };
+    used(0);
+    let none = used(0);
+    assert_eq!(used(4000) - none, 4000 / 4, "the whole answer");
+    assert_eq!(used(60_000) - none, 4000 / 4);
+    assert_eq!(used(1000) - none, 1000 / 4, "as much of it as there is room for");
+    // The error text of a request that failed: nothing listens at the address, a port of this machine that was
+    // just closed.
+    let closed = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+    let mut rt = installed("test.answers.error", &BOTH, &request(&format!("http://127.0.0.1:{closed}/"), "http_error"));
+    rt.pointer(0, 1, 1, 0);
+    ended(&mut rt, &mut c);
+    let mut used = |room: i32| {
+        rt.key(room, 0, true);
+        assert_eq!(rt.error(), None);
+        rt.fuel_used()
+    };
+    used(0);
+    let none = used(0);
+    let whole = used(4000) - none;
+    assert!((20 / 4..=4096 / 4).contains(&whole), "curl's line for the failure, at 1 for every 4 bytes: {whole}");
+    assert_eq!(used(60_000) - none, whole);
+    assert_eq!(used(8) - none, 8 / 4, "as much of it as there is room for");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The canvas after a pass of `draw` on the whole screen, the app's error, and what the pass took from its budget.
+fn pass_of(id: &str, draw: Vec<u8>, data: &[u8]) -> (Canvas, Option<String>, u64) {
+    let mut w = roomy(draw);
+    w.data = vec![(0, data.to_vec())];
+    let mut rt = loaded(id, &BOTH, &w);
+    let mut c = patterned(SCREEN.0, SCREEN.1);
+    rt.draw(&mut c, WHOLE, 0);
+    (c, rt.error().map(str::to_string), rt.fuel_used())
+}
+
+#[test]
+fn the_hosts_work_for_a_call_is_paid_from_the_calls_budget() {
+    let root = fresh_root("work");
+    let before = patterned(SCREEN.0, SCREEN.1);
+    let letters: Vec<u8> = (0..1024).map(|k| 33 + (k % 94) as u8).collect();
+    let words: Vec<u8> = (0..1024).map(|k| if k % 2 == 0 { b'a' + (k / 2 % 26) as u8 } else { b' ' }).collect();
+    let all = APP_CALL_COMMANDS_MAX as i32;
+    // (a number that falls by `step` each turn of the loop it is in, from `from`)
+    let falling = |from: i32, step: i32| seq(&[i(from), counter(), i(step), vec![0x6c, 0x6b]]);
+    // (sixteen letters from a place that moves on each turn)
+    let moving = seq(&[counter(), i(16), vec![0x6c], i(1008), vec![0x70]]);
+    // Calls within every count and length a call is held to, each of them long work for the host on the whole
+    // screen. The budget does not pay for any: each is stopped as a call out of instructions is, with the budget
+    // used up, and nothing of it is drawn.
+    let long: Vec<(&str, Vec<u8>, &[u8])> = vec![
+        ("4,096 rectangles, each over the whole body", repeat(all, &call("fill_rect", &[-10, -10, 4000, 4000, 0])), &letters),
+        ("4,096 round rectangles over the body, their radius half of it", repeat(all, &call("round_rect", &[0, 0, 1860, 2480, 1240, 0, 1, 0])), &letters),
+        ("4,096 outlines over the body, 100,000 thick", repeat(all, &call("round_rect", &[-10, -10, 4000, 4000, 0, 0, 0, 100_000])), &letters),
+        ("4,096 lines 4,096 wide", repeat(all, &line(0.0, 0.0, 1860.0, 2480.0, 4096.0, 0)), &letters),
+        ("4,096 thin lines from corner to corner", repeat(all, &line(0.0, 0.0, 1860.0, 2480.0, 1.0, 0)), &letters),
+        ("4,096 surfaces over the body with outlines 100,000 thick", repeat(all, &call("surface", &[-10, -10, 4000, 4000, 0, 100_000])), &letters),
+        ("4,096 cards over the body", repeat(all, &call("card", &[0, 0, 1860, 2480, 1])), &letters),
+        ("4,096 floating buttons over the body", repeat(all, &call("fab", &[-300, 0, 2480, 2480, 0, 4])), b"gear"),
+        ("4,096 chips over the body", repeat(all, &call("chip", &[0, 0, 1860, 2480, 0, 16, 1])), &letters),
+        ("4,096 buttons over the body, each with an icon", repeat(all, &call("button", &[0, 0, 1860, 2480, 0, 0, 0, 4, 0])), b"gear"),
+        ("4,096 rows over the body", repeat(all, &call("row", &[0, 0, 1860, 2480, 0, 4, 8, 16, 0, 1])), b"gear    a label of a row"),
+        ("4,096 selects over the body", repeat(all, &call("select", &[0, 0, 1860, 2480, 8, 8, 16, 8])), &letters),
+        ("4,096 app tiles over the body", repeat(all, &call("app_tile", &[0, 0, 1860, 2480, 0, 4, 8, 8, 1])), b"gear    a label"),
+        ("4,096 text fields over the body", repeat(all, &call("text_field", &[0, 0, 1860, 2480, 0, 4, 8, 8, 16, 8])), b"gear    typed   hint    "),
+        ("4,096 icons of 1,024 px", repeat(all, &call("icon", &[0, 4, 0, 0, 1280, 1280, 0])), b"gear"),
+        ("4,096 icons of every size from 1,024 px down", repeat(all, &seq(&[i(0), i(4), i(0), i(0), seq(&[i(1280), counter(), i(1100), vec![0x70, 0x6b]]), seq(&[i(1280), counter(), i(1100), vec![0x70, 0x6b]]), i(0), invoke("icon")])), b"gear"),
+        ("64 texts of 1,024 letters 768 px high", repeat(64, &call("text", &[0, 0, 60_000, 2000, 0, 1024, 768_000, 0, 0, 0])), &letters),
+        ("4,096 texts of 4 letters 256 px high in the caps face", repeat(all, &call("text", &[0, 0, 60_000, 2000, 0, 4, 256_000, 3, 0, 0])), &letters),
+        ("one text of 16 letters 768 px high in the bold face", call("text", &[0, 0, 60_000, 2000, 0, 16, 768_000, 1, 0, 0]), &letters),
+        ("64 texts of 1,024 letters at a place, 768 px high", repeat(64, &call("text_at", &[0, 1500, 0, 1024, 768_000, 0, 0])), &letters),
+        ("4,096 texts of 16 letters, each at its own height from 768 px down", repeat(all, &seq(&[i(0), i(0), i(60_000), i(2000), moving.clone(), i(16), falling(768_000, 180), i(0), i(0), i(0), invoke("text")])), &letters),
+        ("4,096 texts of 16 letters, each at its own height from 64 px down", repeat(all, &seq(&[i(0), i(0), i(60_000), i(2000), moving.clone(), i(16), falling(64_000, 15), i(0), i(0), i(0), invoke("text")])), &letters),
+        ("4,096 texts of 16 letters at a place, each at its own height", repeat(all, &seq(&[i(0), i(1500), moving, i(16), falling(768_000, 180), i(0), i(0), invoke("text_at")])), &letters),
+        ("64 texts of 1,024 letters cut short to 300 px", repeat(64, &call("text", &[0, 0, 300, 100, 0, 1024, 34_000, 0, 0, 0])), &words),
+        ("64 buttons 9,000 px wide with labels of 512 one-letter words", repeat(64, &call("button", &[0, 0, 9000, 300, 0, 1023, 0, 0, 0])), &words),
+        ("64 rows with labels of 512 one-letter words", repeat(64, &call("row", &[0, 0, 1860, 300, 0, 0, 0, 1023, 0, -1])), &words),
+        ("64 chips with labels of 1,024 letters", repeat(64, &call("chip", &[0, 0, 1860, 300, 0, 1024, 0])), &letters),
+    ];
+    for (k, (name, draw, data)) in long.into_iter().enumerate() {
+        let (c, error, used) = pass_of(&format!("test.work.{k}"), draw, data);
+        assert_eq!(error.as_deref(), Some(STOPPED), "{name}");
+        assert_eq!(used, APP_CALL_FUEL, "{name}: the budget is used up");
+        assert_eq!(changed_outside(&before, &c, RECT_EMPTY), 0, "{name}: nothing is drawn");
+    }
+    // What an honest call asks for is paid many times over: a clock's digits, in bold and as high as a text may
+    // be, a page full of small text (70 lines of 90 letters), a board of a hundred keys over a background, and a
+    // screen of thirty rows on a card. (the_limits_leave_room_for_an_honest_app has the fixture app's pass and the
+    // pass of one of every command.)
+    let line_of_text = [b'n'; 90];
+    let honest_passes: Vec<(&str, Vec<u8>, &[u8], u64)> = vec![
+        ("a clock's digits 400 px high, in bold", call("text", &[0, 0, 1860, 900, 0, 5, 400_000, 1, 1, 0]), b"12:34", 8),
+        ("a clock's digits as high as a text may be", call("text", &[0, 0, 1860, 900, 0, 5, 768_000, 0, 1, 0]), b"12:34", 15),
+        ("a page full of small text", repeat(70, &call("text", &[20, 0, 1820, 34, 0, 90, 34_000, 0, 0, 0])), &line_of_text, 4),
+        ("a hundred keys", seq(&[call("fill_rect", &[0, 0, 1860, 2480, 255]), repeat(100, &call("button", &[0, 0, 160, 160, 0, 3, 0, 0, 0]))]), b"sin", 4),
+        ("thirty rows on a card", seq(&[call("card", &[20, 20, 1820, 2440, 0]), repeat(30, &call("row", &[60, 60, 1740, 70, 4, 4, 0, 4, 0, 1]))]), b"rowsgear", 10),
+    ];
+    for (k, (name, draw, data, times_over)) in honest_passes.into_iter().enumerate() {
+        let (_, error, used) = pass_of(&format!("test.paid.{k}"), draw, data);
+        assert_eq!(error, None, "{name}");
+        assert!(used * times_over < APP_CALL_FUEL, "{name}: {used} of the budget");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_limits_leave_room_for_an_honest_app() {
+    let root = fresh_root("room");
+    let mut c = patterned(SCREEN.0, SCREEN.1);
+    // The fixture app of tests/fixtures/apppkg: a rectangle and a line of text.
+    let (yaml, module) = fixture();
+    let icon = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/apppkg/packages/apps/com.example.fixture/icon.ico")).unwrap();
+    app_package_install(&yaml.replace("min_grimoire_version: 2.3.0\n", ""), &module, Some(&icon), "", SCREEN.0, SCREEN.1).unwrap();
+    let mut rt = AppRuntime::open("com.example.fixture", SCREEN.0, SCREEN.1, false).unwrap();
+    rt.draw(&mut c, WHOLE, 0);
+    assert_eq!(rt.error(), None);
+    // (docs/APPS.md, Limits: 3 commands, 22 bytes read, under 1% of a call's budget)
+    assert_eq!((rt.commands(), rt.bytes_read()), (3, 22));
+    assert!(rt.fuel_used() > 50_000 && rt.fuel_used() * 100 < APP_CALL_FUEL, "the fixture app's pass: {} of the budget", rt.fuel_used());
+    // The pass of one of every command (rust/tests/appfix, `honest`): a page of a settings screen and a small board.
+    let cmds = honest();
+    let mut rt = installed("test.room.honest", &BOTH, &pass(&cmds));
+    rt.draw(&mut c, body_under_the_bar(), 0);
+    assert_eq!(rt.error(), None);
+    // (47 commands and 348 bytes read, under a tenth of the budget)
+    assert_eq!((rt.commands(), rt.bytes_read()), (47, 348));
+    assert!(rt.fuel_used() > 1_000_000 && rt.fuel_used() * 10 < APP_CALL_FUEL, "the pass of one of every command: {} of the budget", rt.fuel_used());
+    // A touch records nothing that is drawn, and the next pass is the pass again.
+    rt.pointer(0, 100, 100, 0);
+    rt.draw(&mut c, body_under_the_bar(), 0);
+    assert_eq!((rt.error(), rt.commands()), (None, 47));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_loop_of_one_import_is_ended_by_the_calls_budget() {
+    let root = fresh_root("import-loops");
+    let mut c = patterned(SCREEN.0, SCREEN.1);
+    let data = [b'k'; 512];
+    // Each import of the ABI in a loop with no way out, with numbers it does something with: in an app with both
+    // capabilities and in one with none (where the calls that need a capability return at once), the call is
+    // stopped. For the calls that record no drawing command it is the budget that ends it, used up; a loop of a
+    // drawing command ends at the commands of a call, or at the budget where that comes first.
+    let drawing = ["fill_rect", "outline_rect", "round_rect", "line", "text", "text_at", "icon", "button", "chip", "row", "surface", "select", "app_tile", "fab", "card", "text_field", "clip", "clip_clear"];
+    let one = |import: &'static str| -> Vec<u8> {
+        if import == "line" {
+            return line(10.0, 10.0, 200.0, 40.0, 2.0, 0);
+        }
+        let (_, params, _) = IMPORTS[appfix::import(import) as usize];
+        let args: Vec<i32> = match import {
+            "request_redraw" => vec![1000],
+            "status" => vec![0, 256],
+            "toast" => vec![0, 256, 1500],
+            "state_get" | "time_text" | "date_text" | "wifi_ssid" | "http_body" | "http_error" => vec![4096, 64],
+            "state_set" => vec![0, 0],
+            "setting" => vec![0, 64, 4096, 64],
+            "text" => vec![40, 40, 400, 60, 0, 4, 40_000, 0, 0, 0],
+            "text_at" => vec![40, 200, 0, 4, 40_000, 0, 0],
+            "text_width" => vec![0, 0, 40_000, 0],
+            "text_height" => vec![40_000, 0],
+            // (a request whose address is refused: nothing is started)
+            "http_start" => vec![0, 3, 0, 4, 0, 0, 0, 0],
+            _ => (0..params.len()).map(|at| if at % 2 == 0 { 40 } else { 4 }).collect(),
+        };
+        call(import, &args)
+    };
+    // (a loop of calls that each pay the fixed charge alone makes at most this many: the budget pays for no more)
+    let most = (APP_CALL_FUEL / APP_CHARGE_CALL) as i32;
+    assert_eq!(most, 60_000);
+    for (import, _, _) in IMPORTS.iter() {
+        let records = drawing.contains(import);
+        for (kind, capabilities) in [("both", &BOTH[..]), ("none", &[][..])] {
+            let mut w = Wasm::with(forever(&one(import)), &data);
+            w.memories = vec![(2, None)];
+            let mut rt = loaded(&format!("test.forever.{kind}.{}", import.replace('_', "-")), capabilities, &w);
+            rt.draw(&mut c, WHOLE, 0);
+            assert_eq!(rt.error(), Some(STOPPED), "{import}, {kind}");
+            if !records {
+                assert!(used_up(&rt), "{import}, {kind}: the budget is used up ({})", rt.fuel_used());
+            }
+        }
+        if records {
+            continue;
+        }
+        // The count: one call more than the budget pays fixed charges for is not made, and a tenth as many are.
+        let mut w = Wasm::with(repeat(most + 1, &one(import)), &data);
+        w.memories = vec![(2, None)];
+        let mut rt = loaded(&format!("test.count.past.{}", import.replace('_', "-")), &[], &w);
+        rt.draw(&mut c, WHOLE, 0);
+        assert_eq!((rt.error(), used_up(&rt)), (Some(STOPPED), true), "{import}: {} calls ({})", most + 1, rt.fuel_used());
+        let system = ["time_text", "date_text", "battery_percent", "battery_charging", "http_poll"].contains(import);
+        let some = if system { most / 10 / 41 } else { most / 10 };
+        let mut w = Wasm::with(repeat(some, &one(import)), &data);
+        w.memories = vec![(2, None)];
+        let mut rt = loaded(&format!("test.count.tenth.{}", import.replace('_', "-")), &[], &w);
+        rt.draw(&mut c, WHOLE, 0);
+        assert_eq!(rt.error(), None, "{import}: {some} calls");
+        assert!(rt.fuel_used() >= some as u64 * APP_CHARGE_CALL && rt.fuel_used() < APP_CALL_FUEL / 2, "{import}: {}", rt.fuel_used());
+    }
+    // The same in a touch, a key and a stop, and in a start function.
+    let now = call("now", &[]);
+    let mut touched = Wasm::new(Vec::new());
+    touched.pointer = forever(&now);
+    touched.key = forever(&now);
+    touched.stop = forever(&now);
+    let mut rt = installed("test.forever.touch", &BOTH, &touched);
+    rt.draw(&mut c, WHOLE, 0);
+    rt.pointer(0, 1, 1, 0);
+    assert_eq!((rt.error(), rt.fuel_used()), (Some("The app stopped while handling a touch."), APP_CALL_FUEL));
+    let mut rt = installed("test.forever.key", &BOTH, &touched);
+    rt.key(30, 0, true);
+    assert_eq!((rt.error(), rt.fuel_used()), (Some("The app stopped while handling a key."), APP_CALL_FUEL));
+    let mut rt = installed("test.forever.stop", &BOTH, &touched);
+    rt.stop();
+    assert_eq!((rt.error(), rt.fuel_used()), (None, APP_CALL_FUEL));
+    let mut starts = Wasm::new(Vec::new());
+    starts.start = Some(forever(&now));
+    install("test.forever.start", &BOTH, &starts.bytes());
+    assert_eq!(load("test.forever.start").as_deref(), Some("The app could not start: all fuel consumed by WebAssembly"));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A sequence of numbers that is the same on every run (xorshift), for passes of numbers nobody chose.
 struct Dice(u64);
 
@@ -1143,24 +1675,24 @@ fn no_number_an_app_passes_overflows_a_sum_or_draws_outside_its_body() {
         Rect { x: -200, y: -100, w: 600, h: 500 },
         Rect { x: 1600, y: 2200, w: 600, h: 500 },
     ];
+    // Each list is drawn as the passes the call's budget pays for (a command it does not pay for alone, a long
+    // text as high as a text may be, is stopped and draws nothing).
+    let screen = patterned(SCREEN.0, SCREEN.1);
+    let (mut ids, mut drawn, mut all) = (0, 0, 0);
     for (i, cmds) in passes.iter().enumerate() {
-        let mut rt = loaded(&format!("test.numbers.{i}"), &BOTH, &pass(cmds));
         for (b, body) in [bodies[0], bodies[1 + i % 5]].into_iter().enumerate() {
             let theme = if (i + b) % 2 == 0 { UiTheme::Gothic } else { UiTheme::Classic };
             ui_set_theme(theme);
-            let before = patterned(SCREEN.0, SCREEN.1);
-            let mut c = before.clone();
             let part = Rect { x: 100, y: 100, w: 1500, h: 2000 };
-            if i % 3 == 2 {
-                canvas_set_clip(&mut c, part);
-            }
-            let clip = c.clip;
-            rt.draw(&mut c, body, 0);
-            assert_eq!(rt.error(), None, "pass {i}");
-            assert_eq!(changed_outside(&before, &c, rect_intersect(body, clip)), 0, "pass {i} in {theme:?}, a body at {},{} of {}x{}: pixels outside it changed", body.x, body.y, body.w, body.h);
-            assert_eq!(c.clip, clip, "pass {i}: the canvas keeps its clip");
+            let clip = if i % 3 == 2 { part } else { screen.clip };
+            all += cmds.len();
+            drawn += drawn_within_the_budget(&mut ids, &screen, cmds, body, Some(clip), &mut |before, after| {
+                assert_eq!(changed_outside(before, after, rect_intersect(body, clip)), 0, "pass {i} in {theme:?}, a body at {},{} of {}x{}: pixels outside it changed", body.x, body.y, body.w, body.h);
+            });
         }
     }
+    eprintln!("numbers nobody chose: {drawn} of {all} commands drawn in {ids} passes");
+    assert!(drawn * 10 > all * 9, "most of the commands are ones the budget pays for: {drawn} of {all}");
     ui_set_theme(UiTheme::Gothic);
     let _ = std::fs::remove_dir_all(&root);
 }

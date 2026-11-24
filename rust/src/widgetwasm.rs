@@ -43,9 +43,9 @@
 //! does nothing. `status`, `setting` and `now` need none.
 
 use crate::prelude::*;
-use crate::wasmhost::{in_body as hit_in_body, on_screen};
+use crate::wasmhost::{charge, in_body as hit_in_body, on_screen, TextCharge};
 use crate::widgetpkg::{WIDGET_CAP_OVERLAY, WIDGET_CAP_STORAGE};
-use wasmi::{Caller, Config, Engine, Linker, Module, Store, StoreLimits, TrapCode};
+use wasmi::{Caller, Config, Engine, Linker, Module, Store, StoreLimits};
 
 const ABI: &str = "grimoire";
 const STATE_FILE: &str = "state/runtime.bin";
@@ -93,8 +93,9 @@ pub const WIDGET_TEXT_PX_MAX: i32 = 512;
 // ---- the charges: what the host's work for an import takes from the call's budget (docs/WIDGETS.md, Limits) ----
 //
 // The budget counts the module's instructions. The host's work for an import is no instruction of the
-// module's, so each import takes a charge for it from the same budget (`charge`): a fixed one for every
-// call, and one by size where the work grows with what the import is given. The numbers are in
+// module's, so each import takes a charge for it from the same budget (`wasmhost::charge`, which the app
+// host takes its own with): a fixed one for every call, and one by size where the work grows with what the
+// import is given. The numbers are in
 // instructions: about what the work costs beside a module's own, as measured in a release build on a
 // desktop machine, where the longest drawing a budget pays for takes about three times as long as the
 // same budget spent on instructions alone (not measured on a Kindle). When the budget cannot pay, the
@@ -522,30 +523,17 @@ fn past(st: &HostState, limit: &str, max: usize) -> wasmi::Error {
     crate::wasmhost::out_of_fuel()
 }
 
-/// Takes `n` from the call's instruction budget for work the host does for the call. When the budget cannot
-/// pay, the call ends exactly as a call that used up its instructions ends: nothing is left of the budget,
-/// and the trap is the interpreter's own for that.
-fn charge(caller: &mut Caller<'_, HostState>, n: u64) -> Result<(), wasmi::Error> {
-    let left = caller.get_fuel().unwrap_or(0);
-    if n > left {
-        let _ = caller.set_fuel(0);
-        return Err(wasmi::Error::from(TrapCode::OutOfFuel));
-    }
-    let _ = caller.set_fuel(left - n);
-    Ok(())
-}
-
 /// The pixels of a command's rectangle (body-local) that lie inside the body the call draws on.
 fn area_in_body(st: &HostState, x: i32, y: i32, w: i32, h: i32) -> u64 {
-    let body = Rect { x: 0, y: 0, w: st.body.0, h: st.body.1 };
-    hit_in_body(body, Rect { x, y, w, h }).map_or(0, |r| r.w as u64 * r.h as u64)
+    crate::wasmhost::area_in_body(st.body, x, y, w, h)
 }
+
+/// The widget host's numbers for the charge of a text (`wasmhost::TextCharge`).
+const TEXT_CHARGE: TextCharge = TextCharge { byte_px: WIDGET_CHARGE_TEXT, tall_px: WIDGET_CHARGE_TALL_PX, square: WIDGET_CHARGE_SQUARE, px_max: WIDGET_TEXT_PX_MAX as u64 };
 
 /// The charge for drawing a text of `bytes` bytes `px` high, its bytes counted to `square_max` in the square.
 fn text_charge(bytes: usize, px: i32, square_max: u64) -> u64 {
-    let (n, h) = (bytes as u64, px.clamp(1, WIDGET_TEXT_PX_MAX) as u64);
-    let m = n.min(square_max);
-    n * h * h.max(WIDGET_CHARGE_TALL_PX) * WIDGET_CHARGE_TEXT / WIDGET_CHARGE_TALL_PX + WIDGET_CHARGE_SQUARE * m * m
+    TEXT_CHARGE.of(bytes, px as i64, square_max)
 }
 
 fn room_for_command(st: &HostState) -> Result<(), wasmi::Error> {

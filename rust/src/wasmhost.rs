@@ -2,8 +2,9 @@
 //! full-screen app). Each runs a module from an installed package with the wasmi interpreter, inside
 //! Grimoire's own process, and each holds its module to rules of the same shape with numbers of its own
 //! (docs/WIDGETS.md and docs/APPS.md, Limits). The rules are written once, here, so the two hosts keep them
-//! alike: a store's limits, how a call past a limit ends, how a module's memory is read and written, and how
-//! the numbers a module draws with are held near its body.
+//! alike: a store's limits, how a call past a limit ends, how a module's memory is read and written, how the
+//! numbers a module draws with are held near its body, and how the host's work for an import is paid from the
+//! call's instruction budget.
 
 use crate::prelude::Rect;
 use wasmi::{Caller, Extern, StoreLimits, StoreLimitsBuilder, TrapCode};
@@ -21,6 +22,57 @@ pub fn store_limits(memory_max: usize, table_max: usize) -> StoreLimits {
 /// its instructions, so that the two end alike for the module and for what the host shows.
 pub fn out_of_fuel() -> wasmi::Error {
     wasmi::Error::from(TrapCode::OutOfFuel)
+}
+
+// ---- the charges: the host's work for an import, paid from the call's instruction budget ----
+//
+// A call's budget counts the module's instructions. The host's work for an import is no instruction of the
+// module's, so each import takes a charge for it from the same budget: a fixed one for every call, and one by
+// size where the work grows with what the import is given. The way a charge is taken (`charge`) and the shapes
+// of the charges by size (`TextCharge`, `area_in_body`) are here, for both hosts; the numbers are each host's
+// own (docs/WIDGETS.md and docs/APPS.md, "What a call's budget pays for").
+
+/// Takes `n` from the call's instruction budget for work the host does for the call. When the budget cannot
+/// pay, the call ends exactly as a call that used up its instructions ends: nothing is left of the budget, and
+/// the trap is the interpreter's own for that.
+pub fn charge<T>(caller: &mut Caller<'_, T>, n: u64) -> Result<(), wasmi::Error> {
+    let left = caller.get_fuel().unwrap_or(0);
+    if n > left {
+        let _ = caller.set_fuel(0);
+        return Err(out_of_fuel());
+    }
+    let _ = caller.set_fuel(left - n);
+    Ok(())
+}
+
+/// The pixels of a command's rectangle (relative to the body's top left) that lie inside a body of this size.
+pub fn area_in_body(body: (i32, i32), x: i32, y: i32, w: i32, h: i32) -> u64 {
+    in_body(Rect { x: 0, y: 0, w: body.0, h: body.1 }, Rect { x, y, w, h }).map_or(0, |r| r.w as u64 * r.h as u64)
+}
+
+/// A host's numbers for the charge of drawing a text.
+///
+/// For each byte, `byte_px` for each pixel of the text's height up to `tall_px`; a taller letter costs by its
+/// area, so above that height a byte is charged by the square of the height (the same at `tall_px` exactly).
+/// And `square` for the square of the text's bytes, where the text is measured again and again to fit it to its
+/// room (cut short, or broken into lines): the caller says up to how many bytes those steps look at.
+#[derive(Clone, Copy, Debug)]
+pub struct TextCharge {
+    pub byte_px: u64,
+    pub tall_px: u64,
+    pub square: u64,
+    /// the height a text is drawn at most: a larger one is paid for as this one, as it is drawn
+    pub px_max: u64,
+}
+
+impl TextCharge {
+    /// The charge for a text of `bytes` bytes `px` pixels high (1 to `px_max`), its bytes counted to
+    /// `square_max` in the square.
+    pub fn of(&self, bytes: usize, px: i64, square_max: u64) -> u64 {
+        let (n, h) = (bytes as u64, px.clamp(1, self.px_max as i64) as u64);
+        let m = n.min(square_max);
+        n * h * h.max(self.tall_px) * self.byte_px / self.tall_px + self.square * m * m
+    }
 }
 
 /// `len` bytes of the module's memory from `ptr`, or as many as the memory has there; none for a `ptr` or a
