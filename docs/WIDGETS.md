@@ -47,13 +47,16 @@ Settings → Packages → Widgets accepts two forms:
 | `user/repo` | GitHub: `https://api.github.com/repos/user/repo` gives the default branch, then `https://raw.githubusercontent.com/user/repo/<branch>/package.yaml` (the fallback when the API cannot be reached is `main`) |
 | `https://host/path/package.yaml` | that manifest directly; any HTTPS host works |
 
-Only `https://` is fetched, and the address may be at most 1024 characters. The GitHub API is
-unauthenticated, so a check is subject to GitHub's rate limit.
+Only `https://` is fetched, and the address may be at most 1024 characters, with no space and no
+control character in it. Every redirect an answer sends must be `https://` too, and at most five are
+followed. The address is taken as written: braces and brackets in it are part of the one address.
+The GitHub API is unauthenticated, so a check is subject to GitHub's rate limit.
 
 The artifact's URL is the manifest's directory plus `artifact.path`, unless `releases` has an entry
 for the manifest's version, in which case that entry's `url` is used. This is why a repository can
 keep its source and its built artifact in one tree, or attach the artifact to a GitHub release and
-point at it.
+point at it. The path is joined as it is written, so one with a space in it makes an address that
+is not fetched.
 
 An update re-fetches the stored install address (`source_url`). A package installed as
 `user/repo` is updated through GitHub; one installed from a full `.yaml` address is updated from
@@ -75,7 +78,7 @@ license_url: https://github.com/janedoe/timer/blob/main/LICENSE
 min_grimoire_version: 2.2.0
 platforms: [all]
 repository: https://github.com/janedoe/timer
-capabilities: [storage:widget-local]
+capabilities: [editor:overlay, storage:widget-local]
 settings:
   - key: show_seconds
     label: Show seconds
@@ -106,20 +109,20 @@ spec:
 
 | field | |
 |---|---|
-| `name` | required; the row and the frame's title |
-| `id` | required; the package's permanent identity. Lowercase letters, digits, dots and hyphens only, at most 128, no leading or trailing dot and no `..`. The install, update and remove paths all use it, so never change it between versions |
+| `name` | required; the row and the frame's title. At most 1,023 bytes, as `author` and `description` are: what the index of installed packages keeps of each |
+| `id` | required; the package's permanent identity. Lowercase letters, digits, dots and hyphens only, at most 128, no leading or trailing dot and no `..`, and not ending in `.previous` (an update keeps the replaced version's folder as `<id>.previous`, so that name is no package's). The install, update and remove paths all use it, and so does the saved layout (`widgets.ini` reads an id by this same rule, whatever its length up to 128), so never change it between versions |
 | `type` | must be `widget` |
 | `version` | required; `MAJOR.MINOR.PATCH`, with an optional prerelease suffix. The updater orders `-beta.N` and `-rc.N`; another suffix is accepted but is not ordered as newer. No leading zeroes in a number. An update is installed only when this sorts above the installed version, so bump it for every published change |
-| `author` | optional; shown in the detail page and the widget's frame metadata |
-| `description` | optional; shown in the list, the detail page and the frame |
+| `author` | optional; shown in the detail page and the widget's frame metadata. At most 1,023 bytes |
+| `description` | optional; shown in the list, the detail page and the frame. At most 1,023 bytes |
 | `license` | optional; the SPDX name or a short name. When its text is found, the install page asks the reader to agree before installing |
 | `license_url` | optional; an HTTPS page or raw file with the license text. Without it, `LICENSE`, `LICENSE.md`, `LICENSE.txt`, `COPYING` and `COPYING.md` beside the manifest are tried, in that order |
 | `min_grimoire_version` | optional; the same `MAJOR.MINOR.PATCH` form, with an optional `-beta.N` or `-rc.N` suffix. The install is refused on an older Grimoire |
 | `platforms` | optional; `all` (the default when the key is omitted), `kindle-scribe-2022`, `kindle-scribe-2024`, or a list of them. An explicit empty list is refused. `all` matches every device |
 | `repository` | optional; the human-facing project address. A GitHub address also gets **View QR code** in the detail page |
-| `capabilities` | optional; only `editor:overlay` and `storage:widget-local` are accepted. Declare only what the widget needs. The ABI itself has no network, filesystem or process access; a module can reach only the frame, its settings and its own state |
+| `capabilities` | required; a list that holds `editor:overlay` (the widget draws in its frame), and `storage:widget-local` as well when the widget keeps saved state. They are the two there are: any other value is refused, and so is a manifest that does not declare `editor:overlay`. A module is given only what is declared here: see [Capabilities](#capabilities). The ABI itself has no network, filesystem or process access; a module can reach only the frame, its settings and its own state |
 | `settings` | optional; up to 32 settings the package declares for its own Settings page. Each has a `key`, a `label`, a `type` (`toggle` or `choice`), and a `default`; a choice also has 2 to 16 `choices`. An optional `icon` names one of the icons above |
-| `artifact.path` | required; a safe relative path, at most 240 bytes: no leading `/`, no backslash, no empty, `.` or `..` component, and neither `package.yaml` nor anything under `state/` |
+| `artifact.path` | required; a safe relative path, at most 240 bytes: no leading `/`, no backslash, no empty, `.` or `..` component, and neither `package.yaml` nor anything under `state/`, whatever the case of their letters (`Package.yaml` and `STATE/x` are refused too: a storage that ignores case finds the manifest and the state folder by those names). No component begins with a dot, or ends in a dot, a space or `.sdr`, and the first is not the name of one of the storage's system folders (`system`, `extensions` and the like): the module is read through the walk Grimoire reads the Kindle's storage with, which takes no such name |
 | `artifact.sha256` | required; 64 hexadecimal characters, over the artifact's bytes |
 | `artifact.size` | required; the artifact's size in bytes, at least 1 and at most 32 MiB. It is used even when `releases` supplies the URL and digest |
 | `releases` | optional; `version`, `url` (use HTTPS) and `sha256` per entry. Only the entry whose `version` equals the manifest's is used |
@@ -128,8 +131,8 @@ spec:
 | `spec.icon` | optional; one of Grimoire's icons: `calculator`, `package`, `clock`, `timer`/`hourglass`, `music`, `notebook`, `pdf`, `image`/`photo`, `files`/`folder`, `search`, `download`, `language`, `gear`/`settings`, `update`, `paper`/`page`, `library`, `link`, `live`, `gamepad`, `eye`. A `md-` prefix is accepted. An unknown or omitted icon is the widget grid |
 | `spec.minimizable` | optional, default `true`. Accepted for forward compatibility; this build always draws the frame's minimize button |
 | `spec.size.mode` | `fixed` (default) or `resizable` |
-| `spec.size.default` | optional; `[width, height]` at 300 dpi, default `[220, 160]` |
-| `spec.size.min`, `spec.size.max` | `resizable` only; each side must be at least 120x80 at 300 dpi and at most 70% of the editor canvas either way (about 1302x1736 on a 1860x2480 Scribe). `min` may not exceed `max`. A `fixed` widget uses `default` for all three |
+| `spec.size.default` | optional; `[width, height]` at 300 dpi, default `[220, 160]`, within the same bounds as `min` and `max` |
+| `spec.size.min`, `spec.size.max` | `resizable` only; each side must be at least 120x120 at 300 dpi and at most 70% of the editor canvas either way (about 1302x1736 on a 1860x2480 Scribe). `min` may not exceed `max`. A `fixed` widget uses `default` for all three |
 
 Unknown top-level keys are ignored, so a newer manifest can carry fields an older Grimoire does not
 know; unknown keys inside `spec` are ignored too. Values of the known fields are checked where
@@ -144,12 +147,54 @@ release asset is a single file, never an archive.
 
 `spec.size` values are pixels at 300 dpi, the Scribe's panel. Grimoire scales them by the panel's
 dpi when it draws the frame, so the widget is the same physical size on every device. The floor is
-120x80 at 300 dpi; the ceiling is 70% of the editor canvas in either direction. A frame is placed
+120x120 at 300 dpi; the ceiling is 70% of the editor canvas in either direction. A frame is placed
 at the top right of the editor, cascading down as more open, and is clamped onto the screen after
 a rotation or a window-size change.
 
 `mode: resizable` gives the bottom-right grip and clamps to `min` and `max`; `mode: fixed` omits the
 grip and keeps the frame at `default`.
+
+The floor's height is what a frame is made of: the title bar (64), the gap and margin above and
+below the body (22) and the smallest body (34, one line of small text). The body is the frame less
+its title bar and margins, 28 narrower and 86 shorter, so the smallest frame has a body of 92x34 to
+draw on. A manifest whose `default`, `min` or `max` is below the floor is refused, and a frame is
+never opened, restored or resized below it, whatever an installed manifest says.
+
+### Capabilities
+
+A module has the capabilities its manifest declares, and no other:
+
+| capability | what it gives the module |
+|---|---|
+| `editor:overlay` | drawing in its frame over the notebook: `rect`, `text`, `button` and `hit`, and asking for a drawing pass with `request_redraw`. A manifest must declare it (below) |
+| `storage:widget-local` | its own saved state: `state_get`, `state_set` and the file `state/runtime.bin`. Without it `state_get` returns `0`, `state_set` does nothing, and no state file is read or written for the package |
+
+A module may import every function of the ABI whatever it declares; a call it has no capability
+for returns at once. `status`, `setting` and `now` need no capability. The
+package's settings are the reader's, changed on its Settings page and kept by the host with or
+without `storage:widget-local`.
+
+**A widget package declares `editor:overlay`.** A widget is a frame that its module draws in, and
+without the capability nothing the module draws is shown: the frame would open with an empty body
+and nothing to say why. So the manifest check refuses a manifest whose `capabilities` do not hold
+`editor:overlay`, when the manifest is read and before the reader is asked anything, with
+
+```text
+`capabilities` must declare `editor:overlay`; without it nothing a widget draws is shown
+```
+
+and an update to such a manifest is refused the same way. A widget that draws and remembers
+something declares both:
+
+```yaml
+capabilities: [editor:overlay, storage:widget-local]
+```
+
+A package that an earlier build installed without `editor:overlay` stays installed and still opens:
+`rect`, `text`, `button`, `hit` and `request_redraw` do nothing for it, so its frame has an empty
+body and no hit regions and is not drawn again for the module's asking, and Grimoire's log says that
+the manifest does not declare the capability. It draws again
+once it is updated to a version that declares it.
 
 ### Settings
 
@@ -244,29 +289,110 @@ now() -> i64
 300 dpi by multiplying with `scale_milli / 1000.0`. Drawing coordinates are relative to the body's
 top-left.
 
+The body is all a widget draws on. Every rectangle, text and button is clipped to it, whatever
+coordinates and sizes the module passes: what reaches past an edge of the body is cut off there, and
+nothing is drawn on the frame's title bar, on another frame, on the toolbar or on the page. A hit
+region is the part of it that lies inside the body, and a tap in the frame's margin, beside the
+body, is a tap on no region.
+
 | import | |
 |---|---|
-| `rect` | a rectangle in the frame; `style` is `0` normal, `1` selected or `2` disabled |
-| `text` | UTF-8 text at `ptr`, `len` in the module's memory, `px` high, centered when `center` is nonzero |
+| `rect` | a rectangle in the frame; `style` is `0` normal, `1` selected or `2` disabled. `rect`, `text`, `button`, `hit` and `request_redraw` need `editor:overlay` |
+| `text` | UTF-8 text at `ptr`, `len` in the module's memory, `px` high (1 to 512: a smaller or larger value is drawn at the nearer end), centered when `center` is nonzero |
 | `button` | a button with its own label; it is also a hit region with `id` |
 | `hit` | a hit region with `id`, without drawing anything |
 | `status` | the text the editor's `editor.widget.N.status` probe reads, for tests and debugging |
-| `request_redraw` | asks for `widget_draw` again after `after_ms` (16 to 86,400,000); a clock calls it once per draw, and a package that never calls it is only drawn when something else repaints |
+| `request_redraw` | asks for `widget_draw` again after `after_ms` (100 to 86,400,000; a value outside is taken as the nearer end); a clock calls it once per draw, and a package that never calls it is only drawn when something else repaints. When the time has come the frame is drawn again and its rectangle is refreshed once. A minimized frame draws no body, so its request waits until the frame is restored, and a request waits while a finger or the pen is down or a menu or sheet is open. A redraw also waits while the pen is writing or near the screen, and comes once when the pen has left |
 | `setting` | copies one saved setting's value into `out_ptr` and returns its byte length, or `0`; `out_cap` caps the copy |
-| `state_get` | copies the saved state into `ptr` and returns its byte length, or `0`; `cap` caps the copy |
-| `state_set` | replaces the saved state with the bytes at `ptr`; at most 64 KiB is kept |
+| `state_get` | copies the saved state into `ptr` and returns its byte length, or `0`; `cap` caps the copy. `state_get` and `state_set` need `storage:widget-local` |
+| `state_set` | replaces the saved state with the bytes at `ptr`; the first 64 KiB are kept |
 | `now` | Unix time in seconds, when a widget needs a clock |
 
 `widget_tap` is called with the `id` of the hit region under the tap, or `-1` for a tap elsewhere
-in the body. It should update the package's state; the next `widget_draw` shows the result. A
+in the body. It should update the package's state; the next `widget_draw` shows the result (what
+a tap itself draws is not shown: a pass holds the commands of its own `widget_draw` only). A
 module may call `state_set` during a tap or a draw; the host writes the state file after the call,
 at `packages/widgets/<id>/state/runtime.bin`. For a timer or a sticky note, that is the whole
 persistence model.
 
-Each call runs with a fixed instruction budget, and a module's linear memory may grow to at most
-32 MiB. A module that loops past the budget is stopped and its frame shows the error instead of
+Each call runs with a fixed instruction budget, from which the host's work for the imports it
+calls is paid as well ([Limits](#limits)), and a module has one linear memory, which may grow to at
+most 32 MiB. A module that loops past the budget is stopped and its frame shows the error instead of
 freezing Grimoire. Imports outside the `grimoire` module fail to link, and the module has no
 filesystem, network or process access.
+
+### Limits
+
+The host calls a module's `widget_draw` (a drawing pass) and its `widget_tap`. Each call is held to
+the limits below, and the counts start again with every call:
+
+| limit | |
+|---|---|
+| a call's budget | 20,000,000, counted in instructions: the module's own, and the host's work for its imports ([below](#what-a-calls-budget-pays-for)) |
+| the module's memories | 1, of at most 32 MiB (512 pages) |
+| the module's tables | 1, of at most 65,536 entries |
+| drawing commands in one pass (`rect`, `text` and `button` together) | 512 |
+| hit regions in one pass (`button` and `hit` together) | 512 |
+| bytes of one text (a `text`'s, or a `button`'s label) | 1,024 |
+| bytes of all the texts of one pass | 16,384 (16 KiB) |
+| bytes of the status line | 256 |
+| bytes `state_get` and `state_set` move in one call, all their uses together | 1,048,576 (1 MiB) |
+| the saved state | 65,536 bytes (64 KiB): `state_set` keeps the first 64 KiB of what it is given |
+| a text's height, `px` | 1 to 512; a value outside is drawn at the nearer end |
+| `request_redraw`'s delay | 100 ms to 86,400,000 ms (24 hours); a value outside is taken as the nearer end, so a package has itself drawn again at most ten times a second |
+| a key passed to `setting` | 64 bytes, the longest a setting's key can be; a longer one is no setting's and returns `0` |
+
+A length is compared with its limit before the host reads the module's memory. A call that goes past
+the command, hit region, text, status line or state limit is stopped the way a call that runs past
+its instruction budget is: the frame shows the same error in place of its body (as much of it as the
+body has room for), the module is not called again until the frame is closed and opened, and
+Grimoire's log names the limit.
+
+A module has one linear memory and at most one table. Memory past 32 MiB and table entries past
+65,536 are not given: `memory.grow` and `table.grow` fail, as WebAssembly defines it (they return
+`-1`), and the module runs on. A module that declares a second memory or a second table, or one that
+starts larger than its limit, is not started: its frame says that the widget could not start.
+
+The limits leave room. The calculator package of `tests/fixtures/widgetcalc/` draws at most 39
+commands, 37 hit regions and 118 bytes of text in a pass, with a status line of 47 bytes. Its largest
+call takes about 300,000 from its budget in the frame it opens with (1.5%; about 180,000 of them are
+its own instructions) and about 430,000 in its largest frame.
+
+#### What a call's budget pays for
+
+A call's budget is counted in instructions, and it pays for two things: the instructions the module
+runs, and the work the host does for the imports the module calls. The second is no instruction of
+the module's, so each import takes a charge for it from the same budget: a fixed one for every call,
+and one by size where the work grows with what the import is given.
+
+| import | what a call of it takes from the budget |
+|---|---|
+| every import | 500 |
+| `rect` | and 1 for every 4 pixels of the rectangle that lie inside the body |
+| `button` | and 1 for every 2 pixels of the button that lie inside the body; and its label as a `text` 48 pixels high, with all of its bytes counted in the square |
+| `text` | and, for each byte, 32 for each pixel of its height (1 to 512) up to 64 pixels; above 64 pixels, half the square of the height for each byte, since a tall letter costs by its area; and 16 times the square of its bytes, counted to 256 bytes (a line that does not fit is cut short, and a label is broken in two, by steps that each measure the text again) |
+| `status`, `setting`, `state_get`, `state_set` | and 4 for each byte read from the module's memory or written to it |
+
+A call whose budget cannot pay a charge ends exactly as a call that ran out of instructions: its frame
+shows the same error, and nothing of the pass is drawn. A call of an import the package has no
+capability for pays the fixed charge and returns.
+
+The charges were set by measuring, in a release build on a desktop machine, what each import's work
+costs beside a module's own instructions. There, the longest drawing a budget pays for takes about
+three times as long as the same budget spent on instructions alone. They have not been measured on a
+Kindle.
+
+Some sums, for a sense of scale:
+
+- a clock's `12:34` as high as a text may be, 512 pixels: 5 x 512 x 512 / 2 + 16 x 25 + 500, about
+  656,000 (3% of the budget);
+- a line of 75 letters 34 pixels high: 75 x 34 x 32 + 16 x 75 x 75 + 500 = 172,100; a body full of
+  them, 41 lines: about 7,100,000 (35%);
+- a key of 120x120 pixels with a label of 3 bytes: 500 + 7,200 + 3 x 48 x 32 + 16 x 9 = 12,452;
+  a hundred of them: about 1,250,000 (6%);
+- a rectangle over the whole of the largest body (1274x1650): about 526,000, so a pass has room for
+  38 of them, not 512; and 16 KiB of text is paid for only when it is small and in short pieces
+  (512 texts of 32 letters fit the budget up to 20 pixels high).
 
 A module must be self-contained: the same bytes run on every supported Scribe, so there is nothing
 to cross-compile for armv7. A Rust `cdylib` built for `wasm32-unknown-unknown` with `extern "C"`
@@ -279,6 +405,21 @@ The installer downloads the artifact (at most 32 MiB, with a 45-second timeout),
 and SHA-256 against the manifest, and only then writes anything. A mismatch refuses the install
 with nothing changed. There is no signature and no inspection beyond that check; the module is
 first instantiated when its frame opens.
+
+Each time a frame opens, before the module is loaded, its file is checked again:
+
+- the installed manifest's `artifact.path` is still a path the manifest check takes, and the index
+  (`packages/index.json`) names the same file, `packages/widgets/<id>/<artifact.path>`;
+- it is a plain file inside the package's own folder, with no link in its place or between the
+  package's folder and it;
+- it is no larger than 32 MiB, and its SHA-256 is the `sha` the index recorded when the package was
+  installed.
+
+A file that fails a check is not loaded: the frame says "The widget's artifact could not be read."
+in place of its body, and Grimoire's log says which check it was. (A frame whose module failed says
+the reason first, in as many lines as its body holds, and under it, where lines are left, the
+package's name, version and author; a body with room for one line shows the start of the reason.) The file is read and hashed once
+for each load, which is once for a frame that opens; drawing does not read it again.
 
 `tests/fixtures/widgetcalc/` holds a compiled calculator package used by the scenarios;
 `tests/fixtures/widgetpkg/` holds a small package used for the install-path checks. Neither is
@@ -346,6 +487,26 @@ have them. The fixtures and scenarios under `tests/` are the working examples:
   then checks the open frame and a newly opened one.
 - `tests/scenarios/z_widget_packages.qs` drives install, update, license and remove through the
   package manager.
+- `tests/fixtures/widgethost/` holds six small packages for the host's own rules. Their modules are
+  written byte by byte by `rust/tests/widgetfix` (`make widget-fixtures` writes the folder, and
+  `rust/tests/test_widget_fixtures.rs` checks it is what the writer makes), so each can pass the
+  host exactly the numbers its rule is about.
+- `tests/scenarios/z_widget_host.qs` opens each of them: one that draws far outside its body, one
+  that declares no capability, one a command past a pass's limit, one whose file is not the one
+  installed, one resized to the smallest frame, and one whose id is 128 bytes long.
+  `z_widget_host_kept.qs` starts Grimoire again on that data and finds the last one's frame.
+- `tests/fixtures/widgetruns/` holds the packages whose modules run for long or again and again,
+  written the same way, and `tests/scenarios/z_widget_runs.qs` opens them with app time on the
+  script's clock: one whose drawing pass never ends, which is stopped when its instruction budget is
+  used up and whose frame, the default size, says the reason first; and one that asks to be drawn again each second, whose passes and refreshes are counted
+  while its frame is open and while it is minimized, and again in a package that declares no
+  capability.
+- `tests/scenarios/z_widget_pen.qs` opens the one that asks to be drawn again each second and brings
+  the pen: no pass and no refresh of the frame while the pen is near, while it writes, and after a
+  lift with the pen still near; one pass and one refresh when the pen has left; and a pen's tap on
+  the frame, which is drawn at its lift.
+- `rust/tests/test_widget_host.rs` holds the same rules as unit tests of the host, pixel by pixel
+  and limit by limit.
 
 A scenario can copy a fixture into a fresh data root:
 
@@ -363,7 +524,9 @@ cp -r path/to/my-timer /tmp/mypkg/packages/widgets/com.example.timer
 ```
 
 The entry's `path` is relative to the data root (`packages/widgets/<id>/<artifact.path>`), `sha` is
-the installed artifact's digest, and `source_url` is the address an update should re-fetch. Then
+the installed artifact's digest, and `source_url` is the address an update should re-fetch. Both
+`path` and `sha` are checked when the frame opens (see [The artifact](#the-artifact)): with a `sha`
+that is not the file's SHA-256 the module is not loaded. Then
 run a scenario with `# copy: /tmp/mypkg .` (or copy it to `GRIMOIRE_ROOT` yourself) and inspect the
 shots:
 
@@ -404,12 +567,13 @@ does.
 5. Do not move or rewrite a published version. If the artifact was wrong, publish a new version.
 
 Removal deletes the installed manifest, artifact and frame, and keeps `state/`. An update keeps
-the old directory as `<id>.previous` until the new one is in place; a failed write rolls back.
+the old directory as `<id>.previous` until the new one is in place; a failed write rolls back. No
+package's id ends in `.previous`, so that directory is never another package's.
 
 ## State
 
-A package that needs to remember something across launches writes it through `state_set`; the host
-keeps the bytes in `packages/widgets/<id>/state/runtime.bin`. That folder is not part of the
+A package that needs to remember something across launches declares `storage:widget-local` and
+writes it through `state_set`; the host keeps the bytes in `packages/widgets/<id>/state/runtime.bin`. That folder is not part of the
 artifact and is never overwritten by an update. Removing the package keeps it, so reinstalling
 restores the widget's data. Nothing else of the package remains after a removal.
 
@@ -425,14 +589,18 @@ the platform matches, and that the artifact's length and SHA-256 match the manif
 not review the code and cannot tell a good widget from a malicious one. Install from sources you
 trust, and read the manifest before installing.
 
-The manifest and artifact are fetched over HTTPS. The SHA-256 protects against a truncated or
+The manifest and artifact are fetched over HTTPS, and so is every redirect on the way to them (at
+most five). The SHA-256 protects against a truncated or
 corrupted download; it is not a signature, and it comes from the same repository as the artifact.
-There is no package signing and no revocation list.
+The check before each load compares the installed module with the digest kept in
+`packages/index.json`, a file of the same data folder: it finds a module that is no longer the file
+that was installed, and it is not a signature either. There is no package signing and no revocation
+list.
 
 A widget is confined to its frame, its settings and its own state file. The module has no network,
 filesystem or process access; the only files the host touches for it are the artifact it was
-installed from and `state/runtime.bin`. It still runs with the reader's full screen and can draw
-misleading content, so the trust decision remains yours.
+installed from and `state/runtime.bin`. It draws in its frame's body and nowhere else on the screen;
+what it shows there can still be misleading, so the trust decision remains yours.
 
 ## Checklist
 
@@ -442,7 +610,8 @@ misleading content, so the trust decision remains yours.
 - [ ] `artifact.size` and `artifact.sha256` match it (`tools/widget-pack.sh`)
 - [ ] `license` and a license file or `license_url`
 - [ ] `spec.runtime: wasm`, and the module exports `memory`, `widget_draw` and `widget_tap`
-- [ ] `spec.size` within 120x80 and 70% of the canvas
+- [ ] `capabilities` declares `editor:overlay` (every widget; the install is refused without it), and `storage:widget-local` for a widget that saves state
+- [ ] `spec.size` within 120x120 and 70% of the canvas
 - [ ] `platforms` correct, `min_grimoire_version` honest
 - [ ] any `settings` keys, labels, defaults and choices are final; changing a key loses its saved value
 - [ ] tested from a clean data root: install, open, move, close, update, remove; open Settings and toggle each row

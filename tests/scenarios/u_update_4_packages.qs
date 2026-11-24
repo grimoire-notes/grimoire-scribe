@@ -19,7 +19,8 @@ expect library.update is newer 9.0.0-beta.9
 expect library.update.packages is com.example.fixture com.example.timer
 expect library.update.pkg.versions is com.example.fixture=1.0.0->1.2.0 com.example.timer=1.0.0->1.1.0
 expect library.update.pkg.status is idle
-expect library.update.pkg.icons is 1
+# (the app's Store icon is decoded by the sandboxed worker, issue #236: it comes a moment after the page)
+waitfor library.update.pkg.icons is 1
 expect library.ui_has.updates.pkg.0 is 1
 expect library.ui_has.updates.pkg.1 is 1
 shot 00-updates

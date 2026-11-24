@@ -107,18 +107,19 @@ pub enum IconKind {
     /// A widget package, and Settings' Packages category (2.2, Rust only)
     Package = 72,
     /// The home's app row and Apps page (2.3, issue #209): Calendar and Agenda (apps still to come),
-    /// Browser (Files), and the status bar's Wi-Fi, Bluetooth and battery.
+    /// Browser (Files), and the status bar's Wi-Fi and Bluetooth. (The bar's battery is no icon: it is
+    /// drawn, globalui.rs gui_battery, and the bundled Terminess has no battery glyph. A kind that names
+    /// a glyph the fonts lack draws nothing: assets/terminess-keep.txt, rust/tests/test_terminess_keep.rs.)
     Calendar = 73,
     Agenda = 74,
     Browser = 75,
     Wifi = 76,
     Bluetooth = 77,
-    Battery = 78,
-    Keyboard = 79,
+    Keyboard = 78,
 }
 impl IconKind {
     /// ICON_COUNT
-    pub const COUNT: usize = 80;
+    pub const COUNT: usize = 79;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -352,7 +353,6 @@ const K_ICON_CP: [u32; IconKind::COUNT] = {
     k[IconKind::Browser as usize] = 0xF0AB6; // md-file_cabinet
     k[IconKind::Wifi as usize] = 0xF05A9; // md-wifi
     k[IconKind::Bluetooth as usize] = 0xF0339; // md-link_variant (the closest glyph in the subset)
-    k[IconKind::Battery as usize] = 0xF0079; // md-battery (the status bar draws its own battery)
     k[IconKind::Keyboard as usize] = 0xF0570; // md-view_grid (the subset has no keyboard glyph)
     k
 };

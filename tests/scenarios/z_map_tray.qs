@@ -2,6 +2,9 @@
 # generate: tests/map_fixture.py 250
 # env: GRIMOIRE_CHECK_FIT=1
 # A notebook without links has no tiny dots or unlinked tray in either orientation.
+# (the status bar's clock held still: a new minute between a drawing and a look at editor.screen_composed
+# would make the two differ)
+clock 1700000000
 wait 200
 tap library card.1
 tap panel pages

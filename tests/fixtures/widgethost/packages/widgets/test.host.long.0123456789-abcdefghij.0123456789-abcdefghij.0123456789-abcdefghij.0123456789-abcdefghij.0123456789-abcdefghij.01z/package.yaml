@@ -1,0 +1,17 @@
+name: Long
+id: test.host.long.0123456789-abcdefghij.0123456789-abcdefghij.0123456789-abcdefghij.0123456789-abcdefghij.0123456789-abcdefghij.01z
+type: widget
+version: 1.0.0
+author: Grimoire tests
+description: A module of the widget host's tests.
+platforms: [all]
+artifact:
+  path: module.bin
+  sha256: 121294865067d086d36441faaebc371f2e0132a951c8a91203deaf00ba3e89ff
+  size: 384
+capabilities: [editor:overlay, storage:widget-local]
+spec:
+  runtime: wasm
+  size:
+    mode: fixed
+    default: [400, 300]

@@ -1,7 +1,8 @@
 // test_picwork_fallback.rs: with the sandbox unavailable where it is not required (the Mac, the simulator, tests),
 // pictures fall back to the writer's own decode and say so in the log (D21), but for a worker-only pool (Files'
-// previews, 2.2), whose pictures wait. Where it is required they wait instead (test_picwork_closed.rs). Its own
-// binary: the fallback holds for the rest of the process.
+// previews, 2.2), whose pictures wait, and for a small picture (a package's icon, a Package Store picture: 2.3,
+// issue #236), which no pool ever decodes in the writer. Where it is required they wait instead
+// (test_picwork_closed.rs). Its own binary: the fallback holds for the rest of the process.
 #![cfg(feature = "sim")]
 mod testlib;
 use grimoire::picwork::*;
@@ -56,6 +57,15 @@ fn fallback_decodes_and_says_so() {
     let mut only = PicPool::worker_only();
     check!(matches!(only.decode(&bytes, true, 300, 400), PicOut::NoWorker(_)));
     check!(matches!(only.check(&bytes, bytes.len()), PicOut::NoWorker(_)));
+    // A small picture (2.3, issue #236) waits whatever the pool: the very pool that decoded the pictures above in
+    // the writer answers NoWorker for it, for a picture, an `.ico` and either, and so does a worker-only one. The
+    // pool still decodes its other pictures here after that.
+    let ico = include_bytes!("../../tests/fixtures/apppkg/packages/apps/com.example.fixture/icon.ico");
+    for (data, what) in [(&bytes[..], SMALL_PICTURE), (&ico[..], SMALL_ICO), (&ico[..], SMALL_ICO | SMALL_PICTURE), (&bytes[..], SMALL_ICO | SMALL_PICTURE)] {
+        check!(matches!(pool.small(data, what, 256), PicOut::NoWorker(_)));
+        check!(matches!(only.small(data, what, 256), PicOut::NoWorker(_)));
+    }
+    check!(matches!(pool.decode(&bytes, false, 300, 400), PicOut::Pic { .. }));
 }
 
 #[test]

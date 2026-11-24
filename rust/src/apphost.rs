@@ -30,6 +30,7 @@
 use crate::globalui::{gui_app_tile, gui_chip, gui_fab, gui_select, gui_status_bar, gui_status_h, gui_surface, gui_text_field};
 use crate::prelude::*;
 use std::time::{Duration, Instant};
+use std::os::unix::process::CommandExt;
 use std::process::Command;
 use wasmi::{Caller, Config, Engine, Extern, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
 
@@ -83,33 +84,143 @@ struct HostState {
     network_http: bool,
     /// The one asynchronous curl request an app may have in flight.
     http: Option<HttpJob>,
+    /// Tests: the program started in curl's place and its first arguments (empty: curl itself).
+    #[cfg(test)]
+    http_stand_in: Vec<String>,
+}
+
+/// The limits of one app HTTP request (docs/APPS.md, HTTP). The answer's limit is given to curl,
+/// set on the files curl may write, watched by `http_watch` while curl runs, and held again when
+/// the answer is read.
+const HTTP_ADDRESS_MAX: usize = 4096;
+/// The method is at most HTTP_METHOD_MAX letters; its text as the module gives it, with any white
+/// space around the method, is at most HTTP_METHOD_TEXT_MAX bytes.
+const HTTP_METHOD_MAX: usize = 16;
+const HTTP_METHOD_TEXT_MAX: usize = 64;
+const HTTP_HEADERS_MAX: usize = 32 * 1024;
+const HTTP_UPLOAD_MAX: usize = 2 * 1024 * 1024;
+const HTTP_HEADER_LINES_MAX: usize = 32;
+const HTTP_HEADER_LINE_MAX: usize = 2048;
+const HTTP_REDIRECTS_MAX: u32 = 5;
+const HTTP_ANSWER_MAX: u64 = 8 * 1024 * 1024;
+const HTTP_TOO_LARGE: &str = "The answer is too large.";
+/// The User-Agent of a request that has no `User-Agent` line of its own.
+const HTTP_USER_AGENT: &str = "Grimoire-App/2.3";
+/// The address space a request's curl may take beyond Grimoire's own at the request's start
+/// (childcaps.rs): the margin a child with no number of its own has there.
+const HTTP_CHILD_MARGIN: u64 = 256 << 20;
+
+/// The variables curl takes a proxy from for an http or https address. A request's curl starts
+/// without them (`http_no_proxy`): a request goes to the address it names, whatever Grimoire's
+/// own environment holds.
+const HTTP_PROXY_VARIABLES: [&str; 5] = ["http_proxy", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"];
+
+/// The kinds of a request's files: the endings of their names.
+const HTTP_FILE_KINDS: [&str; 4] = ["body", "status", "err", "request"];
+
+/// One request's files under the app's `state/http` folder, named by their common start: the
+/// answer (`.body`), curl's status code (`.status`) and error text (`.err`), and the upload
+/// (`.request`). They are removed when this is dropped, so no way out of a request keeps them.
+struct HttpFiles {
+    base: String,
+}
+
+impl HttpFiles {
+    fn path(&self, kind: &str) -> String {
+        format!("{}.{kind}", self.base)
+    }
+
+    fn remove(&self) {
+        for kind in HTTP_FILE_KINDS {
+            let _ = std::fs::remove_file(self.path(kind));
+        }
+    }
+}
+
+/// True for a name `http_start` gives a request's file: the process's number, a hyphen, the
+/// start's time as a number, a dot and one of the four kinds.
+fn http_file_name(name: &str) -> bool {
+    let number = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    name.rsplit_once('.').is_some_and(|(start, kind)| {
+        HTTP_FILE_KINDS.contains(&kind) && start.split_once('-').is_some_and(|(pid, tick)| number(pid) && number(tick))
+    })
+}
+
+/// Makes an app's state folder `state` and its request folder `folder` (`state/http`) when they
+/// are missing, and says whether both are real folders: folders themselves, not links to one.
+/// Neither name is followed when it is a link, so nothing is made behind one.
+fn http_folders(state: &str, folder: &str) -> bool {
+    let real = |path: &str| std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir());
+    let missing = |path: &str| std::fs::symlink_metadata(path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound);
+    (real(state) || missing(state)) && (real(folder) || missing(folder)) && mkdir_p(folder) == 0 && real(state) && real(folder)
+}
+
+/// Removes the request files an earlier run left in `folder`, an app's `state/http`: a Grimoire
+/// that stopped while a request ran removed none of them. Only plain files with a request file's
+/// name go. A link in the folder is neither followed nor removed, and every other name stays.
+/// When `folder`'s own name is a link, or anything but a folder, nothing is removed; the names
+/// before it in the path are followed as any path's are, and are the caller's to check
+/// (`http_start` does, with `http_folders`). For when no request of the host is in flight.
+fn http_sweep(folder: &str) {
+    if !std::fs::symlink_metadata(folder).is_ok_and(|m| m.is_dir()) {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(folder) else { return };
+    let left: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()) && e.file_name().to_str().is_some_and(http_file_name))
+        .map(|e| e.path())
+        .collect();
+    for path in left {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+impl Drop for HttpFiles {
+    fn drop(&mut self) {
+        self.remove();
+    }
 }
 
 /// One app HTTP request, run by curl in the background. The app polls it from
-/// `request_redraw` frames, so no network contact ever blocks drawing or touch.
+/// `request_redraw` frames, so no network contact ever blocks drawing or touch. The host's tick
+/// looks after it between the app's polls, and when the app does not poll (`http_watch`).
 struct HttpJob {
     child: std::process::Child,
-    body_path: String,
-    status_path: String,
-    err_path: String,
+    files: HttpFiles,
     done: bool,
     code: i32,
     body: Vec<u8>,
     error: String,
 }
 
-impl Drop for HttpJob {
-    fn drop(&mut self) {
+impl HttpJob {
+    /// Ends a curl that still runs and reaps it.
+    fn stop(&mut self) {
         if !self.done {
             let _ = self.child.kill();
             let _ = self.child.wait();
+            self.done = true;
         }
-        let _ = std::fs::remove_file(&self.body_path);
-        let _ = std::fs::remove_file(&self.status_path);
-        let _ = std::fs::remove_file(&self.err_path);
-        if let Some(body) = self.body_path.strip_suffix(".body") {
-            let _ = std::fs::remove_file(format!("{body}.request"));
-        }
+    }
+
+    /// The answer file's size so far: 0 until curl has made it.
+    fn answer_len(&self) -> u64 {
+        std::fs::symlink_metadata(self.files.path("body")).map_or(0, |m| m.len())
+    }
+
+    /// The outcome of an answer over HTTP_ANSWER_MAX: no body, no status code, and the reason.
+    fn too_large(&mut self) {
+        self.code = -1;
+        self.body = Vec::new();
+        self.error = HTTP_TOO_LARGE.to_string();
+    }
+}
+
+impl Drop for HttpJob {
+    fn drop(&mut self) {
+        // (curl ends first; `files` is dropped after this and removes what curl was writing)
+        self.stop();
     }
 }
 
@@ -310,7 +421,7 @@ pub fn apphost_draw(a: &mut App) {
     let App { screen: c, app_view, .. } = a;
     canvas_fill(c, Rect::new(0, 0, aw, ah), 255);
     if app_view.status_bar {
-        gui_status_bar(c, aw, wall_time());
+        gui_status_bar(c, aw, sys_wall_clock());
     }
     if !rect_is_empty(body) {
         app_view.body = body;
@@ -471,6 +582,8 @@ impl AppRuntime {
             clock_12h,
             network_http: m.capabilities.iter().any(|c| c == "network:http"),
             http: None,
+            #[cfg(test)]
+            http_stand_in: Vec::new(),
         });
         store.limiter(|st| &mut st.limits);
         let _ = store.set_fuel(FUEL_PER_CALL);
@@ -621,6 +734,8 @@ impl AppRuntime {
     }
 
     fn tick(&mut self) {
+        // A request in flight is looked after whether or not the app polls it, or still runs.
+        self.store.data_mut().http_watch();
         if self.error.is_some() {
             return;
         }
@@ -825,6 +940,13 @@ fn install_imports(linker: &mut Linker<HostState>) -> Result<(), String> {
     // An app starts one request and polls it. The request runs in a child curl while the app keeps
     // drawing; `request_redraw` is how it asks to be called again.
     linker.func_wrap(ABI, "http_start", |mut caller: Caller<'_, HostState>, method_ptr: i32, method_len: i32, url_ptr: i32, url_len: i32, headers_ptr: i32, headers_len: i32, body_ptr: i32, body_len: i32| -> i32 {
+        // Nothing of the request is read from the module's memory before the capability, the
+        // request in flight and the four lengths have been checked.
+        let lengths = [method_len, url_len, headers_len, body_len].map(|len| len.max(0) as usize);
+        let before = caller.data().http_start_before_read(lengths);
+        if before != 0 {
+            return before;
+        }
         let method = String::from_utf8_lossy(&read_mem(&caller, method_ptr, method_len)).into_owned();
         let url = String::from_utf8_lossy(&read_mem(&caller, url_ptr, url_len)).into_owned();
         let headers = String::from_utf8_lossy(&read_mem(&caller, headers_ptr, headers_len)).into_owned();
@@ -840,78 +962,255 @@ fn install_imports(linker: &mut Linker<HostState>) -> Result<(), String> {
     linker.func_wrap(ABI, "http_body_len", |caller: Caller<'_, HostState>| -> i32 {
         caller.data().http.as_ref().map_or(0, |j| j.body.len() as i32)
     }).map_err(e)?;
+    // The answer and the error text are written from where the host holds them: each is lent to
+    // the write and put back, and is not copied for the call.
     linker.func_wrap(ABI, "http_body", |mut caller: Caller<'_, HostState>, ptr: i32, cap: i32| -> i32 {
-        let body = caller.data().http.as_ref().map_or_else(Vec::new, |j| j.body.clone());
-        write_mem(&mut caller, ptr, cap, &body)
+        let Some(body) = caller.data_mut().http.as_mut().map(|j| std::mem::take(&mut j.body)) else { return 0 };
+        let n = write_mem(&mut caller, ptr, cap, &body);
+        if let Some(j) = caller.data_mut().http.as_mut() {
+            j.body = body;
+        }
+        n
     }).map_err(e)?;
     linker.func_wrap(ABI, "http_error", |mut caller: Caller<'_, HostState>, ptr: i32, cap: i32| -> i32 {
-        let text = caller.data().http.as_ref().map_or_else(String::new, |j| j.error.clone());
-        write_mem(&mut caller, ptr, cap, text.as_bytes())
+        let Some(text) = caller.data_mut().http.as_mut().map(|j| std::mem::take(&mut j.error)) else { return 0 };
+        let n = write_mem(&mut caller, ptr, cap, text.as_bytes());
+        if let Some(j) = caller.data_mut().http.as_mut() {
+            j.error = text;
+        }
+        n
     }).map_err(e)?;
     linker.func_wrap(ABI, "http_cancel", |mut caller: Caller<'_, HostState>| {
-        caller.data_mut().http = None;
+        caller.data_mut().http_cancel();
     }).map_err(e)?;
     Ok(())
 }
 
+/// True for the address of a request: it begins with `http://` or `https://`, is at most
+/// HTTP_ADDRESS_MAX bytes, and has no control character and no space.
+fn http_address_ok(url: &str) -> bool {
+    (url.starts_with("https://") || url.starts_with("http://"))
+        && url.len() <= HTTP_ADDRESS_MAX
+        && !url.chars().any(|c| c.is_control() || c == ' ')
+}
+
+/// True for a header line of a request: a name, a colon and a value. The name is one or more
+/// HTTP token characters (RFC 9110's tchar) and begins the line, the colon follows it directly,
+/// the value has no control character, and the line is at most HTTP_HEADER_LINE_MAX bytes.
+fn http_header_line_ok(line: &str) -> bool {
+    let Some((name, value)) = line.split_once(':') else { return false };
+    line.len() <= HTTP_HEADER_LINE_MAX
+        && !name.is_empty()
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+        && !value.chars().any(char::is_control)
+}
+
+/// The header lines of a request, one per line of `headers`, without the white space around
+/// each; an empty line is skipped. None when a line is not a header line or there are more than
+/// HTTP_HEADER_LINES_MAX of them: the request is then refused whole.
+fn http_header_lines(headers: &str) -> Option<Vec<&str>> {
+    let mut lines = Vec::new();
+    for line in headers.lines() {
+        let line = line.trim_end_matches('\r').trim();
+        if line.is_empty() {
+            continue;
+        }
+        if lines.len() == HTTP_HEADER_LINES_MAX || !http_header_line_ok(line) {
+            return None;
+        }
+        lines.push(line);
+    }
+    Some(lines)
+}
+
+/// The arguments curl is started with for one request. `-q` is first, so no configuration file
+/// is read. The address and every redirect are http or https, at most HTTP_REDIRECTS_MAX
+/// redirects are followed, the address is taken as written (`-g`), and the answer is at most
+/// HTTP_ANSWER_MAX bytes. The default User-Agent is `-A`'s, so a `User-Agent` line of the request
+/// takes its place and is not sent beside it. Each header line is one `-H`; the address is last.
+///
+/// A `HEAD` request is curl's own (`--head`), not a method put in another request's place: curl
+/// then expects no body behind an answer's header lines, and writes those lines as the answer.
+/// The length such an answer states is not its own, so `--max-filesize` is not given: the
+/// answer file's other limits (`http_child_rules`, `http_watch`) hold as for any request.
+fn http_args(method: &str, url: &str, header_lines: &[&str], body_path: &str, request_path: Option<&str>) -> Vec<String> {
+    let redirects = HTTP_REDIRECTS_MAX.to_string();
+    let answer = HTTP_ANSWER_MAX.to_string();
+    let mut args: Vec<String> = [
+        "-q", "-sS", "-g",
+        "--proto", "=http,https", "--proto-redir", "=http,https",
+        "-L", "--max-redirs", &redirects,
+        "--max-time", "30",
+    ].map(String::from).to_vec();
+    if method == "HEAD" {
+        args.push("--head".to_string());
+    } else {
+        args.extend(["--max-filesize", &answer, "-X", method].map(String::from));
+    }
+    args.extend(["-o", body_path, "-w", "%{http_code}", "-A", HTTP_USER_AGENT].map(String::from));
+    for line in header_lines {
+        args.extend(["-H".to_string(), line.to_string()]);
+    }
+    if let Some(request) = request_path {
+        args.extend(["--data-binary".to_string(), format!("@{request}")]);
+    }
+    args.push(url.to_string());
+    args
+}
+
+/// Takes the proxy variables out of the environment the child of `cmd` starts with. The rest of
+/// Grimoire's environment is passed on as it is.
+fn http_no_proxy(cmd: &mut Command) {
+    for name in HTTP_PROXY_VARIABLES {
+        cmd.env_remove(name);
+    }
+}
+
+/// The rules a request's child starts under, set in the child between the fork and curl's start,
+/// as the tree's other children carry them (wifi.rs, sandbox.rs, childcaps.rs). Everything it uses
+/// was worked out before the fork: here there are only system calls, no allocation and no lock.
+///
+/// - None of Grimoire's descriptors: 0, 1 and 2 are the request's own by now, and every other one
+///   closes when curl starts.
+/// - curl ends when Grimoire does: the signal is asked for, then Grimoire is looked for, as it may
+///   have ended before the signal was asked for.
+/// - A background child's caps (`caps`, and `oom` its `oom_score_adj` as text): best effort, and
+///   of the address space the soft limit only, never above the hard one nor over a lower one
+///   already set, as child_caps_apply sets them.
+/// - No file curl writes is longer than the answer's limit and one byte, and a write past that is
+///   an error to curl, not a signal. `http_watch` reads an answer file of that length as too
+///   large.
+///
+/// An error here keeps curl from starting.
+fn http_child_rules(parent: libc::pid_t, caps: ChildCaps, oom: &[u8]) -> std::io::Result<()> {
+    // SAFETY: fcntl, prctl, getppid, open, write, close, getrlimit, setrlimit and signal are system
+    // calls here: they take plain numbers, a path that ends with its NUL, `oom`'s bytes and the
+    // rlimits this function owns.
+    unsafe {
+        for fd in 3..1024 {
+            let flags = libc::fcntl(fd, libc::F_GETFD);
+            if flags >= 0 {
+                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+            }
+        }
+        #[cfg(target_os = "linux")]
+        if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong, 0, 0, 0) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if libc::getppid() != parent {
+            return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let fd = libc::open(c"/proc/self/oom_score_adj".as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
+            if fd >= 0 {
+                libc::write(fd, oom.as_ptr().cast(), oom.len());
+                libc::close(fd);
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = oom; // (only Linux has the file)
+        if let Some(cap) = caps.as_bytes {
+            let cap = cap as libc::rlim_t;
+            let mut was = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+            if libc::getrlimit(libc::RLIMIT_AS, &mut was) == 0 {
+                let lower = was.rlim_cur != libc::RLIM_INFINITY && was.rlim_cur <= cap;
+                let over = was.rlim_max != libc::RLIM_INFINITY && cap > was.rlim_max;
+                if !lower && !over {
+                    libc::setrlimit(libc::RLIMIT_AS, &libc::rlimit { rlim_cur: cap, rlim_max: was.rlim_max });
+                }
+            }
+        }
+        libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
+        // (a lower limit already set stays as it is)
+        let most = (HTTP_ANSWER_MAX + 1) as libc::rlim_t;
+        let mut size = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        if libc::getrlimit(libc::RLIMIT_FSIZE, &mut size) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        size = libc::rlimit { rlim_cur: size.rlim_cur.min(most), rlim_max: size.rlim_max.min(most) };
+        if libc::setrlimit(libc::RLIMIT_FSIZE, &size) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
 impl HostState {
-    fn http_start(&mut self, method: &str, url: &str, headers: &str, body: &[u8]) -> i32 {
+    /// What `http_start` answers from a request's four lengths alone, in bytes (the method's text,
+    /// the address, the header text and the upload), before anything of the request is read: -2
+    /// without the capability, -3 while a request is in flight, -1 when a length is over its limit,
+    /// and 0 when the request may be read.
+    fn http_start_before_read(&self, [method, url, headers, body]: [usize; 4]) -> i32 {
         if !self.network_http {
             return -2;
         }
         if self.http.as_ref().is_some_and(|j| !j.done) {
             return -3;
         }
+        if method > HTTP_METHOD_TEXT_MAX || url > HTTP_ADDRESS_MAX || headers > HTTP_HEADERS_MAX || body > HTTP_UPLOAD_MAX {
+            return -1;
+        }
+        0
+    }
+
+    fn http_start(&mut self, method: &str, url: &str, headers: &str, body: &[u8]) -> i32 {
+        let before = self.http_start_before_read([method.len(), url.len(), headers.len(), body.len()]);
+        if before != 0 {
+            return before;
+        }
         let method = method.trim().to_ascii_uppercase();
-        if method.is_empty()
-            || method.len() > 16
-            || !method.bytes().all(|b| b.is_ascii_uppercase())
-            || !(url.starts_with("https://") || url.starts_with("http://"))
-            || url.len() > 4096
-            || headers.len() > 32 * 1024
-            || body.len() > 2 * 1024 * 1024
-        {
+        if method.is_empty() || method.len() > HTTP_METHOD_MAX || !method.bytes().all(|b| b.is_ascii_uppercase()) || !http_address_ok(url) {
             return -1;
         }
-        self.http = None;
+        // (a HEAD request has no upload)
+        if method == "HEAD" && !body.is_empty() {
+            return -1;
+        }
+        let Some(header_lines) = http_header_lines(headers) else { return -1 };
+        // (an ended request stays as it is until this one has started: a start that fails from
+        // here on leaves its outcome readable, as a refused one does)
         let Some(dir) = self.state_path.rsplit_once('/').map(|(d, _)| d) else { return -1 };
-        if mkdir_p(&format!("{dir}/http")) != 0 {
+        let folder = format!("{dir}/http");
+        // The request's files are made in the app's state folder and its `http` folder, which are
+        // real folders: with a link at either name the start fails, and makes and removes nothing.
+        if !http_folders(dir, &folder) {
             return -1;
         }
+        // No request of this host is in flight now: what an earlier run left in the folder goes.
+        http_sweep(&folder);
         let tick = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
-        let base = format!("{dir}/http/{}-{tick}", std::process::id());
-        let body_path = format!("{base}.body");
-        let status_path = format!("{base}.status");
-        let err_path = format!("{base}.err");
-        let request_path = format!("{base}.request");
+        // (from here every return drops `files`, or the job that holds it: the files go with it)
+        let files = HttpFiles { base: format!("{folder}/{}-{tick}", std::process::id()) };
+        let request_path = files.path("request");
         if !body.is_empty() && std::fs::write(&request_path, body).is_err() {
             return -1;
         }
-        let Ok(status_file) = std::fs::File::create(&status_path) else { return -1 };
-        let Ok(err_file) = std::fs::File::create(&err_path) else { return -1 };
+        let Ok(status_file) = std::fs::File::create(files.path("status")) else { return -1 };
+        let Ok(err_file) = std::fs::File::create(files.path("err")) else { return -1 };
+        let args = http_args(&method, url, &header_lines, &files.path("body"), (!body.is_empty()).then_some(request_path.as_str()));
         let mut cmd = Command::new("curl");
-        cmd.arg("-q").arg("-sS").arg("-L").arg("--max-time").arg("30")
-            .arg("-X").arg(&method)
-            .arg("-o").arg(&body_path)
-            .arg("-w").arg("%{http_code}")
-            .arg("-H").arg("User-Agent: Grimoire-App/2.3");
-        for line in headers.lines().take(32) {
-            let line = line.trim_end_matches('\r').trim();
-            if !line.is_empty() && line.len() <= 2048 && !line.chars().any(char::is_control) {
-                cmd.arg("-H").arg(line);
-            }
+        #[cfg(test)]
+        if let Some((program, first)) = self.http_stand_in.split_first() {
+            cmd = Command::new(program);
+            cmd.args(first);
         }
-        if !body.is_empty() {
-            cmd.arg("--data-binary").arg(format!("@{request_path}"));
+        cmd.args(&args).stdin(std::process::Stdio::null()).stdout(status_file).stderr(err_file);
+        http_no_proxy(&mut cmd);
+        let caps = child_caps_plan(child_vm_base(child_vm_bytes()), HTTP_CHILD_MARGIN);
+        let oom = caps.oom_adj.to_string();
+        // SAFETY: getpid has no preconditions.
+        let parent = unsafe { libc::getpid() };
+        // SAFETY: the closure runs in the child, between the fork and curl's start, and makes only
+        // system calls (http_child_rules) with what was made here, before the fork.
+        unsafe {
+            cmd.pre_exec(move || http_child_rules(parent, caps, oom.as_bytes()));
         }
-        cmd.arg(url).stdin(std::process::Stdio::null()).stdout(status_file).stderr(err_file);
         match cmd.spawn() {
             Ok(child) => {
                 self.http = Some(HttpJob {
                     child,
-                    body_path,
-                    status_path,
-                    err_path,
+                    files,
                     done: false,
                     code: -1,
                     body: Vec::new(),
@@ -919,47 +1218,68 @@ impl HostState {
                 });
                 0
             }
-            Err(e) => {
-                let _ = std::fs::remove_file(&body_path);
-                let _ = std::fs::remove_file(&status_path);
-                let _ = std::fs::remove_file(&err_path);
-                let _ = std::fs::remove_file(&request_path);
-                self.http = None;
-                let _ = e;
-                -1
-            }
+            Err(_) => -1,
         }
     }
 
-    fn http_poll(&mut self) -> i32 {
-        let Some(job) = self.http.as_mut() else { return -1 };
+    /// Looks after the request in flight: reaps a curl that has ended, reads its outcome once and
+    /// removes its files, and ends a curl whose answer file has grown past the limit. The host's
+    /// tick calls this, so a request the app never polls leaves no child and no file behind, and
+    /// `http_poll` calls it before it answers.
+    fn http_watch(&mut self) {
+        let Some(job) = self.http.as_mut() else { return };
         if job.done {
-            return 1;
+            return;
         }
         match job.child.try_wait() {
             Ok(Some(status)) => {
                 job.done = true;
-                job.code = read_file_max(&job.status_path, 32)
+                job.code = read_file_max(&job.files.path("status"), 32)
                     .and_then(|v| String::from_utf8_lossy(&v).trim().parse::<i32>().ok())
                     .unwrap_or(-1);
-                job.body = read_file_max(&job.body_path, 8 * 1024 * 1024).unwrap_or_default();
-                if !status.success() && job.body.is_empty() {
-                    let detail = read_file_max(&job.err_path, 4096)
+                // (63 is curl's exit code for an answer over --max-filesize. A curl that the size
+                // limit of its start stopped ended with a write error, or by that limit's signal,
+                // and left an answer file one byte over the limit.)
+                if status.code() == Some(63) || job.answer_len() > HTTP_ANSWER_MAX {
+                    job.too_large();
+                } else if status.success() {
+                    job.body = read_file_max(&job.files.path("body"), HTTP_ANSWER_MAX as usize).unwrap_or_default();
+                } else {
+                    // A curl that ended with a failure brought no answer, whatever part of one it
+                    // had written: the request has no status code, and curl's line is its error.
+                    let detail = read_file_max(&job.files.path("err"), 4096)
                         .map(|v| String::from_utf8_lossy(&v).split_whitespace().collect::<Vec<_>>().join(" "))
                         .unwrap_or_default();
                     job.error = if detail.is_empty() { format!("curl exited {:?}", status.code()) } else { detail };
                     job.code = -1;
                 }
-                1
+                // The answer is in memory now: its files are not kept until the next request.
+                job.files.remove();
             }
-            Ok(None) => 0,
+            // An answer whose length was not stated is watched as it grows.
+            Ok(None) if job.answer_len() > HTTP_ANSWER_MAX => {
+                job.stop();
+                job.too_large();
+                job.files.remove();
+            }
+            Ok(None) => {}
             Err(e) => {
                 job.done = true;
                 job.error = format!("Could not wait for curl: {e}");
                 job.code = -1;
-                1
+                job.files.remove();
             }
         }
+    }
+
+    /// What an app's poll is told: -1 with no request, 0 while it runs, 1 once it has ended.
+    fn http_poll(&mut self) -> i32 {
+        self.http_watch();
+        self.http.as_ref().map_or(-1, |job| i32::from(job.done))
+    }
+
+    fn http_cancel(&mut self) {
+        self.http = None;
     }
 }
 
@@ -1001,6 +1321,1541 @@ mod tests {
         assert!(gesture_matches(900.0, 2300.0, 930.0, 1200.0, 1860, 2480));
         assert!(!gesture_matches(900.0, 1500.0, 930.0, 1200.0, 1860, 2480));
         assert!(!gesture_matches(900.0, 2300.0, 1700.0, 1200.0, 1860, 2480));
+    }
+
+    // ---- HTTP ----
+
+    // A header line is a name of token characters, a colon and a value without control characters.
+    #[test]
+    fn a_header_line_is_a_name_a_colon_and_a_value() {
+        let longest = format!("X-Long: {}", "a".repeat(HTTP_HEADER_LINE_MAX - 8));
+        assert_eq!(longest.len(), HTTP_HEADER_LINE_MAX);
+        for line in [
+            "Accept: application/json",
+            "X-A:1",
+            "X-A:    spaces after the colon",
+            "X-A:",
+            "X-A: a value: with colons",
+            "X-A: caf\u{e9} \u{65e5}\u{672c}",
+            "x!#$%&'*+-.^_`|~9: every kind of token character",
+            longest.as_str(),
+        ] {
+            assert!(http_header_line_ok(line), "{line:?}");
+        }
+        let too_long = format!("X-Long: {}", "a".repeat(HTTP_HEADER_LINE_MAX - 7));
+        for line in [
+            "",
+            "no colon",
+            "Accept",
+            "X-A;",
+            ":",
+            ": no name",
+            "X A: a space in the name",
+            "X-A : a space before the colon",
+            " X-A: a space first",
+            "@X-A: 1",
+            "@",
+            "=X-A: 1",
+            "=",
+            "(X-A): 1",
+            "(",
+            "<X-A>: 1",
+            "<",
+            "\"X-A\": 1",
+            "\"",
+            "Caf\u{e9}: 1",
+            "X-A: a\ttab",
+            "X-A: a\u{0}b",
+            "X-A: a\rb",
+            "X-A: a\u{1b}b",
+            "X-A: a\u{7f}b",
+            "X-A: a\u{85}b",
+            "X\tA: 1",
+            too_long.as_str(),
+        ] {
+            assert!(!http_header_line_ok(line), "{line:?}");
+        }
+        // Of the ASCII characters, only the token characters are part of a name, first or later.
+        for b in 0u8..128 {
+            let c = b as char;
+            let token = c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
+            assert_eq!(http_header_line_ok(&format!("{c}X: 1")), token, "{c:?} first");
+            if c != ':' {
+                assert_eq!(http_header_line_ok(&format!("X{c}: 1")), token, "{c:?} later");
+            }
+        }
+    }
+
+    // The lines of a request: white space around a line and empty lines are not part of them, and one
+    // line that is not a header line, or one line too many, refuses them all.
+    #[test]
+    fn the_header_lines_of_a_request_are_taken_whole_or_not_at_all() {
+        assert_eq!(http_header_lines(""), Some(vec![]));
+        assert_eq!(http_header_lines("\r\n\n  \n"), Some(vec![]));
+        assert_eq!(http_header_lines("Accept: text/plain\r\n\r\n  X-A: 1 \t\nX-B:2"), Some(vec!["Accept: text/plain", "X-A: 1", "X-B:2"]));
+        assert_eq!(http_header_lines("Accept: text/plain\nno colon\nX-A: 1"), None);
+        assert_eq!(http_header_lines("Accept: text/plain\n@X-A: 1"), None);
+        for line in ["=X-A: 1", "(X-A): 1", "<X-A>: 1", "\"X-A\": 1"] {
+            assert_eq!(http_header_lines(&format!("Accept: text/plain\n{line}")), None, "{line:?}");
+        }
+        assert_eq!(http_header_lines("X-A: a\rb\n"), None);
+        let most = "X-A: 1\n\n".repeat(HTTP_HEADER_LINES_MAX);
+        assert_eq!(http_header_lines(&most).map(|l| l.len()), Some(HTTP_HEADER_LINES_MAX));
+        assert_eq!(http_header_lines(&format!("{most}X-A: 1")), None);
+        let longest = format!("X-Long: {}", "a".repeat(HTTP_HEADER_LINE_MAX - 8));
+        assert_eq!(http_header_lines(&format!("  {longest}  \r\n")), Some(vec![longest.as_str()]));
+        assert_eq!(http_header_lines(&format!("{longest}a")), None);
+    }
+
+    // The whole list curl is started with: -q first, each rule's option, each header line behind
+    // its own -H, and the address last.
+    #[test]
+    fn curl_is_started_with_the_rules_of_a_request_and_the_address_last() {
+        let url = "https://example.org/a?b=[1]&c={x,y}";
+        let args = http_args("POST", url, &["Accept: text/plain", "X-A: 1"], "/s/http/1.body", Some("/s/http/1.request"));
+        assert_eq!(args, [
+            "-q", "-sS", "-g",
+            "--proto", "=http,https", "--proto-redir", "=http,https",
+            "-L", "--max-redirs", "5",
+            "--max-time", "30", "--max-filesize", "8388608",
+            "-X", "POST", "-o", "/s/http/1.body", "-w", "%{http_code}",
+            "-A", "Grimoire-App/2.3",
+            "-H", "Accept: text/plain",
+            "-H", "X-A: 1",
+            "--data-binary", "@/s/http/1.request",
+            url,
+        ]);
+        let plain = http_args("GET", "http://example.org/", &[], "/s/http/2.body", None);
+        assert_eq!(plain, [
+            "-q", "-sS", "-g",
+            "--proto", "=http,https", "--proto-redir", "=http,https",
+            "-L", "--max-redirs", "5",
+            "--max-time", "30", "--max-filesize", "8388608",
+            "-X", "GET", "-o", "/s/http/2.body", "-w", "%{http_code}",
+            "-A", "Grimoire-App/2.3",
+            "http://example.org/",
+        ]);
+        // A HEAD request: --head where another request has --max-filesize and its method.
+        let head = http_args("HEAD", "http://example.org/", &["X-A: 1"], "/s/http/3.body", None);
+        assert_eq!(head, [
+            "-q", "-sS", "-g",
+            "--proto", "=http,https", "--proto-redir", "=http,https",
+            "-L", "--max-redirs", "5",
+            "--max-time", "30",
+            "--head", "-o", "/s/http/3.body", "-w", "%{http_code}",
+            "-A", "Grimoire-App/2.3",
+            "-H", "X-A: 1",
+            "http://example.org/",
+        ]);
+        assert_eq!(HTTP_ANSWER_MAX, 8_388_608);
+    }
+
+    /// A scratch folder of one test's own (under GRIMOIRE_TEST_TMP when the Makefile sets it).
+    fn scratch(name: &str) -> String {
+        let base = std::env::var("GRIMOIRE_TEST_TMP").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+        let dir = base.join(format!("grimoire-apphost-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.to_str().unwrap().to_string()
+    }
+
+    /// The host's state for an app with `network:http` whose state folder is `dir/state`.
+    fn host(dir: &str) -> HostState {
+        HostState {
+            commands: Vec::new(),
+            state: Vec::new(),
+            state_path: format!("{dir}/{STATE_FILE}"),
+            settings: Vec::new(),
+            close_requested: false,
+            status_bar: false,
+            status: String::new(),
+            texts: Vec::new(),
+            toast: None,
+            dirty: false,
+            limits: StoreLimitsBuilder::new().build(),
+            redraw_at: None,
+            screen_w: 0,
+            screen_h: 0,
+            clock_12h: false,
+            network_http: true,
+            http: None,
+            http_stand_in: Vec::new(),
+        }
+    }
+
+    /// At the head of a stand-in's script: puts the answer file's path, which follows `-o` among
+    /// curl's arguments, in `$out`.
+    const FIND_ANSWER: &str = "while [ $# -gt 1 ]; do [ \"$1\" = -o ] && out=$2; shift; done; ";
+
+    /// A host whose requests start `sh -c script` in curl's place, by the same start and with
+    /// curl's arguments as the script's.
+    fn host_standing_in(dir: &str, script: &str) -> HostState {
+        let mut st = host(dir);
+        st.http_stand_in = ["sh", "-c", script, "curl"].map(String::from).to_vec();
+        st
+    }
+
+    /// Waits until the child has ended and leaves it unreaped, as an app that does not poll does.
+    fn wait_unreaped(pid: u32) {
+        loop {
+            // SAFETY: waitid fills the siginfo this owns; WNOWAIT leaves the child to be reaped.
+            let r = unsafe {
+                let mut info: libc::siginfo_t = std::mem::zeroed();
+                libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, libc::WEXITED | libc::WNOWAIT)
+            };
+            if r == 0 {
+                return;
+            }
+            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EINTR));
+        }
+    }
+
+    /// The names of the files in the app's request folder.
+    fn request_files(dir: &str) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(format!("{dir}/state/http"))
+            .map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+            .unwrap_or_default();
+        names.sort();
+        names
+    }
+
+    /// The kinds (the names' endings) of the files in the app's request folder.
+    fn request_kinds(dir: &str) -> Vec<String> {
+        request_files(dir).iter().map(|n| n.rsplit('.').next().unwrap_or("").to_string()).collect()
+    }
+
+    /// True when no process has this id any more: the child was ended and reaped.
+    fn gone(pid: u32) -> bool {
+        // SAFETY: signal 0 sends nothing: it asks whether the process is there.
+        let r = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        r == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    }
+
+    fn child_pid(st: &HostState) -> u32 {
+        st.http.as_ref().unwrap().child.id()
+    }
+
+    /// Polls a request until it has ended, as an app does from its redraws.
+    fn poll_to_end(st: &mut HostState) {
+        let end = Instant::now() + Duration::from_secs(45);
+        while st.http_poll() == 0 {
+            assert!(Instant::now() < end, "the request did not end");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(st.http_poll(), 1);
+    }
+
+    /// What an app reads of an ended request: its status code, its answer and its error text.
+    fn outcome(st: &HostState) -> (i32, Vec<u8>, String) {
+        let job = st.http.as_ref().unwrap();
+        (job.code, job.body.clone(), job.error.clone())
+    }
+
+    /// A local address that takes a connection and never answers it: a request to it stays in
+    /// flight. (The listener is returned to be kept: the address is its.)
+    fn silent_address() -> (std::net::TcpListener, String) {
+        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let url = format!("http://127.0.0.1:{}/", l.local_addr().unwrap().port());
+        (l, url)
+    }
+
+    const NEEDS_CURL: &str = "this test starts curl: it must be on the PATH";
+
+    // The address of a request is http or https, at most 4096 bytes, and has no control character
+    // and no space. A request with another address starts nothing and makes no file or folder.
+    #[test]
+    fn a_request_with_a_refused_address_starts_nothing() {
+        let longest = format!("http://example.org/{}", "a".repeat(HTTP_ADDRESS_MAX - 19));
+        assert_eq!(longest.len(), HTTP_ADDRESS_MAX);
+        for url in [
+            "http://example.org/",
+            "https://example.org/a?b=[1]&c={x,y}#d",
+            "http://[::1]:8080/",
+            "https://example.org/a%20b",
+            "https://example.org/caf\u{e9}",
+            longest.as_str(),
+        ] {
+            assert!(http_address_ok(url), "{url:?}");
+        }
+        let too_long = format!("{longest}a");
+        let refused = [
+            "",
+            "example.org",
+            "ftp://example.org/",
+            " http://example.org/",
+            "http://example.org/a b",
+            "http://example.org/ ",
+            "http://example.org/a\tb",
+            "http://example.org/a\nb",
+            "http://example.org/a\rb",
+            "http://example.org/a\u{0}b",
+            "http://example.org/a\u{1b}b",
+            "http://example.org/a\u{7f}b",
+            "http://example.org/a\u{85}b",
+            too_long.as_str(),
+        ];
+        let dir = scratch("refused-address");
+        let mut st = host(&dir);
+        for url in refused {
+            assert!(!http_address_ok(url), "{url:?}");
+            assert_eq!(st.http_start("POST", url, "X-A: 1", b"upload"), -1, "{url:?}");
+            assert!(st.http.is_none(), "{url:?}");
+            assert!(!std::path::Path::new(&format!("{dir}/state")).exists(), "{url:?}");
+        }
+        assert_eq!(st.http_poll(), -1);
+    }
+
+    // A refused request starts nothing and makes no file: every case here is one line that is not a
+    // header line, a line over the length limit, or more lines than the limit.
+    #[test]
+    fn a_request_with_a_refused_header_line_starts_nothing() {
+        let dir = scratch("refused");
+        let mut st = host(&dir);
+        let many = "X-A: 1\n".repeat(HTTP_HEADER_LINES_MAX + 1);
+        let long = format!("X-A: {}", "a".repeat(HTTP_HEADER_LINE_MAX));
+        for headers in [
+            "Accept: text/plain\nno colon",
+            "Accept: text/plain\n: no name",
+            "X A: 1",
+            "@X-A: 1",
+            "=X-A: 1",
+            "(X-A): 1",
+            "<X-A>: 1",
+            "\"X-A\": 1",
+            "X-A: a\u{1}b",
+            many.as_str(),
+            long.as_str(),
+        ] {
+            assert_eq!(st.http_start("POST", "http://127.0.0.1:9/", headers, b"upload"), -1, "{headers:?}");
+            assert!(st.http.is_none(), "{headers:?}");
+            assert_eq!(request_files(&dir), Vec::<String>::new(), "{headers:?}");
+        }
+        assert_eq!(st.http_poll(), -1);
+    }
+
+    // The method of a request is 1 to 16 ASCII letters, in either case, with white space around
+    // it or none; the upload is at most 2 MiB and the header text at most 32 KiB. A request at a
+    // limit starts, and one past it starts nothing.
+    #[test]
+    fn a_request_is_held_to_its_method_and_its_limits() {
+        let dir = scratch("limits");
+        // (a stand-in that gives the method it was started with as its answer)
+        let script = "while [ $# -gt 1 ]; do [ \"$1\" = -o ] && out=$2; [ \"$1\" = -X ] && method=$2; shift; done; printf %s \"$method\" > \"$out\"; printf 200";
+        let mut st = host_standing_in(&dir, script);
+        let at = "http://127.0.0.1:9/";
+        let mut starts = |method: &str, headers: &str, upload: &[u8]| {
+            let r = st.http_start(method, at, headers, upload);
+            if r != 0 {
+                assert!(st.http.is_none());
+                assert_eq!(request_files(&dir), Vec::<String>::new());
+                return (r, String::new());
+            }
+            poll_to_end(&mut st);
+            let (code, body, error) = outcome(&st);
+            assert_eq!((code, error), (200, String::new()));
+            st.http_cancel();
+            (0, String::from_utf8(body).unwrap())
+        };
+        let sent = |method: &str| (0, method.to_string());
+        let refused = (-1, String::new());
+
+        // The method.
+        assert_eq!(starts("GET", "", b""), sent("GET"));
+        assert_eq!(starts("get", "", b""), sent("GET"));
+        assert_eq!(starts(" \tPatch\r\n", "", b""), sent("PATCH"));
+        assert_eq!(starts("A", "", b""), sent("A"));
+        assert_eq!(starts("ABCDEFGHIJKLMNOP", "", b""), sent("ABCDEFGHIJKLMNOP"));
+        assert_eq!(starts("ABCDEFGHIJKLMNOPQ", "", b""), refused);
+        for method in ["", " ", "M-SEARCH", "GET2", "GET POST", "G\u{c9}T", "GET\u{0}", "GET."] {
+            assert_eq!(starts(method, "", b""), refused, "{method:?}");
+        }
+        assert_eq!(starts(&format!("{:^1$}", "GET", HTTP_METHOD_TEXT_MAX), "", b""), sent("GET"));
+        assert_eq!(starts(&format!("{:^1$}", "GET", HTTP_METHOD_TEXT_MAX + 1), "", b""), refused);
+
+        // The upload.
+        assert_eq!(HTTP_UPLOAD_MAX, 2 * 1024 * 1024);
+        assert_eq!(starts("POST", "", &vec![b'u'; HTTP_UPLOAD_MAX]), sent("POST"));
+        assert_eq!(starts("POST", "", &vec![b'u'; HTTP_UPLOAD_MAX + 1]), refused);
+
+        // The header text: 32 KiB in 32 lines and in 16, and one byte more.
+        assert_eq!(HTTP_HEADERS_MAX, 32 * 1024);
+        let short = format!("X-A: {}\n", "a".repeat(1018)).repeat(32);
+        let long = format!("X-A: {}\n", "a".repeat(2042)).repeat(16);
+        assert_eq!((short.len(), long.len()), (HTTP_HEADERS_MAX, HTTP_HEADERS_MAX));
+        assert_eq!(starts("GET", &short, b""), sent("GET"));
+        assert_eq!(starts("GET", &long, b""), sent("GET"));
+        assert_eq!(starts("GET", &format!("{short} "), b""), refused);
+        assert_eq!(starts("GET", &format!("{long}\n"), b""), refused);
+    }
+
+    // A start that is refused leaves the outcome of an ended request as it was: the app still
+    // reads its status code, its answer and its error text.
+    #[test]
+    fn a_refused_start_leaves_an_ended_requests_outcome_readable() {
+        let dir = scratch("refused-keeps");
+        let mut st = host(&dir);
+        stand_in(&mut st, &dir, "exit 0", "200", Some(5));
+        poll_to_end(&mut st);
+        let ended = (200, vec![0u8; 5], String::new());
+        assert_eq!(outcome(&st), ended);
+        let at = "http://127.0.0.1:9/";
+        let too_long = "a".repeat(HTTP_HEADERS_MAX + 1);
+        for (method, url, headers, upload) in [
+            ("GET", "ftp://example.org/", "", &b""[..]),
+            ("GET", "http://example.org/a b", "", b""),
+            ("GET", at, "no colon", b""),
+            ("GET", at, too_long.as_str(), b""),
+            ("GET2", at, "", b""),
+            ("", at, "", b""),
+            ("HEAD", at, "", b"upload"),
+            ("POST", at, "", &vec![b'u'; HTTP_UPLOAD_MAX + 1][..]),
+        ] {
+            assert_eq!(st.http_start(method, url, headers, upload), -1, "{method:?} {url:?}");
+            assert!(st.http.is_some(), "{method:?} {url:?}");
+            assert_eq!(outcome(&st), ended, "{method:?} {url:?}");
+            assert_eq!(st.http_poll(), 1);
+        }
+        st.network_http = false;
+        assert_eq!(st.http_start("GET", at, "", b""), -2);
+        assert_eq!(outcome(&st), ended);
+        assert_eq!(st.http_poll(), 1);
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+    }
+
+    // A start that fails after its arguments were accepted (the request folder is not a real
+    // folder, the program cannot be started) leaves the outcome of an ended request as it was
+    // too. The next request that starts takes its place.
+    #[test]
+    fn a_start_that_fails_leaves_an_ended_requests_outcome_readable() {
+        let dir = scratch("failed-keeps");
+        let mut st = host_standing_in(&dir, "printf 201");
+        stand_in(&mut st, &dir, "exit 0", "200", Some(5));
+        poll_to_end(&mut st);
+        let ended = (200, vec![0u8; 5], String::new());
+        assert_eq!(outcome(&st), ended);
+        let at = "http://127.0.0.1:9/";
+
+        // The program to start is not there: the start fails after the request's files were made.
+        let stand_in_program = std::mem::replace(&mut st.http_stand_in, vec![format!("{dir}/no-such-program")]);
+        assert_eq!(st.http_start("POST", at, "X-A: 1", b"upload"), -1);
+        assert_eq!(outcome(&st), ended);
+        assert_eq!(st.http_poll(), 1);
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+        st.http_stand_in = stand_in_program;
+
+        // The request folder is a link.
+        let folder = format!("{dir}/state/http");
+        std::fs::remove_dir(&folder).unwrap();
+        std::os::unix::fs::symlink(&dir, &folder).unwrap();
+        assert_eq!(st.http_start("POST", at, "X-A: 1", b"upload"), -1);
+        assert_eq!(outcome(&st), ended);
+        assert_eq!(st.http_poll(), 1);
+        std::fs::remove_file(&folder).unwrap();
+
+        // A request that starts takes the ended one's place.
+        assert_eq!(st.http_start("GET", at, "", b""), 0);
+        assert_eq!(st.http.as_ref().unwrap().code, -1);
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (201, Vec::new(), String::new()));
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+    }
+
+    /// Puts a request in flight whose child is `sh -c script`, standing in for curl, with the status
+    /// and answer files a curl would have written by then. Returns the child's process id.
+    fn stand_in(st: &mut HostState, dir: &str, script: &str, status: &str, answer_len: Option<u64>) -> u32 {
+        // (an earlier stand-in goes first: its files have the same names)
+        st.http_cancel();
+        std::fs::create_dir_all(format!("{dir}/state/http")).unwrap();
+        let files = HttpFiles { base: format!("{dir}/state/http/stand-in") };
+        std::fs::write(files.path("status"), status).unwrap();
+        std::fs::write(files.path("err"), "").unwrap();
+        std::fs::write(files.path("request"), "upload").unwrap();
+        if let Some(len) = answer_len {
+            // (a file of that length without its bytes written: it reads as zeros)
+            std::fs::File::create(files.path("body")).unwrap().set_len(len).unwrap();
+        }
+        let child = Command::new("sh").arg("-c").arg(script).spawn().unwrap();
+        let pid = child.id();
+        st.http = Some(HttpJob { child, files, done: false, code: -1, body: Vec::new(), error: String::new() });
+        pid
+    }
+
+    // While curl runs, http_poll watches the answer file: at the limit the request goes on, one byte
+    // past it the child is ended and reaped and the request ends with the reason.
+    #[test]
+    fn an_answer_that_grows_past_the_limit_ends_the_request() {
+        let dir = scratch("grows");
+        let mut st = host(&dir);
+        let pid = stand_in(&mut st, &dir, "exec sleep 60", "", Some(HTTP_ANSWER_MAX));
+        assert_eq!(st.http_poll(), 0);
+        assert!(!gone(pid));
+        let answer = st.http.as_ref().unwrap().files.path("body");
+        std::fs::OpenOptions::new().write(true).open(&answer).unwrap().set_len(HTTP_ANSWER_MAX + 1).unwrap();
+        assert_eq!(st.http_poll(), 1);
+        assert_eq!(outcome(&st), (-1, Vec::new(), "The answer is too large.".to_string()));
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+        assert_eq!(st.http_poll(), 1);
+    }
+
+    // When curl has ended, the answer is read under the same limit: curl's own exit for an answer over
+    // it, or a file over it, ends with the reason; an answer at the limit is read whole. Either way
+    // the request's files are gone once http_poll has said the request ended.
+    #[test]
+    fn an_ended_request_is_read_under_the_limit_and_its_files_removed() {
+        let dir = scratch("ended");
+        let mut st = host(&dir);
+        let too_large = (-1, Vec::new(), "The answer is too large.".to_string());
+
+        stand_in(&mut st, &dir, "exit 0", "200", Some(5));
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (200, vec![0u8; 5], String::new()));
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+
+        stand_in(&mut st, &dir, "exit 63", "200", Some(5));
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), too_large);
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+
+        stand_in(&mut st, &dir, "exit 0", "200", Some(HTTP_ANSWER_MAX + 1));
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), too_large);
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+
+        stand_in(&mut st, &dir, "exit 0", "200", Some(HTTP_ANSWER_MAX));
+        poll_to_end(&mut st);
+        let (code, body, error) = outcome(&st);
+        assert_eq!((code, body.len() as u64, error), (200, HTTP_ANSWER_MAX, String::new()));
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+
+        // A curl that the size limit of its start stopped, by a write error or by the limit's
+        // signal, left its answer file one byte over the limit.
+        stand_in(&mut st, &dir, "exit 23", "200", Some(HTTP_ANSWER_MAX + 1));
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), too_large);
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+
+        let pid = stand_in(&mut st, &dir, "kill -s XFSZ $$", "200", Some(HTTP_ANSWER_MAX + 1));
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), too_large);
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+        assert!(gone(pid));
+
+        // A curl that failed with no answer gives its error text, as before: a failed connection,
+        // and a write error that is not the limit's.
+        for (script, text) in [("exit 7", "curl: (7) Failed to connect"), ("exit 23", "curl: (23) Failure writing output to destination")] {
+            let pid = stand_in(&mut st, &dir, script, "000", None);
+            let err = st.http.as_ref().unwrap().files.path("err");
+            std::fs::write(err, format!("{text}\n")).unwrap();
+            poll_to_end(&mut st);
+            assert_eq!(outcome(&st), (-1, Vec::new(), text.to_string()));
+            assert_eq!(request_files(&dir), Vec::<String>::new());
+            assert!(gone(pid));
+        }
+    }
+
+    /// The answer of a listener that states 100 bytes, sends 10 and closes the connection.
+    fn part_of_an_answer(_first_line: &str) -> Vec<u8> {
+        b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n0123456789".to_vec()
+    }
+
+    // A curl that ended with a failure is a failed request whatever it had written: no status
+    // code, no answer, and curl's line as the error. The part of an answer that arrived is not
+    // given.
+    #[test]
+    fn a_curl_that_ended_with_a_failure_brings_no_answer() {
+        let dir = scratch("failure");
+        let mut st = host(&dir);
+        let none = Vec::<String>::new();
+
+        // Stand-ins that end as curl does when the answer stops short (18), the time is up (28)
+        // and the connection fails while the answer arrives (56), each with ten bytes written.
+        for (code, text) in [
+            (18, "curl: (18) transfer closed with 90 bytes remaining to read"),
+            (28, "curl: (28) Operation timed out after 30004 milliseconds with 10 out of 100 bytes received"),
+            (56, "curl: (56) Recv failure: Connection reset by peer"),
+        ] {
+            let pid = stand_in(&mut st, &dir, &format!("exit {code}"), "200", Some(10));
+            let err = st.http.as_ref().unwrap().files.path("err");
+            std::fs::write(err, format!("{text}\n")).unwrap();
+            poll_to_end(&mut st);
+            assert_eq!(outcome(&st), (-1, Vec::new(), text.to_string()));
+            assert!(gone(pid));
+            assert_eq!(request_files(&dir), none);
+        }
+
+        // With no line of curl's, the error names how it ended: an exit status, or none when a
+        // signal ended it.
+        stand_in(&mut st, &dir, "exit 18", "200", Some(10));
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (-1, Vec::new(), "curl exited Some(18)".to_string()));
+        stand_in(&mut st, &dir, "kill -s TERM $$", "200", Some(10));
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (-1, Vec::new(), "curl exited None".to_string()));
+        assert_eq!(request_files(&dir), none);
+
+        // The same ten bytes from a curl that ended well are the answer.
+        stand_in(&mut st, &dir, "exit 0", "200", Some(10));
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (200, vec![0u8; 10], String::new()));
+
+        // The host's curl and a real answer that stops short of its stated length.
+        let mut st = host(&dir);
+        let (at, stop, served) = serve_each(part_of_an_answer);
+        assert_eq!(st.http_start("GET", &format!("{at}/"), "", b""), 0, "{NEEDS_CURL}");
+        let pid = child_pid(&st);
+        poll_to_end(&mut st);
+        let (code, body, error) = outcome(&st);
+        assert_eq!((code, body), (-1, Vec::new()), "{error}");
+        assert!(error.starts_with("curl: (18) "), "{error}");
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), none);
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(served.join().unwrap(), ["GET / HTTP/1.1"]);
+    }
+
+    // The child of a request keeps none of the host's descriptors: one that a child started plainly
+    // lists among its own is not among those of a request's child.
+    #[test]
+    fn the_child_of_a_request_has_none_of_the_hosts_descriptors() {
+        use std::os::fd::AsRawFd;
+        let dir = scratch("descriptors");
+        // A descriptor that is not close-on-exec, numbered above the few a child opens itself.
+        let folder = std::fs::File::open(&dir).unwrap();
+        // SAFETY: fcntl makes a second descriptor of one this test owns; it is closed below.
+        let kept = unsafe { libc::fcntl(folder.as_raw_fd(), libc::F_DUPFD, 64) };
+        assert!((64..1024).contains(&kept), "{kept}");
+        let lists = |text: &str, fd: i32| text.lines().any(|l| l.trim() == fd.to_string());
+        let script = format!("{FIND_ANSWER}ls /dev/fd > \"$out\"; printf 200");
+
+        // Started plainly, the stand-in lists that descriptor among its own.
+        let plain = format!("{dir}/plain");
+        assert!(Command::new("sh").args(["-c", &script, "curl", "-o", &plain]).stdout(std::process::Stdio::null()).status().unwrap().success());
+        let listed = std::fs::read_to_string(&plain).unwrap();
+        assert!(lists(&listed, 0) && lists(&listed, kept), "{listed}");
+
+        // Started as a request's child, it lists its own 0, 1 and 2 and not that one.
+        let mut st = host_standing_in(&dir, &script);
+        assert_eq!(st.http_start("GET", "http://127.0.0.1:9/", "X-A: 1", b"upload"), 0);
+        let pid = child_pid(&st);
+        poll_to_end(&mut st);
+        let (code, body, error) = outcome(&st);
+        let listed = String::from_utf8(body).unwrap();
+        assert_eq!((code, error), (200, String::new()), "{listed}");
+        assert!(lists(&listed, 0) && lists(&listed, 1) && lists(&listed, 2), "{listed}");
+        assert!(!lists(&listed, kept), "{listed}");
+        assert!(gone(pid));
+        // SAFETY: closes the descriptor this test made.
+        unsafe { libc::close(kept) };
+    }
+
+    // The child of a request starts without the variables curl takes a proxy from, and with the
+    // rest of the environment: of a command that was given all five and one more variable, and of
+    // a request's own child, whatever this test's environment holds.
+    #[test]
+    fn the_child_of_a_request_has_no_proxy_variable() {
+        let names = |text: &str| -> Vec<String> { text.lines().filter_map(|l| l.split_once('=')).map(|(name, _)| name.to_string()).collect() };
+        let proxies = ["http_proxy", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"];
+        assert_eq!(HTTP_PROXY_VARIABLES, proxies);
+
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "env"]);
+        for name in proxies {
+            cmd.env(name, "http://127.0.0.1:9/");
+        }
+        cmd.env("GRIMOIRE_TEST_KEPT", "1");
+        http_no_proxy(&mut cmd);
+        let given = names(&String::from_utf8(cmd.output().unwrap().stdout).unwrap());
+        assert!(proxies.iter().all(|p| !given.iter().any(|n| n == p)), "{given:?}");
+        assert!(given.iter().any(|n| n == "GRIMOIRE_TEST_KEPT") && given.iter().any(|n| n == "PATH"), "{given:?}");
+
+        let dir = scratch("no-proxy");
+        let mut st = host_standing_in(&dir, &format!("{FIND_ANSWER}env > \"$out\"; printf 200"));
+        assert_eq!(st.http_start("GET", "http://127.0.0.1:9/", "", b""), 0);
+        poll_to_end(&mut st);
+        let (code, body, error) = outcome(&st);
+        assert_eq!((code, error), (200, String::new()));
+        let given = names(&String::from_utf8(body).unwrap());
+        assert!(proxies.iter().all(|p| !given.iter().any(|n| n == p)), "{given:?}");
+        assert!(given.iter().any(|n| n == "PATH"), "{given:?}");
+    }
+
+    // On Linux the child of a request carries what the tree's children carry there, read back
+    // from the child itself: its oom_score_adj is 500; no file it writes is longer than the
+    // answer's limit and one byte; its address space has a soft limit, between this process's
+    // own size and that size with twice the margin; and its parent-death signal is the kill
+    // signal. CI's sandbox job runs this test (docs/TESTING.md).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn on_linux_the_child_of_a_request_carries_its_caps_and_its_parent_death_signal() {
+        let limits_of = |resource| {
+            let mut own = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+            // SAFETY: getrlimit writes one rlimit into `own`, which this owns.
+            assert_eq!(unsafe { libc::getrlimit(resource, &mut own) }, 0);
+            own
+        };
+        let shown = |limit: libc::rlim_t| if limit == libc::RLIM_INFINITY { "unlimited".to_string() } else { limit.to_string() };
+        let dir = scratch("linux-rules");
+        // The stand-in gives its oom_score_adj and its limits as the kernel tells them and then,
+        // as the same process, the parent-death signal it carries (PR_GET_PDEATHSIG is 2): the
+        // signal is a process's own and is not handed on to a child it makes.
+        let asks = "import ctypes; signal = ctypes.c_int(-1); print(ctypes.CDLL(None).prctl(2, ctypes.byref(signal)), signal.value)";
+        let script = format!("{FIND_ANSWER}cat /proc/self/oom_score_adj /proc/self/limits > \"$out\"; printf 200; exec python3 -I -c '{asks}' >> \"$out\"");
+        let mut st = host_standing_in(&dir, &script);
+        let before = child_vm_bytes().unwrap();
+        assert_eq!(st.http_start("GET", "http://127.0.0.1:9/", "", b""), 0);
+        let after = child_vm_bytes().unwrap();
+        let pid = child_pid(&st);
+        poll_to_end(&mut st);
+        let (code, body, error) = outcome(&st);
+        let text = String::from_utf8(body).unwrap();
+        assert_eq!((code, error.as_str()), (200, ""), "this test needs python3 on the PATH: {text}");
+        assert!(gone(pid));
+        let lines: Vec<&str> = text.lines().collect();
+        let limit = |name: &str| -> Vec<&str> { lines.iter().find_map(|l| l.strip_prefix(name)).unwrap_or_else(|| panic!("{name}: {text}")).split_whitespace().collect() };
+
+        assert_eq!(lines[0], CHILD_OOM_ADJ.to_string(), "{text}");
+        assert_eq!(CHILD_OOM_ADJ, 500);
+
+        let most = (HTTP_ANSWER_MAX + 1) as libc::rlim_t;
+        let own = limits_of(libc::RLIMIT_FSIZE);
+        assert_eq!(limit("Max file size"), [shown(own.rlim_cur.min(most)).as_str(), shown(own.rlim_max.min(most)).as_str(), "bytes"], "{text}");
+        assert_eq!(most, 8_388_609);
+
+        let own = limits_of(libc::RLIMIT_AS);
+        let space = limit("Max address space");
+        let soft: u64 = space[0].parse().unwrap_or_else(|_| panic!("the address space has no soft limit: {text}"));
+        if own.rlim_cur == libc::RLIM_INFINITY && own.rlim_max == libc::RLIM_INFINITY {
+            assert!(soft >= before.min(after) && soft <= before.max(after) + 2 * HTTP_CHILD_MARGIN, "{soft} for a process of {before} to {after} bytes: {text}");
+            assert_eq!(space[1..], ["unlimited", "bytes"], "{text}");
+        } else {
+            // (a limit this process already has is never raised)
+            assert!(own.rlim_cur == libc::RLIM_INFINITY || soft <= own.rlim_cur as u64, "{text}");
+            assert_eq!(space[1], shown(own.rlim_max), "{text}");
+        }
+
+        assert_eq!(lines.last(), Some(&format!("0 {}", libc::SIGKILL).as_str()), "{text}");
+    }
+
+    // The size limit a request's child starts under holds with no poll at all: the answer file of a
+    // child that writes without end stops one byte past the answer's limit, and the request ends
+    // as too large. A real answer of exactly the limit still comes back whole.
+    #[test]
+    fn the_answer_file_stops_a_byte_past_the_limit_without_a_poll() {
+        let dir = scratch("unpolled");
+        let too_large = (-1, Vec::new(), "The answer is too large.".to_string());
+
+        // A stand-in that writes 10 MiB to its answer file, were nothing to stop it, and then
+        // tells how its writer ended: with an error of its own (1), not by a signal.
+        let script = format!("{FIND_ANSWER}dd if=/dev/zero of=\"$out\" bs=65536 count=160; printf %s $?");
+        let mut st = host_standing_in(&dir, &script);
+        assert_eq!(st.http_start("GET", "http://127.0.0.1:9/", "", b""), 0);
+        let pid = child_pid(&st);
+        wait_unreaped(pid);
+        let job = st.http.as_ref().unwrap();
+        assert_eq!(job.answer_len(), HTTP_ANSWER_MAX + 1);
+        assert_eq!(std::fs::read_to_string(job.files.path("status")).unwrap(), "1");
+        assert_eq!(st.http_poll(), 1);
+        assert_eq!(outcome(&st), too_large);
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+
+        // The host's curl and a real answer with no stated length, one byte over the limit.
+        let mut st = host(&dir);
+        let mut grows = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_vec();
+        grows.resize(grows.len() + HTTP_ANSWER_MAX as usize + 1, b'a');
+        let (at, served) = serve_once(grows);
+        assert_eq!(st.http_start("GET", &format!("{at}/"), "", b""), 0, "{NEEDS_CURL}");
+        let pid = child_pid(&st);
+        wait_unreaped(pid);
+        assert!(st.http.as_ref().unwrap().answer_len() <= HTTP_ANSWER_MAX + 1);
+        assert_eq!(st.http_poll(), 1);
+        assert_eq!(outcome(&st), too_large);
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+        served.join().unwrap();
+
+        // A real answer of exactly the limit is under every limit: it comes back whole.
+        let mut whole = format!("HTTP/1.1 200 OK\r\nContent-Length: {HTTP_ANSWER_MAX}\r\nConnection: close\r\n\r\n").into_bytes();
+        whole.resize(whole.len() + HTTP_ANSWER_MAX as usize, b'a');
+        let (at, served) = serve_once(whole);
+        assert_eq!(st.http_start("GET", &format!("{at}/"), "", b""), 0);
+        poll_to_end(&mut st);
+        let (code, body, error) = outcome(&st);
+        assert_eq!((code, body.len() as u64, error), (200, HTTP_ANSWER_MAX, String::new()));
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+        served.join().unwrap();
+    }
+
+    // Every way out of a request leaves none of its files and no child: a start that failed, a
+    // cancel, the host dropped while curl runs (the app stopped), an answer read, a new request.
+    #[test]
+    fn a_request_leaves_no_file_and_no_child_on_any_way_out() {
+        let dir = scratch("ways-out");
+        let none = Vec::<String>::new();
+
+        // A start that fails after the request's files were made: the program to start is not
+        // there. (The request folder is: the start came as far as making it.)
+        let mut st = host(&dir);
+        st.http_stand_in = vec![format!("{dir}/no-such-program")];
+        assert_eq!(st.http_start("POST", "http://127.0.0.1:9/", "X-A: 1", b"upload"), -1);
+        assert!(st.http.is_none());
+        assert!(std::path::Path::new(&format!("{dir}/state/http")).is_dir());
+        assert_eq!(request_files(&dir), none);
+        st.http_stand_in.clear();
+
+        // A request in flight has its files; another start is refused and changes nothing.
+        let (_listener, silent) = silent_address();
+        assert_eq!(st.http_start("POST", &silent, "X-A: 1", b"upload"), 0, "{NEEDS_CURL}");
+        let pid = child_pid(&st);
+        assert_eq!(st.http_poll(), 0);
+        assert_eq!(request_kinds(&dir), ["err", "request", "status"]);
+        assert_eq!(st.http_start("GET", &silent, "", b""), -3);
+        assert_eq!(child_pid(&st), pid);
+        assert_eq!(request_kinds(&dir), ["err", "request", "status"]);
+
+        // http_cancel.
+        st.http_cancel();
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), none);
+        assert_eq!(st.http_poll(), -1);
+
+        // The host dropped while curl runs.
+        assert_eq!(st.http_start("POST", &silent, "", b"upload"), 0);
+        let pid = child_pid(&st);
+        assert_eq!(request_kinds(&dir), ["err", "request", "status"]);
+        drop(st);
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), none);
+
+        // An outcome read (here curl's failure at a listener of the test's own, which closes the
+        // connection without an answer): the files are gone once http_poll has said so, and what
+        // was read stays until the next request or a cancel.
+        let mut st = host(&dir);
+        let (at, stop, served) = serve_each(no_answer);
+        assert_eq!(st.http_start("GET", &format!("{at}/"), "", b""), 0);
+        let pid = child_pid(&st);
+        poll_to_end(&mut st);
+        let (code, body, error) = outcome(&st);
+        assert_eq!((code, body), (-1, Vec::new()));
+        assert!(error.starts_with("curl: (52) "), "{error}");
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), none);
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(served.join().unwrap(), ["GET / HTTP/1.1"]);
+
+        // A new request after it: only the new one's files are there.
+        assert_eq!(st.http_start("GET", &silent, "", b""), 0);
+        let pid = child_pid(&st);
+        assert_eq!(request_kinds(&dir), ["err", "status"]);
+        drop(st);
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), none);
+    }
+
+    // The names http_start gives a request's files, and no other name.
+    #[test]
+    fn a_request_files_name_is_two_numbers_and_a_kind() {
+        for name in ["1-2.body", "1-2.status", "1-2.err", "1-2.request", "40213-1795000000123456789.body"] {
+            assert!(http_file_name(name), "{name:?}");
+        }
+        for name in [
+            "", "body", ".body", "1-2", "1-2.", "1-2.other", "1-2.body.tmp", "1-2.BODY", "12.body", "-2.body", "1-.body",
+            "x-2.body", "1-x.body", "1-2-3.body", "1 -2.body", "+1-2.body", "stand-in.body", "runtime.bin", "notes.txt",
+        ] {
+            assert!(!http_file_name(name), "{name:?}");
+        }
+    }
+
+    // What an earlier run left in the request folder is removed when the next request starts: the
+    // plain files with a request file's name, and nothing else.
+    #[test]
+    fn the_request_files_of_an_earlier_run_are_removed_at_the_next_start() {
+        let dir = scratch("earlier-run");
+        let folder = format!("{dir}/state/http");
+        let (_listener, silent) = silent_address();
+
+        // An earlier run that stopped with its request in flight: nothing removed the files.
+        let mut st = host(&dir);
+        assert_eq!(st.http_start("POST", &silent, "", b"upload"), 0, "{NEEDS_CURL}");
+        let job = st.http.as_mut().unwrap();
+        std::fs::write(job.files.path("body"), "part of an answer").unwrap();
+        job.child.kill().unwrap();
+        job.child.wait().unwrap();
+        std::mem::forget(st);
+        let left = request_files(&dir);
+        assert_eq!(request_kinds(&dir), ["body", "err", "request", "status"]);
+        std::fs::write(format!("{folder}/1-2.status"), "200").unwrap();
+
+        // Other things in the folder: other names, and a folder and a link with such a name.
+        let outside = format!("{dir}/outside");
+        std::fs::write(&outside, "kept").unwrap();
+        let mut others = vec!["1-2.other", "7-7.err", "8-8.body", "notes.txt", "x-2.body"];
+        std::fs::write(format!("{folder}/notes.txt"), "kept").unwrap();
+        std::fs::write(format!("{folder}/1-2.other"), "kept").unwrap();
+        std::fs::write(format!("{folder}/x-2.body"), "kept").unwrap();
+        std::fs::create_dir(format!("{folder}/7-7.err")).unwrap();
+        std::os::unix::fs::symlink(&outside, format!("{folder}/8-8.body")).unwrap();
+
+        // A request that is refused starts nothing and removes nothing.
+        let mut st = host(&dir);
+        assert_eq!(st.http_start("GET", &silent, "no colon", b""), -1);
+        assert_eq!(request_files(&dir).len(), left.len() + 1 + others.len());
+
+        // The next request: the earlier run's files are gone, the others are there, and the
+        // request has its own two.
+        assert_eq!(st.http_start("GET", &silent, "", b""), 0);
+        let now = request_files(&dir);
+        assert!(left.iter().all(|name| !now.contains(name)), "{now:?}");
+        assert!(!now.contains(&"1-2.status".to_string()), "{now:?}");
+        let own: Vec<&String> = now.iter().filter(|name| !others.contains(&name.as_str())).collect();
+        assert_eq!(own.len(), 2, "{now:?}");
+        assert!(own[0].ends_with(".err") && own[1].ends_with(".status") && http_file_name(own[0]), "{now:?}");
+        assert_eq!(now.len(), others.len() + 2, "{now:?}");
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "kept");
+        assert!(std::fs::symlink_metadata(format!("{folder}/8-8.body")).unwrap().file_type().is_symlink());
+        assert!(std::fs::symlink_metadata(format!("{folder}/7-7.err")).unwrap().is_dir());
+
+        // A request folder that is a link to a folder is left as it is.
+        let elsewhere = format!("{dir}/elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        std::fs::write(format!("{elsewhere}/1-2.body"), "kept").unwrap();
+        let link = format!("{dir}/link");
+        std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+        http_sweep(&link);
+        assert_eq!(std::fs::read_to_string(format!("{elsewhere}/1-2.body")).unwrap(), "kept");
+        http_sweep(&elsewhere);
+        assert!(!std::path::Path::new(&format!("{elsewhere}/1-2.body")).exists());
+
+        drop(st);
+        others.sort();
+        assert_eq!(request_files(&dir), others);
+    }
+
+    // A request is started only when the app's state folder and its http folder are real folders.
+    // With a link at either name, whatever it leads to, or a file there, the start fails: nothing
+    // is started, nothing is made and nothing is removed.
+    #[test]
+    fn a_request_is_started_only_in_real_folders() {
+        use std::os::unix::fs::symlink;
+        let listed = |folder: &str| {
+            let mut names: Vec<String> = std::fs::read_dir(folder).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+            names.sort();
+            names
+        };
+        let refused = |dir: &str| {
+            let mut st = host_standing_in(dir, "printf 200");
+            assert_eq!(st.http_start("POST", "http://127.0.0.1:9/", "X-A: 1", b"upload"), -1, "{dir}");
+            assert!(st.http.is_none(), "{dir}");
+        };
+
+        // The state folder is a link to a folder that has a request folder with files in it.
+        let dir = scratch("links-state");
+        let target = format!("{dir}/target");
+        std::fs::create_dir_all(format!("{target}/http")).unwrap();
+        std::fs::write(format!("{target}/http/5-5.body"), "kept").unwrap();
+        std::fs::write(format!("{target}/http/notes.txt"), "kept").unwrap();
+        symlink(&target, format!("{dir}/state")).unwrap();
+        refused(&dir);
+        assert_eq!(listed(&format!("{target}/http")), ["5-5.body", "notes.txt"]);
+        assert_eq!(listed(&dir), ["state", "target"]);
+
+        // The state folder is a link to a folder with nothing in it, and a link that leads nowhere.
+        let dir = scratch("links-state-empty");
+        let target = format!("{dir}/target");
+        std::fs::create_dir(&target).unwrap();
+        symlink(&target, format!("{dir}/state")).unwrap();
+        refused(&dir);
+        assert_eq!(listed(&target), Vec::<String>::new());
+        std::fs::remove_file(format!("{dir}/state")).unwrap();
+        symlink(format!("{dir}/nowhere"), format!("{dir}/state")).unwrap();
+        refused(&dir);
+        assert_eq!(listed(&dir), ["state", "target"]);
+
+        // The request folder is a link to a folder with files in it, and a link that leads nowhere.
+        let dir = scratch("links-http");
+        let elsewhere = format!("{dir}/elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        std::fs::write(format!("{elsewhere}/5-5.body"), "kept").unwrap();
+        std::fs::create_dir(format!("{dir}/state")).unwrap();
+        symlink(&elsewhere, format!("{dir}/state/http")).unwrap();
+        refused(&dir);
+        assert_eq!(listed(&elsewhere), ["5-5.body"]);
+        std::fs::remove_file(format!("{dir}/state/http")).unwrap();
+        symlink(format!("{dir}/nowhere"), format!("{dir}/state/http")).unwrap();
+        refused(&dir);
+        assert_eq!(listed(&dir), ["elsewhere", "state"]);
+        assert_eq!(listed(&format!("{dir}/state")), ["http"]);
+
+        // A file at either name.
+        let dir = scratch("links-files");
+        std::fs::create_dir(format!("{dir}/state")).unwrap();
+        std::fs::write(format!("{dir}/state/http"), "kept").unwrap();
+        refused(&dir);
+        assert_eq!(std::fs::read_to_string(format!("{dir}/state/http")).unwrap(), "kept");
+        std::fs::remove_file(format!("{dir}/state/http")).unwrap();
+        std::fs::remove_dir(format!("{dir}/state")).unwrap();
+        std::fs::write(format!("{dir}/state"), "kept").unwrap();
+        refused(&dir);
+        assert_eq!(std::fs::read_to_string(format!("{dir}/state")).unwrap(), "kept");
+
+        // Real folders, there already or made by the start: the request starts, and what an
+        // earlier run left in the request folder goes.
+        let dir = scratch("links-none");
+        let mut st = host_standing_in(&dir, "printf 200");
+        assert_eq!(st.http_start("GET", "http://127.0.0.1:9/", "", b""), 0);
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (200, Vec::new(), String::new()));
+        std::fs::write(format!("{dir}/state/http/5-5.body"), "left").unwrap();
+        assert_eq!(st.http_start("GET", "http://127.0.0.1:9/", "", b""), 0);
+        poll_to_end(&mut st);
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+    }
+
+    /// An open app's runtime around `st`, with a module that has nothing in it: what the host's
+    /// tick needs.
+    fn runtime(st: HostState) -> AppRuntime {
+        let engine = Engine::default();
+        let module = Module::new(&engine, &b"\0asm\x01\0\0\0"[..]).unwrap();
+        let mut store = Store::new(&engine, st);
+        let instance = Linker::new(&engine).instantiate_and_start(&mut store, &module).unwrap();
+        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None }
+    }
+
+    /// Ticks the host until its request has ended, with no poll of the app's.
+    fn tick_to_end(rt: &mut AppRuntime) {
+        let end = Instant::now() + Duration::from_secs(45);
+        while !rt.store.data().http.as_ref().unwrap().done {
+            assert!(Instant::now() < end, "the request did not end");
+            std::thread::sleep(Duration::from_millis(5));
+            rt.tick();
+        }
+    }
+
+    // The host's tick looks after a request the app never polls: an ended child is reaped, its
+    // outcome read and its files removed, and an answer file past the limit ends the request.
+    // A poll after that is told what is known already.
+    #[test]
+    fn the_hosts_tick_looks_after_a_request_between_the_apps_polls() {
+        let dir = scratch("tick");
+        let none = Vec::<String>::new();
+
+        // A request that ends by itself, started as curl is.
+        let script = format!("{FIND_ANSWER}printf answer > \"$out\"; printf 200");
+        let mut rt = runtime(host_standing_in(&dir, &script));
+        assert_eq!(rt.store.data_mut().http_start("POST", "http://127.0.0.1:9/", "", b"upload"), 0);
+        let pid = child_pid(rt.store.data());
+        tick_to_end(&mut rt);
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), none);
+        let answered = (200, b"answer".to_vec(), String::new());
+        assert_eq!(outcome(rt.store.data()), answered);
+        assert_eq!(rt.store.data_mut().http_poll(), 1);
+        assert_eq!(outcome(rt.store.data()), answered);
+
+        // A request whose answer file grows past the limit while its child runs.
+        let pid = stand_in(rt.store.data_mut(), &dir, "exec sleep 60", "", Some(HTTP_ANSWER_MAX));
+        rt.tick();
+        assert!(!rt.store.data().http.as_ref().unwrap().done && !gone(pid));
+        let answer = rt.store.data().http.as_ref().unwrap().files.path("body");
+        std::fs::OpenOptions::new().write(true).open(&answer).unwrap().set_len(HTTP_ANSWER_MAX + 1).unwrap();
+        rt.tick();
+        assert_eq!(outcome(rt.store.data()), (-1, Vec::new(), "The answer is too large.".to_string()));
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), none);
+        assert_eq!(rt.store.data_mut().http_poll(), 1);
+
+        // The request of an app that has stopped with an error is looked after too.
+        rt.error = Some("stopped".to_string());
+        let pid = stand_in(rt.store.data_mut(), &dir, "exit 0", "200", Some(5));
+        tick_to_end(&mut rt);
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), none);
+        assert_eq!(outcome(rt.store.data()), (200, vec![0u8; 5], String::new()));
+
+        // With no request there is nothing to look after.
+        rt.store.data_mut().http_cancel();
+        rt.tick();
+        assert_eq!(rt.store.data_mut().http_poll(), -1);
+    }
+
+    /// Serves one request at a local address: reads it whole (its head, and the upload its
+    /// Content-Length states), writes `answer`, and waits for the other end to close. The thread
+    /// gives back the request as it was received.
+    fn serve_once(answer: Vec<u8>) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let at = format!("http://127.0.0.1:{}", l.local_addr().unwrap().port());
+        let served = std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+            let mut got = Vec::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                let n = s.read(&mut buf).unwrap();
+                got.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&got);
+                if let Some((head, upload)) = text.split_once("\r\n\r\n") {
+                    let stated = head.lines().find_map(|l| l.strip_prefix("Content-Length: ")).map_or(0, |v| v.parse::<usize>().unwrap());
+                    if upload.len() >= stated {
+                        break;
+                    }
+                }
+                assert!(n > 0, "the request ended early: {text:?}");
+            }
+            s.write_all(&answer).unwrap();
+            let _ = s.read(&mut buf);
+            String::from_utf8_lossy(&got).into_owned()
+        });
+        (at, served)
+    }
+
+    /// Serves requests at a local address until `stop` is set, one to a connection, which it then
+    /// closes: `answer` makes the answer from a request's first line. The thread gives back the
+    /// first lines received, in order.
+    fn serve_each(answer: fn(&str) -> Vec<u8>) -> (String, std::sync::Arc<std::sync::atomic::AtomicBool>, std::thread::JoinHandle<Vec<String>>) {
+        use std::io::{Read, Write};
+        use std::sync::atomic::Ordering;
+        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        l.set_nonblocking(true).unwrap();
+        let at = format!("http://127.0.0.1:{}", l.local_addr().unwrap().port());
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopped = stop.clone();
+        let served = std::thread::spawn(move || {
+            let mut firsts = Vec::new();
+            while !stopped.load(Ordering::SeqCst) {
+                let Ok((mut s, _)) = l.accept() else {
+                    std::thread::sleep(Duration::from_millis(2));
+                    continue;
+                };
+                s.set_nonblocking(false).unwrap();
+                s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+                let mut got = Vec::new();
+                let mut buf = [0u8; 4096];
+                while !got.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let n = s.read(&mut buf).unwrap();
+                    assert!(n > 0, "the request ended early: {:?}", String::from_utf8_lossy(&got));
+                    got.extend_from_slice(&buf[..n]);
+                }
+                let first = String::from_utf8_lossy(&got).lines().next().unwrap_or("").to_string();
+                s.write_all(&answer(&first)).unwrap();
+                firsts.push(first);
+            }
+            firsts
+        });
+        (at, stop, served)
+    }
+
+    /// The answer of a listener that closes the connection without one.
+    fn no_answer(_first_line: &str) -> Vec<u8> {
+        Vec::new()
+    }
+
+    /// The answers of a listener that redirects: `/hop/N` leads to `/hop/N-1` and `/hop/0` is the
+    /// last answer; `/to/ADDRESS` leads to ADDRESS. Every redirect has an answer of its own.
+    fn redirecting(first_line: &str) -> Vec<u8> {
+        let path = first_line.split(' ').nth(1).unwrap_or("");
+        let moved = |to: &str| format!("HTTP/1.1 302 Found\r\nLocation: {to}\r\nContent-Length: 5\r\nConnection: close\r\n\r\nmoved").into_bytes();
+        if let Some(to) = path.strip_prefix("/to/") {
+            return moved(to);
+        }
+        match path.strip_prefix("/hop/").and_then(|n| n.parse::<u32>().ok()) {
+            Some(n) if n > 0 => moved(&format!("/hop/{}", n - 1)),
+            _ => b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\narrived".to_vec(),
+        }
+    }
+
+    // The redirects of a real request: five are followed and bring the last answer; a sixth ends
+    // the request as a failure with no answer, and so does a redirect to an address that is not
+    // http or https, which is not asked for.
+    #[test]
+    fn a_real_request_follows_five_redirects_and_only_to_http_and_https() {
+        let dir = scratch("redirects");
+        let mut st = host(&dir);
+        let (at, stop, served) = serve_each(redirecting);
+        let mut ask = |path: &str| {
+            assert_eq!(st.http_start("GET", &format!("{at}{path}"), "", b""), 0, "{NEEDS_CURL}");
+            let pid = child_pid(&st);
+            poll_to_end(&mut st);
+            assert!(gone(pid));
+            assert_eq!(request_files(&dir), Vec::<String>::new());
+            outcome(&st)
+        };
+        assert_eq!(ask("/hop/5"), (200, b"arrived".to_vec(), String::new()));
+        let (code, body, error) = ask("/hop/6");
+        assert_eq!((code, body), (-1, Vec::new()), "{error}");
+        assert!(error.starts_with("curl: (47) "), "{error}");
+        for to in ["ftp://127.0.0.1:1/a", "file:///dev/null", "gopher://127.0.0.1:1/"] {
+            let (code, body, error) = ask(&format!("/to/{to}"));
+            assert_eq!((code, body), (-1, Vec::new()), "{to}: {error}");
+            assert!(error.starts_with("curl: (1) "), "{to}: {error}");
+        }
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        let asked: Vec<String> = [5, 4, 3, 2, 1, 0, 6, 5, 4, 3, 2, 1]
+            .map(|n| format!("GET /hop/{n} HTTP/1.1"))
+            .into_iter()
+            .chain(["ftp://127.0.0.1:1/a", "file:///dev/null", "gopher://127.0.0.1:1/"].map(|to| format!("GET /to/{to} HTTP/1.1")))
+            .collect();
+        assert_eq!(served.join().unwrap(), asked);
+    }
+
+    // A real request to a local listener: the method, the address as written, the two header lines
+    // and the upload arrive, and the status code and the answer come back.
+    #[test]
+    fn a_real_request_carries_its_header_lines_and_brings_its_answer() {
+        let dir = scratch("real");
+        let mut st = host(&dir);
+        let (at, served) = serve_once(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nworld".to_vec());
+        let url = format!("{at}/a?b=[1]&c={{x,y}}");
+        assert_eq!(st.http_start("post", &url, "Accept: text/plain\r\n\r\n  X-Grimoire-Test: one two  \n", b"hello"), 0, "{NEEDS_CURL}");
+        let pid = child_pid(&st);
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (200, b"world".to_vec(), String::new()));
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+        let request = served.join().unwrap();
+        let (head, upload) = request.split_once("\r\n\r\n").unwrap();
+        let mut lines = head.split("\r\n");
+        assert_eq!(lines.next(), Some("POST /a?b=[1]&c={x,y} HTTP/1.1"), "{head}");
+        let lines: Vec<&str> = lines.collect();
+        for line in ["Accept: text/plain", "X-Grimoire-Test: one two", "User-Agent: Grimoire-App/2.3", "Content-Length: 5"] {
+            assert_eq!(lines.iter().filter(|l| **l == line).count(), 1, "{line:?} in {head}");
+        }
+        assert_eq!(upload, "hello");
+    }
+
+    /// The answer to a HEAD request of a listener that closes the connection behind it.
+    fn head_of_twelve_bytes(_first_line: &str) -> Vec<u8> {
+        b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\nContent-Type: text/plain\r\n\r\n".to_vec()
+    }
+
+    // A real HEAD request ends when the answer's header lines have arrived, whether the listener
+    // keeps the connection open behind them or closes it, and those lines are its answer: of
+    // each answer in turn when a redirect was followed, and whatever length they state. A HEAD
+    // request with an upload is refused.
+    #[test]
+    fn a_real_head_request_brings_the_answers_header_lines() {
+        let dir = scratch("head");
+        let mut st = host(&dir);
+        let none = Vec::<String>::new();
+        let lines = head_of_twelve_bytes("");
+
+        // A listener that keeps the connection open until the other end closes it.
+        let (at, served) = serve_once(lines.clone());
+        assert_eq!(st.http_start("head", &format!("{at}/a"), "X-A: 1", b""), 0, "{NEEDS_CURL}");
+        let pid = child_pid(&st);
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (200, lines.clone(), String::new()));
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), none);
+        let request = served.join().unwrap();
+        assert!(request.starts_with("HEAD /a HTTP/1.1\r\n"), "{request}");
+        assert_eq!(request.split("\r\n").filter(|l| *l == "X-A: 1").count(), 1, "{request}");
+
+        // A listener that closes the connection behind the header lines.
+        let (at, stop, served) = serve_each(head_of_twelve_bytes);
+        assert_eq!(st.http_start("HEAD", &format!("{at}/b"), "", b""), 0);
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (200, lines.clone(), String::new()));
+        assert_eq!(request_files(&dir), none);
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(served.join().unwrap(), ["HEAD /b HTTP/1.1"]);
+
+        // The length the header lines state is not the answer's: one over the answer's limit.
+        let large = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", HTTP_ANSWER_MAX + 1).into_bytes();
+        let (at, served) = serve_once(large.clone());
+        assert_eq!(st.http_start("HEAD", &format!("{at}/"), "", b""), 0);
+        poll_to_end(&mut st);
+        assert_eq!(outcome(&st), (200, large, String::new()));
+        served.join().unwrap();
+
+        // A redirect that is followed: the header lines of both answers, in turn.
+        let (at, stop, served) = serve_each(redirecting);
+        assert_eq!(st.http_start("HEAD", &format!("{at}/hop/1"), "", b""), 0);
+        poll_to_end(&mut st);
+        let (code, body, error) = outcome(&st);
+        let text = String::from_utf8(body).unwrap();
+        assert_eq!((code, error), (200, String::new()), "{text}");
+        let moved = "HTTP/1.1 302 Found\r\nLocation: /hop/0\r\nContent-Length: 5\r\nConnection: close\r\n\r\n";
+        let arrived = "HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\n";
+        assert_eq!(text, format!("{moved}{arrived}"));
+        assert_eq!(request_files(&dir), none);
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(served.join().unwrap(), ["HEAD /hop/1 HTTP/1.1", "HEAD /hop/0 HTTP/1.1"]);
+
+        // A HEAD request has no upload: with one it is refused, and the last outcome stays.
+        let before = outcome(&st);
+        assert_eq!(st.http_start("HEAD", "http://127.0.0.1:9/", "", b"upload"), -1);
+        assert_eq!(st.http_start(" head ", "http://127.0.0.1:9/", "", b"u"), -1);
+        assert_eq!(outcome(&st), before);
+        assert_eq!(request_files(&dir), none);
+    }
+
+    // One Content-Type line arrives with a real upload: curl's default, or the request's own line
+    // in its place. A request with no upload has none.
+    #[test]
+    fn a_real_upload_carries_one_content_type_line_and_its_own_when_it_has_one() {
+        let dir = scratch("content-type");
+        let mut st = host(&dir);
+        let mut kinds = |headers: &str, upload: &[u8]| -> Vec<String> {
+            let (at, served) = serve_once(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_vec());
+            assert_eq!(st.http_start("POST", &format!("{at}/"), headers, upload), 0, "{NEEDS_CURL}");
+            poll_to_end(&mut st);
+            assert_eq!(outcome(&st), (200, b"ok".to_vec(), String::new()));
+            let request = served.join().unwrap();
+            assert!(request.ends_with(&format!("\r\n\r\n{}", String::from_utf8_lossy(upload))), "{request}");
+            request.split("\r\n").filter(|l| l.to_ascii_lowercase().starts_with("content-type")).map(String::from).collect()
+        };
+        assert_eq!(kinds("", b"a=1"), ["Content-Type: application/x-www-form-urlencoded"]);
+        assert_eq!(kinds("Accept: text/plain", b"{}"), ["Content-Type: application/x-www-form-urlencoded"]);
+        assert_eq!(kinds("Content-Type: application/json", b"{}"), ["Content-Type: application/json"]);
+        assert_eq!(kinds("content-type: text/plain\nX-A: 1", b"hello"), ["content-type: text/plain"]);
+        assert_eq!(kinds("", b""), Vec::<String>::new());
+    }
+
+    // One User-Agent line arrives with a real request: the host's default, or the request's own
+    // line in its place, however its name is written. A line with an empty value sends none.
+    #[test]
+    fn a_real_request_carries_one_user_agent_line_and_its_own_when_it_has_one() {
+        let dir = scratch("user-agent");
+        let mut st = host(&dir);
+        let mut agents = |headers: &str| -> Vec<String> {
+            let (at, served) = serve_once(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_vec());
+            assert_eq!(st.http_start("GET", &format!("{at}/"), headers, b""), 0, "{NEEDS_CURL}");
+            poll_to_end(&mut st);
+            assert_eq!(outcome(&st), (200, b"ok".to_vec(), String::new()));
+            let request = served.join().unwrap();
+            request.split("\r\n").filter(|l| l.to_ascii_lowercase().starts_with("user-agent")).map(String::from).collect()
+        };
+        assert_eq!(agents(""), ["User-Agent: Grimoire-App/2.3"]);
+        assert_eq!(agents("Accept: text/plain"), ["User-Agent: Grimoire-App/2.3"]);
+        assert_eq!(agents("User-Agent: mine/1"), ["User-Agent: mine/1"]);
+        assert_eq!(agents("Accept: text/plain\nuser-agent: mine/2\nX-A: 1"), ["user-agent: mine/2"]);
+        assert_eq!(agents("User-Agent:"), Vec::<String>::new());
+    }
+
+    // A real answer over the limit, with its length stated and without: the request ends with the
+    // reason, no status code and no answer, and nothing of it is left.
+    #[test]
+    fn a_real_answer_over_the_limit_ends_with_the_reason() {
+        let dir = scratch("real-large");
+        let mut st = host(&dir);
+        let stated = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", HTTP_ANSWER_MAX + 1).into_bytes();
+        // (not stated: the answer runs until the connection closes, and is one byte over the limit)
+        let mut grows = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_vec();
+        grows.resize(grows.len() + HTTP_ANSWER_MAX as usize + 1, b'a');
+        for answer in [stated, grows] {
+            let (at, served) = serve_once(answer);
+            assert_eq!(st.http_start("GET", &format!("{at}/"), "", b""), 0, "{NEEDS_CURL}");
+            let pid = child_pid(&st);
+            poll_to_end(&mut st);
+            assert_eq!(outcome(&st), (-1, Vec::new(), "The answer is too large.".to_string()));
+            assert!(gone(pid));
+            assert_eq!(request_files(&dir), Vec::<String>::new());
+            served.join().unwrap();
+        }
+    }
+
+    /// A module with a memory of `pages` pages, the one import `grimoire.<import>` (`params`
+    /// numbers in, one out) and the export `call`, which passes its arguments to the import and
+    /// gives back its answer: how a test calls an import as an app does.
+    fn module_calling(import: &str, params: u8, pages: u16) -> Vec<u8> {
+        let named = |name: &str, kind: &[u8]| [&[name.len() as u8][..], name.as_bytes(), kind].concat();
+        let section = |id: u8, content: Vec<u8>| [&[id, content.len() as u8][..], &content[..]].concat();
+        // (the function type; the import, function 0; `call`, function 1; the memory, its least
+        // and most the same; the two exports; `call`'s code: each argument, the call, the end)
+        let kind = [&[1, 0x60, params][..], &vec![0x7f; params as usize][..], &[1, 0x7f][..]].concat();
+        let import = [&[1][..], &named(ABI, &[])[..], &named(import, &[0, 0])[..]].concat();
+        let size = [(pages & 0x7f) as u8 | 0x80, (pages >> 7) as u8];
+        let memory = [&[1, 1][..], &size[..], &size[..]].concat();
+        let exports = [&[2][..], &named("memory", &[2, 0])[..], &named("call", &[0, 1])[..]].concat();
+        let arguments: Vec<u8> = (0..params).flat_map(|i| [0x20, i]).collect();
+        let code = [&[1, arguments.len() as u8 + 4, 0][..], &arguments[..], &[0x10, 0, 0x0b][..]].concat();
+        [
+            b"\0asm\x01\0\0\0".to_vec(),
+            section(1, kind),
+            section(2, import),
+            section(3, vec![1, 0]),
+            section(5, memory),
+            section(7, exports),
+            section(10, code),
+        ]
+        .concat()
+    }
+
+    /// An open app's runtime around `st` and `wasm`, with the host's imports and an app's limits.
+    fn runtime_of(mut st: HostState, wasm: &[u8]) -> AppRuntime {
+        let mut config = Config::default();
+        config.consume_fuel(true);
+        let engine = Engine::new(&config);
+        let module = Module::new(&engine, wasm).unwrap();
+        st.limits = StoreLimitsBuilder::new().memory_size(MEMORY_MAX).build();
+        let mut store = Store::new(&engine, st);
+        store.limiter(|st| &mut st.limits);
+        store.set_fuel(FUEL_PER_CALL).unwrap();
+        let mut linker = Linker::new(&engine);
+        install_imports(&mut linker).unwrap();
+        let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
+        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None }
+    }
+
+    /// The module's memory, to place a request's texts in and to read what a call wrote.
+    fn memory_of(rt: &mut AppRuntime) -> &mut [u8] {
+        rt.instance.get_memory(&rt.store, "memory").unwrap().data_mut(&mut rt.store)
+    }
+
+    /// The quickest of `times` runs of `run`.
+    fn quickest(times: usize, mut run: impl FnMut()) -> Duration {
+        (0..times)
+            .map(|_| {
+                let start = Instant::now();
+                run();
+                start.elapsed()
+            })
+            .min()
+            .unwrap()
+    }
+
+    // http_body and http_error write what the host holds of an ended request into the module's
+    // memory: as much as the room given and the memory take, and nothing with no request. What
+    // the host holds stays where it was, and http_body does not copy the answer for a call: with
+    // an answer of the limit's size, the quickest call that asks for one byte takes less than an
+    // eighth of the time of the quickest single copy of that answer.
+    #[test]
+    fn the_answer_and_the_error_are_written_from_what_the_host_holds() {
+        type Write = wasmi::TypedFunc<(i32, i32), i32>;
+        let dir = scratch("written");
+        let pages = (HTTP_ANSWER_MAX >> 16) as u16 + 1;
+        let size = pages as usize * 65536;
+        let answer: Vec<u8> = (0..HTTP_ANSWER_MAX as usize).map(|i| (i % 251) as u8 + 1).collect();
+        let text = "curl: (7) Failed to connect";
+        let mut st = host(&dir);
+        stand_in(&mut st, &dir, "exit 0", "200", None);
+        poll_to_end(&mut st);
+        let job = st.http.as_mut().unwrap();
+        job.body = answer.clone();
+        job.error = text.to_string();
+
+        // Each call's answer and what it wrote, for the rooms an app may give.
+        let written = |rt: &mut AppRuntime, write: &Write, held: &[u8]| {
+            let len = held.len();
+            let rooms = [(16, len + 100, len), (16, len, len), (16, 10, 10), (16, 1, 1), (size - 3, 10, 3)];
+            for (at, room, n) in rooms {
+                memory_of(rt).fill(0);
+                assert_eq!(write.call(&mut rt.store, (at as i32, room as i32)).unwrap(), n as i32, "{at} {room}");
+                let memory = memory_of(rt);
+                assert!(memory[at..at + n] == held[..n], "{at} {room}");
+                assert!(memory[..at].iter().chain(&memory[at + n..]).all(|b| *b == 0), "{at} {room}");
+            }
+            memory_of(rt).fill(0);
+            for (at, room) in [(0, 0), (0, -1), (-1, 10), (size as i32, 10), (i32::MAX, 10)] {
+                assert_eq!(write.call(&mut rt.store, (at, room)).unwrap(), 0, "{at} {room}");
+            }
+            assert!(memory_of(rt).iter().all(|b| *b == 0));
+        };
+        let held = |st: &HostState| {
+            let job = st.http.as_ref().unwrap();
+            (job.body.as_ptr(), job.body.len(), job.error.as_ptr(), job.error.clone())
+        };
+        let before = held(&st);
+
+        let mut rt = runtime_of(st, &module_calling("http_body", 2, pages));
+        let body: Write = rt.instance.get_typed_func(&rt.store, "call").unwrap();
+        written(&mut rt, &body, &answer);
+        let a_copy = quickest(3, || drop(std::hint::black_box(answer.clone())));
+        let took = quickest(20, || assert_eq!(body.call(&mut rt.store, (0, 1)).unwrap(), 1));
+        assert!(took * 8 < a_copy, "a call for one byte took {took:?}, one copy of the answer {a_copy:?}");
+        assert_eq!(held(rt.store.data()), before);
+        assert!(rt.store.data().http.as_ref().unwrap().body == answer);
+
+        let mut rt = runtime_of(rt.store.into_data(), &module_calling("http_error", 2, pages));
+        let error: Write = rt.instance.get_typed_func(&rt.store, "call").unwrap();
+        written(&mut rt, &error, text.as_bytes());
+        assert_eq!(held(rt.store.data()), before);
+
+        // With no request there is nothing to write.
+        rt.store.data_mut().http_cancel();
+        memory_of(&mut rt).fill(0);
+        assert_eq!(error.call(&mut rt.store, (16, 100)).unwrap(), 0);
+        let mut rt = runtime_of(rt.store.into_data(), &module_calling("http_body", 2, pages));
+        let body: Write = rt.instance.get_typed_func(&rt.store, "call").unwrap();
+        assert_eq!(body.call(&mut rt.store, (16, 100)).unwrap(), 0);
+        assert!(memory_of(&mut rt).iter().all(|b| *b == 0));
+    }
+
+    // The http_start import answers from the capability, the request in flight and the request's
+    // four lengths before it reads the request: -2, -3 and -1 in that order, and a refused call
+    // copies nothing of the module's memory. The measure is time: the module's whole 48 MiB is
+    // named by each of the four lengths, and the quickest refused call takes less time than the
+    // quickest single copy of that memory.
+    #[test]
+    fn a_start_refused_by_its_lengths_reads_nothing_of_the_request() {
+        type Start = wasmi::TypedFunc<(i32, i32, i32, i32, i32, i32, i32, i32), i32>;
+        let dir = scratch("lengths");
+        let wasm = module_calling("http_start", 8, (MEMORY_MAX >> 16) as u16);
+        let mut rt = runtime_of(host_standing_in(&dir, "printf 200"), &wasm);
+        let start: Start = rt.instance.get_typed_func(&rt.store, "call").unwrap();
+        let whole = MEMORY_MAX as i32;
+        memory_of(&mut rt).fill(0xff);
+        assert_eq!(memory_of(&mut rt).len(), MEMORY_MAX);
+        let a_copy = quickest(3, || drop(std::hint::black_box(memory_of(&mut rt).to_vec())));
+        let refused = |rt: &mut AppRuntime, lengths: [i32; 4], answer: i32, what: &str| {
+            let [method, url, headers, body] = lengths;
+            let took = quickest(5, || assert_eq!(start.call(&mut rt.store, (0, method, 0, url, 0, headers, 0, body)).unwrap(), answer, "{what}"));
+            assert!(took < a_copy, "{what}: a refused call took {took:?}, one copy of the module's memory {a_copy:?}");
+        };
+
+        // Without the capability: -2, whatever the lengths and whether or not a request runs.
+        rt.store.data_mut().network_http = false;
+        refused(&mut rt, [whole; 4], -2, "no capability");
+        let pid = stand_in(rt.store.data_mut(), &dir, "exec sleep 60", "", None);
+        refused(&mut rt, [whole; 4], -2, "no capability, a request in flight");
+
+        // With it, while a request is in flight: -3, whatever the lengths.
+        rt.store.data_mut().network_http = true;
+        refused(&mut rt, [whole; 4], -3, "a request in flight");
+        refused(&mut rt, [3, 20, 0, 0], -3, "a request in flight, a request that could start");
+        assert_eq!(child_pid(rt.store.data()), pid);
+        rt.store.data_mut().http_cancel();
+        assert!(gone(pid));
+
+        // With no request in flight: -1 for any one length over its limit.
+        let most = [HTTP_METHOD_TEXT_MAX as i32, HTTP_ADDRESS_MAX as i32, HTTP_HEADERS_MAX as i32, HTTP_UPLOAD_MAX as i32];
+        refused(&mut rt, [whole; 4], -1, "every length the whole memory");
+        refused(&mut rt, [i32::MAX; 4], -1, "every length the largest number");
+        for i in 0..4 {
+            let mut lengths = [0; 4];
+            lengths[i] = whole;
+            refused(&mut rt, lengths, -1, &format!("length {i} the whole memory"));
+            lengths = most;
+            lengths[i] += 1;
+            refused(&mut rt, lengths, -1, &format!("length {i} one over its limit"));
+        }
+        assert!(rt.store.data().http.is_none());
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+
+        // A request of exactly the four limits is read and started: the method with white space
+        // around it, the longest address, 32 KiB of header lines and the largest upload.
+        let method = format!("{:^1$}", "post", HTTP_METHOD_TEXT_MAX);
+        let url = format!("http://127.0.0.1:9/{}", "a".repeat(HTTP_ADDRESS_MAX - 19));
+        let headers = format!("X-A: {}\n", "a".repeat(1018)).repeat(32);
+        let texts = [method.as_bytes(), url.as_bytes(), headers.as_bytes(), &vec![b'u'; HTTP_UPLOAD_MAX][..]];
+        assert_eq!(texts.map(<[u8]>::len), most.map(|n| n as usize));
+        let mut at = [0usize; 4];
+        let mut next = 0;
+        for (i, text) in texts.iter().enumerate() {
+            at[i] = next;
+            memory_of(&mut rt)[next..next + text.len()].copy_from_slice(text);
+            next += text.len();
+        }
+        let request = (at[0] as i32, most[0], at[1] as i32, most[1], at[2] as i32, most[2], at[3] as i32, most[3]);
+        assert_eq!(start.call(&mut rt.store, request).unwrap(), 0);
+        let pid = child_pid(rt.store.data());
+        assert_eq!(std::fs::metadata(rt.store.data().http.as_ref().unwrap().files.path("request")).unwrap().len(), HTTP_UPLOAD_MAX as u64);
+        poll_to_end(rt.store.data_mut());
+        assert_eq!(outcome(rt.store.data()), (200, Vec::new(), String::new()));
+        assert!(gone(pid));
+        assert_eq!(request_files(&dir), Vec::<String>::new());
     }
 }
 

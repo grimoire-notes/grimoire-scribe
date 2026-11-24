@@ -18,9 +18,27 @@ const WIDGET_MINIMIZED: f32 = 112.0;
 const WIDGET_MARGIN: f32 = 28.0;
 /// How far each new widget is offset from the one before it.
 const WIDGET_CASCADE: f32 = 22.0;
-/// The smallest frame the editor will make, whatever a widget asks for, at 300 dpi.
-const WIDGET_FLOOR_W: f32 = 120.0;
-const WIDGET_FLOOR_H: f32 = 80.0;
+/// A frame's own parts, at 300 dpi: the title bar's height; the margin on each side of the body; the gap
+/// between the title bar and the body; and what a frame's height holds beside its title bar and its body
+/// (that gap and the margin under the body). `title_rect`, `close_rect` and `body_rect` lay a frame out with
+/// these, and the smallest frame is made of them too.
+const WIDGET_TITLE_H: f32 = 64.0;
+const WIDGET_BODY_SIDE: f32 = 14.0;
+const WIDGET_BODY_TOP: f32 = 8.0;
+const WIDGET_BODY_ROWS: f32 = 22.0;
+/// The smallest body's height: one line of the small text (`ui_small_size`).
+const WIDGET_BODY_MIN_H: f32 = 34.0;
+/// The smallest frame the editor will make, whatever a widget asks for, at 300 dpi: 120 by 120. Its height is
+/// the title bar, the rows around the body and the smallest body, so a frame at its smallest still has a body.
+pub const WIDGET_FLOOR_W: f32 = 120.0;
+pub const WIDGET_FLOOR_H: f32 = WIDGET_TITLE_H + WIDGET_BODY_ROWS + WIDGET_BODY_MIN_H;
+
+/// The smallest frame in screen pixels: what a manifest's sizes are checked against (widgetpkg.rs) and what
+/// `WidgetFrame::limits` and `WidgetHost::spawn` hold a frame to. The height is the sum of its parts as the
+/// layout rounds them, so at any scale the body of the smallest frame is `WIDGET_BODY_MIN_H` high exactly.
+pub fn widget_floor() -> (i32, i32) {
+    (ui_px(WIDGET_FLOOR_W), ui_px(WIDGET_TITLE_H) + ui_px(WIDGET_BODY_ROWS) + ui_px(WIDGET_BODY_MIN_H))
+}
 /// A frame never takes more than this share of the canvas either way.
 const WIDGET_MAX_SHARE: i32 = 70;
 
@@ -165,6 +183,21 @@ impl WidgetFrame {
         self.runtime_error.as_deref().or_else(|| self.runtime.as_ref().and_then(WidgetRuntime::error))
     }
 
+    /// What a frame whose module failed says in place of its body, in the order it is drawn: the reason (the
+    /// frame's error), then whose widget it is (the package's name, its version and its author). None while the
+    /// module runs. The reason is first so that a body with room for little shows it.
+    pub fn says(&self) -> Option<(String, String)> {
+        let reason = self.error()?.to_string();
+        let mut whose = self.def.name.to_string();
+        if !self.def.version.is_empty() {
+            whose.push_str(&format!(" v{}", self.def.version));
+        }
+        if !self.def.author.is_empty() {
+            whose.push_str(&format!(" · {}", self.def.author));
+        }
+        Some((reason, whose))
+    }
+
     /// The frame as drawn and hit: a minimized widget is a small square at its corner.
     pub fn rect(&self) -> Rect {
         if self.layout.minimized {
@@ -178,8 +211,7 @@ impl WidgetFrame {
     /// The sizes this frame may take on `area`: the widget's own bounds, never past the screen's
     /// floor and share.
     pub fn limits(&self, area: Rect) -> (i32, i32, i32, i32) {
-        let floor_w = ui_px(WIDGET_FLOOR_W);
-        let floor_h = ui_px(WIDGET_FLOOR_H);
+        let (floor_w, floor_h) = widget_floor();
         let share_w = (area.w * WIDGET_MAX_SHARE / 100).max(floor_w);
         let share_h = (area.h * WIDGET_MAX_SHARE / 100).max(floor_h);
         let min_w = ui_px(self.def.min_w).clamp(floor_w, share_w);
@@ -224,13 +256,26 @@ impl WidgetFrame {
 
     pub fn title_rect(&self) -> Rect {
         let r = self.rect();
-        let h = (ui_px(64.0)).min(r.h);
+        let h = (ui_px(WIDGET_TITLE_H)).min(r.h);
         Rect { x: r.x, y: r.y, w: r.w, h }
+    }
+
+    /// The body: what the package draws on, under the title bar and inside the frame's margins. A frame no
+    /// smaller than `widget_floor` has one at least `WIDGET_BODY_MIN_H` high.
+    pub fn body_rect(&self) -> Rect {
+        let r = self.rect();
+        let title = self.title_rect();
+        Rect {
+            x: r.x + ui_px(WIDGET_BODY_SIDE),
+            y: title.y + title.h + ui_px(WIDGET_BODY_TOP),
+            w: r.w - ui_px(2.0 * WIDGET_BODY_SIDE),
+            h: r.h - title.h - ui_px(WIDGET_BODY_ROWS),
+        }
     }
 
     pub fn close_rect(&self) -> Rect {
         let r = self.rect();
-        let side = ui_px(64.0).min(r.h).min(r.w / 3);
+        let side = ui_px(WIDGET_TITLE_H).min(r.h).min(r.w / 3);
         Rect { x: r.x + r.w - side, y: r.y, w: side, h: side }
     }
 
@@ -283,15 +328,29 @@ impl WidgetHost {
         }
     }
 
+    /// The next z number, for the frame that goes on top. The numbers only order the frames, so when the next
+    /// one would be the largest an i32 holds (widgets.ini is a file a hand can edit: a line may say any number)
+    /// the open frames are counted again from 0 in the order they have, and no sum passes that number.
+    fn top_z(&mut self) -> i32 {
+        if self.next_z == i32::MAX {
+            for (rank, i) in self.draw_order().into_iter().enumerate() {
+                self.frames[i].layout.z = rank as i32;
+            }
+            self.next_z = self.frames.len() as i32;
+        }
+        let z = self.next_z.max(0);
+        self.next_z = z + 1;
+        z
+    }
+
     /// Raises a frame to the top, returning whether its z changed.
     pub fn raise(&mut self, index: usize) -> bool {
-        let Some(f) = self.frames.get_mut(index) else { return false };
-        let z = self.next_z.max(0);
-        if f.layout.z == z {
+        let Some(f) = self.frames.get(index) else { return false };
+        if f.layout.z == self.next_z.max(0) {
             return false;
         }
-        f.layout.z = z;
-        self.next_z = z + 1;
+        let z = self.top_z();
+        self.frames[index].layout.z = z;
         true
     }
 
@@ -306,8 +365,9 @@ impl WidgetHost {
         }
         let mut f = WidgetFrame::new(def);
         let (_, _, max_w, max_h) = f.limits(area);
-        f.layout.w = f.layout.w.clamp(ui_px(WIDGET_FLOOR_W), max_w);
-        f.layout.h = f.layout.h.clamp(ui_px(WIDGET_FLOOR_H), max_h);
+        let (floor_w, floor_h) = widget_floor();
+        f.layout.w = f.layout.w.clamp(floor_w, max_w);
+        f.layout.h = f.layout.h.clamp(floor_h, max_h);
         // Top right of the canvas, left of the panel when the panel is there: the first thing a
         // new widget shows should not be hidden under the toolbar.
         let mut x = area.x + area.w - f.layout.w - ui_px(WIDGET_MARGIN);
@@ -318,8 +378,7 @@ impl WidgetHost {
         let y = area.y + ui_px(WIDGET_MARGIN) + step;
         f.layout.x = clampi(x - step, area.x, (area.x + area.w - f.layout.w).max(area.x));
         f.layout.y = clampi(y, area.y, (area.y + area.h - f.layout.h).max(area.y));
-        f.layout.z = self.next_z;
-        self.next_z += 1;
+        f.layout.z = self.top_z();
         self.frames.push(f);
         true
     }
@@ -332,7 +391,8 @@ impl WidgetHost {
         let mut f = WidgetFrame::new(def);
         f.layout = layout;
         f.clamp(area);
-        self.next_z = self.next_z.max(f.layout.z + 1);
+        // (the saved z may be any number: the sum stops at the largest, and `top_z` counts again from there)
+        self.next_z = self.next_z.max(f.layout.z.saturating_add(1));
         self.frames.push(f);
     }
 
@@ -422,8 +482,9 @@ fn widgets_path() -> String {
     format!("{}/widgets.ini", store_root())
 }
 
-/// Reads widgets.ini. A missing or unreadable file is an empty layout. Lines that are not a known
-/// id with seven comma-separated fields are skipped; the file is small and human-editable.
+/// Reads widgets.ini. A missing or unreadable file is an empty layout. Lines that are not a package's
+/// id (`widget_id_ok`, the manifest check's own rule) with seven comma-separated fields are skipped;
+/// the file is small and human-editable.
 pub fn widgets_load() -> Vec<WidgetEntry> {
     let root = store_root();
     if root.is_empty() {
@@ -441,7 +502,7 @@ pub fn widgets_load() -> Vec<WidgetEntry> {
         }
         let Some((id, rest)) = line.split_once('=') else { continue };
         let id = id.trim();
-        if id.is_empty() || id.len() > 64 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_') {
+        if !crate::widgetpkg::widget_id_ok(id) {
             continue;
         }
         let v: Vec<&str> = rest.split(',').map(str::trim).collect();
@@ -470,7 +531,9 @@ pub fn widgets_load() -> Vec<WidgetEntry> {
     out
 }
 
-/// Writes widgets.ini atomically. The open frames are the file: a closed widget has no line.
+/// Writes widgets.ini atomically. The open frames are the file: a closed widget has no line. A line is
+/// written for an id the reader takes (every installed package's is one), so the file holds no line that
+/// would be skipped when it is read.
 pub fn widgets_save(entries: &[WidgetEntry]) -> i32 {
     let root = store_root();
     if root.is_empty() {
@@ -479,7 +542,7 @@ pub fn widgets_save(entries: &[WidgetEntry]) -> i32 {
     let _ = mkdir_p(&root);
     let mut s = String::from("# Grimoire widget layout. One line per open widget:\n");
     s.push_str("# id=x,y,w,h,minimized,z\n");
-    for e in entries {
+    for e in entries.iter().filter(|e| crate::widgetpkg::widget_id_ok(&e.id)) {
         s.push_str(&format!(
             "{}={},{},{},{},{},{},0\n",
             e.id, e.layout.x, e.layout.y, e.layout.w, e.layout.h, e.layout.minimized as i32, e.layout.z
@@ -554,6 +617,116 @@ mod tests {
         assert!(f.layout.x >= area().x && f.layout.y + f.rect().h <= area().h);
     }
 
+    /// A package that asks for less than any frame may be: its sizes are held to the floor.
+    static TINY_WIDGET: WidgetDef = WidgetDef {
+        id: "test.tiny",
+        name: "Tiny",
+        icon: IconKind::Grid,
+        default_w: 1.0,
+        default_h: 1.0,
+        min_w: 1.0,
+        min_h: 1.0,
+        max_w: 500.0,
+        max_h: 500.0,
+        resizable: true,
+        version: "",
+        author: "",
+        description: "",
+    };
+
+    #[test]
+    fn the_smallest_frame_still_has_a_body() {
+        assert_eq!((WIDGET_FLOOR_W, WIDGET_FLOOR_H), (120.0, 120.0));
+        // (the Scribe's 300 dpi, and other scales, where each part rounds on its own)
+        for dpi in [300.0, 226.0, 167.0, 212.0, 265.0, 359.0, 600.0] {
+            ui_init(dpi);
+            let (floor_w, floor_h) = widget_floor();
+            let body_min = ui_px(WIDGET_BODY_MIN_H);
+            assert!(body_min >= 1);
+            // Opened from the popup, resized to nothing, restored from a layout with no size, and clamped again:
+            // each is the floor, and the body there is as high as the smallest body and inside the frame.
+            let mut h = WidgetHost::new();
+            assert!(h.spawn(&TINY_WIDGET, area(), panel()));
+            let mut resized = WidgetFrame::new(&TINY_WIDGET);
+            resized.resize_to(1, 1, area());
+            let mut restored = WidgetHost::new();
+            restored.restore(&TINY_WIDGET, WidgetLayout { x: 40, y: 40, w: 1, h: 1, minimized: false, z: 0 }, area());
+            let mut clamped = WidgetFrame::new(&TINY_WIDGET);
+            clamped.layout.h = 0;
+            clamped.clamp(area());
+            for f in [&h.frames[0], &resized, &restored.frames[0], &clamped] {
+                assert_eq!((f.layout.w, f.layout.h), (floor_w, floor_h), "at {dpi} dpi");
+                let (r, title, body) = (f.rect(), f.title_rect(), f.body_rect());
+                assert_eq!(body.h, body_min, "at {dpi} dpi");
+                assert!(body.w > 0 && body.x > r.x && body.x + body.w < r.x + r.w, "at {dpi} dpi");
+                assert!(body.y > title.y + title.h && body.y + body.h < r.y + r.h, "at {dpi} dpi");
+            }
+            // The floor is a frame's least height at every size the limits give, whatever the canvas.
+            let small = Rect { x: 0, y: 0, w: 100, h: 100 };
+            let (min_w, min_h, max_w, max_h) = resized.limits(small);
+            assert!(min_w >= floor_w && min_h >= floor_h && max_w >= min_w && max_h >= min_h);
+        }
+        ui_init(300.0);
+    }
+
+    #[test]
+    fn a_z_order_of_any_number_in_widgets_ini_keeps_its_order() {
+        ui_init(300.0);
+        let root = std::env::temp_dir().join(format!("grimoire-widgets-z-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        // A line whose z is the largest number an i32 holds, between two ordinary ones, and one with the least.
+        std::fs::write(
+            root.join("widgets.ini"),
+            "test.a=10,10,300,300,0,5,0\ntest.ini=10,10,300,300,0,2147483647,0\ntest.b=40,40,300,300,0,7,0\ntest.c=70,70,300,300,0,-2147483648,0\n",
+        )
+        .unwrap();
+        let lines = widgets_load();
+        assert_eq!(lines.iter().map(|e| e.layout.z).collect::<Vec<_>>(), [5, i32::MAX, 7, i32::MIN]);
+        static DEFS: [WidgetDef; 5] = [
+            WidgetDef { id: "test.a", ..TEST_WIDGET },
+            WidgetDef { id: "test.ini", ..TEST_WIDGET },
+            WidgetDef { id: "test.b", ..TEST_WIDGET },
+            WidgetDef { id: "test.c", ..TEST_WIDGET },
+            WidgetDef { id: "test.new", ..TEST_WIDGET },
+        ];
+        let mut h = WidgetHost::new();
+        for (e, def) in lines.iter().zip(&DEFS) {
+            h.restore(def, e.layout, area());
+        }
+        let ids = |h: &WidgetHost| h.draw_order().into_iter().map(|i| h.frames[i].def.id).collect::<Vec<_>>();
+        assert_eq!(ids(&h), ["test.c", "test.a", "test.b", "test.ini"], "drawn in the order of their numbers");
+        // What the editor does next with the frames: raise one, open another, raise each in turn. Each goes on top
+        // of the others, which keep their order, and every number stays one a sum can be made with.
+        assert!(h.raise(0));
+        assert_eq!(ids(&h), ["test.c", "test.b", "test.ini", "test.a"]);
+        assert!(h.spawn(&DEFS[4], area(), panel()));
+        assert_eq!(ids(&h), ["test.c", "test.b", "test.ini", "test.a", "test.new"]);
+        for i in [1, 3, 2, 0, 4, 1] {
+            h.raise(i);
+            assert_eq!(*ids(&h).last().unwrap(), h.frames[i].def.id);
+            assert!(h.frames.iter().all(|f| (0..1000).contains(&f.layout.z)), "{:?}", h.frames.iter().map(|f| f.layout.z).collect::<Vec<_>>());
+        }
+        assert_eq!(h.hit(100, 100).map(|(i, _)| h.frames[i].def.id), Some("test.ini"), "the frame raised last is the one a tap finds");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_failed_frame_says_the_reason_first() {
+        static NAMED: WidgetDef = WidgetDef { name: "A Widget With A Long Name", version: "1.2.3", author: "Its Author", ..TEST_WIDGET };
+        let mut f = WidgetFrame::new(&NAMED);
+        assert_eq!(f.says(), None, "a frame with no error says nothing of one");
+        f.runtime_error = Some("The widget's artifact could not be read.".to_string());
+        let (reason, whose) = f.says().unwrap();
+        assert_eq!(reason, "The widget's artifact could not be read.");
+        assert_eq!(whose, "A Widget With A Long Name v1.2.3 · Its Author");
+        // (a package with no version or author in its catalog entry: its name alone)
+        let mut f = WidgetFrame::new(&TEST_WIDGET);
+        f.runtime_error = Some("The widget package is not installed.".to_string());
+        assert_eq!(f.says(), Some(("The widget package is not installed.".to_string(), "Test".to_string())));
+    }
+
     #[test]
     fn minimized_rect_is_a_square_and_restore_keeps_the_size() {
         ui_init(300.0);
@@ -592,4 +765,70 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// A manifest with this id and nothing a frame needs beyond it.
+    fn manifest_of(id: &str) -> String {
+        format!(
+            "name: Long\nid: {id}\ntype: widget\nversion: 1.0.0\ncapabilities: [editor:overlay]\nartifact:\n  path: w.bin\n  sha256: {}\n  size: 4\nspec:\n  runtime: wasm\n",
+            crate::sha256::sha256_of(b"test")
+        )
+    }
+
+    #[test]
+    fn a_frame_of_a_package_with_the_longest_id_is_there_after_a_restart() {
+        use crate::widgetpkg::{widget_catalog_invalidate, widget_id_ok, widget_package_install, WIDGET_ID_MAX};
+        ui_init(300.0);
+        let root = std::env::temp_dir().join(format!("grimoire-widgets-long-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        widget_catalog_invalidate();
+        // The longest id the manifest check takes: 128 bytes of every kind of character an id has.
+        assert_eq!(WIDGET_ID_MAX, 128);
+        let id = format!("com.example.{}", "long-id-0123456789.".repeat(7));
+        let id = &id[..WIDGET_ID_MAX - 1];
+        let id = format!("{id}z");
+        assert!(id.len() == WIDGET_ID_MAX && widget_id_ok(&id));
+        widget_package_install(&manifest_of(&id), b"test", "", 1860, 2480).unwrap();
+        // (one byte more is no id: not to the manifest check, and not in widgets.ini)
+        let longer = format!("{id}z");
+        assert!(!widget_id_ok(&longer));
+        assert!(widget_package_install(&manifest_of(&longer), b"test", "", 1860, 2480).is_err());
+
+        // Open its frame and move it; the layout is saved as the editor saves it.
+        let mut h = WidgetHost::new();
+        assert!(h.spawn(widget_def(&id).unwrap(), area(), panel()));
+        h.frames[0].move_to(300, 400, area());
+        let layout = h.frames[0].layout;
+        assert_eq!(h.save(), 0);
+        assert_eq!(widgets_load(), vec![WidgetEntry { id: id.clone(), layout }]);
+
+        // A restart: nothing is kept but the files. The catalog is read again, then the layout.
+        drop(h);
+        widget_catalog_invalidate();
+        let mut again = WidgetHost::new();
+        again.load(area());
+        assert_eq!(again.frames.len(), 1, "the frame is open again");
+        assert_eq!((again.frames[0].def.id, again.frames[0].layout), (id.as_str(), layout));
+
+        // widgets.ini's reader takes the ids the manifest check takes, and no others.
+        std::fs::write(
+            root.join("widgets.ini"),
+            format!("{longer}=1,2,300,300,0,1,0\nCom.Example=1,2,300,300,0,2,0\ncom_example=1,2,300,300,0,3,0\n.com.example=1,2,300,300,0,4,0\ncom..example=1,2,300,300,0,5,0\ncom.example.=1,2,300,300,0,6,0\n{id}=5,6,300,300,1,7,0\n"),
+        )
+        .unwrap();
+        let got = widgets_load();
+        assert_eq!(got.len(), 1);
+        assert_eq!((got[0].id.as_str(), got[0].layout.z), (id.as_str(), 7));
+        // (and the writer leaves out a line its reader would skip)
+        let entry = |id: &str| WidgetEntry { id: id.to_string(), layout };
+        assert_eq!(widgets_save(&[entry("Not An Id"), entry(&id), entry(&longer)]), 0);
+        assert_eq!(widgets_load(), vec![entry(&id)]);
+        // (the file itself, not what the reader makes of it: two lines of comment and that frame's line)
+        let written = std::fs::read_to_string(root.join("widgets.ini")).unwrap();
+        let lines: Vec<&str> = written.lines().filter(|l| !l.starts_with('#')).collect();
+        assert_eq!(lines, [format!("{id}=300,400,{},{},0,{},0", layout.w, layout.h, layout.z)]);
+        assert!(!written.contains("Not An Id") && !written.contains(&longer));
+        widget_catalog_invalidate();
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

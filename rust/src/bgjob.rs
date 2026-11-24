@@ -56,6 +56,13 @@ pub enum BgKind {
     /// notebook..., 2.2, issue #195), drawn in the child (bgwork_template.rs). Ends 0, or -1 (not made: the page does
     /// not read, its paper's picture is missing, or the id it was given is not in the notebook's bg/index.ini).
     PageTemplate = 11,
+    /// id: none, path: "<form>.<size>.<mtime>:<path from Grimoire's folder>", a package's picture as a screen asked
+    /// for it: an installed app's bundled icon or a Package Store icon or screenshot, made by the sandboxed worker
+    /// into grimoire/.cache/packages, or its "no picture" mark (pkgpics.rs, 2.3, issue #236). One file a job, held
+    /// to a few seconds, never one the user waits on by name: it runs with Files' previews (`rank`); dropped at
+    /// exit. Ends 0 or 1, or 4 when the sandbox refused its worker a step (the session is then broken here too, and
+    /// the pictures still queued are dropped).
+    PackagePictures = 12,
 }
 
 /// Queues a job (a queued duplicate, same kind, id and path, is merged). notify: report the result
@@ -182,6 +189,29 @@ pub fn bg_job_pending(kind:BgKind,id:&str,path:&str)->bool {
 fn bg_job_queued(kind:BgKind,id:&str,path:&str)->bool {
     with(|s|s.q.iter().any(|j|j.kind==kind&&j.id.as_str()==id&&j.dir.as_str()==path))
 }
+/// How many jobs of this kind are queued or running (a screen that asks for many holds itself to a few at a time).
+pub fn bg_kind_count(kind: BgKind) -> usize {
+    with(|s| (s.pid > 0 && s.running.kind == kind) as usize + (s.extra_pid > 0 && s.extra.kind == kind) as usize + s.q.iter().filter(|j| j.kind == kind).count())
+}
+/// Whether the queue is full: one more job queued now would push another out (bg_queue). What asks for work
+/// nobody waits on by name looks first, and asks later (pkgpics.rs).
+pub fn bg_queue_full() -> bool {
+    with(|s| s.q.len() >= BG_QUEUE)
+}
+/// For the unit tests of what asks for jobs (pkgpics.rs, packagestore.rs): while it is on, the first child counts
+/// as busy (a pid that is no process, running a job of no kind those tests ask for), so every job asked for stays
+/// in the queue, in its order, and no child is forked. Off: the child is free again and the queue is emptied.
+/// Nothing may poll the jobs while it is on (the poll would take that child as ended).
+#[cfg(test)]
+pub(crate) fn bg_test_hold(on: bool) {
+    with(|s| {
+        s.pid = if on { 999_996 } else { -1 };
+        s.running = Job::default();
+        if !on {
+            s.q.clear();
+        }
+    });
+}
 /// Whether a child runs a job of this kind now (not one that only waits in the queue).
 pub fn bg_kind_running(kind: BgKind) -> bool {
     with(|s| (s.pid > 0 && s.running.kind == kind) || (s.extra_pid > 0 && s.extra.kind == kind))
@@ -251,6 +281,13 @@ pub fn bg_poll_job(done_kind:Option<&mut i32>,mut done_id:Option<&mut FixedStr<S
                 crate::sandbox::session_set_broken();
                 qlog!("bg: the sandbox refused a template PDF's worker a step: no worker is asked for again until Grimoire starts again");
             }
+            // (a picture's worker refused a sandbox step, 2.3, issue #236: the same, so that no screen asks for a
+            // picture again in this session; the pictures still queued would each fork to find the same, and go)
+            if kind == BgKind::PackagePictures && code == crate::pkgpics::CODE_SANDBOX {
+                crate::sandbox::session_set_broken();
+                with(|s| s.q.retain(|j| j.kind != BgKind::PackagePictures));
+                qlog!("bg: the sandbox refused a package picture's worker a step: no worker is asked for again until Grimoire starts again");
+            }
             // (a font check's 3: some files were still being copied and wait for the next look)
             let ok = code == 0 || (is_pdf && (code == 2 || code == 3)) || (kind == BgKind::FontCheck && (code == 3 || code == 5)) || tpl_more;
             if let Some(done)=done_id.as_deref_mut(){*done=id;}
@@ -311,6 +348,15 @@ pub fn bg_detach_rest() {
     });
     if previews > 0 {
         qlog!("bg: %d file preview(s) dropped (Grimoire ends)", previews as i32);
+    }
+    // (nor a package's picture: the next look at its screen asks again)
+    let pictures = with(|s| {
+        let n = s.q.len();
+        s.q.retain(|j| j.kind != BgKind::PackagePictures);
+        n - s.q.len()
+    });
+    if pictures > 0 {
+        qlog!("bg: %d package picture(s) dropped (Grimoire ends)", pictures as i32);
     }
     let pdf_pages = with(|s| {
         let n = s.q.len();
@@ -387,8 +433,8 @@ struct Job {
 }
 
 // (by the kind's number)
-const K_KIND_NAMES: [&str; 12] =
-    ["export", "compaction", "template", "import", "map layout", "page previews", "library map layout", "PDF import", "font check", "file previews", "file copy", "page template"];
+const K_KIND_NAMES: [&str; 13] =
+    ["export", "compaction", "template", "import", "map layout", "page previews", "library map layout", "PDF import", "font check", "file previews", "file copy", "page template", "package pictures"];
 
 /// bgjob.c's g_q, g_n, g_pid, g_running_notify and g_running.
 struct State {
@@ -503,6 +549,7 @@ fn run_job(j: &Job) -> i32 {
         BgKind::CopyFile => crate::bgwork_copy::bg_copy_file(j.id.as_str(), j.dir.as_str()),
         BgKind::PageTemplate => crate::bgwork_template::bg_page_template(j.id.as_str(), j.dir.as_str(), j.dpi),
         BgKind::FilePreviews => crate::bgwork_previews::bg_file_preview(j.dir.as_str()),
+        BgKind::PackagePictures => crate::pkgpics::bg_package_picture(j.dir.as_str()),
     }
 }
 
@@ -585,6 +632,9 @@ fn rank(j: &Job) -> i32 {
         // child ahead of an export, the mirror, an import or a font check; ahead of compaction and the idle
         // warm-ups, since someone looks at the screen. A full queue lets them go before those jobs, too.
         BgKind::FilePreviews => 4,
+        // A package's picture (2.3, issue #236): an icon or a Store picture of the screen in front, with Files'
+        // previews and by their rule (first queued, first run).
+        BgKind::PackagePictures => 4,
         // (an idle warm-up of the Pages view's previews: after anything asked for, with compaction)
         BgKind::PagePreviews => 5,
         _ => 5,
@@ -596,7 +646,7 @@ fn rank(j: &Job) -> i32 {
 fn job_of(j: &Job) -> &str {
     match (j.id.is_empty(), j.kind) {
         (false, _) => j.id.as_str(),
-        (true, BgKind::FilePreviews) => "a file",
+        (true, BgKind::FilePreviews | BgKind::PackagePictures) => "a file",
         (true, _) if template_pdf(j) => "a file",
         (true, _) => "a folder",
     }
@@ -785,11 +835,13 @@ fn start_job(j: Job, extra: bool) -> bool {
         // buffers. (A PDF import slice's 2 and 3 mean done with blank pages, and more to do; a font check's 3,
         // 4, 5 and 6, some files wait, no worker can be had, more fonts are left, and what it finds cannot be kept;
         // a copy's 2, 3 and 4, the file is bigger than its folder takes, is no longer the one listed, and has too
-        // long a path; a template PDF's 3 and 4, more pages are left, and the sandbox refused its worker a step.)
+        // long a path; a template PDF's 3 and 4, more pages are left, and the sandbox refused its worker a step; a
+        // package picture's 4, the same.)
         let says_more = (j.kind == BgKind::PdfImport && (rc == 2 || rc == 3))
             || (j.kind == BgKind::FontCheck && (rc == 3 || rc == 4 || rc == 5 || rc == 6))
             || (j.kind == BgKind::CopyFile && (rc == 2 || rc == 3 || rc == 4))
-            || (template_pdf(&j) && (rc == crate::bgwork_tplpdf::CODE_MORE || rc == crate::bgwork_tplpdf::CODE_SANDBOX));
+            || (template_pdf(&j) && (rc == crate::bgwork_tplpdf::CODE_MORE || rc == crate::bgwork_tplpdf::CODE_SANDBOX))
+            || (j.kind == BgKind::PackagePictures && rc == crate::pkgpics::CODE_SANDBOX);
         unsafe { libc::_exit(if rc == 0 { 0 } else if says_more { rc } else { 1 }) };
     }
     let beside = with(|s| {

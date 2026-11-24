@@ -582,6 +582,10 @@ pub struct LibraryState {
     home_pending: bool,
     home_deferred: bool,
     home_held: bool,
+    /// A picture came from the worker (an installed app's bundled icon: appicon.rs; a Package Store picture:
+    /// packagestore.rs; 2.3, issue #236) and the screen that shows it has not been drawn again yet (a press was
+    /// held: its lift comes first).
+    pictures_due: bool,
 }
 
 /// The C's S (a->lib).
@@ -1933,8 +1937,12 @@ fn draw_base(a: &mut App) {
     hits_clear(&mut s.hits);
     canvas_fill(c, Rect::new(0, 0, aw, ah), 255);
 
-    // The status bar (2.3, issue #209): time and date, Wi-Fi and Bluetooth, the battery.
-    gui_status_bar(c, aw, wall_time());
+    // The status bar (2.3, issue #209): time and date, Wi-Fi and Bluetooth, the battery. The minute it
+    // is drawn with is the one library_tick compares: a tick draws the home again only once the
+    // bar's time has changed (a start with no minute recorded drew it twice).
+    let now = sys_wall_clock();
+    gui_status_bar(c, aw, now);
+    s.status_min = now / 60;
 
     let m = margin();
     let gap = gui_gap();
@@ -7553,20 +7561,45 @@ fn toast_floor(a: &App) -> i32 {
     below
 }
 
+// (One copy: it is two calls long since the draw and the refresh were split, short enough for the compiler to
+// copy it into each of its many callers, which the Kindle's binary has no room for.)
+#[inline(never)]
 fn redraw(a: &mut App, m: RefreshMode) {
+    draw_front(a);
+    app_invalidate_all(a, m);
+}
+
+/// A picture that came by itself (an app's bundled icon or a Package Store picture, decoded by the worker:
+/// pkgpics.rs, 2.3, issue #236): the screen in front is drawn again, and only the part of it that the new frame
+/// changed is refreshed, as a part that fills in by itself (app_invalidate_filling: a Ui refresh that is never the
+/// one that becomes the cleaning flash). Nothing is refreshed when the new frame is the old one.
+pub(crate) fn redraw_filling(a: &mut App) {
+    let mut before = Canvas { w: a.screen.w, h: a.screen.h, stride: a.screen.stride, ..Default::default() };
+    // (no memory for a copy of the frame: the whole of it is refreshed)
+    if before.px.try_reserve_exact(a.screen.px.len()).is_err() {
+        redraw(a, RefreshMode::Ui);
+        return;
+    }
+    before.px.extend_from_slice(&a.screen.px);
+    draw_front(a);
+    let changed = canvas_changed_rect(&before, &a.screen);
+    if !rect_is_empty(changed) {
+        app_invalidate_filling(a, changed);
+    }
+}
+
+// What is in front, drawn into the screen's canvas (redraw's and redraw_filling's draw: nothing is refreshed here).
+fn draw_front(a: &mut App) {
     if a.app_view.open {
         crate::apphost::apphost_draw(a);
-        app_invalidate_all(a, m);
         return;
     }
     if a.pkg.open {
         crate::widgetpkgui::packages_ui_draw(a);
-        app_invalidate_all(a, m);
         return;
     }
     if a.store.open {
         crate::packagestore::store_draw(a);
-        app_invalidate_all(a, m);
         return;
     }
     if files_shown(a) {
@@ -7580,13 +7613,11 @@ fn redraw(a: &mut App, m: RefreshMode) {
             draw_modal(a);
             a.toast_floor = toast_floor(a);
         }
-        app_invalidate_all(a, m);
         return;
     }
     if graph_shown(a) {
         graph_draw(a);
         a.toast_floor = 0;
-        app_invalidate_all(a, m);
         return;
     }
     if lib(a).settings_return_editor && a.scr==ScreenId::Editor {
@@ -7599,7 +7630,6 @@ fn redraw(a: &mut App, m: RefreshMode) {
         draw_modal(a);
     }
     a.toast_floor = toast_floor(a);
-    app_invalidate_all(a, m);
 }
 
 /// The device's name for About: the Kindle's own model (its device tree, else /proc/usid's model
@@ -10519,6 +10549,44 @@ fn library_event_in(a: &mut App, ev: &InEvent) {
     }
 }
 
+/// A picture came from the worker while a screen that shows it is in front: an installed app's icon (appicon.rs)
+/// on the home's app row, the All apps page or the package manager's list or detail page; a Package Store picture
+/// (packagestore.rs) in the Store or on Settings > Updates. The screen is drawn again and only what changed on it
+/// is refreshed (redraw_filling). Under a press it waits for the lift; behind any other sheet nothing is drawn (the
+/// sheet's close draws what is under it whole).
+fn pictures_due_draw(a: &mut App) {
+    if !std::mem::take(&mut lib(a).pictures_due) {
+        return;
+    }
+    let at_rest = if a.store.open {
+        crate::packagestore::store_at_rest(&a.store)
+    } else if a.pkg.open {
+        if a.pkg.kb.open {
+            return;
+        }
+        crate::widgetpkgui::packages_ui_at_rest(a)
+    } else {
+        let modal = lib(a).modal;
+        let home = a.scr == ScreenId::Library && !files_shown(a) && !graph_shown(a) && matches!(modal, Modal::None | Modal::Apps | Modal::Updates);
+        // (Settings > Updates opened from a notebook: the same page, over the editor)
+        if !home && !(library_settings_active(a) && modal == Modal::Updates) {
+            return;
+        }
+        lib(a).pressed.is_none()
+    };
+    if at_rest {
+        redraw_filling(a);
+    } else {
+        lib(a).pictures_due = true;
+    }
+}
+
+/// A Package Store picture came from the worker (packagestore.rs): the screen that shows it is drawn again by the
+/// Library's tick (pictures_due_draw).
+pub(crate) fn picture_came(a: &mut App) {
+    lib(a).pictures_due = true;
+}
+
 pub fn library_tick(a: &mut App, now: u32) {
     if a.app_view.open {
         crate::apphost::apphost_tick(a, now);
@@ -10526,17 +10594,34 @@ pub fn library_tick(a: &mut App, now: u32) {
     }
     if a.store.open {
         crate::packagestore::store_tick(a, now);
+        // The Store's status bar keeps the clock, as the home's does below: when the minute changes its page is
+        // drawn again, by the compared redraw, so only the clock's own digits are refreshed (and a picture that
+        // comes later is compared with a frame whose clock is the panel's: its refresh is its own place).
+        let min = sys_wall_clock() / 60;
+        if lib(a).status_min != min {
+            lib(a).status_min = min;
+            lib(a).pictures_due = true;
+        }
+        pictures_due_draw(a);
         return;
+    }
+    // (installed apps' bundled icons: the ones the cache had nothing for are asked of the worker's job, and one
+    // that came is taken in: appicon.rs)
+    if crate::appicon::app_icons_step() {
+        lib(a).pictures_due = true;
     }
     if a.pkg.open {
         crate::widgetpkgui::packages_ui_tick(a, now);
+        pictures_due_draw(a);
         return;
     }
+    pictures_due_draw(a);
     crate::userfonts::userfonts_tick(a, now); // (a font check that ended with no verdict is queued again after its wait)
     // The home's status bar keeps the clock: one redraw when the minute changes (nothing behind a
-    // sheet or the keyboard is laying itself out again).
+    // sheet or the keyboard is laying itself out again). The minute is the platform's clock's, as
+    // the bar's own time is (gui_status_bar).
     if !files_shown(a) && !graph_shown(a) && lib(a).modal == Modal::None {
-        let min = wall_time() / 60;
+        let min = sys_wall_clock() / 60;
         if lib(a).status_min != min {
             lib(a).status_min = min;
             redraw(a, RefreshMode::Ui);
@@ -10951,6 +11036,13 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
     if key == "apps" {
         let ids: Vec<String> = crate::apppkg::app_package_list().into_iter().map(|p| p.id).collect();
         csnprintf!(out, cap, "%s", &ids.join(" "));
+        return 0;
+    }
+    // (how many installed apps' bundled icons a launcher would draw now: their pictures are there, made by the
+    // worker; an app that shows its built-in icon is not counted)
+    if key == "apps.icons" {
+        let n = crate::apppkg::app_package_list().iter().filter(|it| AppIcon::for_install(it).image.is_some()).count();
+        csnprintf!(out, cap, "%d", n as i32);
         return 0;
     }
     if key == "recent-apps" {
@@ -11687,6 +11779,39 @@ mod tests {
         let mut out = String::new();
         assert_eq!(library_probe(a, key, &mut out, 512), 0, "{key}");
         out
+    }
+
+    // The home is drawn with its bar's minute recorded, so a tick in that minute draws nothing again.
+    // Before, the first tick after a start found no minute recorded and drew and refreshed the whole
+    // home a second time with nothing on it changed.
+    #[test]
+    fn a_tick_in_the_minute_the_home_was_drawn_in_draws_nothing() {
+        let mut a = pen_record_app();
+        a.scr = ScreenId::Library;
+        lib(&mut a).modal = Modal::None;
+        lib(&mut a).items.clear();
+        // (the machine's minute can change between a draw and its tick: the next pair is inside one)
+        let mut quiet = false;
+        for _ in 0..2 {
+            lib(&mut a).status_min = 0;
+            redraw(&mut a, RefreshMode::Ui);
+            a.dirty = RECT_EMPTY;
+            library_tick(&mut a, 100);
+            if rect_is_empty(a.dirty) {
+                quiet = true;
+                break;
+            }
+        }
+        assert!(quiet, "a tick in the minute the home was drawn in asked for a refresh");
+        // A minute on by the clock, the tick draws it again, once.
+        lib(&mut a).status_min -= 1;
+        library_tick(&mut a, 200);
+        assert!(!rect_is_empty(a.dirty));
+        a.dirty = RECT_EMPTY;
+        library_tick(&mut a, 300);
+        assert!(rect_is_empty(a.dirty) || lib(&mut a).status_min != sys_wall_clock() / 60);
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
     }
 
     // The global popup menus close on a tap outside their rows; the page under them does not act.
@@ -14266,7 +14391,7 @@ pub(crate) fn library_app_closed(a: &mut App) {
 
 /// Whether the status bar's minute changed while an app was up.
 pub(crate) fn library_app_minute(a: &mut App) -> bool {
-    let min = wall_time() / 60;
+    let min = sys_wall_clock() / 60;
     let Some(s) = a.lib.as_deref_mut() else { return false };
     if s.status_min == min {
         false

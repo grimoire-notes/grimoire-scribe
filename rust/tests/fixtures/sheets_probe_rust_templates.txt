@@ -4,80 +4,81 @@
 # own. Only these reviewed pixels differ; the page counts and every result keep the C baseline.
 # The tiles' labels are drawn in each language, so a language's empty-sheet lines follow its "From a file...": when
 # that translation changes, look at the 16 sheets again and record their lines (the ja lines were, when #136
-# translated it; the empty sheets were recorded again for #195's tiles and 18-a-page grid).
+# translated it; the empty sheets were recorded again for #195's tiles and 18-a-page grid, and every Classic line
+# for 2.3's Classic, #209: rounder corners, and no rule under a sheet's title).
 tplsheet empty0 en pg templates d2d54c54ac8bf3f0
 tplsheet empty0 en pg photos fe290deb3196fe43
-tplsheet empty0 en pc templates 1a0b3310255e2ab4
-tplsheet empty0 en pc photos c289480f79189675
+tplsheet empty0 en pc templates 1ec5b58b4a4ddb9c
+tplsheet empty0 en pc photos 993d0a62bb3c4315
 tplsheet empty0 en lg templates d611b74cd9a4067a
 tplsheet empty0 en lg photos ea2312be1da935b6
-tplsheet empty0 en lc templates fab048a0174e1fd9
-tplsheet empty0 en lc photos bcc9ea14f167dcda
+tplsheet empty0 en lc templates 29e51bd2655750d1
+tplsheet empty0 en lc photos e9a1899a95475bbe
 tplsheet empty0 es pg templates c00331f568cefc7a
 tplsheet empty0 es pg photos e7bb4ae46535c6db
-tplsheet empty0 es pc templates 1c2e0d2a2fb707a8
-tplsheet empty0 es pc photos 2019ecafe0912f69
+tplsheet empty0 es pc templates 11e6539c1ddd63ac
+tplsheet empty0 es pc photos ceb9c90db61121a5
 tplsheet empty0 es lg templates 2632e8e159a24c38
 tplsheet empty0 es lg photos ab4a8dba62126326
-tplsheet empty0 es lc templates ddfe22a5b4d76853
-tplsheet empty0 es lc photos 321f3c3da68b5236
+tplsheet empty0 es lc templates 98fb46cee3739e2f
+tplsheet empty0 es lc photos f2fc6dbf8cddde7e
 tplsheet empty0 ja pg templates 5e3e91c6422d9829
 tplsheet empty0 ja pg photos 2b56c2b2764afd29
-tplsheet empty0 ja pc templates 0f93f3effdbeffa2
-tplsheet empty0 ja pc photos 09715990c2ffe865
+tplsheet empty0 ja pc templates c24bbadc839f46fe
+tplsheet empty0 ja pc photos d3427a0bbab49f89
 tplsheet empty0 ja lg templates ec8b8598a1a70a93
 tplsheet empty0 ja lg photos b0450805dbb0b0cc
-tplsheet empty0 ja lc templates 4274b3a854ecc381
-tplsheet empty0 ja lc photos 9c47abc1cc453172
+tplsheet empty0 ja lc templates 2dbef91786052b6d
+tplsheet empty0 ja lc photos d8a7a4314444590a
 tplsheet empty0 pl pg templates dd5d234cbf67fefe
 tplsheet empty0 pl pg photos 9419f6c23ed1926d
-tplsheet empty0 pl pc templates 4c1558190a2385f8
-tplsheet empty0 pl pc photos 944049a4dc13caa3
+tplsheet empty0 pl pc templates 00143cde7f809574
+tplsheet empty0 pl pc photos 78836a863ca5ae7f
 tplsheet empty0 pl lg templates 4fa47eeabc251114
 tplsheet empty0 pl lg photos 689f033c3b09c580
-tplsheet empty0 pl lc templates 5e1d3dbb846ab7eb
-tplsheet empty0 pl lc photos 6eed308367ba400e
+tplsheet empty0 pl lc templates 6e66b16618493407
+tplsheet empty0 pl lc photos dd3215625c02652e
 tplsheet empty1 en pg templates e963eab281f15df0
 tplsheet empty1 en pg photos fe290deb3196fe43
-tplsheet empty1 en pc templates cb4c25060834c5e7
-tplsheet empty1 en pc photos c289480f79189675
+tplsheet empty1 en pc templates 05e0a91cc784468f
+tplsheet empty1 en pc photos 993d0a62bb3c4315
 tplsheet empty1 en lg templates 35ce7f5a16755a7a
 tplsheet empty1 en lg photos ea2312be1da935b6
-tplsheet empty1 en lc templates 778e35f03fe22e66
-tplsheet empty1 en lc photos bcc9ea14f167dcda
+tplsheet empty1 en lc templates d60743fab32027fe
+tplsheet empty1 en lc photos e9a1899a95475bbe
 tplsheet empty1 es pg templates 1d7fc3d7624a827a
 tplsheet empty1 es pg photos e7bb4ae46535c6db
-tplsheet empty1 es pc templates 8e9be8d4bde11956
-tplsheet empty1 es pc photos 2019ecafe0912f69
+tplsheet empty1 es pc templates 703d83744199c272
+tplsheet empty1 es pc photos ceb9c90db61121a5
 tplsheet empty1 es lg templates 529f36e520595438
 tplsheet empty1 es lg photos ab4a8dba62126326
-tplsheet empty1 es lc templates 14ccb19f75b8d881
-tplsheet empty1 es lc photos 321f3c3da68b5236
+tplsheet empty1 es lc templates 68d1369b7bcc5ed5
+tplsheet empty1 es lc photos f2fc6dbf8cddde7e
 tplsheet empty1 ja pg templates d9cf2c9680e6f552
 tplsheet empty1 ja pg photos 2b56c2b2764afd29
-tplsheet empty1 ja pc templates cce1b6de96fce611
-tplsheet empty1 ja pc photos 09715990c2ffe865
+tplsheet empty1 ja pc templates d70a475d120f93a5
+tplsheet empty1 ja pc photos d3427a0bbab49f89
 tplsheet empty1 ja lg templates d0dfc1934c92ff10
 tplsheet empty1 ja lg photos b0450805dbb0b0cc
-tplsheet empty1 ja lc templates 61bc443e38bf9a02
-tplsheet empty1 ja lc photos 9c47abc1cc453172
+tplsheet empty1 ja lc templates 385002e5ab169096
+tplsheet empty1 ja lc photos d8a7a4314444590a
 tplsheet empty1 pl pg templates c1cc5ffff506a346
 tplsheet empty1 pl pg photos 9419f6c23ed1926d
-tplsheet empty1 pl pc templates fda5ad83146a88a4
-tplsheet empty1 pl pc photos 944049a4dc13caa3
+tplsheet empty1 pl pc templates 4a8f9478c7aa2fa0
+tplsheet empty1 pl pc photos 78836a863ca5ae7f
 tplsheet empty1 pl lg templates bf7d09d080465c5c
 tplsheet empty1 pl lg photos 689f033c3b09c580
-tplsheet empty1 pl lc templates 149ade3c4f0bad73
-tplsheet empty1 pl lc photos 6eed308367ba400e
+tplsheet empty1 pl lc templates 9e83bf5f8dd832cf
+tplsheet empty1 pl lc photos dd3215625c02652e
 tplsheet pg waiting page 1 of 2 selected 16 hash 97fd54e1ec6959cf
 tplsheet pg ready tick 1 dirty 70 60 1720 2300 page 1 of 2 hash 0f54d917c5250020
 tplsheet pg turn 1 -> 1 page 2 65b07b6920094b66
-tplsheet pc waiting page 1 of 2 selected 16 hash 9954fe5e298d0577
-tplsheet pc ready tick 0 dirty 0 0 0 0 page 1 of 2 hash 9954fe5e298d0577
-tplsheet pc turn 1 -> 1 page 2 283e422a001ff212
+tplsheet pc waiting page 1 of 2 selected 16 hash 70f97e552480eaa7
+tplsheet pc ready tick 0 dirty 0 0 0 0 page 1 of 2 hash 70f97e552480eaa7
+tplsheet pc turn 1 -> 1 page 2 1223da9f2baa29b2
 tplsheet lg waiting page 1 of 2 selected 16 hash 81f602981bc79ca5
 tplsheet lg ready tick 0 dirty 0 0 0 0 page 1 of 2 hash 81f602981bc79ca5
 tplsheet lg turn 1 -> 1 page 2 7bdd98657925a8c6
-tplsheet lc waiting page 1 of 2 selected 16 hash 0ae783903335f648
-tplsheet lc ready tick 0 dirty 0 0 0 0 page 1 of 2 hash 0ae783903335f648
-tplsheet lc turn 1 -> 1 page 2 8477c716893460f7
+tplsheet lc waiting page 1 of 2 selected 16 hash 59a11435b47f1090
+tplsheet lc ready tick 0 dirty 0 0 0 0 page 1 of 2 hash 59a11435b47f1090
+tplsheet lc turn 1 -> 1 page 2 e807f29efb78101f

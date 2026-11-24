@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "packages": [
+    {"id":"test.host.wide","name":"Wide","version":"1.0.0","author":"Grimoire tests","description":"A module of the widget host's tests.","icon":"","path":"packages/widgets/test.host.wide/module.bin","sha":"db9516bf984766322e31accdba54f284c0e965f254535fc7246567f1282fbce2","installed_at":1,"source_url":""},
+    {"id":"test.host.plain","name":"Plain","version":"1.0.0","author":"Grimoire tests","description":"A module of the widget host's tests.","icon":"","path":"packages/widgets/test.host.plain/module.bin","sha":"db9516bf984766322e31accdba54f284c0e965f254535fc7246567f1282fbce2","installed_at":1,"source_url":""},
+    {"id":"test.host.many","name":"Many","version":"1.0.0","author":"Grimoire tests","description":"A module of the widget host's tests.","icon":"","path":"packages/widgets/test.host.many/module.bin","sha":"6b9368eb27fc4d8a95ce68ab1eb637057ca8f101c3562f26257ade40b34df360","installed_at":1,"source_url":""},
+    {"id":"test.host.changed","name":"Changed","version":"1.0.0","author":"Grimoire tests","description":"A module of the widget host's tests.","icon":"","path":"packages/widgets/test.host.changed/module.bin","sha":"121294865067d086d36441faaebc371f2e0132a951c8a91203deaf00ba3e89ff","installed_at":1,"source_url":""},
+    {"id":"test.host.small","name":"Small","version":"1.0.0","author":"Grimoire tests","description":"A module of the widget host's tests.","icon":"","path":"packages/widgets/test.host.small/module.bin","sha":"db9516bf984766322e31accdba54f284c0e965f254535fc7246567f1282fbce2","installed_at":1,"source_url":""},
+    {"id":"test.host.long.0123456789-abcdefghij.0123456789-abcdefghij.0123456789-abcdefghij.0123456789-abcdefghij.0123456789-abcdefghij.01z","name":"Long","version":"1.0.0","author":"Grimoire tests","description":"A module of the widget host's tests.","icon":"","path":"packages/widgets/test.host.long.0123456789-abcdefghij.0123456789-abcdefghij.0123456789-abcdefghij.0123456789-abcdefghij.0123456789-abcdefghij.01z/module.bin","sha":"121294865067d086d36441faaebc371f2e0132a951c8a91203deaf00ba3e89ff","installed_at":1,"source_url":""}
+  ]
+}
