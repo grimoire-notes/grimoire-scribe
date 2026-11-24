@@ -3676,8 +3676,9 @@ cache and checked (`pkgpics.rs`, `appicon.rs`, `packagestore.rs`).
   `test_sec_invariants.rs` (no decoder named in the launcher's and the Store's files; these sentences against
   the code); `picwork/icofile.rs`, `pkgpics.rs` and `canvas.rs` unit tests; the scenarios `z_apps`, `z_apps_icon`,
   `z_package_store`, `z_package_store_pictures`, `z_package_store_refused`, `z_pictures_no_worker` and
-  `u_update_4_packages`. The Linux sandbox's steps for a picture worker are CI's (`test_sandbox_linux.rs`); `T`
-  has not run under them or on a Scribe (docs/TESTING.md).
+  `u_update_4_packages`. Under the sandbox's real steps `T` and the job have a case in `test_sandbox_linux.rs`
+  (`small_pictures_are_made_in_the_real_sandbox`), which only CI's Linux job runs; docs/TESTING.md has the
+  Scribe's check.
 
 ## Shared building blocks (2.1, lane L0)
 

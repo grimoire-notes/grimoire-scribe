@@ -3670,16 +3670,17 @@ They check the headless runner's panel; on the Kindle, check what the screen sho
 
 ## 2.3, packages' pictures decoded by the worker (issue #236): device checks
 
-Not run on a Scribe, and not under the Linux sandbox's real steps: the picture worker's new command (`T`, a small
-gray picture of an `.ico` or a picture) has run on the Mac only, where a worker has plain process isolation. The
-Mac's tests cover the logic: `rust/tests/test_picwork_small.rs` (the worker and what the writer takes of its
+Not run on a Scribe. The picture worker's new command (`T`, a small gray picture of an `.ico` or a picture) has
+run on the Mac, where a worker has plain process isolation. The Mac's tests cover the logic: `rust/tests/test_picwork_small.rs` (the worker and what the writer takes of its
 answer), `test_package_pictures.rs` (the job and its cache), `test_app_icons.rs` (the launcher),
 `test_sec_invariants.rs` (no decoder named in the launcher's and the Store's files), and the scenarios `z_apps`,
 `z_apps_icon`, `z_package_store`, `z_package_store_pictures`, `z_package_store_refused`, `z_pictures_no_worker`
-and `u_update_4_packages`, where the simulated panel counts the refreshes (`display.presents`). CI's Linux job
-runs a picture worker in the real sandbox for a template and a preview (`test_sandbox_linux.rs`), not yet for
-`T`: the `.ico` reader's PNG entries go through the png crate, whose calls under the filter are what a Scribe or
-that job has to show. What only the Scribe can tell (read grimoire.log over SSH; it names no file):
+and `u_update_4_packages`, where the simulated panel counts the refreshes (`display.presents`). Under the
+sandbox's real steps `T` runs only in CI's Linux job, which has a case for it (`test_sandbox_linux.rs`,
+`small_pictures_are_made_in_the_real_sandbox`: an `.ico` with BMP entries, one with a PNG entry, a picture, one
+over the side, then the job for each form and a worker the filter ends). The `.ico` reader's PNG entries go
+through the png crate, whose calls under the filter are what that job and a Scribe have to show. What only the
+Scribe can tell (read grimoire.log over SSH; it names no file):
 
 1. **An app's icon**: install an app that bundles an `.ico` (Settings > Packages > Apps, or the Package Store).
    Home: the app's tile shows its built-in icon for a moment and then its own, with a refresh of the tile's icon
