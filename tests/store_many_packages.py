@@ -4,7 +4,8 @@
 # root. FOLDER is package-store, the saved catalog the Store opens with no network
 # (tests/scenarios/z_package_store_page_first.qs), unless another is named: package-store-served is where
 # tests/store-curl/curl answers from, for a first visit with nothing saved
-# (tests/scenarios/z_package_store_first_visit.qs). Usage: store_many_packages.py N [FOLDER] DATA_ROOT
+# (tests/scenarios/z_package_store_first_visit.qs); there the last package's screenshot is left out, so its
+# download fails. Usage: store_many_packages.py N [FOLDER] DATA_ROOT
 import json
 import os
 import shutil
@@ -20,7 +21,8 @@ for k in range(n):
     dest = os.path.join(root, folder, 'assets', 'packages', pid)
     os.makedirs(os.path.join(dest, 'screens'), exist_ok=True)
     for name in ('icon.ico', 'package.yaml', os.path.join('screens', '01-app.png')):
-        shutil.copy(os.path.join(fixture, name), os.path.join(dest, name))
+        if not (folder != 'package-store' and k == n - 1 and name.endswith('.png')):
+            shutil.copy(os.path.join(fixture, name), os.path.join(dest, name))
     packages.append({
         'id': pid, 'name': f'Package {k:02d}', 'version': '1.0.0', 'type': 'app', 'author': 'Grimoire tests',
         'category': 'Examples', 'summary': 'One of a scenario\'s packages.',

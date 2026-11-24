@@ -207,7 +207,15 @@ while the detail page's screenshot is still to come (to download, or asked of th
 once it is there or none will come. A picture's arrival is one `ui` refresh of its own place in
 `display.presents` (tests/scenarios/z_apps_icon.qs, z_package_store_pictures.qs);
 `GRIMOIRE_BG_DELAY_MS` holds its job back, and `GRIMOIRE_WORK_FAIL_STEP` leaves it with no worker
-(z_pictures_no_worker.qs).
+(z_pictures_no_worker.qs). A scenario that counts these refreshes sets the script's clock first
+(`clock 1700000000`), so that no refresh for a new minute falls among them.
+A visit with a network runs without one: tests/store-curl/curl stands in for curl when a
+scenario's `# env:` line puts its folder first in `PATH` and names a catalog at
+`https://store.test/index.json`; it answers from the folder `package-store-served` of the
+scenario's data root, which tests/store_many_packages.py fills, 0.3 s a download
+(tests/scenarios/z_package_store_first_visit.qs: a download's end refreshes nothing by itself).
+The same generator makes a saved catalog of any number of packages
+(z_package_store_page_first.qs).
 A disabled button
 (Undo with nothing to undo, Clear on an empty page, Previous on page 1) has no hit and no name. A scenario
 that wants a panel button taps it by name, so that it does not break when the panel gains a button;

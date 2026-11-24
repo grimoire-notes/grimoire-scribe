@@ -679,9 +679,10 @@ pub fn updates_tick(a: &mut App, _now: u32) {
     }
     let mut changed = tick_catalog(a);
     changed |= tick_install(a);
-    changed |= tick_asset(a);
+    // (a picture's download that ended: store_tick has why it is no whole redraw)
+    let mut came = tick_asset(a);
     changed |= start_list_icons(a);
-    let came = tick_pictures(&mut a.store);
+    came |= tick_pictures(&mut a.store);
     if changed {
         crate::library::store_redraw(a);
     } else if came {
@@ -1396,6 +1397,8 @@ fn tick_install(a: &mut App) -> bool {
     true
 }
 
+/// The asset download's poll (a card's icon, a page's icon or screenshot: the picture stages). True when it
+/// ended, well or not: the page may show something else now (the compared redraw finds out what).
 fn tick_asset(a: &mut App) -> bool {
     let Some(mut job) = a.store.asset_job.take() else { return false };
     let Some(res) = job.fetch.tick() else {
@@ -1443,12 +1446,16 @@ pub fn store_tick(a: &mut App, _now: u32) {
     }
     let mut changed = tick_catalog(a);
     changed |= tick_install(a);
-    changed |= tick_asset(a);
+    // A picture's download that ended puts nothing new on the screen by itself: its picture is still to come
+    // from the worker. So it asks for no redraw of the whole screen, only for the compared one, which refreshes
+    // nothing while the page is as it was, the picture's place when the worker's cache had it already, and the
+    // screenshot frame's words when its download failed.
+    let mut came = tick_asset(a);
     if a.store.view == StoreView::List {
         changed |= start_list_icons(a);
     }
     // (a picture the worker made: the page is drawn again and only its place refreshed)
-    let came = tick_pictures(&mut a.store);
+    came |= tick_pictures(&mut a.store);
     if changed {
         redraw(a);
     } else if came {
