@@ -180,7 +180,9 @@ Widgets popup's rows are `widgets.ID` (`widgets.com.example.timer`), and an open
 named by its index in the open list, which is how a scenario reaches the controls a package draws:
 `widget.0.hit.N` is the hit region with id N in the first frame's last draw, and
 `widget.0.hit.N` stays a valid name only while that region exists. A package's own status text is
-read with `editor.widget.0.status`. The Packages page is Settings → Packages
+read with `editor.widget.0.status`. A frame's due redraw (`request_redraw`) waits while the pen is near, as the
+clock corner's refresh does: a script follows a `pentap` with `pen leave` to let it come
+(tests/scenarios/z_widget_pen.qs). The Packages page is Settings → Packages
 → Widgets: `settings.cat.5` picks the Packages category and `settings.packages` opens the Widgets
 page. Its controls are `packages.close` (the X, which closes Settings), `packages.back` (to
 Settings), `packages.row.ID` (or its index, `packages.row.0`), `packages.update-all`,
