@@ -688,7 +688,8 @@ pub const WIDGET_ID_PREVIOUS: &str = ".previous";
 /// Whether `id` is a package's id: lowercase letters, digits, dots and hyphens, at most WIDGET_ID_MAX, no dot
 /// first or last and no two in a row, and not ending in `.previous` (WIDGET_ID_PREVIOUS). The one rule for an
 /// id wherever one is read: a manifest, the packages index, a package's folder, and a frame's line in
-/// widgets.ini (widgets.rs), so a package that installs is one whose open frame is found again.
+/// widgets.ini (widgets.rs), so a package that installs is one whose open frame is found again. An app
+/// package's id follows it too (apppkg.rs).
 pub fn widget_id_ok(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= WIDGET_ID_MAX
@@ -744,8 +745,8 @@ pub const WIDGET_CAP_STORAGE: &str = "storage:widget-local";
 /// (`StoragePath::walked`), since the module is read through that walk when it is loaded. The manifest and the
 /// state folder are named without regard to the case of ASCII letters, as a storage that ignores case finds
 /// them (`Package.yaml`, `STATE/x`). The manifest check and the load ask this one question, so a path that
-/// installs is a path that loads.
-fn artifact_path_ok(p: &str) -> bool {
+/// installs is a path that loads. An app package's module is held to it too (apppkg.rs).
+pub(crate) fn artifact_path_ok(p: &str) -> bool {
     path_ok(p)
         && !p.eq_ignore_ascii_case("package.yaml")
         && !p.split('/').next().is_some_and(|first| first.eq_ignore_ascii_case("state"))

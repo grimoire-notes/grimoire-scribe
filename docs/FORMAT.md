@@ -1745,7 +1745,8 @@ widget stops with an error instead of freezing the device.
 Settings → Packages → Apps installs a full-screen app from a GitHub repository (`user/repo`) or a
 HTTPS `.yaml` address. Apps use the same package manager as widgets, with their own folder and
 index: `packages/apps/<id>/` and `packages/apps-index.json`. A manifest is `type: app` and has the
-same fields as a widget manifest, except that `spec.size` is ignored (an app owns the screen) and
+same fields as a widget manifest, with the same rules for `id`, for the lengths of `name`, `author`
+and `description` and for `artifact.path`, except that `spec.size` is ignored (an app owns the screen) and
 `spec.status_bar` chooses whether Grimoire's shared status bar starts over the app. `spec.icon` may
 name a built-in icon or a bundled `.ico`; a `.ico` needs `spec.icon_sha256` and `spec.icon_size`, and
 the installer fetches and verifies that second file before the app is put in place. The app

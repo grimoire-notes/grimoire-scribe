@@ -69,6 +69,22 @@ An omitted `platforms` means every supported device. The artifact is at most 32 
 app packages are installed. A manifest is at most 256 KiB. The artifact is checked against its size
 and SHA-256 before anything is written, and an update is staged before it replaces the old version.
 
+Three fields follow the rules of a widget's manifest ([WIDGETS.md](WIDGETS.md#the-manifest)), and a
+manifest that breaks one is refused when it is read, before anything is asked or written:
+
+- `id` is lowercase letters, digits, dots and hyphens, at most 128, with no leading or trailing dot
+  and no `..`, and does not end in `.previous`: an update keeps the replaced version's folder as
+  `<id>.previous`, so that name is no package's.
+- `name`, `author` and `description` are at most 1,023 bytes each, what the index of installed apps
+  keeps of each.
+- `artifact.path` is a safe relative path of at most 240 bytes: no leading `/`, no backslash, no
+  empty, `.` or `..` component, and neither `package.yaml` nor anything under `state/`, whatever the
+  case of their letters (`Package.yaml` and `STATE/x` are refused too: a storage that ignores case
+  finds the manifest and the state folder by those names). No component begins with a dot, or ends
+  in a dot, a space or `.sdr`, and the first is not the name of one of the storage's system folders
+  (`system`, `extensions` and the like): the module is read through the walk Grimoire reads the
+  Kindle's storage with, which takes no such name.
+
 `spec.icon` may name one of Grimoire's built-in icons, or a `.ico` bundled beside `package.yaml`.
 A bundled icon is a second package file: the installer fetches it from the manifest's folder, checks
 its `spec.icon_sha256` and `spec.icon_size` (at most 256 KiB), and saves it with the artifact. Its
