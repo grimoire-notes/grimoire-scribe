@@ -1612,6 +1612,95 @@ mod tests {
         assert_eq!(st.http_poll(), -1);
     }
 
+    // The method of a request is 1 to 16 ASCII letters, in either case, with white space around
+    // it or none; the upload is at most 2 MiB and the header text at most 32 KiB. A request at a
+    // limit starts, and one past it starts nothing.
+    #[test]
+    fn a_request_is_held_to_its_method_and_its_limits() {
+        let dir = scratch("limits");
+        // (a stand-in that gives the method it was started with as its answer)
+        let script = "while [ $# -gt 1 ]; do [ \"$1\" = -o ] && out=$2; [ \"$1\" = -X ] && method=$2; shift; done; printf %s \"$method\" > \"$out\"; printf 200";
+        let mut st = host_standing_in(&dir, script);
+        let at = "http://127.0.0.1:9/";
+        let mut starts = |method: &str, headers: &str, upload: &[u8]| {
+            let r = st.http_start(method, at, headers, upload);
+            if r != 0 {
+                assert!(st.http.is_none());
+                assert_eq!(request_files(&dir), Vec::<String>::new());
+                return (r, String::new());
+            }
+            poll_to_end(&mut st);
+            let (code, body, error) = outcome(&st);
+            assert_eq!((code, error), (200, String::new()));
+            st.http_cancel();
+            (0, String::from_utf8(body).unwrap())
+        };
+        let sent = |method: &str| (0, method.to_string());
+        let refused = (-1, String::new());
+
+        // The method.
+        assert_eq!(starts("GET", "", b""), sent("GET"));
+        assert_eq!(starts("get", "", b""), sent("GET"));
+        assert_eq!(starts(" \tPatch\r\n", "", b""), sent("PATCH"));
+        assert_eq!(starts("A", "", b""), sent("A"));
+        assert_eq!(starts("ABCDEFGHIJKLMNOP", "", b""), sent("ABCDEFGHIJKLMNOP"));
+        assert_eq!(starts("ABCDEFGHIJKLMNOPQ", "", b""), refused);
+        for method in ["", " ", "M-SEARCH", "GET2", "GET POST", "G\u{c9}T", "GET\u{0}", "GET."] {
+            assert_eq!(starts(method, "", b""), refused, "{method:?}");
+        }
+        assert_eq!(starts(&format!("{:^1$}", "GET", HTTP_METHOD_TEXT_MAX), "", b""), sent("GET"));
+        assert_eq!(starts(&format!("{:^1$}", "GET", HTTP_METHOD_TEXT_MAX + 1), "", b""), refused);
+
+        // The upload.
+        assert_eq!(HTTP_UPLOAD_MAX, 2 * 1024 * 1024);
+        assert_eq!(starts("POST", "", &vec![b'u'; HTTP_UPLOAD_MAX]), sent("POST"));
+        assert_eq!(starts("POST", "", &vec![b'u'; HTTP_UPLOAD_MAX + 1]), refused);
+
+        // The header text: 32 KiB in 32 lines and in 16, and one byte more.
+        assert_eq!(HTTP_HEADERS_MAX, 32 * 1024);
+        let short = format!("X-A: {}\n", "a".repeat(1018)).repeat(32);
+        let long = format!("X-A: {}\n", "a".repeat(2042)).repeat(16);
+        assert_eq!((short.len(), long.len()), (HTTP_HEADERS_MAX, HTTP_HEADERS_MAX));
+        assert_eq!(starts("GET", &short, b""), sent("GET"));
+        assert_eq!(starts("GET", &long, b""), sent("GET"));
+        assert_eq!(starts("GET", &format!("{short} "), b""), refused);
+        assert_eq!(starts("GET", &format!("{long}\n"), b""), refused);
+    }
+
+    // A start that is refused leaves the outcome of an ended request as it was: the app still
+    // reads its status code, its answer and its error text.
+    #[test]
+    fn a_refused_start_leaves_an_ended_requests_outcome_readable() {
+        let dir = scratch("refused-keeps");
+        let mut st = host(&dir);
+        stand_in(&mut st, &dir, "exit 0", "200", Some(5));
+        poll_to_end(&mut st);
+        let ended = (200, vec![0u8; 5], String::new());
+        assert_eq!(outcome(&st), ended);
+        let at = "http://127.0.0.1:9/";
+        let too_long = "a".repeat(HTTP_HEADERS_MAX + 1);
+        for (method, url, headers, upload) in [
+            ("GET", "ftp://example.org/", "", &b""[..]),
+            ("GET", "http://example.org/a b", "", b""),
+            ("GET", at, "no colon", b""),
+            ("GET", at, too_long.as_str(), b""),
+            ("GET2", at, "", b""),
+            ("", at, "", b""),
+            ("HEAD", at, "", b"upload"),
+            ("POST", at, "", &vec![b'u'; HTTP_UPLOAD_MAX + 1][..]),
+        ] {
+            assert_eq!(st.http_start(method, url, headers, upload), -1, "{method:?} {url:?}");
+            assert!(st.http.is_some(), "{method:?} {url:?}");
+            assert_eq!(outcome(&st), ended, "{method:?} {url:?}");
+            assert_eq!(st.http_poll(), 1);
+        }
+        st.network_http = false;
+        assert_eq!(st.http_start("GET", at, "", b""), -2);
+        assert_eq!(outcome(&st), ended);
+        assert_eq!(st.http_poll(), 1);
+        assert_eq!(request_files(&dir), Vec::<String>::new());
+    }
+
     /// Puts a request in flight whose child is `sh -c script`, standing in for curl, with the status
     /// and answer files a curl would have written by then. Returns the child's process id.
     fn stand_in(st: &mut HostState, dir: &str, script: &str, status: &str, answer_len: Option<u64>) -> u32 {
