@@ -268,8 +268,6 @@ const H_LOOK_ICON_PAGE: i32 = 300;
 const H_SET_DARKER: i32 = 250;
 const H_DARKER_PICK: i32 = 251;
 const H_DARKER_BACK: i32 = 252;
-// Settings > Packages > Widgets (2.2, issue #200): the widget package manager (widgetpkgui.rs).
-// Settings > Packages > Apps: the same manager for the app package kind.
 // Settings > General's Import Kindle notebooks (2.3, issue #196): copies the Kindle's own notebooks from
 // .notebooks/ into import/ and queues them (bgwork_template.rs).
 const H_SET_KINDLE: i32 = 283;
@@ -5940,6 +5938,12 @@ pub(crate) fn settings_page(
     SettingsPage { content, back: back_r, close: close_r, footer: footer_r }
 }
 
+/// The index of the Settings category that holds a row, found by the row and not by a number: the
+/// categories' places change when one is added or taken out.
+fn settings_cat_of(id: settingsmenu::SettingId) -> i32 {
+    settingsmenu::CATEGORIES.iter().position(|c| c.items.iter().any(|it| it.id == id)).unwrap_or(0) as i32
+}
+
 /// Maps a settings row to the hit id its action already handles: adding a row in settingsmenu.rs
 /// is one line here (and its handler in act if it is new) and the page layout picks it up.
 fn setting_hit(id: settingsmenu::SettingId) -> i32 {
@@ -6682,7 +6686,7 @@ fn home_app(a: &mut App, app: i32) {
             // The About page of Settings' System category, directly; its Back returns there.
             let s = lib(a);
             s.modal = Modal::None;
-            s.settings_cat = 6;
+            s.settings_cat = settings_cat_of(settingsmenu::SettingId::AboutDevice);
             s.settings_cat_shown = -1;
             s.settings_rows_page = 0;
             s.device_links_page = 0;
@@ -13787,7 +13791,7 @@ mod tests {
         library_init(&mut a);
         crate::pdfimport::set_darker(crate::pdfwork::Gamma::Off);
         lib(&mut a).modal = Modal::Settings;
-        lib(&mut a).settings_cat = 6;
+        lib(&mut a).settings_cat = settings_cat_of(settingsmenu::SettingId::DarkerLines);
         hits_clear(&mut lib(&mut a).hits);
         draw_settings(&mut a);
         assert!(a.lib.as_ref().unwrap().hits.h.iter().any(|h| h.id == H_SET_DARKER), "the System row");
@@ -13840,7 +13844,7 @@ mod tests {
         assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
         library_init(&mut a);
         lib(&mut a).modal = Modal::Settings;
-        lib(&mut a).settings_cat = 6;
+        lib(&mut a).settings_cat = settings_cat_of(settingsmenu::SettingId::AboutDevice);
         hits_clear(&mut lib(&mut a).hits);
         draw_settings(&mut a);
         assert!(
