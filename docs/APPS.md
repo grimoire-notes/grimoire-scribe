@@ -227,6 +227,12 @@ sizes are screen pixels in the app body. Each call of the module runs with a fix
 budget, from which the host's work for the imports it calls is paid as well, and is held to the
 [limits](#limits) below.
 
+A module may also import the package kit, `grimoire_kit` ([KIT.md](KIT.md)), which a widget draws with too: the
+theme's standard sizes, text by role, and Grimoire's own elements at the theme's sizes. Its commands are drawn
+with the module's own, in the order it calls them, and count toward the limits below. A kit element given an id
+is a hit region; the regions of the last drawing pass are what the headless runner taps by name. A call of
+`grimoire_kit` this Grimoire does not have keeps the app from opening (KIT.md, Levels).
+
 ### Drawing and Grimoire's UI
 
 ```text
@@ -391,8 +397,9 @@ The host calls a module's `app_draw` (a drawing pass), `app_pointer`, `app_key`,
 | a call's budget | 30,000,000, counted in instructions: the module's own, and the host's work for its imports ([below](#what-a-calls-budget-pays-for)) |
 | the module's memories | 1, of at most 48 MiB (768 pages) |
 | the module's tables | 1, of at most 65,536 entries |
-| drawing commands in one call (the eighteen calls from `fill_rect` to `clip_clear`, all kinds together; `text_width` and `text_height` draw nothing and are not counted) | 4,096 |
-| bytes of one text (a `text`'s, a `text_at`'s, what `text_width` measures, and each label, caption, value, text and hint of `button`, `chip`, `row`, `select`, `app_tile` and `text_field`) | 1,024 |
+| drawing commands in one call (the eighteen calls from `fill_rect` to `clip_clear` and the kit's drawing calls, all kinds together; `text_width` and `text_height` draw nothing and are not counted) | 4,096 |
+| hit regions in one call (the kit's elements given an id, and its `hit`) | 512 |
+| bytes of one text (a `text`'s, a `text_at`'s, what `text_width` measures, each label, caption, value, text and hint of `button`, `chip`, `row`, `select`, `app_tile` and `text_field`, and each text the kit reads) | 1,024 |
 | bytes of all those texts of one call | 65,536 (64 KiB) |
 | bytes of the status line | 256 |
 | bytes `state_get` and `state_set` move in one call, all their uses together | 4,194,304 (4 MiB) |
@@ -524,6 +531,9 @@ the Library. Removing the package while it runs does the same before deleting it
   drawing passes and the screen's refreshes.
 - `rust/tests/test_app_host.rs` holds the same rules as unit tests of the host, and compares a
   drawing pass of one of every command with the kit's own drawing, pixel for pixel.
+- `tests/fixtures/kit/` holds an app (and widgets) drawn with the package kit, written by `rust/tests/kitfix`
+  (`make kit-fixtures`); `tests/scenarios/z_kit_app.qs` opens it in both themes and taps its controls by name, and
+  `rust/tests/test_kit.rs` holds the kit's rules ([KIT.md](KIT.md), Testing).
 
 A scenario can copy a fixture into a fresh data root:
 

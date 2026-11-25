@@ -3716,6 +3716,30 @@ cache and checked (`pkgpics.rs`, `appicon.rs`, `packagestore.rs`).
   (`small_pictures_are_made_in_the_real_sandbox`), which only CI's Linux job runs; docs/TESTING.md has the
   Scribe's check.
 
+## The package kit (2.3, issue #267)
+
+Widgets and apps are WebAssembly modules of installed packages, run by the wasmi interpreter inside Grimoire's own
+process: `widgetwasm.rs` hosts a widget's frame over the notebook, `apphost.rs` a full-screen app, and
+`wasmhost.rs` holds the rules of a call they share (a store's limits, how a call past a limit ends, how a module's
+memory is read and written, how numbers are held near the body, how the host's work is charged to the call's
+instruction budget). Each host has its own import module, `grimoire`, whose calls differ between the two.
+
+Both link a second import module, `grimoire_kit` (`kithost.rs`; [KIT.md](KIT.md) is its reference), whose calls
+are written once and mean the same in either: the theme's standard sizes, text by role, and the elements Grimoire's
+own screens draw, which take the theme's standard size when a call gives them none. The sizes are functions of
+`globalui.rs` and `ui.rs` that the screens they come from read (Settings' rows, the package manager's actions, the
+home's chips and Sort), so a package's row given no height is Settings' row pixel for pixel. A host gives the kit
+its body, its limits and its records through the `KitHost` trait; a kit command is one of the host's drawing
+commands, drawn in the order the module called it. The work of each call is a function that no host's type is part
+of, so one copy of it serves both hosts, and each host's linker holds a thin call of it.
+
+Every call of the kit keeps the rules of the host it runs in: the fixed charge first; a length compared with its
+limit before the module's memory is read; the host's work paid from the call's budget, by the app host's charges in
+both hosts; drawing held to the body (`on_screen`, the body's clip); a command and a hit region counted against
+the host's limits; and, in a widget, drawing only for a package that declares `editor:overlay`. A package's text
+is drawn with no report to the translation fit check, and its icons at most 1,024 px each way. A module that
+imports a call of the kit this Grimoire does not have is not started, and its frame or a toast names the call.
+
 ## Shared building blocks (2.1, lane L0)
 
 The 2.1 plan builds a few pieces once, for every later lane to reuse (no second one grows beside them).

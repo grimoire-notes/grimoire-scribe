@@ -168,7 +168,7 @@ A module has the capabilities its manifest declares, and no other:
 
 | capability | what it gives the module |
 |---|---|
-| `editor:overlay` | drawing in its frame over the notebook: `rect`, `text`, `button` and `hit`, and asking for a drawing pass with `request_redraw`. A manifest must declare it (below) |
+| `editor:overlay` | drawing in its frame over the notebook: `rect`, `text`, `button` and `hit`, the drawing calls and hit regions of the package kit ([KIT.md](KIT.md)), and asking for a drawing pass with `request_redraw`. A manifest must declare it (below) |
 | `storage:widget-local` | its own saved state: `state_get`, `state_set` and the file `state/runtime.bin`. Without it `state_get` returns `0`, `state_set` does nothing, and no state file is read or written for the package |
 
 A module may import every function of the ABI whatever it declares; a call it has no capability
@@ -271,7 +271,10 @@ means. A new frame reads the saved values on its first draw.
 
 The artifact is one WebAssembly module. It exports `memory`, `widget_draw(width, height,
 scale_milli)` and `widget_tap(hit_id)`, and may import these functions from the module named
-`grimoire`:
+`grimoire`, and the package kit's from `grimoire_kit` ([KIT.md](KIT.md)): the theme's standard sizes, text by
+role, and Grimoire's own elements at the theme's sizes, which an app draws with too. A kit element given an id is a
+hit region, and a tap on it calls `widget_tap` with that id. The kit's calls are drawn with the module's own, in
+the order it calls them, and count toward the limits below.
 
 ```text
 rect(x, y, w, h, style)
@@ -320,7 +323,8 @@ persistence model.
 Each call runs with a fixed instruction budget, from which the host's work for the imports it
 calls is paid as well ([Limits](#limits)), and a module has one linear memory, which may grow to at
 most 32 MiB. A module that loops past the budget is stopped and its frame shows the error instead of
-freezing Grimoire. Imports outside the `grimoire` module fail to link, and the module has no
+freezing Grimoire. Imports outside the `grimoire` and `grimoire_kit` modules fail to link, a call of
+`grimoire_kit` this Grimoire does not have keeps the module from starting (KIT.md, Levels), and the module has no
 filesystem, network or process access.
 
 ### Limits
@@ -333,9 +337,9 @@ the limits below, and the counts start again with every call:
 | a call's budget | 20,000,000, counted in instructions: the module's own, and the host's work for its imports ([below](#what-a-calls-budget-pays-for)) |
 | the module's memories | 1, of at most 32 MiB (512 pages) |
 | the module's tables | 1, of at most 65,536 entries |
-| drawing commands in one pass (`rect`, `text` and `button` together) | 512 |
-| hit regions in one pass (`button` and `hit` together) | 512 |
-| bytes of one text (a `text`'s, or a `button`'s label) | 1,024 |
+| drawing commands in one pass (`rect`, `text`, `button` and the kit's drawing calls together) | 512 |
+| hit regions in one pass (`button`, `hit` and the kit's together) | 512 |
+| bytes of one text (a `text`'s, a `button`'s label, and each text the kit reads) | 1,024 |
 | bytes of all the texts of one pass | 16,384 (16 KiB) |
 | bytes of the status line | 256 |
 | bytes `state_get` and `state_set` move in one call, all their uses together | 1,048,576 (1 MiB) |
@@ -489,6 +493,9 @@ have them. The fixtures and scenarios under `tests/` are the working examples:
   then checks the open frame and a newly opened one.
 - `tests/scenarios/z_widget_packages.qs` drives install, update, license and remove through the
   package manager.
+- `tests/fixtures/kit/` holds widgets (and an app) drawn with the package kit, written by `rust/tests/kitfix`
+  (`make kit-fixtures`); `tests/scenarios/z_kit_widget.qs` opens them in both themes and taps their kit
+  elements by name, and `rust/tests/test_kit.rs` holds the kit's rules ([KIT.md](KIT.md), Testing).
 - `tests/fixtures/widgethost/` holds six small packages for the host's own rules. Their modules are
   written byte by byte by `rust/tests/widgetfix` (`make widget-fixtures` writes the folder, and
   `rust/tests/test_widget_fixtures.rs` checks it is what the writer makes), so each can pass the
