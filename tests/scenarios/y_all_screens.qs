@@ -1287,18 +1287,18 @@ tap library card.1
 wait 200
 expect screen is editor
 shot 48-editor-landscape
-touch down 2026 179
+touch down 2026 264
 wait 700
-touch up 2026 179
+touch up 2026 264
 wait 100
 expect editor.quicksize is ballpoint
 shot 48-quick-sizes-landscape
 tap 600 700
 wait 150
 expect editor.quicksize is 0
-touch down 2026 287
+touch down 2026 372
 wait 700
-touch up 2026 287
+touch up 2026 372
 wait 100
 expect editor.quicksize is eraser
 shot 48-quick-sizes-eraser-landscape
