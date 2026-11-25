@@ -24,7 +24,7 @@ swipe 2 1300 1200 -400 0
 expect editor.pages is 3
 expect editor.page is 3
 # the Display sheet's row turns it off, and on again
-pentap panel display
+action display
 wait 300
 expect editor.modal is display
 tap panel display.newpage

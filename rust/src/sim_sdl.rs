@@ -1802,6 +1802,9 @@ enum Step {
     /// `tap panel NAME` / `pentap panel NAME` (true: the pen): the panel's button NAME is found where the
     /// App is (script_step), then tapped like `tap` and `pentap` do, and the batch ends
     Panel(FixedStr<32>, bool),
+    /// `action NAME`: the action the Buttons and Gestures sheets call NAME, fired as a key press would (the
+    /// screen's centre for a zoom's anchor) in script_step, and the batch ends
+    Action(FixedStr<32>),
     MapNode(FixedStr<48>, bool),
     Library(FixedStr<96>,bool),
     Share(FixedStr<96>,bool),
@@ -2320,6 +2323,17 @@ fn script_step_in(st: &mut State) -> Step {
             scan_floats(s, 1, &mut v[..2]);
             st.tap_events(v[0], v[1], a == b"pentap");
             return Step::Batch; // one tap per batch, like a human
+        } else if a == b"action" {
+            // `action NAME`: what a key bound to it does. The buttons and the app's state are those the app
+            // drew from what is queued ahead of this line, so it ends the batch first.
+            if st.qh != st.qt {
+                st.unread = Some(line.clone());
+                st.line_no -= 1;
+                return Step::Batch;
+            }
+            let mut name = FixedStr::<32>::new();
+            name.set_bytes(b);
+            return Step::Action(name);
         } else if a == b"drag" {
             // drag pen|touch x0 y0 x1 y1 steps
             scan_floats(s, 2, &mut v[..5]);
@@ -2617,6 +2631,19 @@ fn script_step(mut a: Option<&mut App>) {
                         st.expect_total += 1;
                         st.expect_failed += 1;
                     }
+                });
+                break;
+            }
+            Step::Action(name) => {
+                // The App fires it as a key press would; a name that is no action fails the run like a failed check.
+                let ok = a.as_deref_mut().and_then(|a| {
+                    let action = shortcut_action(name.as_str());
+                    (action >= 0 && crate::editor::editor_shortcut(a, action)).then_some(())
+                });
+                with(|st| if ok.is_none() {
+                    err(&bformat("expect failed (line %d): no action %s\n", &[B::D(st.line_no), B::S(name.as_bytes())]));
+                    st.expect_total += 1;
+                    st.expect_failed += 1;
                 });
                 break;
             }
