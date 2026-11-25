@@ -287,12 +287,12 @@ for w in "lipc-wait-event -s 0 $EVENTS" "lipc-wait-event -m -s 0 $EVENTS"; do
     check "restore()'s pkill pattern matches '$w'" sh -c 'printf "%s\n" "$2" | grep -qE -- "$1"' sh "$PAT" "$w"
 done
 
-# The size guard (the owner's decision D23, raised by him for 2.1.0-beta.2 and again for 2.2): the Kindle binary
-# stays under 13 MB and the zip under 7 MB (the binary is on the Kindle twice: in documents/Grimoire.sh's archive and
-# as app/grimoire).
+# The size guard (the owner's decision D23, raised by the owner for 2.1.0-beta.2, for 2.2, and on main after 2.2
+# for the Kindle binary, #253): the Kindle binary stays under 14 MB and the zip under 7 MB (the binary is on the
+# Kindle twice: in documents/Grimoire.sh's archive and as app/grimoire).
 BIN_SIZE=$(wc -c <"$B/app/grimoire" | tr -d ' ')
 ZIP_SIZE=$(wc -c <"$ZIP" | tr -d ' ')
-check "the Kindle binary is under 13 MB ($BIN_SIZE bytes)" [ "$BIN_SIZE" -lt 13000000 ]
+check "the Kindle binary is under 14 MB ($BIN_SIZE bytes)" [ "$BIN_SIZE" -lt 14000000 ]
 check "the zip is under 7 MB ($ZIP_SIZE bytes)" [ "$ZIP_SIZE" -lt 7000000 ]
 
 if [ $fail = 0 ]; then
