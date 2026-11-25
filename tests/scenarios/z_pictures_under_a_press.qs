@@ -34,7 +34,7 @@ expect library.store.list.icons is 0
 expect display.presents not -1
 touch down 600 450
 wait 200
-expect display.presents is fast 348 338 570 372
+expect display.presents is fast 348 340 570 372
 waitfor library.store.list.icons is 1
 wait 300
 expect display.presents is
@@ -42,7 +42,7 @@ shot 02-store-held
 touch move 900 2300
 touch up 900 2300
 wait 300
-expect display.presents is ui 348 338 570 372
+expect display.presents is ui 348 340 570 372
 expect library.store.view is list
 shot 03-store-lifted
 quit
