@@ -316,7 +316,7 @@ fn previews_are_made_in_the_real_sandbox() {
     for (name, made) in [("a.pdf", true), ("p.png", true), ("f.ttf", true), ("junk.pdf", false)] {
         let p = grimoire::fsview::StoragePath::new(format!("documents/{name}").as_bytes()).unwrap();
         let s = st.stat(&p, false).unwrap();
-        let arg = format!("{}.{}.{}.{}:documents/{name}", s.dev, s.ino, s.size, s.mtime);
+        let arg = format!("{}.{}.{}.{}.{}:documents/{name}", s.dev, s.ino, s.size, s.mtime, s.mtime_nsec);
         assert_eq!(bg_file_preview(&arg), 0, "{name}");
         match preview_cached(&p, &s) {
             Cached::Preview(c) if made => {
@@ -334,7 +334,7 @@ fn previews_are_made_in_the_real_sandbox() {
         std::fs::copy(dir.join(from), dir.join(name)).unwrap();
         let p = grimoire::fsview::StoragePath::new(format!("documents/{name}").as_bytes()).unwrap();
         let s = st.stat(&p, false).unwrap();
-        let arg = format!("{}.{}.{}.{}:documents/{name}", s.dev, s.ino, s.size, s.mtime);
+        let arg = format!("{}.{}.{}.{}.{}:documents/{name}", s.dev, s.ino, s.size, s.mtime, s.mtime_nsec);
         std::env::set_var(hook, at);
         assert_eq!(bg_file_preview(&arg), 0, "{name}");
         assert_eq!(preview_info(&p, &s).map(|i| i.made), Some(Made::Once(NoPreview::Ended)), "{name}: the first death is a try");
