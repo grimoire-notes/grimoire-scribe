@@ -1,24 +1,31 @@
 # Apps
 
-Apps are full-screen programs packaged for Grimoire. They are installed and managed in
-**Settings → Packages → Apps**, open from the home app row or the **All apps** page, and run in a
-WebAssembly host that gives them the whole display. They are a package kind of their own: an app is
-not a widget, and a widget is not an app. Anyone can publish one from a GitHub repository or a
-HTTPS `package.yaml`, exactly as widget packages are published.
+Apps are full-screen programs packaged for Grimoire. They are installed and managed in the
+**Package Store** and with **Manage apps...** at the foot of the **All apps** page, open from the
+home app row or the **All apps** page, and run in a WebAssembly host that gives them the whole
+display. They are a package kind of their own: an app is not a widget, and a widget is not an app.
+Anyone can publish one from a GitHub repository or a HTTPS `package.yaml`, exactly as widget
+packages are published.
 
-The package manager, trust prompt, license prompt, settings page, update check and Remove are the
-same as Settings → Packages → Widgets. What differs is the folder (`packages/apps` instead of
-`packages/widgets`), the index (`packages/apps-index.json`), the manifest type (`type: app`) and
-the runtime.
+The package manager (**Manage apps...** at the foot of the **All apps** page), trust prompt,
+license prompt, settings page, update check and Remove are the same as the widget package
+manager's (**Manage widgets...** at the foot of a notebook's Widgets popup). What differs is the
+folder (`packages/apps` instead of `packages/widgets`), the index (`packages/apps-index.json`), the
+manifest type (`type: app`) and the runtime.
 
 ## Package Store
 
 The home app row's fourth built-in app is **Package Store**. It is a catalog of apps and widgets
 kept outside Grimoire, in a GitHub repository whose `index.json` names each package's manifest,
 artifact, icon, screenshots and description. Opening a package shows its screenshots and metadata,
-then Install downloads the manifest and artifact and runs the same trust prompt, digest checks and
-installer as **Settings → Packages**. The store does not replace the package manager: installed
-packages are still managed there.
+then Install downloads the manifest and artifact and runs the package manager's trust prompt,
+license prompt, digest checks and installer. The Store is also where installed packages are
+managed: its **Installed** tab lists every installed app and widget, an installed package's page has
+**Uninstall** (and **Update to** the newer version when the catalog has one), and the header's
+repository button installs a package that is not in the catalog from a GitHub repository
+(`user/repo`) or an HTTPS `.yaml` address. A package's own page, with its settings, is in the
+package manager: **Manage apps...** at the foot of the **All apps** page opens it for apps, and
+**Manage widgets...** at the foot of a notebook's Widgets popup for widgets.
 
 The catalog is cached at `grimoire/package-store/index.json`, and its images at
 `grimoire/package-store/assets/`, so the last store still opens without a network. The Store itself

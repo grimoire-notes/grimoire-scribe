@@ -3686,7 +3686,7 @@ decoded by stb_image, as every other picture the worker decodes is (`bgimage.rs`
 `D` does not: what that job and a Scribe have to show is the reader itself and the fit. What only the
 Scribe can tell (read grimoire.log over SSH; it names no file):
 
-1. **An app's icon**: install an app that bundles an `.ico` (Settings > Packages > Apps, or the Package Store).
+1. **An app's icon**: install an app that bundles an `.ico` (from the Package Store).
    Home: the app's tile shows its built-in icon for a moment and then its own, with a refresh of the tile's icon
    alone (no flash of the screen). The log says `package pictures: app-icon made in T ms`: send T. Close Grimoire
    and start it again: the icon is there at the first draw, and the log has no new `package pictures` line.

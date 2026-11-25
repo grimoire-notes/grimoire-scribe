@@ -40,7 +40,9 @@ token, no private-repository support and no zip or tarball distribution.
 
 ## The address
 
-Settings → Packages → Widgets accepts two forms:
+The widget package manager's **Install from repository...** (the manager is opened by **Manage
+widgets...** at the foot of a notebook's Widgets popup) and the Package Store's repository button
+accept two forms:
 
 | address | what is fetched |
 |---|---|
@@ -558,8 +560,9 @@ does.
 1. Put `package.yaml` and the artifact at the repository root and push them to a public
    repository. GitHub's default branch is used for `user/repo`; a direct raw URL works on any
    branch.
-2. Check the install from a clean data root: Settings → Packages → Widgets → **Install from
-   repository...**, enter `user/repo`, read the trust page and the license, and install.
+2. Check the install from a clean data root: in a notebook, the Widgets popup's **Manage
+   widgets...** → **Install from repository...**, enter `user/repo`, read the trust page and the
+   license, and install.
 3. Open the widget from the catalog, move and resize it, close it and reopen it. If it has a
    license, check **View license**. On a GitHub package, check **View QR code**.
 4. Publish a new version by changing the artifact and `version`, re-running the packaging script,

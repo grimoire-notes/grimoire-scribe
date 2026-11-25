@@ -268,8 +268,6 @@ const H_LOOK_ICON_PAGE: i32 = 300;
 const H_SET_DARKER: i32 = 250;
 const H_DARKER_PICK: i32 = 251;
 const H_DARKER_BACK: i32 = 252;
-// Settings > Packages > Widgets (2.2, issue #200): the widget package manager (widgetpkgui.rs).
-// Settings > Packages > Apps: the same manager for the app package kind.
 // Settings > General's Import Kindle notebooks (2.3, issue #196): copies the Kindle's own notebooks from
 // .notebooks/ into import/ and queues them (bgwork_template.rs).
 const H_SET_KINDLE: i32 = 283;
@@ -285,6 +283,9 @@ const H_ADD_ACTION: i32 = 276;
 const H_APPS: i32 = 277;
 const H_APP: i32 = 278;
 const H_APPS_CLOSE: i32 = 279;
+// The All apps page's Manage apps...: the app package manager, as the Widgets popup's Manage widgets...
+// opens the widget one.
+const H_APPS_MANAGE: i32 = 280;
 // The All apps page's own pager when installed apps need more than one screen.
 const H_APPS_PREV: i32 = 281;
 const H_APPS_NEXT: i32 = 282;
@@ -5940,6 +5941,12 @@ pub(crate) fn settings_page(
     SettingsPage { content, back: back_r, close: close_r, footer: footer_r }
 }
 
+/// The index of the Settings category that holds a row, found by the row and not by a number: the
+/// categories' places change when one is added or taken out.
+fn settings_cat_of(id: settingsmenu::SettingId) -> i32 {
+    settingsmenu::CATEGORIES.iter().position(|c| c.items.iter().any(|it| it.id == id)).unwrap_or(0) as i32
+}
+
 /// Maps a settings row to the hit id its action already handles: adding a row in settingsmenu.rs
 /// is one line here (and its handler in act if it is new) and the page layout picks it up.
 fn setting_hit(id: settingsmenu::SettingId) -> i32 {
@@ -6682,7 +6689,7 @@ fn home_app(a: &mut App, app: i32) {
             // The About page of Settings' System category, directly; its Back returns there.
             let s = lib(a);
             s.modal = Modal::None;
-            s.settings_cat = 6;
+            s.settings_cat = settings_cat_of(settingsmenu::SettingId::AboutDevice);
             s.settings_cat_shown = -1;
             s.settings_rows_page = 0;
             s.device_links_page = 0;
@@ -6729,6 +6736,11 @@ fn draw_apps(a: &mut App) {
     let about = Rect::new(whats.x + whats.w + gap, by, bw, bh);
     ui_button(c, about, IconKind::Castle, tr("About"), ButtonStyle::Plain);
     hits_add(&mut s.hits, about, H_APP, 7);
+    let manage = Rect::new(about.x + about.w + gap, by, bw, bh);
+    // TRANSLATORS: the All apps page's button that opens the app package manager (as the widget
+    // popup's Manage widgets... opens the widget one).
+    ui_button(c, manage, IconKind::Gear, tr("Manage apps..."), ButtonStyle::Plain);
+    hits_add(&mut s.hits, manage, H_APPS_MANAGE, 0);
     if pages > 1 {
         let side = ui_px(110.0);
         let prev = Rect::new(aw - m - 2 * side - gap, by, side, bh);
@@ -8408,6 +8420,11 @@ fn act(a: &mut App, h: &Hit) {
             open_modal(a, Modal::Apps);
         }
         H_APPS_CLOSE => close_modal(a),
+        H_APPS_MANAGE => {
+            // The package manager is over the All apps page, as the widget one is over the notebook: its
+            // Back and its X come back to this page (packages_closed).
+            crate::widgetpkgui::packages_ui_open(a, crate::widgetpkgui::PkgKind::App);
+        }
         H_APPS_PREV => {
             lib(a).apps_page = (lib(a).apps_page - 1).max(0);
             redraw(a, RefreshMode::Ui);
@@ -11394,7 +11411,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_BACK => "back", H_ABOUT => "about", H_ABOUT_CLOSE => "about.close",
                 H_CARD => "card.", H_CARD_MORE => "card-menu.",
                 H_ADD => "add", H_ADD_ACTION => "add.", H_APPS => "apps", H_APPS_CLOSE => "apps.close",
-                H_APPS_PREV => "apps.prev", H_APPS_NEXT => "apps.next",
+                H_APPS_PREV => "apps.prev", H_APPS_NEXT => "apps.next", H_APPS_MANAGE => "apps.manage",
                 H_APP => "app.", H_FILTER => "filter.", H_SORT => "sort", H_SORT_PICK => "sort.",
                 H_SEARCH => "search",
                 H_PREV => "prev", H_NEXT => "next",
@@ -13797,7 +13814,7 @@ mod tests {
         library_init(&mut a);
         crate::pdfimport::set_darker(crate::pdfwork::Gamma::Off);
         lib(&mut a).modal = Modal::Settings;
-        lib(&mut a).settings_cat = 6;
+        lib(&mut a).settings_cat = settings_cat_of(settingsmenu::SettingId::DarkerLines);
         hits_clear(&mut lib(&mut a).hits);
         draw_settings(&mut a);
         assert!(a.lib.as_ref().unwrap().hits.h.iter().any(|h| h.id == H_SET_DARKER), "the System row");
@@ -13850,7 +13867,7 @@ mod tests {
         assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
         library_init(&mut a);
         lib(&mut a).modal = Modal::Settings;
-        lib(&mut a).settings_cat = 6;
+        lib(&mut a).settings_cat = settings_cat_of(settingsmenu::SettingId::AboutDevice);
         hits_clear(&mut lib(&mut a).hits);
         draw_settings(&mut a);
         assert!(
@@ -14403,8 +14420,12 @@ pub fn library_settings_back(a:&mut App) {close_modal(a);}
 /// The Packages page draws itself whole (widgetpkgui.rs); its callers redraw through here so it
 /// replaces Settings while it is open and Settings comes back when it closes.
 pub(crate) fn packages_redraw(a:&mut App) {redraw(a,RefreshMode::Ui);}
-/// The Packages page's X: the whole of Settings closes, as every Settings submenu's X does.
-pub(crate) fn packages_closed(a:&mut App) {close_settings(a,RefreshMode::Ui);}
+/// The Packages page's X: the whole of Settings closes, as every Settings submenu's X does. Opened from
+/// the All apps page (Manage apps...), the page comes back to it, as its Back does.
+pub(crate) fn packages_closed(a:&mut App) {
+    if lib(a).modal==Modal::Apps {redraw(a,RefreshMode::Ui);return;}
+    close_settings(a,RefreshMode::Ui);
+}
 /// The Package Store draws itself whole, over the Library: its own redraw and close.
 pub(crate) fn store_redraw(a:&mut App) {redraw(a,RefreshMode::Ui);}
 pub(crate) fn store_closed(a:&mut App) {

@@ -222,8 +222,9 @@ fn pkg_settings_clear(kind: PkgKind, id: &str) -> i32 {
     }
 }
 
-/// Opens Settings → Packages → Widgets or Apps. The caller has Settings open (library.rs): closing
-/// this page comes back to it, not out of Settings.
+/// Opens the package manager for widgets or apps: the Widgets popup's Manage widgets... opens it over
+/// Settings opened over the notebook (editor.rs), the All apps page's Manage apps... over that page
+/// (library.rs). Its Back from the list comes back to what is under it.
 pub fn packages_ui_open(a: &mut App, kind: PkgKind) {
     let ui = &mut a.pkg;
     ui.open = true;

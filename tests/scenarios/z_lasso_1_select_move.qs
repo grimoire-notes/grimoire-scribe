@@ -152,7 +152,7 @@ pentap panel redo
 wait 100
 expect editor.strokes is 9
 expect editor.live_matches_render is 1
-expect display.presents is fast 1718 868 100 100, ui 428 220 1404 1842
+expect display.presents is fast 1718 868 100 100, ui 428 220 1404 1734
 # cut the pasted group: off the page, one step
 pen down 500 1300
 pen move 1000 1300

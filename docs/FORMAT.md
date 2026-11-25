@@ -1603,8 +1603,9 @@ com.grimoire.calculator=1416,270,340,560,0,1,0
 
 ## Widget packages (2.2, issue #200)
 
-Settings → Packages → Widgets installs a widget from a GitHub repository (`user/repo`) or an
-HTTPS `.yaml` address; the Widgets popup's **Manage widgets...** row opens the same page.
+The Widgets popup's **Manage widgets...** row opens the widget package manager, which installs a
+widget from a GitHub repository (`user/repo`) or an HTTPS `.yaml` address; the Package Store
+installs one from its catalog or from the same addresses.
 [WIDGETS.md](WIDGETS.md) is the developer's guide to the manifest, the artifact and publishing.
 The manifest is `package.yaml`; unknown keys are ignored. An install is refused before anything is
 written if the manifest is invalid, the platform does not match, or the artifact does not match its
@@ -1743,9 +1744,10 @@ widget stops with an error instead of freezing the device.
 
 ## App packages (2.3)
 
-Settings → Packages → Apps installs a full-screen app from a GitHub repository (`user/repo`) or a
-HTTPS `.yaml` address. Apps use the same package manager as widgets, with their own folder and
-index: `packages/apps/<id>/` and `packages/apps-index.json`. A manifest is `type: app` and has the
+The Package Store installs a full-screen app from its catalog, or from a GitHub repository
+(`user/repo`) or a HTTPS `.yaml` address; the All apps page's **Manage apps...** opens the app package
+manager, which installs from the same addresses. Apps use the same package manager as widgets, with their
+own folder and index: `packages/apps/<id>/` and `packages/apps-index.json`. A manifest is `type: app` and has the
 same fields as a widget manifest, except that `spec.size` is ignored (an app owns the screen) and
 `spec.status_bar` chooses whether Grimoire's shared status bar starts over the app. `spec.icon` may
 name a built-in icon or a bundled `.ico`; a `.ico` needs `spec.icon_sha256` and `spec.icon_size`, and
