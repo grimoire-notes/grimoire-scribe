@@ -1,37 +1,39 @@
 # settings: status_mode=1
 # rust-only
+# env: GRIMOIRE_PACKAGE_STORE_OFFLINE=1
 # copy: tests/fixtures/widgetpkg .
-# The widget package manager: an installed package appears in Packages → Widgets and in the widget
-# popup, a frame opens from it, Remove asks first, and Install from repository... opens the repository
-# keyboard.
+# copy: tests/fixtures/package-store .
+# The widget package manager: an installed package appears in the Package Store's Installed tab and in
+# the widget popup, the popup's Manage widgets... opens the package manager, a frame opens from the
+# popup, Remove asks first, and Install from repository... opens the repository keyboard.
 # (The app repaints once more about 3.5 s after it starts, mainloop.rs: the scenario starts after that, so the check
 # below that a tap on empty paper refreshes nothing never meets it on a fast machine, issue #226.)
 wait 3600
-# From the Library: Settings → Packages → Widgets, then the X closes Settings back to the Library.
-tap library settings
+# From the Library: the Package Store's Installed tab lists the package (the saved catalog, offline),
+# then the X closes the Store back to the Library.
+tap library app.store
 wait 400
-tap library settings.cat.5
+expect library.sheet is store
+tap library store.filter.3
 wait 300
-tap library settings.packages
-wait 400
-expect editor.packages.open is 1
-tap library packages.close
+expect library.store.filter is 3
+expect library.store.visible is com.example.timer
+tap library store.close
 wait 300
+expect library.sheet is none
 expect screen is library
-# Open a notebook for the editor's own Settings and the widget frames.
+# Open a notebook for the widget popup and the widget frames.
 tap library add
 tap library add.new-notebook
 wait 100
 tap 1564 2254
 wait 300
 expect screen is editor
-# Settings → Packages → Widgets (not the popup): the category and its Widgets row.
-tap panel settings
-wait 400
-tap panel settings.cat.5
+# The popup's Manage widgets... opens the package manager, over the notebook as Settings is.
+tap panel widgets
 wait 300
-shot 00-settings-packages
-tap panel settings.packages
+shot 00-widgets-popup
+tap panel widgets.manage
 wait 400
 expect editor.packages.open is 1
 expect editor.packages is 1 com.example.timer 1.0.0
@@ -43,9 +45,12 @@ expect display.presents not -1
 tap 900 1500
 wait 120
 expect display.presents is
-# The installed package is in the popup too, and opens as a frame.
+# The X closes the page and Settings under it, back to the notebook. The installed package is in
+# the popup too, and opens as a frame.
 tap panel packages.close
 wait 300
+expect editor.packages.open is 0
+expect screen is editor
 tap panel widgets
 wait 300
 tap panel widgets.com.example.timer
@@ -54,8 +59,7 @@ expect editor.widgets is 1 com.example.timer
 shot 02-package-widget
 tap panel widget.com.example.timer.close
 wait 300
-# Its detail page, then Remove with its question. This time the popup's Manage widgets... opens
-# the same Settings page.
+# Its detail page, then Remove with its question, from the popup's Manage widgets... again.
 tap panel widgets
 wait 200
 tap panel widgets.manage
