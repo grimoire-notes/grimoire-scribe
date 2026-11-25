@@ -1,0 +1,1073 @@
+//! The package kit (2.3, issue #267; docs/KIT.md is its reference): the `grimoire_kit` import module, which the
+//! widget host (widgetwasm.rs) and the app host (apphost.rs) both link beside their own `grimoire` module. Its
+//! calls are written once, here, and mean the same in a widget's frame and in an app: the theme's standard sizes
+//! (`metric`), the kit's level and Grimoire's version, text by role, and the theme's elements, which take the
+//! theme's standard size when they are given none, so that a package's screen is drawn as Grimoire's own are.
+//! Each host's `grimoire` module stays as it was; a module may import from both, and its commands are drawn in
+//! the order it called them.
+//!
+//! Every call keeps the rules of the host it runs in (wasmhost.rs; docs/WIDGETS.md and docs/APPS.md, Limits):
+//! the fixed charge first, whatever the call is given; a length compared with its limit before the module's
+//! memory is read; the host's work paid from the call's budget, by the app host's charges (apphost.rs) in both
+//! hosts; drawing held to the body; a drawing command and a hit region counted against the host's own limits;
+//! and a widget's drawing calls, as its own, only for a package that declares `editor:overlay`. A host gives
+//! the kit its body, its limits and its records through `KitHost`. The work of each call is a function here that
+//! no host's type is part of, so one copy of it serves both hosts: `kit_link` installs, for each host, a call
+//! that hands the function the call's budget, the module's memory and the host (`Call`).
+
+use crate::apphost::{
+    APP_CHARGE_BOLD, APP_CHARGE_BYTE, APP_CHARGE_CALL, APP_CHARGE_CORNER, APP_CHARGE_EDGE_PX, APP_CHARGE_FILL_PX,
+    APP_CHARGE_ICON_PX, APP_CHARGE_LABEL_PX, APP_CHARGE_LINE_ROW, APP_CHARGE_MEASURE, APP_CHARGE_SMALL_ICON_PX,
+    APP_CHARGE_SQUARE, APP_CHARGE_SQUARE_BYTES, APP_CHARGE_SWITCH, APP_CHARGE_TALL_PX, APP_CHARGE_TEXT,
+    APP_ICON_NAME_MAX, APP_ICON_PX_MAX, APP_LINE_WIDTH_MAX, APP_TEXT_PX_MAX,
+};
+use crate::globalui::{
+    gui_button, gui_button_h, gui_chip, gui_chip_h, gui_chip_w, gui_field_h, gui_gap, gui_gothic, gui_head_h,
+    gui_icon_button, gui_margin, gui_page_title_px, gui_row_h, gui_row_min_h, gui_select, gui_select_h, gui_text_field,
+    gui_top_button_h, GUI_GRAY_DISABLED, GUI_GRAY_MUTED, GUI_GRAY_RULE,
+};
+use crate::prelude::*;
+use crate::wasmhost::{in_body, line_in_reach, on_screen, TextCharge};
+use wasmi::{Caller, Linker};
+
+/// The import module's name.
+pub const KIT: &str = "grimoire_kit";
+/// The kit's level: the set of calls, metrics, roles and flags this Grimoire has (docs/KIT.md, Levels).
+pub const KIT_LEVEL: i32 = 1;
+/// The calls of level 1, every one a module may import from `grimoire_kit`.
+pub const KIT_CALLS: [&str; 26] = [
+    "level", "version", "metric", "clock_ms", "text", "text_lines", "measure_width", "measure_height", "button",
+    "icon_button", "row", "chip", "field", "select", "checkbox", "card", "divider", "icon", "fill", "frame", "line",
+    "clip", "clip_clear", "hit", "list_page", "pager",
+];
+
+// ---- the limits of the kit's own (the rest are each host's: docs/KIT.md, Limits) ----
+
+/// The bytes `version` writes at most.
+pub const KIT_VERSION_MAX: usize = 32;
+/// The rows `list_page` and `pager` count at most; more is taken as this many.
+pub const KIT_LIST_ROWS_MAX: i32 = 10_000;
+/// The heights `list_page` lays out with, in pixels, at most; a larger one is taken as this.
+pub const KIT_LIST_PX_MAX: i32 = 32_767;
+/// A frame's outline is at most this many pixels thick; a thicker one is drawn at this thickness.
+pub const KIT_THICKNESS_MAX: i32 = 4096;
+
+// ---- the charges of the kit's own (the elements are charged as the app host's are: apphost.rs) ----
+
+/// Every call of the kit, whatever it is given and whether or not the package may draw.
+pub const KIT_CHARGE_CALL: u64 = APP_CHARGE_CALL;
+/// A text broken into lines (`text` with WRAP, `text_lines`, `measure_height`): this for each byte. Each word is
+/// measured once, and a word wider than the line is broken between its letters by halving (`kit_lines`).
+pub const KIT_CHARGE_WRAP: u64 = 384;
+
+// ---- metric ids (docs/KIT.md, Metrics) ----
+pub const M_TEXT_BODY: i32 = 1;
+pub const M_TEXT_SMALL: i32 = 2;
+pub const M_TEXT_TITLE: i32 = 3;
+pub const M_TEXT_DISPLAY: i32 = 4;
+pub const M_LINE_BODY: i32 = 5;
+pub const M_LINE_SMALL: i32 = 6;
+pub const M_LINE_TITLE: i32 = 7;
+pub const M_LINE_DISPLAY: i32 = 8;
+pub const M_LINE_MONO: i32 = 9;
+pub const M_ROW_H: i32 = 10;
+pub const M_ROW_MIN_H: i32 = 11;
+pub const M_BUTTON_H: i32 = 12;
+pub const M_CHIP_H: i32 = 13;
+pub const M_FIELD_H: i32 = 14;
+pub const M_ICON: i32 = 15;
+pub const M_ICON_BUTTON: i32 = 16;
+pub const M_TOUCH_MIN: i32 = 17;
+pub const M_HEADER_H: i32 = 18;
+pub const M_SELECT_H: i32 = 19;
+pub const M_MARGIN: i32 = 20;
+pub const M_GAP: i32 = 21;
+pub const M_ROW_GAP: i32 = 22;
+pub const M_PAD: i32 = 23;
+pub const M_RADIUS: i32 = 24;
+pub const M_LINE: i32 = 25;
+pub const M_SCALE_MILLI: i32 = 30;
+pub const M_DPI: i32 = 31;
+pub const M_THEME: i32 = 32;
+pub const M_FONT: i32 = 33;
+pub const M_STATUS_BAR_H: i32 = 34;
+pub const M_KEYBOARD_TOP: i32 = 35;
+pub const M_BODY_W: i32 = 36;
+pub const M_BODY_H: i32 = 37;
+pub const M_GRAY_INK: i32 = 40;
+pub const M_GRAY_PAPER: i32 = 41;
+pub const M_GRAY_MUTED: i32 = 42;
+pub const M_GRAY_DISABLED: i32 = 43;
+pub const M_GRAY_RULE: i32 = 44;
+
+/// The theme's standard size or value `id`, in screen pixels unless docs/KIT.md says otherwise, for a call drawing
+/// on a body of `body` under a status bar `status_bar_h` high; -1 for an id this level does not have. Each is
+/// the function Grimoire's own screen reads (globalui.rs, ui.rs), so the two cannot differ.
+pub fn kit_metric(id: i32, body: (i32, i32), status_bar_h: i32) -> i32 {
+    let line = |role: i32| {
+        let (f, px) = role_face(role);
+        line_h(f, px)
+    };
+    match id {
+        M_TEXT_BODY => ui_text_size().round() as i32,
+        M_TEXT_SMALL => ui_small_size().round() as i32,
+        M_TEXT_TITLE => ui_title_size().round() as i32,
+        M_TEXT_DISPLAY => gui_page_title_px().round() as i32,
+        M_LINE_BODY => line(ROLE_BODY),
+        M_LINE_SMALL => line(ROLE_SMALL),
+        M_LINE_TITLE => line(ROLE_TITLE),
+        M_LINE_DISPLAY => line(ROLE_DISPLAY),
+        M_LINE_MONO => line(ROLE_MONO),
+        M_ROW_H => gui_row_h(),
+        M_ROW_MIN_H | M_TOUCH_MIN => gui_row_min_h(),
+        M_BUTTON_H => gui_button_h(),
+        M_CHIP_H => gui_chip_h(),
+        M_FIELD_H => gui_field_h(),
+        M_ICON => ui_row_icon(),
+        M_ICON_BUTTON => gui_top_button_h(),
+        M_HEADER_H => gui_head_h(),
+        M_SELECT_H => gui_select_h(),
+        M_MARGIN => gui_margin(),
+        M_GAP => gui_gap(),
+        M_ROW_GAP => ui_row_space(),
+        M_PAD => ui_row_pad(),
+        M_RADIUS => ui_card_radius(),
+        M_LINE => ui_line(),
+        M_SCALE_MILLI => ui_px(1000.0),
+        M_DPI => ui_px(300.0),
+        M_THEME => (ui_theme() == UiTheme::Classic) as i32,
+        // (Classic's family of Settings > Font, 4 for the reader's own font, and 5 for Gothic's faces)
+        M_FONT => {
+            if gui_gothic() {
+                5
+            } else if font_own() {
+                4
+            } else {
+                font_family() as i32
+            }
+        }
+        M_STATUS_BAR_H => status_bar_h,
+        // (no keyboard of the kit's is open in this level)
+        M_KEYBOARD_TOP => -1,
+        M_BODY_W => body.0,
+        M_BODY_H => body.1,
+        M_GRAY_INK => 0,
+        M_GRAY_PAPER => 255,
+        M_GRAY_MUTED => GUI_GRAY_MUTED as i32,
+        M_GRAY_DISABLED => GUI_GRAY_DISABLED as i32,
+        M_GRAY_RULE => GUI_GRAY_RULE as i32,
+        _ => -1,
+    }
+}
+
+// ---- text by role ----
+
+pub const ROLE_BODY: i32 = 0;
+pub const ROLE_SMALL: i32 = 1;
+pub const ROLE_LABEL: i32 = 2;
+pub const ROLE_CAPTION: i32 = 3;
+pub const ROLE_TITLE: i32 = 4;
+pub const ROLE_MONO: i32 = 5;
+pub const ROLE_MONO_SMALL: i32 = 6;
+pub const ROLE_DISPLAY: i32 = 7;
+
+/// The face and the size of a role in the theme in use; a role this level does not have is BODY.
+pub fn role_face(role: i32) -> (FontFace, f32) {
+    match role {
+        ROLE_SMALL => (FontFace::Regular, ui_small_size()),
+        ROLE_LABEL => (FontFace::Bold, ui_text_size()),
+        ROLE_CAPTION => (FontFace::Bold, ui_small_size()),
+        ROLE_TITLE => (FontFace::Title, ui_title_size()),
+        ROLE_MONO => (FontFace::Fixed, ui_text_size()),
+        ROLE_MONO_SMALL => (FontFace::Fixed, ui_small_size()),
+        ROLE_DISPLAY => (FontFace::Title, gui_page_title_px()),
+        _ => (FontFace::Regular, ui_text_size()),
+    }
+}
+
+fn line_h(f: FontFace, px: f32) -> i32 {
+    (font_ascent(f, px) + font_descent(f, px)).max(1)
+}
+
+/// A text's flags: its alignment (0 left, 1 centred, 2 right), WRAP, FIT and its tone.
+pub const FLAG_ALIGN: i32 = 3;
+pub const FLAG_WRAP: i32 = 4;
+pub const FLAG_FIT: i32 = 8;
+
+/// The gray of a tone (a text's flags >> 4, an icon's tone): ink, muted, disabled or paper; ink for another.
+fn tone_gray(tone: i32) -> u8 {
+    match tone {
+        1 => GUI_GRAY_MUTED,
+        2 => GUI_GRAY_DISABLED,
+        3 => 255,
+        _ => 0,
+    }
+}
+
+/// The bytes before which `s` may be cut: its characters' starts, and its end.
+fn cuts(s: &str) -> Vec<usize> {
+    s.char_indices().map(|(i, _)| i).skip(1).chain([s.len()]).collect()
+}
+
+/// How many bytes of `s` from its start fit `w` (at a character's start; 0 when not even the first does), found
+/// by halving: a few measures, however long `s` is.
+fn fitting(f: FontFace, px: f32, s: &str, w: i32) -> usize {
+    let at = cuts(s);
+    let (mut lo, mut hi) = (0usize, at.len());
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        if font_measure(f, px, &s[..at[mid - 1]]) <= w {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    if lo == 0 {
+        0
+    } else {
+        at[lo - 1]
+    }
+}
+
+/// The lines of a text in a face for a width: at its own line breaks, then as many whole words as fit on each
+/// line, and a word wider than the width broken between its characters (at least one to a line). The license
+/// viewer breaks a license so (widgetpkgui.rs, `license_lines`); `text` with WRAP, `text_lines` and
+/// `measure_height` break a package's text so.
+pub fn kit_lines(f: FontFace, px: f32, text: &str, w: i32) -> Vec<String> {
+    let space = font_measure(f, px, " ");
+    let mut out = Vec::new();
+    for raw in text.split('\n') {
+        let raw = raw.strip_suffix('\r').unwrap_or(raw);
+        let mut line = String::new();
+        let mut lw = 0i32;
+        for word in raw.split_whitespace() {
+            let ww = font_measure(f, px, word);
+            if !line.is_empty() && lw.saturating_add(space).saturating_add(ww) > w {
+                out.push(std::mem::take(&mut line));
+                lw = 0;
+            }
+            if !line.is_empty() {
+                line.push(' ');
+                lw += space;
+            }
+            if ww <= w {
+                line.push_str(word);
+                lw += ww;
+                continue;
+            }
+            // (a word wider than the line starts one of its own: as many of its characters to a line as fit)
+            let mut rest = word;
+            while font_measure(f, px, rest) > w {
+                let n = fitting(f, px, rest, w).max(rest.chars().next().map_or(0, char::len_utf8));
+                if n >= rest.len() {
+                    break;
+                }
+                out.push(rest[..n].to_string());
+                rest = &rest[n..];
+            }
+            line.push_str(rest);
+            lw = font_measure(f, px, rest);
+        }
+        out.push(line);
+    }
+    out
+}
+
+/// One line of text in `r`, vertically centred, at its alignment; cut short with "..." where it is too wide (as
+/// Grimoire's labels are). Right-aligned text that is too wide is drawn as left-aligned text is: it fills the
+/// width.
+fn one_line(c: &mut Canvas, f: FontFace, px: f32, r: Rect, text: &str, align: i32, gray: u8) {
+    match align {
+        1 => font_draw_centered(c, f, px, r, text, gray),
+        2 if font_measure(f, px, text) <= r.w => {
+            let w = font_measure(f, px, text);
+            let base = r.y + (r.h - line_h(f, px)) / 2 + font_ascent(f, px);
+            font_draw(c, f, px, r.x + r.w - w, base, text, gray);
+        }
+        _ => font_draw_left_name(c, f, px, r, text, gray),
+    }
+}
+
+/// The size a FIT text is drawn at in a width: its role's size, else a smaller one down to the small size that
+/// holds it on one line; None when it takes two lines at the smallest.
+fn fit_px(f: FontFace, px: f32, text: &str, w: i32) -> Option<f32> {
+    let s = font_fit_px(f, px, px.min(ui_small_size()), text, w);
+    (s > 0.0).then_some(s)
+}
+
+/// A text of `text`: one line, or Grimoire's label rule (FIT: a smaller size down to the small one, then two
+/// lines), at the role's face and its flags' alignment and tone.
+fn draw_text(c: &mut Canvas, r: Rect, text: &str, role: i32, flags: i32) {
+    let (f, px) = role_face(role);
+    let (align, gray) = (flags & FLAG_ALIGN, tone_gray((flags >> 4) & 3));
+    if flags & FLAG_FIT == 0 {
+        return one_line(c, f, px, r, text, align, gray);
+    }
+    match fit_px(f, px, text, r.w) {
+        Some(s) => one_line(c, f, s, r, text, align, gray),
+        None => {
+            let min = px.min(ui_small_size());
+            font_draw_wrapped(c, f, min, r, text, 2.min((r.h / line_h(f, min)).max(1)), 0, align == 1, gray);
+        }
+    }
+}
+
+/// Lines of a role from the top of `r` (a page of `text_lines`), or centred in it with the last one shown cut
+/// short when more follow (`text` with WRAP): as many as `r` is high for, one at least.
+fn draw_lines(c: &mut Canvas, r: Rect, lines: &[String], role: i32, flags: i32, wrapped: bool) {
+    let (f, px) = role_face(role);
+    let (align, gray) = (flags & FLAG_ALIGN, tone_gray((flags >> 4) & 3));
+    let lh = line_h(f, px);
+    let shown = ((r.h / lh).max(1) as usize).min(lines.len());
+    let top = if wrapped { r.y + (r.h - shown as i32 * lh) / 2 } else { r.y };
+    for (i, line) in lines.iter().take(shown).enumerate() {
+        let slot = Rect::new(r.x, top + i as i32 * lh, r.w, lh);
+        if wrapped && i + 1 == shown && shown < lines.len() {
+            // (the rest of the text, on the last line there is room for, cut short)
+            return one_line(c, f, px, slot, &lines[i..].join(" "), align, gray);
+        }
+        one_line(c, f, px, slot, line, align, gray);
+    }
+}
+
+// ---- the commands ----
+
+/// One drawing command of the kit, with its rectangle relative to the body's top left, as the call recorded it
+/// (its sizes taken, its texts read): what `kit_render` draws. A host keeps it among its own commands, in the
+/// order the module called them.
+#[derive(Clone, Debug)]
+pub enum KitCmd {
+    /// a text on one line, or fitted (FIT): its text, role and flags
+    Text(Rect, String, i32, i32),
+    /// lines: a page of `text_lines` (false), or a text with WRAP (true)
+    Lines(Rect, Vec<String>, i32, i32, bool),
+    /// label, icon, style
+    Button(Rect, String, String, i32),
+    /// icon, style
+    IconButton(Rect, String, i32),
+    /// icon, label, style, switch
+    Row(Rect, String, String, i32, i32),
+    Chip(Rect, String, bool),
+    /// icon, text, hint, the text drawn as stars
+    Field(Rect, String, String, String, bool),
+    /// caption, value
+    Select(Rect, String, String),
+    Checkbox(Rect, String, bool),
+    Card(Rect, i32),
+    Divider(Rect),
+    Icon(Rect, String, u8),
+    Fill(Rect, u8),
+    /// gray, filled, thickness
+    Frame(Rect, u8, bool, i32),
+    Line(f32, f32, f32, f32, f32, u8),
+    Clip(Rect),
+    ClipClear,
+    /// the pager's rectangle, its page and its pages
+    Pager(Rect, i32, i32),
+}
+
+fn style_of(v: i32) -> ButtonStyle {
+    match v {
+        1 => ButtonStyle::Selected,
+        2 => ButtonStyle::Disabled,
+        3 => ButtonStyle::Primary,
+        _ => ButtonStyle::Plain,
+    }
+}
+
+fn icon_of(name: &str) -> IconKind {
+    if name.is_empty() {
+        IconKind::None
+    } else {
+        widget_icon(name)
+    }
+}
+
+/// The arrows of a pager in `r`: Settings' (`ui_row_page`'s), at its left and right ends.
+fn pager_arrows(r: Rect) -> (Rect, Rect) {
+    let (bw, bh) = ui_row_pager_button();
+    let next_x = (r.x as i64 + r.w as i64 - bw as i64).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+    (Rect::new(r.x, r.y, bw, bh), Rect::new(next_x, r.y, bw, bh))
+}
+
+/// Draws one command of the kit on `body` of the canvas, with `clip` the part of the canvas the host draws on
+/// (the body, or less), in the theme in use. Its texts go on `texts`, as the host's own commands' do, for the
+/// probes. A package's texts are not reported to Grimoire's translation fit check, and an icon is drawn at most
+/// APP_ICON_PX_MAX each way, as an app's are.
+pub fn kit_render(c: &mut Canvas, body: Rect, clip: Rect, cmd: KitCmd, texts: &mut Vec<String>) {
+    font_without_overflow_hook(|| font_with_icon_side_max(APP_ICON_PX_MAX, || render(c, body, clip, cmd, texts)));
+}
+
+fn render(c: &mut Canvas, body: Rect, clip: Rect, cmd: KitCmd, texts: &mut Vec<String>) {
+    let at = |r: Rect| on_screen(body, r.x, r.y, r.w, r.h);
+    match cmd {
+        KitCmd::Text(r, text, role, flags) => {
+            draw_text(c, at(r), &text, role, flags);
+            texts.push(text);
+        }
+        KitCmd::Lines(r, lines, role, flags, wrapped) => {
+            draw_lines(c, at(r), &lines, role, flags, wrapped);
+            texts.push(lines.join(" "));
+        }
+        KitCmd::Button(r, label, icon, style) => {
+            gui_button(c, at(r), icon_of(&icon), &label, style_of(style));
+            texts.push(label);
+        }
+        KitCmd::IconButton(r, icon, style) => gui_icon_button(c, at(r), icon_of(&icon), style_of(style)),
+        KitCmd::Row(r, icon, label, style, switch) => {
+            let mut row = Row::new(icon_of(&icon), &label).named();
+            row.style = style_of(style);
+            if switch >= 0 {
+                row.switch = Some(switch != 0);
+            }
+            ui_row(c, at(r), &row);
+            texts.push(label);
+        }
+        KitCmd::Chip(r, label, selected) => {
+            gui_chip(c, at(r), &label, selected);
+            texts.push(label);
+        }
+        KitCmd::Field(r, icon, text, hint, stars) => {
+            // (a password's text is drawn as a star for each of its characters, as Grimoire's keyboard draws one,
+            // and the probes read the stars)
+            let shown = if stars { "*".repeat(text.chars().count()) } else { text };
+            gui_text_field(c, at(r), icon_of(&icon), &shown, &hint);
+            texts.push(shown);
+            texts.push(hint);
+        }
+        KitCmd::Select(r, caption, value) => {
+            gui_select(c, at(r), &caption, &value);
+            texts.push(value);
+        }
+        KitCmd::Checkbox(r, label, checked) => {
+            ui_checkbox(c, at(r), &label, checked);
+            texts.push(label);
+        }
+        KitCmd::Card(r, style) => ui_card(c, at(r), style_of(style)),
+        KitCmd::Divider(r) => {
+            let r = at(r);
+            ui_rule(c, r.x, r.x + r.w, r.y, ui_line(), 0);
+        }
+        KitCmd::Icon(r, name, gray) => ui_icon(c, widget_icon(&name), at(r), gray),
+        KitCmd::Fill(r, gray) => canvas_fill(c, at(r), gray),
+        KitCmd::Frame(r, gray, filled, t) => ui_frame(c, at(r), ui_card_radius(), gray, filled, t),
+        KitCmd::Line(x0, y0, x1, y1, width, gray) => {
+            if let Some((x0, y0, x1, y1)) = line_in_reach(body, x0, y0, x1, y1) {
+                canvas_line_aa(c, body.x as f32 + x0, body.y as f32 + y0, body.x as f32 + x1, body.y as f32 + y1, width, gray);
+            }
+        }
+        KitCmd::Clip(r) => canvas_set_clip(c, rect_intersect(at(r), clip)),
+        KitCmd::ClipClear => canvas_set_clip(c, clip),
+        KitCmd::Pager(r, page, pages) => {
+            let (prev, next) = pager_arrows(at(r));
+            ui_row_pager(c, &RowPage { rows: Vec::new(), first: 0, page, pages, prev, next });
+        }
+    }
+}
+
+// ---- the charges (the app host's numbers: apphost.rs and docs/APPS.md, "What a call's budget pays for") ----
+
+/// The app host's numbers for the charge of a text (`wasmhost::TextCharge`).
+const TEXT_CHARGE: TextCharge = TextCharge { byte_px: APP_CHARGE_TEXT, tall_px: APP_CHARGE_TALL_PX, square: APP_CHARGE_SQUARE, px_max: APP_TEXT_PX_MAX as u64 };
+
+/// A command's rectangle as it is drawn (`on_screen`), relative to the top left of a body of `body`.
+pub fn drawn(body: (i32, i32), r: Rect) -> Rect {
+    on_screen(Rect::new(0, 0, body.0, body.1), r.x, r.y, r.w, r.h)
+}
+
+/// How far from its sides an element with round ends is worked out pixel by pixel: half its smaller side (the
+/// radius of its ends in the theme that rounds them) and the kit's corner.
+pub fn round_end(body: (i32, i32), r: Rect) -> i64 {
+    let r = drawn(body, r);
+    (r.w.min(r.h).max(0) / 2) as i64 + APP_CHARGE_CORNER
+}
+
+/// The charge for one frame of a shape (a fill, or an outline): one for every APP_CHARGE_FILL_PX pixels of its
+/// rectangle inside the body, which are filled by rows, and APP_CHARGE_EDGE_PX for each of those within `edge`
+/// pixels of its left and right sides, which are worked out one by one (a corner, a round end, a thick outline).
+pub fn shape_charge(body: (i32, i32), r: Rect, edge: i64) -> u64 {
+    let Some(r) = in_body(Rect::new(0, 0, body.0, body.1), r) else { return 0 };
+    let (w, h) = (r.w as u64, r.h as u64);
+    w * h / APP_CHARGE_FILL_PX + h * w.min(2 * edge.max(0) as u64) * APP_CHARGE_EDGE_PX
+}
+
+/// The charge for a line `width` pixels wide: for each row of the body it crosses, APP_CHARGE_LINE_ROW and
+/// APP_CHARGE_EDGE_PX for each pixel of the row the canvas works out (the line's width along the row, and no
+/// more than the row has in the line's box).
+pub fn line_charge(body: (i32, i32), x0: f32, y0: f32, x1: f32, y1: f32, width: f32) -> u64 {
+    let body = Rect::new(0, 0, body.0, body.1);
+    let Some((x0, y0, x1, y1)) = line_in_reach(body, x0, y0, x1, y1) else { return 0 };
+    let b = rect_intersect(rect_from_points(x0, y0, x1, y1, width * 0.5 + 1.0), body);
+    if rect_is_empty(b) {
+        return 0;
+    }
+    let (dx, dy) = ((x1 - x0) as f64, (y1 - y0) as f64);
+    let along = if dy != 0.0 { ((width as f64 + 1.0) * (dx * dx + dy * dy).sqrt() / dy.abs()).ceil() + 4.0 } else { b.w as f64 };
+    b.h as u64 * (APP_CHARGE_LINE_ROW + (b.w as f64).min(along) as u64 * APP_CHARGE_EDGE_PX)
+}
+
+/// The charge for a text of `bytes` bytes drawn `px` pixels high (a part of a pixel counts as one) in `face`: by
+/// its bytes and its height, and by the cube of the height more in a face that may be printed over
+/// (APP_CHARGE_BOLD).
+pub fn drawn_text_charge(bytes: usize, px: f32, face: FontFace) -> u64 {
+    let h = (px.ceil() as i64).clamp(1, APP_TEXT_PX_MAX as i64);
+    let n = TEXT_CHARGE.of(bytes, h, 0);
+    match face {
+        FontFace::Bold | FontFace::Title | FontFace::Caps => n + bytes as u64 * (h * h * h) as u64 / APP_CHARGE_BOLD,
+        _ => n,
+    }
+}
+
+/// The charge for cutting a text of `bytes` bytes short to fit its room: the square of its bytes, counted to
+/// APP_CHARGE_SQUARE_BYTES (a text is cut to its first 251 bytes before the steps that measure it: font.rs, `fit`).
+pub fn cut_text_charge(bytes: usize) -> u64 {
+    let m = (bytes as u64).min(APP_CHARGE_SQUARE_BYTES);
+    APP_CHARGE_SQUARE * m * m
+}
+
+/// The charge for fitting a text of `bytes` bytes on up to two lines (Grimoire's label rule, FIT): the square of
+/// all its bytes, by steps that measure all of it.
+pub fn fit_text_charge(bytes: usize) -> u64 {
+    APP_CHARGE_SQUARE * bytes as u64 * bytes as u64
+}
+
+/// The charge for a label, a caption, a value, a text or a hint of one of the elements: a text APP_CHARGE_LABEL_PX
+/// high that is fitted to its room, on two lines where the element takes two (all its bytes are then in the
+/// square) and on one elsewhere.
+pub fn label_charge(bytes: usize, two_lines: bool) -> u64 {
+    TEXT_CHARGE.of(bytes, APP_CHARGE_LABEL_PX, if two_lines { u64::MAX } else { APP_CHARGE_SQUARE_BYTES })
+}
+
+/// The charge for an icon `side` pixels each way (1 to APP_ICON_PX_MAX): by the square of its side.
+pub fn icon_charge(side: i64) -> u64 {
+    let s = side.clamp(1, APP_ICON_PX_MAX as i64) as u64;
+    s * s * APP_CHARGE_ICON_PX
+}
+
+/// The charge for an icon as large as the smaller side of `r` as drawn, or the `part`th of it.
+fn icon_in(body: (i32, i32), r: Rect, part: i32) -> u64 {
+    let r = drawn(body, r);
+    icon_charge((r.w.min(r.h) / part) as i64)
+}
+
+// ---- a call ----
+
+/// What a host gives the kit's calls: its body, whether the package may draw, its limits and its records.
+pub trait KitHost {
+    /// The size of the body the call draws on: a drawing pass's, and in another call the last pass's.
+    fn kit_body(&self) -> (i32, i32);
+    /// Whether what the package draws is shown: a widget's `editor:overlay`; an app's always.
+    fn kit_may_draw(&self) -> bool;
+    /// Room for one more drawing command in the call, or the host's way of ending a call past a limit.
+    fn kit_room(&self) -> Result<(), wasmi::Error>;
+    /// Room for one more hit region, the same way.
+    fn kit_hit_room(&self) -> Result<(), wasmi::Error>;
+    /// Counts a text of `n` bytes about to be read, against the host's limits of one text and of the call's
+    /// texts together.
+    fn kit_text(&mut self, n: usize) -> Result<(), wasmi::Error>;
+    /// Records a drawing command, a hit region, or both.
+    fn kit_push(&mut self, cmd: Option<KitCmd>, hit: Option<(i32, Rect)>);
+    /// Counts `n` bytes read from the module's memory.
+    fn kit_read(&mut self, n: usize);
+    /// The height of the status bar over the package: the notebook's for a widget, 0 for an app that hides it.
+    fn kit_status_bar_h(&self) -> i32;
+}
+
+/// A call of the kit as its work sees it: the call's budget, the module's memory and the host.
+pub trait Call {
+    /// Takes `n` from the call's budget (`wasmhost::charge`).
+    fn charge(&mut self, n: u64) -> Result<(), wasmi::Error>;
+    /// `len` bytes of the module's memory from `ptr`, counted by the host (`wasmhost::read_mem`).
+    fn read(&mut self, ptr: i32, len: i32) -> Vec<u8>;
+    /// Writes into the module's memory as much as `cap` and the memory take (`wasmhost::write_mem`).
+    fn write(&mut self, ptr: i32, cap: i32, bytes: &[u8]) -> i32;
+    fn host(&mut self) -> &mut dyn KitHost;
+}
+
+struct With<'a, 'b, T>(&'a mut Caller<'b, T>);
+
+impl<T: KitHost> Call for With<'_, '_, T> {
+    fn charge(&mut self, n: u64) -> Result<(), wasmi::Error> {
+        crate::wasmhost::charge(self.0, n)
+    }
+    fn read(&mut self, ptr: i32, len: i32) -> Vec<u8> {
+        let bytes = crate::wasmhost::read_mem(self.0, ptr, len);
+        self.0.data_mut().kit_read(bytes.len());
+        bytes
+    }
+    fn write(&mut self, ptr: i32, cap: i32, bytes: &[u8]) -> i32 {
+        crate::wasmhost::write_mem(self.0, ptr, cap, bytes)
+    }
+    fn host(&mut self) -> &mut dyn KitHost {
+        self.0.data_mut()
+    }
+}
+
+/// Installs every call of `grimoire_kit` in a host's linker. Each is the call of its work below with the call's
+/// numbers.
+pub fn kit_link<T: KitHost + 'static>(linker: &mut Linker<T>) -> Result<(), String> {
+    macro_rules! kit {
+        ($name:literal, $work:ident, $r:ty $(, $a:ident)*) => {
+            linker
+                .func_wrap(KIT, $name, |mut caller: Caller<'_, T>, $($a: i32),*| -> Result<$r, wasmi::Error> { $work(&mut With(&mut caller), [$($a),*]) })
+                .map_err(|e| e.to_string())?;
+        };
+    }
+    kit!("level", level, i32);
+    kit!("version", version, i32, ptr, cap);
+    kit!("metric", metric, i32, id);
+    kit!("clock_ms", clock_ms, i64);
+    kit!("text", text, i32, x, y, w, h, ptr, len, role, flags);
+    kit!("text_lines", text_lines, i32, x, y, w, h, ptr, len, role, flags, first);
+    kit!("measure_width", measure_width, i32, ptr, len, role);
+    kit!("measure_height", measure_height, i32, ptr, len, role, w);
+    kit!("button", button, i32, id, x, y, w, h, lp, ll, ip, il, style);
+    kit!("icon_button", icon_button, i32, id, x, y, w, h, ip, il, style);
+    kit!("row", row, i32, id, x, y, w, h, ip, il, lp, ll, style, switch);
+    kit!("chip", chip, i32, id, x, y, w, h, lp, ll, selected);
+    kit!("field", field, i32, id, x, y, w, h, ip, il, tp, tl, hp, hl, flags);
+    kit!("select", select, i32, id, x, y, w, h, cp, cl, vp, vl);
+    kit!("checkbox", checkbox, i32, id, x, y, w, h, lp, ll, checked);
+    kit!("card", card, (), x, y, w, h, style);
+    kit!("divider", divider, (), x, y, w);
+    kit!("icon", icon, (), x, y, w, h, np, nl, tone);
+    kit!("fill", fill, (), x, y, w, h, gray);
+    kit!("frame", frame, (), x, y, w, h, gray, filled, t);
+    kit!("clip", clip, (), x, y, w, h);
+    kit!("clip_clear", clip_clear, ());
+    kit!("hit", hit, (), id, x, y, w, h);
+    kit!("list_page", list_page, i64, n, page, area_h, pref_h, min_h);
+    kit!("pager", pager, i32, prev_id, next_id, x, y, w, page, pages);
+    linker
+        .func_wrap(KIT, "line", |mut caller: Caller<'_, T>, x0: f32, y0: f32, x1: f32, y1: f32, width: f32, gray: i32| -> Result<(), wasmi::Error> {
+            line(&mut With(&mut caller), [x0, y0, x1, y1, width], gray)
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// The first call of `grimoire_kit` a module imports that this Grimoire does not have, as `grimoire_kit.<name>`:
+/// a call of a later level. None when it has every one the module imports.
+pub fn kit_missing_import(module: &wasmi::Module) -> Option<String> {
+    module.imports().find(|i| i.module() == KIT && !KIT_CALLS.contains(&i.name())).map(|i| format!("{KIT}.{}", i.name()))
+}
+
+// ---- the work of each call ----
+//
+// Each pays the fixed charge first, whatever it is given. A drawing call then does nothing more (and returns 0)
+// for a package that may not draw; it needs room for one more command (and for a hit region, when it is given an
+// id of 0 or more); its texts' lengths are compared with the host's limits before they are read; it pays for its
+// work; and it records its command.
+
+type Res<R> = Result<R, wasmi::Error>;
+
+/// The fixed charge, and whether the package may draw: what a drawing call starts with.
+fn drawing(cx: &mut dyn Call) -> Res<bool> {
+    cx.charge(KIT_CHARGE_CALL)?;
+    if !cx.host().kit_may_draw() {
+        return Ok(false);
+    }
+    cx.host().kit_room()?;
+    Ok(true)
+}
+
+/// Room for the hit region of an element given an id of 0 or more.
+fn hit_room(cx: &mut dyn Call, id: i32) -> Res<()> {
+    if id >= 0 {
+        cx.host().kit_hit_room()?;
+    }
+    Ok(())
+}
+
+/// A text of the call, read once its length is within the host's limits and the call has paid `cost` of it.
+fn text_of(cx: &mut dyn Call, ptr: i32, len: i32, cost: impl FnOnce(usize) -> u64) -> Res<String> {
+    let n = len.max(0) as usize;
+    cx.host().kit_text(n)?;
+    cx.charge(cost(n))?;
+    Ok(String::from_utf8_lossy(&cx.read(ptr, len)).into_owned())
+}
+
+/// An icon's name, read when it is no longer than a name can be (APP_ICON_NAME_MAX), for 4 a byte. A longer one
+/// is not read, and names no icon.
+fn icon_name(cx: &mut dyn Call, ptr: i32, len: i32) -> Res<String> {
+    if len.max(0) as usize > APP_ICON_NAME_MAX {
+        return Ok("?".to_string());
+    }
+    cx.charge(len.max(0) as u64 * APP_CHARGE_BYTE)?;
+    Ok(String::from_utf8_lossy(&cx.read(ptr, len)).into_owned())
+}
+
+/// A width given as 0 or less: the rest of the body from `x`.
+fn rest_w(cx: &mut dyn Call, x: i32, w: i32) -> i32 {
+    if w > 0 {
+        return w;
+    }
+    (cx.host().kit_body().0 as i64 - x as i64).clamp(0, i32::MAX as i64) as i32
+}
+
+/// A size given as 0 or less: `standard`.
+fn or(v: i32, standard: i32) -> i32 {
+    if v > 0 {
+        v
+    } else {
+        standard
+    }
+}
+
+/// Records an element's command, and its hit region when it has an id of 0 or more.
+fn push(cx: &mut dyn Call, cmd: KitCmd, id: i32, r: Rect) {
+    cx.host().kit_push(Some(cmd), (id >= 0).then_some((id, r)));
+}
+
+fn level(cx: &mut dyn Call, []: [i32; 0]) -> Res<i32> {
+    cx.charge(KIT_CHARGE_CALL)?;
+    Ok(KIT_LEVEL)
+}
+
+fn version(cx: &mut dyn Call, [ptr, cap]: [i32; 2]) -> Res<i32> {
+    cx.charge(KIT_CHARGE_CALL)?;
+    let v = &GRIMOIRE_VERSION.as_bytes()[..GRIMOIRE_VERSION.len().min(KIT_VERSION_MAX)];
+    cx.charge(v.len().min(cap.max(0) as usize) as u64 * APP_CHARGE_BYTE)?;
+    Ok(cx.write(ptr, cap, v))
+}
+
+fn metric(cx: &mut dyn Call, [id]: [i32; 1]) -> Res<i32> {
+    cx.charge(KIT_CHARGE_CALL)?;
+    let host = cx.host();
+    Ok(kit_metric(id, host.kit_body(), host.kit_status_bar_h()))
+}
+
+fn clock_ms(cx: &mut dyn Call, []: [i32; 0]) -> Res<i64> {
+    cx.charge(KIT_CHARGE_CALL)?;
+    Ok(now_ms() as i64)
+}
+
+fn measure_width(cx: &mut dyn Call, [ptr, len, role]: [i32; 3]) -> Res<i32> {
+    cx.charge(KIT_CHARGE_CALL)?;
+    let text = text_of(cx, ptr, len, |n| n as u64 * APP_CHARGE_MEASURE)?;
+    let (f, px) = role_face(role);
+    Ok(font_measure(f, px, &text))
+}
+
+fn measure_height(cx: &mut dyn Call, [ptr, len, role, w]: [i32; 4]) -> Res<i32> {
+    cx.charge(KIT_CHARGE_CALL)?;
+    let w = rest_w(cx, 0, w);
+    let text = text_of(cx, ptr, len, |n| n as u64 * KIT_CHARGE_WRAP)?;
+    let (f, px) = role_face(role);
+    Ok(kit_lines(f, px, &text, w).len() as i32 * line_h(f, px))
+}
+
+fn text(cx: &mut dyn Call, [x, y, w, h, ptr, len, role, flags]: [i32; 8]) -> Res<i32> {
+    if !drawing(cx)? {
+        return Ok(0);
+    }
+    let (f, px) = role_face(role);
+    let w = rest_w(cx, x, w);
+    // (its letters; and the steps that break it into lines, fit it on two, or cut it short, each measuring it)
+    let wrap = flags & FLAG_WRAP != 0;
+    let fit = !wrap && flags & FLAG_FIT != 0;
+    let text = text_of(cx, ptr, len, |n| {
+        drawn_text_charge(n, px, f) + if wrap { n as u64 * KIT_CHARGE_WRAP } else if fit { fit_text_charge(n) } else { 0 }
+    })?;
+    if wrap {
+        let lines = kit_lines(f, px, &text, w);
+        let h = or(h, lines.len() as i32 * line_h(f, px));
+        cx.host().kit_push(Some(KitCmd::Lines(Rect::new(x, y, w, h), lines, role, flags, true)), None);
+        return Ok(h);
+    }
+    if !fit && font_measure(f, px, &text) > w {
+        cx.charge(cut_text_charge(text.len()))?;
+    }
+    let standard = if fit && fit_px(f, px, &text, w).is_none() { 2 * line_h(f, px.min(ui_small_size())) } else { line_h(f, px) };
+    let h = or(h, standard);
+    cx.host().kit_push(Some(KitCmd::Text(Rect::new(x, y, w, h), text, role, flags)), None);
+    Ok(h)
+}
+
+fn text_lines(cx: &mut dyn Call, [x, y, w, h, ptr, len, role, flags, first]: [i32; 9]) -> Res<i32> {
+    if !drawing(cx)? {
+        return Ok(0);
+    }
+    let (f, px) = role_face(role);
+    let w = rest_w(cx, x, w);
+    let h = if h > 0 { h } else { (cx.host().kit_body().1 as i64 - y as i64).clamp(0, i32::MAX as i64) as i32 };
+    let text = text_of(cx, ptr, len, |n| drawn_text_charge(n, px, f) + n as u64 * KIT_CHARGE_WRAP)?;
+    let lines = kit_lines(f, px, &text, w);
+    let n = lines.len();
+    let from = (first.max(0) as usize).min(n);
+    let shown: Vec<String> = lines.into_iter().skip(from).take((h / line_h(f, px)).max(0) as usize).collect();
+    cx.host().kit_push(Some(KitCmd::Lines(Rect::new(x, y, w, h), shown, role, flags & !FLAG_WRAP, false)), None);
+    Ok(n as i32)
+}
+
+/// The width a button `h` high needs for its label and icon in the theme's button, at least `h` (a square).
+pub fn button_need_w(h: i32, icon: bool, label: &str) -> i32 {
+    let need = if gui_gothic() {
+        ui_button_need_w(h, if icon { IconKind::Grid } else { IconKind::None }, label, ButtonStyle::Plain)
+    } else if label.is_empty() {
+        0
+    } else {
+        // (gui_button's pill: its label in the bold face, its icon beside it, padded at both ends)
+        let inner_h = h - 2 * ui_px(8.0);
+        let ts = ui_text_size().min(inner_h as f32 * 0.46);
+        let isz = if icon { inner_h.min(ui_px(70.0)).max(ui_px(30.0)) + ui_px(18.0) } else { 0 };
+        font_measure(FontFace::Bold, ts, label) + isz + 2 * ui_px(22.0)
+    };
+    need.max(h)
+}
+
+fn button(cx: &mut dyn Call, [id, x, y, w, h, lp, ll, ip, il, style]: [i32; 10]) -> Res<i32> {
+    if !drawing(cx)? {
+        return Ok(0);
+    }
+    hit_room(cx, id)?;
+    let label = text_of(cx, lp, ll, |n| label_charge(n, true))?;
+    let icon = icon_name(cx, ip, il)?;
+    let h = or(h, gui_button_h());
+    let w = if w > 0 { w } else { button_need_w(h, !icon.is_empty(), &label) };
+    let r = Rect::new(x, y, w, h);
+    // (its fill, its outline and its inner line; and its icon as large as its smaller side)
+    let body = cx.host().kit_body();
+    cx.charge(3 * shape_charge(body, r, APP_CHARGE_CORNER) + if icon.is_empty() { 0 } else { icon_in(body, r, 1) })?;
+    push(cx, KitCmd::Button(r, label, icon, style), id, r);
+    Ok(w)
+}
+
+fn icon_button(cx: &mut dyn Call, [id, x, y, w, h, ip, il, style]: [i32; 8]) -> Res<i32> {
+    if !drawing(cx)? {
+        return Ok(0);
+    }
+    hit_room(cx, id)?;
+    let icon = icon_name(cx, ip, il)?;
+    let h = or(h, gui_top_button_h());
+    let w = or(w, h);
+    let r = Rect::new(x, y, w, h);
+    let body = cx.host().kit_body();
+    cx.charge(3 * shape_charge(body, r, APP_CHARGE_CORNER) + icon_in(body, r, 1))?;
+    push(cx, KitCmd::IconButton(r, icon, style), id, r);
+    Ok(w)
+}
+
+fn row(cx: &mut dyn Call, [id, x, y, w, h, ip, il, lp, ll, style, switch]: [i32; 11]) -> Res<i32> {
+    if !drawing(cx)? {
+        return Ok(0);
+    }
+    hit_room(cx, id)?;
+    let icon = icon_name(cx, ip, il)?;
+    let label = text_of(cx, lp, ll, |n| label_charge(n, true))?;
+    let (w, h) = (rest_w(cx, x, w), or(h, gui_row_h()));
+    let r = Rect::new(x, y, w, h);
+    // (its card; its icon and its switch are of one size whatever the row's)
+    let small = if icon.is_empty() { 0 } else { icon_charge(APP_CHARGE_SMALL_ICON_PX) } + if switch >= 0 { APP_CHARGE_SWITCH } else { 0 };
+    let body = cx.host().kit_body();
+    cx.charge(shape_charge(body, r, APP_CHARGE_CORNER) + small)?;
+    push(cx, KitCmd::Row(r, icon, label, style, switch), id, r);
+    Ok(h)
+}
+
+fn chip(cx: &mut dyn Call, [id, x, y, w, h, lp, ll, selected]: [i32; 8]) -> Res<i32> {
+    if !drawing(cx)? {
+        return Ok(0);
+    }
+    hit_room(cx, id)?;
+    let label = text_of(cx, lp, ll, |n| label_charge(n, false))?;
+    let (w, h) = (or(w, gui_chip_w(&label)), or(h, gui_chip_h()));
+    let r = Rect::new(x, y, w, h);
+    let body = cx.host().kit_body();
+    cx.charge(2 * shape_charge(body, r, round_end(body, r)))?;
+    push(cx, KitCmd::Chip(r, label, selected != 0), id, r);
+    Ok(w)
+}
+
+fn field(cx: &mut dyn Call, [id, x, y, w, h, ip, il, tp, tl, hp, hl, flags]: [i32; 12]) -> Res<i32> {
+    if !drawing(cx)? {
+        return Ok(0);
+    }
+    hit_room(cx, id)?;
+    let icon = icon_name(cx, ip, il)?;
+    let text = text_of(cx, tp, tl, |n| label_charge(n, false))?;
+    let hint = text_of(cx, hp, hl, |n| label_charge(n, false))?;
+    let (w, h) = (rest_w(cx, x, w), or(h, gui_field_h()));
+    let r = Rect::new(x, y, w, h);
+    // (its icon is as tall as the field, and never smaller than the kit's small icons; the mark that clears a
+    // field with text in it is of one size)
+    let body = cx.host().kit_body();
+    let tall = if icon.is_empty() { 0 } else { icon_charge((drawn(body, r).h as i64).max(APP_CHARGE_SMALL_ICON_PX)) };
+    cx.charge(2 * shape_charge(body, r, round_end(body, r)) + tall + icon_charge(APP_CHARGE_SMALL_ICON_PX))?;
+    push(cx, KitCmd::Field(r, icon, text, hint, flags & 1 != 0), id, r);
+    Ok(h)
+}
+
+fn select(cx: &mut dyn Call, [id, x, y, w, h, cp, cl, vp, vl]: [i32; 9]) -> Res<i32> {
+    if !drawing(cx)? {
+        return Ok(0);
+    }
+    hit_room(cx, id)?;
+    let caption = text_of(cx, cp, cl, |n| label_charge(n, false))?;
+    let value = text_of(cx, vp, vl, |n| label_charge(n, false))?;
+    let (w, h) = (rest_w(cx, x, w), or(h, gui_select_h()));
+    let r = Rect::new(x, y, w, h);
+    // (and its chevron, of one size)
+    let body = cx.host().kit_body();
+    cx.charge(2 * shape_charge(body, r, round_end(body, r)) + icon_charge(APP_CHARGE_SMALL_ICON_PX))?;
+    push(cx, KitCmd::Select(r, caption, value), id, r);
+    Ok(h)
+}
+
+fn checkbox(cx: &mut dyn Call, [id, x, y, w, h, lp, ll, checked]: [i32; 8]) -> Res<i32> {
+    if !drawing(cx)? {
+        return Ok(0);
+    }
+    hit_room(cx, id)?;
+    let label = text_of(cx, lp, ll, |n| label_charge(n, true))?;
+    let (w, h) = (rest_w(cx, x, w), or(h, gui_row_min_h()));
+    let r = Rect::new(x, y, w, h);
+    // (its rectangle is filled white first; its box is of one size, filled and outlined, with its mark)
+    let body = cx.host().kit_body();
+    let side = ui_px(64.0);
+    let boxed = Rect::new(0, 0, side, side);
+    cx.charge(shape_charge(body, r, 0) + 2 * shape_charge((side, side), boxed, side as i64) + icon_charge(side as i64))?;
+    push(cx, KitCmd::Checkbox(r, label, checked != 0), id, r);
+    Ok(h)
+}
+
+fn card(cx: &mut dyn Call, [x, y, w, h, style]: [i32; 5]) -> Res<()> {
+    if !drawing(cx)? {
+        return Ok(());
+    }
+    let r = Rect::new(x, y, rest_w(cx, x, w), or(h, gui_row_h()));
+    let body = cx.host().kit_body();
+    cx.charge(shape_charge(body, r, APP_CHARGE_CORNER))?;
+    cx.host().kit_push(Some(KitCmd::Card(r, style)), None);
+    Ok(())
+}
+
+fn divider(cx: &mut dyn Call, [x, y, w]: [i32; 3]) -> Res<()> {
+    if !drawing(cx)? {
+        return Ok(());
+    }
+    // (the theme's rule: in Gothic a thick line over a thin one, the room of both)
+    let r = Rect::new(x, y, rest_w(cx, x, w), ui_line() + ui_px(7.0));
+    let body = cx.host().kit_body();
+    cx.charge(shape_charge(body, r, 0))?;
+    cx.host().kit_push(Some(KitCmd::Divider(r)), None);
+    Ok(())
+}
+
+fn icon(cx: &mut dyn Call, [x, y, w, h, np, nl, tone]: [i32; 7]) -> Res<()> {
+    if !drawing(cx)? {
+        return Ok(());
+    }
+    let name = icon_name(cx, np, nl)?;
+    let r = Rect::new(x, y, or(w, ui_row_icon()), or(h, ui_row_icon()));
+    let body = cx.host().kit_body();
+    cx.charge(icon_in(body, r, 1))?;
+    cx.host().kit_push(Some(KitCmd::Icon(r, name, tone_gray(tone))), None);
+    Ok(())
+}
+
+fn fill(cx: &mut dyn Call, [x, y, w, h, gray]: [i32; 5]) -> Res<()> {
+    if !drawing(cx)? {
+        return Ok(());
+    }
+    let r = Rect::new(x, y, rest_w(cx, x, w), h.max(0));
+    let body = cx.host().kit_body();
+    cx.charge(shape_charge(body, r, 0))?;
+    cx.host().kit_push(Some(KitCmd::Fill(r, gray.clamp(0, 255) as u8)), None);
+    Ok(())
+}
+
+fn frame(cx: &mut dyn Call, [x, y, w, h, gray, filled, t]: [i32; 7]) -> Res<()> {
+    if !drawing(cx)? {
+        return Ok(());
+    }
+    let r = Rect::new(x, y, rest_w(cx, x, w), h.max(0));
+    let t = if t > 0 { t.min(KIT_THICKNESS_MAX) } else { ui_line() };
+    // (the pixels within its corners' radius, or its outline's thickness, of its sides are worked out one by one)
+    let body = cx.host().kit_body();
+    let d = drawn(body, r);
+    let edge = ui_card_radius().clamp(0, (d.w.min(d.h) / 2).max(0)).max(if filled != 0 { 0 } else { t }) as i64 + 2;
+    cx.charge(shape_charge(body, r, edge))?;
+    cx.host().kit_push(Some(KitCmd::Frame(r, gray.clamp(0, 255) as u8, filled != 0, t)), None);
+    Ok(())
+}
+
+fn line(cx: &mut dyn Call, [x0, y0, x1, y1, width]: [f32; 5], gray: i32) -> Res<()> {
+    if !drawing(cx)? {
+        return Ok(());
+    }
+    // (a width that is not a number is the least)
+    #[allow(clippy::manual_clamp)]
+    let width = width.max(0.1).min(APP_LINE_WIDTH_MAX);
+    let body = cx.host().kit_body();
+    cx.charge(line_charge(body, x0, y0, x1, y1, width))?;
+    cx.host().kit_push(Some(KitCmd::Line(x0, y0, x1, y1, width, gray.clamp(0, 255) as u8)), None);
+    Ok(())
+}
+
+fn clip(cx: &mut dyn Call, [x, y, w, h]: [i32; 4]) -> Res<()> {
+    if drawing(cx)? {
+        cx.host().kit_push(Some(KitCmd::Clip(Rect::new(x, y, w, h))), None);
+    }
+    Ok(())
+}
+
+fn clip_clear(cx: &mut dyn Call, []: [i32; 0]) -> Res<()> {
+    if drawing(cx)? {
+        cx.host().kit_push(Some(KitCmd::ClipClear), None);
+    }
+    Ok(())
+}
+
+fn hit(cx: &mut dyn Call, [id, x, y, w, h]: [i32; 5]) -> Res<()> {
+    cx.charge(KIT_CHARGE_CALL)?;
+    if id >= 0 && cx.host().kit_may_draw() {
+        cx.host().kit_hit_room()?;
+        cx.host().kit_push(None, Some((id, Rect::new(x, y, w, h))));
+    }
+    Ok(())
+}
+
+/// `ui_row_page`'s answer for a list of `n` rows in an area `area_h` high: the rows a page holds, the rows'
+/// height, the gap between them and the pages, each in 16 bits, the first lowest.
+pub fn kit_list_page(n: i32, area_h: i32, pref_h: i32, min_h: i32) -> i64 {
+    let n = n.clamp(0, KIT_LIST_ROWS_MAX) as usize;
+    let (area_h, pref_h, min_h) = (area_h.clamp(0, KIT_LIST_PX_MAX), pref_h.clamp(1, KIT_LIST_PX_MAX), min_h.clamp(0, KIT_LIST_PX_MAX));
+    let (rh, gap, per, pages) = ui_row_page_fit(area_h, n, pref_h, min_h);
+    let field = |v: i64| v.clamp(0, 0xffff);
+    field(per as i64) | field(rh as i64) << 16 | field(gap as i64) << 32 | field(pages as i64) << 48
+}
+
+fn list_page(cx: &mut dyn Call, [n, _page, area_h, pref_h, min_h]: [i32; 5]) -> Res<i64> {
+    cx.charge(KIT_CHARGE_CALL)?;
+    Ok(kit_list_page(n, area_h, pref_h, min_h))
+}
+
+fn pager(cx: &mut dyn Call, [prev_id, next_id, x, y, w, page, pages]: [i32; 7]) -> Res<i32> {
+    if !drawing(cx)? {
+        return Ok(0);
+    }
+    let pages = pages.clamp(0, KIT_LIST_ROWS_MAX);
+    if pages <= 1 {
+        return Ok(0);
+    }
+    let page = page.clamp(0, pages - 1);
+    let r = Rect::new(x, y, rest_w(cx, x, w), ui_row_pager_button().1);
+    let (prev, next) = pager_arrows(r);
+    // (two buttons, each three frames and its icon, and the count between them)
+    let body = cx.host().kit_body();
+    let arrow = |b: Rect| 3 * shape_charge(body, b, APP_CHARGE_CORNER) + icon_in(body, b, 1);
+    let count = format!("{}/{}", page + 1, pages);
+    cx.charge(arrow(prev) + arrow(next) + drawn_text_charge(count.len(), ui_small_size(), FontFace::Fixed))?;
+    let prev_hit = (page > 0 && prev_id >= 0).then_some((prev_id, prev));
+    let next_hit = (page + 1 < pages && next_id >= 0).then_some((next_id, next));
+    if prev_hit.is_some() {
+        cx.host().kit_hit_room()?;
+    }
+    cx.host().kit_push(Some(KitCmd::Pager(r, page, pages)), prev_hit);
+    if next_hit.is_some() {
+        cx.host().kit_hit_room()?;
+        cx.host().kit_push(None, next_hit);
+    }
+    Ok(r.h)
+}

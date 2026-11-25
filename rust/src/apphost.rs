@@ -38,10 +38,16 @@
 //!
 //! Each call of the module has a fixed instruction budget, from which the host's work for the imports it calls
 //! is paid as well, and is held to the limits below (docs/APPS.md, Limits).
+//!
+//! A module may also import the package kit, `grimoire_kit` (kithost.rs, docs/KIT.md), which the widget host
+//! links too: its drawing calls are recorded with this host's own commands, in the order the module called them,
+//! and held to this host's limits. An element of the kit given an id of 0 or more is a hit region; a drawing
+//! pass's hit regions are the runner's names for the app's controls (`apphost_control_point`).
 
 use crate::globalui::{gui_app_tile, gui_chip, gui_fab, gui_select, gui_status_bar, gui_status_h, gui_surface, gui_text_field};
+use crate::kithost::{drawn_text_charge, icon_charge, kit_link, kit_missing_import, kit_render, label_charge, KitCmd, KitHost};
 use crate::prelude::*;
-use crate::wasmhost::{charge, in_body, on_screen, TextCharge};
+use crate::wasmhost::{charge, in_body, line_in_reach, on_screen};
 use std::time::Instant;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
@@ -77,10 +83,12 @@ pub const APP_STATE_MAX: usize = 256 * 1024;
 /// and written several times over.
 pub const APP_CALL_STATE_MAX: usize = 16 * APP_STATE_MAX;
 /// The drawing commands of one call, of every kind together (the eighteen drawing calls, `clip` and
-/// `clip_clear` among them).
+/// `clip_clear` among them, and the kit's).
 pub const APP_CALL_COMMANDS_MAX: usize = 4096;
-/// The bytes of one text: a `text`'s, a `text_at`'s, what `text_width` measures, and each label, caption,
-/// value and hint of the kit's elements.
+/// The hit regions of one call: the kit's elements given an id, and its `hit`.
+pub const APP_CALL_HITS_MAX: usize = 512;
+/// The bytes of one text: a `text`'s, a `text_at`'s, what `text_width` measures, each label, caption, value
+/// and hint of the drawing calls' elements, and each text the package kit reads.
 pub const APP_TEXT_MAX: usize = 1024;
 /// The bytes of all those texts of one call together.
 pub const APP_CALL_TEXT_MAX: usize = 64 * 1024;
@@ -197,6 +205,8 @@ enum DrawCmd {
     TextField(Rect, String, String, String),
     Clip(Rect),
     ClipClear,
+    /// one of the package kit's (kithost.rs)
+    Kit(KitCmd),
 }
 
 struct HostState {
@@ -208,6 +218,8 @@ struct HostState {
     /// charge of a shape by the part of it inside the body
     body: (i32, i32),
     commands: Vec<DrawCmd>,
+    /// the hit regions of the kit's elements in this call (body-local)
+    hits: Vec<(i32, Rect)>,
     /// the bytes of the texts read in this call, and the bytes state_get and state_set moved in it
     text_bytes: usize,
     state_bytes: usize,
@@ -236,6 +248,43 @@ struct HostState {
     /// Tests: the program started in curl's place and its first arguments (empty: curl itself).
     #[cfg(test)]
     http_stand_in: Vec<String>,
+}
+
+/// What the package kit's calls (kithost.rs) are given by this host: its body, its limits and its records. An app
+/// may always draw.
+impl KitHost for HostState {
+    fn kit_body(&self) -> (i32, i32) {
+        self.body
+    }
+    fn kit_may_draw(&self) -> bool {
+        true
+    }
+    fn kit_room(&self) -> Result<(), wasmi::Error> {
+        room_for_command(self)
+    }
+    fn kit_hit_room(&self) -> Result<(), wasmi::Error> {
+        if self.hits.len() >= APP_CALL_HITS_MAX {
+            return Err(past(self, "the hit regions of a call", APP_CALL_HITS_MAX));
+        }
+        Ok(())
+    }
+    fn kit_text(&mut self, n: usize) -> Result<(), wasmi::Error> {
+        call_text_room(self, n)
+    }
+    fn kit_push(&mut self, cmd: Option<KitCmd>, hit: Option<(i32, Rect)>) {
+        self.commands.extend(cmd.map(DrawCmd::Kit));
+        self.hits.extend(hit);
+    }
+    fn kit_read(&mut self, n: usize) {
+        self.read_bytes += n;
+    }
+    fn kit_status_bar_h(&self) -> i32 {
+        if self.status_bar {
+            gui_status_h()
+        } else {
+            0
+        }
+    }
 }
 
 /// The limits of one app HTTP request (docs/APPS.md, HTTP). The answer's limit is given to curl,
@@ -385,6 +434,8 @@ pub struct AppRuntime {
     used: u64,
     /// the drawing commands of the last drawing pass
     drawn: usize,
+    /// the hit regions of the last drawing pass, the part of each inside its body (body-local)
+    hits: Vec<(i32, Rect)>,
 }
 
 impl std::fmt::Debug for AppRuntime {
@@ -426,6 +477,11 @@ impl AppRun {
 
     pub fn error(&self) -> &str {
         self.runtime.as_ref().and_then(|r| r.error.as_deref()).unwrap_or(self.error.as_str())
+    }
+
+    /// The hit regions of the last drawing pass, for the runner's probes.
+    pub fn hit_count(&self) -> usize {
+        self.runtime.as_ref().map_or(0, |r| r.hits.len())
     }
 
     fn take_close(&mut self) -> bool {
@@ -712,13 +768,19 @@ pub fn apphost_tick(a: &mut App, now: u32) {
     }
 }
 
-/// The runner's control point for an app: the body's centre (apps receive absolute taps too).
+/// The runner's control points for an app: the body's centre (apps receive absolute taps too), and `app.hit.N`
+/// the centre of the last drawing pass's hit region N (an element of the kit given the id N).
 pub fn apphost_control_point(a: &App, name: &str) -> Option<(f32, f32)> {
-    if name != "body" || !a.app_view.open {
+    if !a.app_view.open {
         return None;
     }
     let b = app_body(a);
-    Some(((b.x + b.w / 2) as f32, (b.y + b.h / 2) as f32))
+    if let Some(id) = name.strip_prefix("app.hit.") {
+        let id: i32 = id.parse().ok()?;
+        let r = a.app_view.runtime.as_ref()?.hit(id)?;
+        return Some(((b.x + r.x + r.w / 2) as f32, (b.y + r.y + r.h / 2) as f32));
+    }
+    (name == "body").then(|| ((b.x + b.w / 2) as f32, (b.y + b.h / 2) as f32))
 }
 
 // ---- the runtime ----
@@ -739,6 +801,11 @@ impl AppRuntime {
         config.consume_fuel(true);
         let engine = Engine::new(&config);
         let module = Module::new(&engine, bytes).map_err(|e| format!("The app's WebAssembly is invalid: {e}"))?;
+        if let Some(call) = kit_missing_import(&module) {
+            // TRANSLATORS: a toast: the app uses a call of Grimoire's that this version does not have (%s is the
+            // call's name, such as grimoire_kit.row).
+            return Err(cformat!(tr("This app needs a newer Grimoire (%s)."), &call));
+        }
         let state_path = format!("{}/{STATE_FILE}", crate::apppkg::app_package_dir(&it.id));
         let storage = m.capabilities.iter().any(|c| c == APP_CAP_STORAGE);
         // (a state file left by a version that declared the capability is not read, and stays as it is)
@@ -749,6 +816,7 @@ impl AppRuntime {
             storage,
             body: (0, 0),
             commands: Vec::new(),
+            hits: Vec::new(),
             text_bytes: 0,
             state_bytes: 0,
             read_bytes: 0,
@@ -776,6 +844,7 @@ impl AppRuntime {
         let _ = store.set_fuel(APP_CALL_FUEL);
         let mut linker = Linker::new(&engine);
         install_imports(&mut linker)?;
+        kit_link(&mut linker)?;
         let instance = linker.instantiate_and_start(&mut store, &module).map_err(|e| format!("The app could not start: {e}"))?;
         if instance.get_memory(&store, "memory").is_none() {
             return Err("The app has no memory export.".into());
@@ -789,6 +858,7 @@ impl AppRuntime {
             error: None,
             used: 0,
             drawn: 0,
+            hits: Vec::new(),
         })
     }
 
@@ -818,6 +888,8 @@ impl AppRuntime {
         self.save();
         let commands = std::mem::take(&mut self.store.data_mut().commands);
         self.drawn = commands.len();
+        let hits = std::mem::take(&mut self.store.data_mut().hits);
+        self.hits = hits.into_iter().filter_map(|(id, r)| in_body(body, r).map(|r| (id, r))).collect();
         self.status = std::mem::take(&mut self.store.data_mut().status);
         self.texts = std::mem::take(&mut self.store.data_mut().texts);
         // Nothing below draws outside the body: the canvas is clipped to it (and to what the caller already
@@ -889,6 +961,7 @@ impl AppRuntime {
                     }
                     DrawCmd::Clip(r) => canvas_set_clip(c, rect_intersect(at(r), in_body)),
                     DrawCmd::ClipClear => canvas_set_clip(c, in_body),
+                    DrawCmd::Kit(k) => kit_render(c, body, in_body, k, texts),
                 }
             }
         });
@@ -953,6 +1026,7 @@ impl AppRuntime {
     fn begin_call(&mut self) {
         let st = self.store.data_mut();
         st.commands.clear();
+        st.hits.clear();
         st.text_bytes = 0;
         st.state_bytes = 0;
         st.read_bytes = 0;
@@ -1036,6 +1110,16 @@ impl AppRuntime {
     pub fn text(&self) -> String {
         self.texts.join("|")
     }
+
+    /// The last drawing pass's hit region `id` (body-local), for the runner's taps by name.
+    pub fn hit(&self, id: i32) -> Option<Rect> {
+        self.hits.iter().find(|(hit, _)| *hit == id).map(|(_, r)| *r)
+    }
+
+    /// The hit regions of the last drawing pass: the parts inside its body, at most APP_CALL_HITS_MAX.
+    pub fn hits(&self) -> &[(i32, Rect)] {
+        &self.hits
+    }
 }
 
 #[cfg(test)]
@@ -1067,48 +1151,6 @@ fn icon_px_max() -> i32 {
 /// thousandth to APP_TEXT_PX_MAX, a value outside taken as the nearer end.
 fn text_px(px_milli: i32) -> f32 {
     px_milli.clamp(1, text_px_max() * 1000) as f32 / 1000.0
-}
-
-/// An end of a line farther from the body than this, each way by itself, is first taken at this distance: the
-/// cut below is then worked out to a small part of a pixel, whatever numbers the module passed.
-const LINE_FAR: f64 = (1u64 << 30) as f64;
-
-/// A line's ends, relative to the body's top left, held within DRAW_REACH of the body: a line inside that reach
-/// is kept as given, and one that reaches farther is cut where it leaves the reach, on the line it is on, so
-/// what shows in the body is the same. None for a line with no part in that reach, or with an end that is not a
-/// number.
-fn line_in_reach(body: Rect, x0: f32, y0: f32, x1: f32, y1: f32) -> Option<(f32, f32, f32, f32)> {
-    if !(x0.is_finite() && y0.is_finite() && x1.is_finite() && y1.is_finite()) {
-        return None;
-    }
-    let reach = crate::wasmhost::DRAW_REACH as f64;
-    let (far_x, far_y) = (body.w.max(0) as f64 + reach, body.h.max(0) as f64 + reach);
-    let within = |x: f32, y: f32| (-reach..=far_x).contains(&(x as f64)) && (-reach..=far_y).contains(&(y as f64));
-    if within(x0, y0) && within(x1, y1) {
-        return Some((x0, y0, x1, y1));
-    }
-    // (the part of the line between its ends that lies in the reach: from t0 to t1 of the way along it)
-    let near = |v: f32| (v as f64).clamp(-LINE_FAR, LINE_FAR);
-    let (ax, ay, bx, by) = (near(x0), near(y0), near(x1), near(y1));
-    let (dx, dy) = (bx - ax, by - ay);
-    let (mut t0, mut t1) = (0.0f64, 1.0f64);
-    for (step, room) in [(-dx, ax + reach), (dx, far_x - ax), (-dy, ay + reach), (dy, far_y - ay)] {
-        if step == 0.0 {
-            if room < 0.0 {
-                return None;
-            }
-        } else if step < 0.0 {
-            t0 = t0.max(room / step);
-        } else {
-            t1 = t1.min(room / step);
-        }
-    }
-    // (an end that is in the reach stays the number it is)
-    let at = |t: f64| if t <= 0.0 { (ax as f32, ay as f32) } else if t >= 1.0 { (bx as f32, by as f32) } else { ((ax + t * dx) as f32, (ay + t * dy) as f32) };
-    (t0 <= t1).then(|| {
-        let ((x0, y0), (x1, y1)) = (at(t0), at(t1));
-        (x0, y0, x1, y1)
-    })
 }
 
 fn button_style(v: i32) -> ButtonStyle {
@@ -1836,7 +1878,7 @@ fn drawing(caller: &mut Caller<'_, HostState>) -> Result<(), wasmi::Error> {
 
 /// A command's rectangle as it is drawn (`on_screen`), relative to the top left of the body the call draws on.
 fn drawn(st: &HostState, x: i32, y: i32, w: i32, h: i32) -> Rect {
-    on_screen(Rect::new(0, 0, st.body.0, st.body.1), x, y, w, h)
+    crate::kithost::drawn(st.body, Rect::new(x, y, w, h))
 }
 
 /// A thickness as it is drawn: within THICK_REACH of nothing.
@@ -1844,20 +1886,14 @@ fn thick(t: i32) -> i32 {
     t.clamp(-THICK_REACH, THICK_REACH)
 }
 
-/// How far from its sides an element with round ends is worked out pixel by pixel: half its smaller side (the
-/// radius of its ends in the theme that rounds them) and the kit's corner.
+/// How far from its sides an element with round ends is worked out pixel by pixel (`kithost::round_end`).
 fn round_end(st: &HostState, x: i32, y: i32, w: i32, h: i32) -> i64 {
-    let r = drawn(st, x, y, w, h);
-    (r.w.min(r.h).max(0) / 2) as i64 + APP_CHARGE_CORNER
+    crate::kithost::round_end(st.body, Rect::new(x, y, w, h))
 }
 
-/// The charge for one frame of a shape (a fill, or an outline): one for every APP_CHARGE_FILL_PX pixels of its
-/// rectangle inside the body, which are filled by rows, and APP_CHARGE_EDGE_PX for each of those within `edge`
-/// pixels of its left and right sides, which are worked out one by one (a corner, a round end, a thick outline).
+/// The charge for one frame of a shape on the body the call draws on (`kithost::shape_charge`).
 fn shape_charge(st: &HostState, x: i32, y: i32, w: i32, h: i32, edge: i64) -> u64 {
-    let Some(r) = in_body(Rect::new(0, 0, st.body.0, st.body.1), Rect::new(x, y, w, h)) else { return 0 };
-    let (w, h) = (r.w as u64, r.h as u64);
-    w * h / APP_CHARGE_FILL_PX + h * w.min(2 * edge.max(0) as u64) * APP_CHARGE_EDGE_PX
+    crate::kithost::shape_charge(st.body, Rect::new(x, y, w, h), edge)
 }
 
 /// Takes the charge for a shape of `frames` frames from the call's budget (`shape_charge`).
@@ -1866,54 +1902,14 @@ fn pay_shape(caller: &mut Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32,
     charge(caller, n)
 }
 
-/// The charge for a line `width` pixels wide: for each row of the body it crosses, APP_CHARGE_LINE_ROW and
-/// APP_CHARGE_EDGE_PX for each pixel of the row the canvas works out (the line's width along the row, and no
-/// more than the row has in the line's box).
+/// The charge for a line on the body the call draws on (`kithost::line_charge`).
 fn line_charge(st: &HostState, x0: f32, y0: f32, x1: f32, y1: f32, width: f32) -> u64 {
-    let body = Rect::new(0, 0, st.body.0, st.body.1);
-    let Some((x0, y0, x1, y1)) = line_in_reach(body, x0, y0, x1, y1) else { return 0 };
-    let b = rect_intersect(rect_from_points(x0, y0, x1, y1, width * 0.5 + 1.0), body);
-    if rect_is_empty(b) {
-        return 0;
-    }
-    let (dx, dy) = ((x1 - x0) as f64, (y1 - y0) as f64);
-    let along = if dy != 0.0 { ((width as f64 + 1.0) * (dx * dx + dy * dy).sqrt() / dy.abs()).ceil() + 4.0 } else { b.w as f64 };
-    b.h as u64 * (APP_CHARGE_LINE_ROW + (b.w as f64).min(along) as u64 * APP_CHARGE_EDGE_PX)
+    crate::kithost::line_charge(st.body, x0, y0, x1, y1, width)
 }
 
-/// The app host's numbers for the charge of a text (`wasmhost::TextCharge`).
-const TEXT_CHARGE: TextCharge = TextCharge { byte_px: APP_CHARGE_TEXT, tall_px: APP_CHARGE_TALL_PX, square: APP_CHARGE_SQUARE, px_max: APP_TEXT_PX_MAX as u64 };
-
-/// The charge for a text of `bytes` bytes drawn `px` pixels high (a part of a pixel counts as one) in `face`: by
-/// its bytes and its height, and by the cube of the height more in a face that may be printed over
-/// (APP_CHARGE_BOLD).
-fn drawn_text_charge(bytes: usize, px: f32, face: FontFace) -> u64 {
-    let h = (px.ceil() as i64).clamp(1, APP_TEXT_PX_MAX as i64);
-    let n = TEXT_CHARGE.of(bytes, h, 0);
-    match face {
-        FontFace::Bold | FontFace::Title | FontFace::Caps => n + bytes as u64 * (h * h * h) as u64 / APP_CHARGE_BOLD,
-        _ => n,
-    }
-}
-
-/// The charge for cutting a text of `len` bytes short to fit its room: the square of its bytes, counted to
-/// APP_CHARGE_SQUARE_BYTES (a text is cut to its first 251 bytes before the steps that measure it: font.rs, `fit`).
+/// The charge for cutting a text of `len` bytes short to fit its room (`kithost::cut_text_charge`).
 fn cut_text_charge(len: i32) -> u64 {
-    let m = (len.max(0) as u64).min(APP_CHARGE_SQUARE_BYTES);
-    APP_CHARGE_SQUARE * m * m
-}
-
-/// The charge for a label, a caption, a value, a text or a hint of one of the kit's elements: a text
-/// APP_CHARGE_LABEL_PX high that is fitted to its room, on two lines where the element takes two (all its bytes
-/// are then in the square) and on one elsewhere.
-fn label_charge(bytes: usize, two_lines: bool) -> u64 {
-    TEXT_CHARGE.of(bytes, APP_CHARGE_LABEL_PX, if two_lines { u64::MAX } else { APP_CHARGE_SQUARE_BYTES })
-}
-
-/// The charge for an icon `side` pixels each way (1 to APP_ICON_PX_MAX): by the square of its side.
-fn icon_charge(side: i64) -> u64 {
-    let s = side.clamp(1, APP_ICON_PX_MAX as i64) as u64;
-    s * s * APP_CHARGE_ICON_PX
+    crate::kithost::cut_text_charge(len.max(0) as usize)
 }
 
 /// Takes the charge for the icon of a command from the call's budget: an icon as large as the smaller side of
@@ -1929,11 +1925,8 @@ fn copy_charge(bytes: usize) -> u64 {
     bytes as u64 / APP_CHARGE_COPY_BYTES
 }
 
-/// A text of a call, read once its length is within the limit of one text and of the call's texts together and
-/// the call's budget has paid `cost` of its length for what the host does with it.
-fn call_text(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32, cost: impl FnOnce(usize) -> u64) -> Result<String, wasmi::Error> {
-    let n = len.max(0) as usize;
-    let st = caller.data_mut();
+/// Counts a text of `n` bytes about to be read in the call, within the limits of one text and of the call's texts.
+fn call_text_room(st: &mut HostState, n: usize) -> Result<(), wasmi::Error> {
     if n > APP_TEXT_MAX {
         return Err(past(st, "the bytes of one text", APP_TEXT_MAX));
     }
@@ -1941,6 +1934,14 @@ fn call_text(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32, cost: impl 
         return Err(past(st, "the bytes of the texts of a call", APP_CALL_TEXT_MAX));
     }
     st.text_bytes += n;
+    Ok(())
+}
+
+/// A text of a call, read once its length is within the limit of one text and of the call's texts together and
+/// the call's budget has paid `cost` of its length for what the host does with it.
+fn call_text(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32, cost: impl FnOnce(usize) -> u64) -> Result<String, wasmi::Error> {
+    let n = len.max(0) as usize;
+    call_text_room(caller.data_mut(), n)?;
     charge(caller, cost(n))?;
     Ok(String::from_utf8_lossy(&read_mem(caller, ptr, len)).into_owned())
 }
@@ -2291,6 +2292,7 @@ mod tests {
             storage: true,
             body: (0, 0),
             commands: Vec::new(),
+            hits: Vec::new(),
             text_bytes: 0,
             state_bytes: 0,
             read_bytes: 0,
@@ -3150,7 +3152,7 @@ mod tests {
         let module = Module::new(&engine, &b"\0asm\x01\0\0\0"[..]).unwrap();
         let mut store = Store::new(&engine, st);
         let instance = Linker::new(&engine).instantiate_and_start(&mut store, &module).unwrap();
-        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None, used: 0, drawn: 0 }
+        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None, used: 0, drawn: 0, hits: Vec::new() }
     }
 
     /// Ticks the host until its request has ended, with no poll of the app's.
@@ -3527,7 +3529,7 @@ mod tests {
         let mut linker = Linker::new(&engine);
         install_imports(&mut linker).unwrap();
         let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
-        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None, used: 0, drawn: 0 }
+        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None, used: 0, drawn: 0, hits: Vec::new() }
     }
 
     /// The module's memory, to place a request's texts in and to read what a call wrote.

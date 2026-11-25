@@ -41,7 +41,12 @@
 //! which asks for a drawing pass), and `storage:widget-local` the saved state (`state_get`,
 //! `state_set`, the state file). Without the capability the call is still there to link against, and
 //! does nothing. `status`, `setting` and `now` need none.
+//!
+//! A module may also import the package kit, `grimoire_kit` (kithost.rs, docs/KIT.md), which the app host
+//! links too: its drawing calls and hit regions are recorded with this host's own commands, in the order the
+//! module called them, held to this host's limits, and need `editor:overlay` as its own do.
 
+use crate::kithost::{kit_link, kit_missing_import, kit_render, KitCmd, KitHost};
 use crate::prelude::*;
 use crate::wasmhost::{charge, in_body as hit_in_body, on_screen, TextCharge};
 use crate::widgetpkg::{WIDGET_CAP_OVERLAY, WIDGET_CAP_STORAGE};
@@ -74,11 +79,11 @@ pub const WIDGET_STATE_MAX: usize = 64 * 1024;
 /// The bytes `state_get` and `state_set` may move in one call, all their uses together: the whole
 /// state read and written several times over.
 pub const WIDGET_CALL_STATE_MAX: usize = 16 * WIDGET_STATE_MAX;
-/// The drawing commands (`rect`, `text`, `button`) of one pass.
+/// The drawing commands (`rect`, `text`, `button`, and the kit's) of one pass.
 pub const WIDGET_PASS_COMMANDS_MAX: usize = 512;
-/// The hit regions (`button`, `hit`) of one pass.
+/// The hit regions (`button`, `hit`, and the kit's) of one pass.
 pub const WIDGET_PASS_HITS_MAX: usize = 512;
-/// The bytes of one text: a `text`'s, or a `button`'s label.
+/// The bytes of one text: a `text`'s, a `button`'s label, and each text the kit reads.
 pub const WIDGET_TEXT_MAX: usize = 1024;
 /// The bytes of all the texts of one pass together.
 pub const WIDGET_PASS_TEXT_MAX: usize = 16 * 1024;
@@ -132,6 +137,8 @@ enum DrawCmd {
     Rect { x: i32, y: i32, w: i32, h: i32, style: i32 },
     Text { x: i32, y: i32, w: i32, h: i32, text: String, px: i32, center: bool },
     Button { x: i32, y: i32, w: i32, h: i32, text: String, style: i32 },
+    /// one of the package kit's (kithost.rs)
+    Kit(KitCmd),
 }
 
 struct HostState {
@@ -160,6 +167,36 @@ struct HostState {
     limits: StoreLimits,
     /// when the module asked to be drawn again, by the app's clock (`now_ms`); None when it did not
     redraw_at: Option<u32>,
+}
+
+/// What the package kit's calls (kithost.rs) are given by this host: its body, its capability to draw, its
+/// limits and its records.
+impl KitHost for HostState {
+    fn kit_body(&self) -> (i32, i32) {
+        self.body
+    }
+    fn kit_may_draw(&self) -> bool {
+        self.overlay
+    }
+    fn kit_room(&self) -> Result<(), wasmi::Error> {
+        room_for_command(self)
+    }
+    fn kit_hit_room(&self) -> Result<(), wasmi::Error> {
+        room_for_hit(self)
+    }
+    fn kit_text(&mut self, n: usize) -> Result<(), wasmi::Error> {
+        pass_text_room(self, n)
+    }
+    fn kit_push(&mut self, cmd: Option<KitCmd>, hit: Option<(i32, Rect)>) {
+        self.commands.extend(cmd.map(DrawCmd::Kit));
+        self.hits.extend(hit);
+    }
+    fn kit_read(&mut self, n: usize) {
+        self.read_bytes += n;
+    }
+    fn kit_status_bar_h(&self) -> i32 {
+        crate::globalui::gui_status_h()
+    }
 }
 
 /// One open package's WebAssembly instance, its last draw and its saved state.
@@ -194,6 +231,11 @@ impl WidgetRuntime {
         config.consume_fuel(true);
         let engine = Engine::new(&config);
         let module = Module::new(&engine, &bytes[..]).map_err(|e| format!("The widget's WebAssembly is invalid: {e}"))?;
+        if let Some(call) = kit_missing_import(&module) {
+            // TRANSLATORS: in a widget's frame, in place of its body: the widget uses a call of Grimoire's that this
+            // version does not have (%s is the call's name, such as grimoire_kit.row).
+            return Err(cformat!(tr("This widget needs a newer Grimoire (%s)."), &call));
+        }
         let state_path = format!("{}/{STATE_FILE}", crate::widgetpkg::widget_package_dir(id));
         let overlay = m.capabilities.iter().any(|c| c == WIDGET_CAP_OVERLAY);
         let storage = m.capabilities.iter().any(|c| c == WIDGET_CAP_STORAGE);
@@ -330,6 +372,7 @@ impl WidgetRuntime {
             charge(&mut caller, WIDGET_CHARGE_CALL)?;
             Ok(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64))
         }).map_err(|e| e.to_string())?;
+        kit_link(&mut linker)?;
         let instance = linker.instantiate_and_start(&mut store, &module).map_err(|e| format!("The widget could not start: {e}"))?;
         if instance.get_memory(&store, "memory").is_none() {
             return Err("The widget has no memory export.".into());
@@ -365,7 +408,8 @@ impl WidgetRuntime {
         // Nothing below draws outside the body: the canvas is clipped to it (and to what the caller
         // already clipped to) until the commands are drawn.
         let clip = c.clip;
-        canvas_set_clip(c, rect_intersect(clip, body));
+        let in_body = rect_intersect(clip, body);
+        canvas_set_clip(c, in_body);
         canvas_fill(c, body, 255);
         for cmd in commands {
             match cmd {
@@ -387,6 +431,7 @@ impl WidgetRuntime {
                     ui_button(c, r, IconKind::None, &text, style);
                     self.texts.push(text);
                 }
+                DrawCmd::Kit(k) => kit_render(c, body, in_body, k, &mut self.texts),
             }
         }
         c.clip = clip;
@@ -550,11 +595,8 @@ fn room_for_hit(st: &HostState) -> Result<(), wasmi::Error> {
     Ok(())
 }
 
-/// A command's text, read once its length is within the limits of one text and of the pass and the call's
-/// budget has paid for drawing it `px` high (`text_charge`).
-fn pass_text(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32, px: i32, square_max: u64) -> Result<String, wasmi::Error> {
-    let n = len.max(0) as usize;
-    let st = caller.data_mut();
+/// Counts a text of `n` bytes about to be read in the pass, within the limits of one text and of the pass's texts.
+fn pass_text_room(st: &mut HostState, n: usize) -> Result<(), wasmi::Error> {
     if n > WIDGET_TEXT_MAX {
         return Err(past(st, "the bytes of one text", WIDGET_TEXT_MAX));
     }
@@ -562,6 +604,14 @@ fn pass_text(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32, px: i32, sq
         return Err(past(st, "the bytes of the texts of a pass", WIDGET_PASS_TEXT_MAX));
     }
     st.text_bytes += n;
+    Ok(())
+}
+
+/// A command's text, read once its length is within the limits of one text and of the pass and the call's
+/// budget has paid for drawing it `px` high (`text_charge`).
+fn pass_text(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32, px: i32, square_max: u64) -> Result<String, wasmi::Error> {
+    let n = len.max(0) as usize;
+    pass_text_room(caller.data_mut(), n)?;
     charge(caller, text_charge(n, px, square_max))?;
     Ok(String::from_utf8_lossy(&read_mem(caller, ptr, len)).into_owned())
 }

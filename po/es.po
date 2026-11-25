@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Grimoire 1.0.0-beta\n"
 "Report-Msgid-Bugs-To: https://github.com/ganten1998/grimoire-scribe/issues\n"
-"POT-Creation-Date: 2026-11-25 10:19-0600\n"
+"POT-Creation-Date: 2026-11-25 16:25-0600\n"
 "PO-Revision-Date: 2026-10-20 08:02-0500\n"
 "Last-Translator: draft\n"
 "Language-Team: Spanish\n"
@@ -980,6 +980,13 @@ msgstr "Estable"
 #, c-format
 msgid "Update channel: %s"
 msgstr "Canal de actualizaciones: %s"
+
+#. TRANSLATORS: a toast: the app uses a call of Grimoire's that this version does not have (%s is the
+#. call's name, such as grimoire_kit.row).
+#: rust/src/apphost.rs
+#, c-format
+msgid "This app needs a newer Grimoire (%s)."
+msgstr "Esta app necesita una versión más reciente de Grimoire (%s)."
 
 #. TRANSLATORS: (also) a toast (one line of about 1000 px at 44 px in bold): the picture picked for Use as
 #. template, Use as photo or a sheet's From a file... is bigger than Grimoire takes as a template or a photo,
@@ -6390,6 +6397,13 @@ msgstr "Se restablecieron los valores predeterminados"
 #, fuzzy
 msgid "Remove"
 msgstr "Quitar enlace"
+
+#. TRANSLATORS: in a widget's frame, in place of its body: the widget uses a call of Grimoire's that this
+#. version does not have (%s is the call's name, such as grimoire_kit.row).
+#: rust/src/widgetwasm.rs
+#, c-format
+msgid "This widget needs a newer Grimoire (%s)."
+msgstr "Este widget necesita una versión más reciente de Grimoire (%s)."
 
 #. TRANSLATORS: the studio's presets, each a whole look, on buttons.
 #: web/studio.js

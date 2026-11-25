@@ -11127,6 +11127,11 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
         csnprintf!(out, cap, "%s", a.app_view.error());
         return 0;
     }
+    // (the hit regions of the open app's last drawing pass: `tap library app.hit.N` taps region N)
+    if key == "app.hits" {
+        csnprintf!(out, cap, "%d", a.app_view.hit_count() as i32);
+        return 0;
+    }
     if key == "app.status-bar" {
         csnprintf!(out, cap, "%d", a.app_view.status_bar as i32);
         return 0;

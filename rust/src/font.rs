@@ -1421,6 +1421,15 @@ pub fn font_set_overflow_hook(hook: Option<FontOverflowHook>) {
     with(|st| st.overflow = hook);
 }
 
+/// f run with no overflow hook, and the hook as it was again after it: for text that is not Grimoire's own (a
+/// package's, kithost.rs), which no translation's fit check has anything to say about.
+pub fn font_without_overflow_hook<R>(f: impl FnOnce() -> R) -> R {
+    let was = with(|st| st.overflow.take());
+    let r = f();
+    with(|st| st.overflow = was);
+    r
+}
+
 /// Tells the overflow hook, if there is one, outside the state's borrow: the hook may measure.
 fn overflow(utf8: &str, need: i32, have: i32) {
     if let Some(hook) = with(|st| st.overflow) {
