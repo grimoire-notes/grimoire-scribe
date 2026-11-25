@@ -1,6 +1,6 @@
 # settings: status_mode=1
 # rust-only
-# env: GRIMOIRE_SIM_CLOCK=script
+# env: GRIMOIRE_SIM_CLOCK=script TZ=UTC
 # copy: tests/fixtures/apphost .
 # The app host's rules for a module (issue #247), with the packages of tests/fixtures/apphost (written by
 # rust/tests/appfix: `make app-fixtures`). App time is the script's (GRIMOIRE_SIM_CLOCK=script): each `wait`
@@ -52,7 +52,7 @@ expect toast is
 # then again through a clip as wide, and again with the clip taken away. Its body, the screen under the bar
 # (78 px), is black to its edges, and the bar above it is the launcher's own: the dark pixels of its clock and
 # date, as many as before the app was opened.
-expect display.dark.0.0.1860.78 is 1540
+expect display.dark.0.0.1860.78 is 1604
 tap library apps
 wait 300
 tap library app.test.app.wide
@@ -61,7 +61,7 @@ expect library.app.open is 1
 expect library.app.status-bar is 1
 expect library.app.status is wide
 expect display.dark.0.78.1860.2402 is 4467720
-expect display.dark.0.0.1860.78 is 1540
+expect display.dark.0.0.1860.78 is 1604
 shot 03-wide
 swipe 2 930 2200 0 -1000
 wait 300
