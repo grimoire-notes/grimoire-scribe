@@ -172,10 +172,10 @@ pub struct App {
     /// the main loop's last batch ended because no event was left queued (not at its 64 events or
     /// 8 ms): the editor's prefetch and the Links bar's hold timer wait for this
     pub input_drained: bool,
-    /// What a hardware key does to the open on-screen keyboard (Esc: its Cancel; the arrows, Home, End and Ctrl or
-    /// Cmd with A, C, X and V: keyboard_key_input), taken by app_keyboard_pointer at the release app_type_text
-    /// sends (set over its touch-down too, which the keyboard then takes as a contact on no key; None the rest of
-    /// the time).
+    /// What a hardware key does to the open on-screen keyboard (a character, Backspace, Enter its Done, Esc its
+    /// Cancel, the arrows, Home, End and Ctrl or Cmd with A, C, X and V: keyboard_key_input), taken by
+    /// app_keyboard_pointer at the release app_type_text sends (set over its touch-down too, which the keyboard
+    /// then takes as a contact on no key; None the rest of the time).
     pub kb_inject: Option<KbInput>,
     /// The question on the screen that asks before something is deleted (app_ask), and how far its frame is:
     /// drawn, or on the panel since when. A contact answers it only once it has been shown (app_asked_seen).
@@ -985,9 +985,10 @@ pub fn app_type_text(a: &mut App, input: KbInput) -> bool {
     true
 }
 
-/// A hardware keyboard's key on the open on-screen keyboard, when it is one that edits text (keyboard_key_input):
-/// applied through app_type_text, so it draws and refreshes as the keyboard's own keys do. False when it is not
-/// such a key, or no keyboard took it.
+/// A hardware keyboard's key on the open on-screen keyboard, when it is one that types or edits text
+/// (keyboard_key_input: a character, Backspace, Enter, Esc, an arrow, Home, End, an edit key): applied through
+/// app_type_text, so it draws and refreshes as the keyboard's own keys do. False when it is not such a key, or no
+/// keyboard is open or took it.
 fn app_text_key(a: &mut App, ev: &InEvent) -> bool {
     match keyboard_key_input(ev.value, ev.key_mods) {
         Some(input) => app_keyboard_area(a).is_some() && app_type_text(a, input),
@@ -1074,15 +1075,16 @@ fn app_event_screens(a: &mut App, ev: &InEvent) {
             note_input(a);
             return;
         }
-        // A Library dialog with keys of its own (Exit Grimoire?, New notebook's Enter) takes them first.
-        if !a.asleep && !ev.gamepad && crate::library::library_modal_key(a, ev.value) {
+        // A keyboard that types a name, a page, Find, a password or a search takes the keys that type and edit text
+        // (the characters, Space, Backspace, Enter its Done, Esc its Cancel, the arrows, Home and End, and Ctrl or
+        // Cmd with A, C, X and V) before any shortcut or the sheet it is over: none of them reaches what is under it.
+        // (On the Kindle a keyboard is read only while Settings > Shortcuts is on.)
+        if !a.asleep && !ev.gamepad && app_text_key(a, ev) {
             note_input(a);
             return;
         }
-        // A keyboard that types a name, a page or Find takes the keys that edit text (the arrows, Home and End, and
-        // Ctrl or Cmd with A, C, X and V) before any shortcut: none of them reaches what is under it. (On the Kindle
-        // a keyboard is read only while Settings > Shortcuts is on.)
-        if !a.asleep && !ev.gamepad && app_text_key(a, ev) {
+        // A Library dialog with keys of its own (Exit Grimoire?, New notebook's Enter) takes them before any shortcut.
+        if !a.asleep && !ev.gamepad && crate::library::library_modal_key(a, ev.value) {
             note_input(a);
             return;
         }
