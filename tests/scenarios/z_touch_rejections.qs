@@ -76,12 +76,18 @@ wait 100
 tap 1564 2254
 wait 300
 expect screen is editor
-expect editor.panel_at.1768.1782 is display
+expect editor.panel_at.1768.1782 is settings
 pen hover 1530 1782
 finger 1 down 1768 1782
 frame 40
 finger 1 up 1768 1782
 frame
+wait 300
+expect editor.modal is settings
+tap library done
+wait 300
+expect editor.modal is none
+action display
 wait 300
 expect editor.modal is display
 # The Display sheet: a brightness drag the pen's arrival cancels keeps the value it reached (a

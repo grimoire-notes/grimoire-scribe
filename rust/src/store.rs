@@ -208,6 +208,11 @@ pub struct Settings {
     pub files_sort: i32,
     pub files_show: i32,
     pub files_view: i32,
+    /// The Library's home view (2.3, issue #209): its filter chip (`home_filter`: 0 All, 1 Notebooks, 2 Folders) and
+    /// its sort (`home_sort`: 0 Name A-Z, 1 Name Z-A, 2 Newest first, 3 Oldest first). Both are absent from
+    /// settings.ini at their defaults (All, Name A-Z).
+    pub home_filter: i32,
+    pub home_sort: i32,
     /// The home folder (2.2, issue #160): where the main menu opens at each start, as settings.ini `home=` keeps
     /// it (home.rs: "" for Notebooks, the Library's top, which is no line in the file; `notebooks/<a Library
     /// folder>`; `files/<a folder of the Kindle's storage>`). Always a value `Home::parse` takes: the file's line
@@ -5376,6 +5381,9 @@ fn settings_cb(s: &mut Settings, k: &[u8], v: &[u8]) -> bool {
         b"files_sort" => s.files_sort = keep_named("files_sort", v, &FILES_SORT_NAMES),
         b"files_show" => s.files_show = keep_named("files_show", v, &FILES_SHOW_NAMES),
         b"files_view" => s.files_view = keep_named("files_view", v, &FILES_VIEW_NAMES),
+        // 2.3: the Library's home view (issue #209), its filter chip and sort
+        b"home_filter" => s.home_filter = keep_int("home_filter", v, 0, 2),
+        b"home_sort" => s.home_sort = keep_int("home_sort", v, 0, 3),
         // 2.2: darker lines in imported PDFs (issue #173), read strictly: only the three known values
         b"pdf_gamma" => s.pdf_gamma = keep_named("pdf_gamma", v, &crate::pdfwork::Gamma::NAMES),
         b"recent_apps" => {
@@ -5788,6 +5796,10 @@ pub fn settings_save(s: &Settings) -> i32 {
     put_unless_default(&mut b, "files_sort", named(&FILES_SORT_NAMES, s.files_sort), FILES_SORT_NAMES[0]);
     put_unless_default(&mut b, "files_show", named(&FILES_SHOW_NAMES, s.files_show), FILES_SHOW_NAMES[0]);
     put_unless_default(&mut b, "files_view", named(&FILES_VIEW_NAMES, s.files_view), FILES_VIEW_NAMES[0]);
+    // 2.3: the Library's home view (issue #209), a line each only away from its default (or a value this build
+    // does not have, written back as it was).
+    put_unless_default(&mut b, "home_filter", &cformat!("%d", s.home_filter), "0");
+    put_unless_default(&mut b, "home_sort", &cformat!("%d", s.home_sort), "0");
     // 2.2: the home folder (issue #160), a line only while home is not Notebooks. Written only when it still reads
     // as a home (whatever set the field), so the file never gains a value this build would refuse.
     if crate::home::Home::parse(s.home.as_bytes()).is_some() {
@@ -6343,6 +6355,30 @@ mod tests {
         assert_eq!(store_init(r.to_str().unwrap()), 0);
         store_set_device(300.0, 600, 800);
         r
+    }
+
+    // The Library's home filter and sort (2.3) go to settings.ini, and come back on the next load; at their
+    // defaults (All, Name A-Z) neither line is written.
+    #[test]
+    fn the_home_view_survives_a_save_and_load() {
+        let r = plain_root("home-view");
+        let mut s = Settings::default();
+        settings_default(&mut s);
+        s.home_filter = 2;
+        s.home_sort = 3;
+        assert_eq!(settings_save(&s), 0);
+        let txt = std::fs::read_to_string(r.join("settings.ini")).unwrap();
+        assert!(txt.contains("home_filter=2\nhome_sort=3\n"), "both lines, in order: {txt}");
+        let mut t = Settings::default();
+        assert_eq!(settings_load(&mut t), 0);
+        assert_eq!((t.home_filter, t.home_sort), (2, 3));
+        // back at the defaults: both lines go
+        t.home_filter = 0;
+        t.home_sort = 0;
+        assert_eq!(settings_save(&t), 0);
+        let txt = std::fs::read_to_string(r.join("settings.ini")).unwrap();
+        assert!(!txt.contains("home_filter=") && !txt.contains("home_sort="), "nothing at the defaults: {txt}");
+        let _ = std::fs::remove_dir_all(&r);
     }
 
     // A settings.ini that was not read is moved aside before the save, and is back at its name when that save

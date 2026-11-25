@@ -1532,11 +1532,10 @@ fn draw_panel(a: &mut App) {
     y += btn_h() + gap();
     canvas_hline(c, x, x + w, y + div_h() / 2 - ui_px(6.0), ui_px(3.0), 160);
     y += div_h();
-    // Widgets, Paper, Display, Settings and Library (icons only, like the rest of the panel).
-    let rest: [(IconKind, i32); 5] = [
+    // Widgets, Paper, Settings and Library (icons only, like the rest of the panel).
+    let rest: [(IconKind, i32); 4] = [
         (IconKind::Grid, P_WIDGETS),
         (IconKind::Paper, P_PAPER),
-        (IconKind::Brightness, P_DISPLAY),
         (IconKind::Gear, P_SETTINGS),
         (IconKind::Library, P_LIBRARY),
     ];
@@ -15648,12 +15647,12 @@ mod tests {
             assert!(p.x >= 0 && p.x + p.w <= w && p.y >= 0 && p.y + p.h <= h && p.h + 2 * m <= h);
             assert_eq!(p.h, panel_height(g_fit(), pins as i32));
             // The buttons from the top: grip, collapse, the tool button, the pins, the eraser, (undo,
-            // redo, clear and previous greyed out), the page chip, next, links, widgets, paper, display, pen feel,
+            // redo, clear and previous greyed out), the page chip, next, links, widgets, paper, settings and
             // the library, whose gap under it ends the panel but for its last 6 px.
             let ids: Vec<i32> = s.hits.h.iter().map(|h| h.id).collect();
             let mut want = vec![P_GRIP, P_COLLAPSE, P_TOOLPICK];
             want.extend(std::iter::repeat_n(P_TOOL, pins));
-            want.extend([P_TOOL, P_SHAPES, P_PENSET, P_PAGES, P_NEXT, P_LINKS, P_WIDGETS, P_PAPER, P_DISPLAY, P_SETTINGS, P_LIBRARY]);
+            want.extend([P_TOOL, P_SHAPES, P_PENSET, P_PAGES, P_NEXT, P_LINKS, P_WIDGETS, P_PAPER, P_SETTINGS, P_LIBRARY]);
             assert_eq!(ids, want);
             let last = s.hits.h.last().unwrap().r;
             assert_eq!(last.y + last.h + gap(), p.y + p.h - ui_px(6.0));

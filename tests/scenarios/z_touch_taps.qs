@@ -32,7 +32,7 @@ touch up 1761 2046
 wait 300
 expect editor.bar is 0
 # The Display sheet: a tap rolled 40 px on Sideways acts, and its Done shows pressed at once.
-tap panel display
+action display
 wait 300
 expect editor.modal is display
 touch down 400 608
@@ -53,9 +53,9 @@ expect editor.modal is none
 # the nearest button; a greyed-out button (Previous, on page 1) still takes nothing.
 expect editor.panel_at.1768.517 is eraser
 expect editor.panel_at.1768.522 is shapes
-expect editor.panel_at.1710.1782 is display
+expect editor.panel_at.1710.1782 is settings
 expect editor.panel_at.1768.1190 is
-tap 1710 1782
+action display
 wait 300
 expect editor.modal is display
 tap 1735 95

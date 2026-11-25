@@ -884,7 +884,7 @@ expect editor.modal is paper
 tap 1562 2125
 wait 100
 expect editor.modal is none
-pentap panel display
+action display
 wait 100
 expect editor.modal is display
 shot 26-display-editor
@@ -1611,7 +1611,7 @@ expect editor.page is 3
 expect editor.links is 1 1
 # the last page: with the Display sheet's "Swiping past the last page adds a page" row off, two fingers left turn
 # nowhere (no page is added) and say so
-pentap panel display
+action display
 wait 300
 expect editor.modal is display
 tap panel display.newpage
@@ -1784,7 +1784,7 @@ swipe 2 930 1300 0 -400
 wait 300
 expect editor.bar is 0
 # the Display sheet's sideways row, sideways: off (the width fills again), then on
-pentap panel display
+action display
 wait 150
 expect editor.modal is display
 shot 69-display-fit-landscape
@@ -1802,7 +1802,7 @@ expect editor.modal is none
 # upright, the same row says where it applies
 rotate 0
 wait 300
-pentap panel display
+action display
 wait 150
 expect editor.modal is display
 shot 69-display-fit

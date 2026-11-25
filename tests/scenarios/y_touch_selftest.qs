@@ -23,9 +23,9 @@ expect editor.panel_at.1768.1458 is links
 expect editor.panel_at.1768.1566 is widgets
 expect editor.panel_at.1768.1674 is paper
 expect editor.panel_at.1768.682 is pen-feel
-expect editor.panel_at.1768.1782 is display
-expect editor.panel_at.1768.1890 is settings
-expect editor.panel_at.1768.1998 is library
+expect editor.panel_at.1768.1782 is settings
+expect editor.panel_at.1768.1890 is library
+expect editor.panel_at.1768.1998 is
 expect editor.panel_at.1768.810 is
 expect editor.panel_at.300.300 is
 # a stroke: Undo is there, with no wait for the settle

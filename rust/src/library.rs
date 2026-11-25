@@ -8381,16 +8381,22 @@ fn act(a: &mut App, h: &Hit) {
             open_modal(a, Modal::Settings);
         }
         H_FILTER => {
-            lib(a).filter = clampi(h.arg, 0, 2);
+            let filter = clampi(h.arg, 0, 2);
+            lib(a).filter = filter;
             lib(a).page = 0;
+            a.settings.home_filter = filter;
+            settings_save(&a.settings);
             refresh_view(a);
             redraw(a, RefreshMode::Ui);
         }
         H_SORT => open_modal(a, Modal::Sort),
         H_SORT_PICK => {
-            lib(a).sort = clampi(h.arg, 0, 3);
+            let sort = clampi(h.arg, 0, 3);
+            lib(a).sort = sort;
             lib(a).page = 0;
             lib(a).modal = Modal::None;
+            a.settings.home_sort = sort;
+            settings_save(&a.settings);
             refresh_view(a);
             redraw(a, RefreshMode::Ui);
         }
@@ -10230,8 +10236,12 @@ pub fn library_map_point(a: &App, spec: &str) -> Option<(f32, f32)> {
 // ---- the screen interface (app.h, DECLARE_SCREEN) ----
 
 pub fn library_init(a: &mut App) {
+    // The home view the last run left (settings.ini home_filter, home_sort, 2.3)
+    let (filter, sort) = (clampi(a.settings.home_filter, 0, 2), clampi(a.settings.home_sort, 0, 3));
     a.lib = Some(Box::default());
     let s = lib(a);
+    s.filter = filter;
+    s.sort = sort;
     s.target = -1;
     s.learn_row = -1;
     s.buttons_group = -1;

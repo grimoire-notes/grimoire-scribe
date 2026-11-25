@@ -22,7 +22,7 @@ expect editor.strokes is 0
 pentap panel undo
 wait 300
 expect editor.strokes is 2
-pentap panel display
+action display
 wait 300
 shot 03-display-sheet
 expect editor.modal is display
