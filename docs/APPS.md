@@ -439,8 +439,12 @@ than its room, and so pays for being cut short, is measured in the font it is dr
 
 The charges were set by measuring, in a release build on a desktop machine, what each import's work
 costs beside a module's own instructions. There, the longest drawing a budget pays for takes about
-two and a half times as long as the same budget spent on instructions alone, and a loop of any one
-import is over in a third of that time. They have not been measured on a Kindle.
+four times as long as the same budget spent on instructions alone: the labels of twenty rows, each
+broken into a line for every letter, in the Gothic theme. How long a label takes also follows the
+font the reader has chosen in Classic, for the same charge: a button's label of 1,023 bytes takes
+about four times as long in Atkinson Hyperlegible Next or Literata as in Terminess. A loop of any
+one import is over in a third of the time the budget's instructions alone take. They have not been
+measured on a Kindle.
 
 Some sums, for a sense of scale:
 

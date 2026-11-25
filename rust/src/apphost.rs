@@ -114,10 +114,12 @@ const THICK_REACH: i32 = 1 << 17;
 // so each import takes a charge for it from the same budget (`wasmhost::charge`, which the widget host takes
 // its own with): a fixed one for every call, and one by size where the work grows with what the import is
 // given. The numbers are in instructions: about what the work costs beside a module's own, as measured in a
-// release build on a desktop machine, where the longest drawing a budget pays for takes about two and a half
-// times as long as the same budget spent on instructions alone (not measured on a Kindle). When the budget
-// cannot pay, the call ends exactly as a call that used up its instructions ends. The charges are the same in
-// both themes: where the themes draw an element differently, the charge is for the one that takes more work.
+// release build on a desktop machine, where the longest drawing a budget pays for takes about four times as long
+// as the same budget spent on instructions alone (labels broken into a line for every letter, in the Gothic
+// theme), and a label's time follows the font in use, for the same charge (not measured on a Kindle). When the
+// budget cannot pay, the call ends exactly as a call that used up its instructions ends. The charges are the
+// same in both themes: where the themes draw an element differently, the charge is for the one that takes more
+// work.
 
 /// Every call of an import, whatever it is given and whether or not the app has the capability for it.
 pub const APP_CHARGE_CALL: u64 = 500;
