@@ -1000,6 +1000,32 @@ fn an_icon_name_longer_than_any_icons_names_no_icon() {
     assert!(drawn("test.names.padded", 64).px == gear.px, "a name of 64 bytes is read");
     assert!(drawn("test.names.longer", 65).px == unknown.px, "a name of 65 bytes names no icon");
     assert!(drawn("test.names.most", MAX).px == unknown.px);
+    // So it is for the icon of each of the kit's elements that has one: a name of 65 bytes is drawn as a name no
+    // icon has, the grid, and not as the element with no icon, which a button, a row and a text field are with a
+    // name of no bytes. (An app tile with no name shows the grid too.)
+    let elements: [(&str, fn(i32) -> Vec<i32>, bool); 4] = [
+        ("button", |len| vec![40, 40, 300, 300, 0, 0, 0, len, 0], true),
+        ("row", |len| vec![40, 40, 1200, 160, 0, len, 0, 0, 0, -1], true),
+        ("text_field", |len| vec![40, 40, 900, 120, 0, len, 0, 0, 0, 0], true),
+        ("app_tile", |len| vec![40, 40, 220, 260, 0, len, 0, 0, 0], false),
+    ];
+    for (import, args, none_differs) in elements {
+        let element = |what: &str, name: &[u8], len: i32| {
+            let mut rt = loaded(&format!("test.names.{import}.{what}").replace('_', "-"), &BOTH, &Wasm::with(call(import, &args(len)), name));
+            let mut c = patterned(SCREEN.0, SCREEN.1);
+            rt.draw(&mut c, WHOLE, 0);
+            assert_eq!(rt.error(), None, "{import} {what}");
+            c
+        };
+        let (unknown, gear) = (element("unknown", b"no-such", 7), element("gear", &padded, 4));
+        assert!(gear.px != unknown.px, "{import}");
+        assert!(element("padded", &padded, 64).px == gear.px, "{import}: a name of 64 bytes is read");
+        assert!(element("longer", &padded, 65).px == unknown.px, "{import}: a name of 65 bytes names no icon, and the grid is drawn");
+        assert!(element("most", &padded, MAX).px == unknown.px, "{import}");
+        if none_differs {
+            assert!(element("none", b"", 0).px != unknown.px, "{import}: with no name it has no icon");
+        }
+    }
     let _ = std::fs::remove_dir_all(&root);
 }
 
