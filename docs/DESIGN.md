@@ -3086,7 +3086,7 @@ may cost is held to a few seconds a file, behind every other job.
   of a file is decoded, sniffed or measured in the app or in the writer; with no worker to be had, nothing is
   previewed.
 - **The job, `BgKind::FilePreviews = 9`**: one file a job, its path the file as listed
-  (`<dev>.<ino>.<size>.<mtime>:<StoragePath>`, as the copy job's), never two of the same file, dropped at exit
+  (`<dev>.<ino>.<size>.<mtime>.<mtime_nsec>:<StoragePath>`, as the copy job's), never two of the same file, dropped at exit
   (`bg_detach_rest`: they were for the screen). The child opens the file again through `fsview`'s walk in place
   mode (no link, one device, never the notebooks; Grimoire's PDF copies and trash are read, as Files lists them),
   checks it is the file listed, makes none under the storage's free floor, and has ONE worker run make a 300 x 400

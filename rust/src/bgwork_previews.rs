@@ -6,7 +6,7 @@
 //!   the trash; a screen turned away from, another folder, the list and Files closed take the jobs still queued out
 //!   of the queue (the one running runs on: it is short, PREVIEW_TILES_MAX below).
 //! - The request (UI thread, `preview_request`, from the Covers view): a file the cache has nothing for is queued as
-//!   a job of its own (BgKind::FilePreviews; path: the file as listed, `<dev>.<ino>.<size>.<mtime>:` and its storage
+//!   a job of its own (BgKind::FilePreviews; path: the file as listed, `<dev>.<ino>.<size>.<mtime>.<mtime_nsec>:` and its storage
 //!   path, as the copy job's). It is work nobody asked for by name, so it ranks behind an export, a template's
 //!   picture, the PDF mirror, an import's slices and a font check (bgjob.rs `rank`), and ahead only of compaction and
 //!   the idle warm-ups.

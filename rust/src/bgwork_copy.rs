@@ -140,19 +140,19 @@ const TMP_TAIL: &str = ".part";
 /// restart that number often belongs to another process): a live copy writes it every 64 KiB.
 const TMP_STALE_SECS: i64 = 3600;
 
-/// The job's path: the source as listed ("<dev>.<ino>.<size>.<mtime>:") and its storage path, None when the path
-/// is not text or the whole would not fit the job's 600 bytes.
+/// The job's path: the source as listed ("<dev>.<ino>.<size>.<mtime>.<mtime_nsec>:") and its storage path, None
+/// when the path is not text or the whole would not fit the job's 600 bytes.
 pub(crate) fn job_path(src: &StoragePath, listed: &FsStat) -> Option<String> {
     let s = std::str::from_utf8(src.as_bytes()).ok()?;
-    let p = format!("{}.{}.{}.{}:{}", listed.dev, listed.ino, listed.size, listed.mtime, s);
+    let p = format!("{}.{}.{}.{}.{}:{}", listed.dev, listed.ino, listed.size, listed.mtime, listed.mtime_nsec, s);
     (p.len() < FS_PATH_MAX).then_some(p)
 }
 
 pub(crate) fn job_parse(path: &str) -> Option<(FsStat, StoragePath)> {
     let (head, src) = path.split_once(':')?;
     let f: Vec<&str> = head.split('.').collect();
-    let [dev, ino, size, mtime] = f[..] else { return None };
-    let st = FsStat { dev: dev.parse().ok()?, ino: ino.parse().ok()?, size: size.parse().ok()?, mtime: mtime.parse().ok()?, mtime_nsec: 0, mode: 0 };
+    let [dev, ino, size, mtime, mtime_nsec] = f[..] else { return None };
+    let st = FsStat { dev: dev.parse().ok()?, ino: ino.parse().ok()?, size: size.parse().ok()?, mtime: mtime.parse().ok()?, mtime_nsec: mtime_nsec.parse().ok()?, mode: 0 };
     Some((st, StoragePath::new(src.as_bytes()).filter(|p| !p.is_root())?))
 }
 
@@ -485,16 +485,16 @@ mod tests {
     // job's 600 bytes, or is not text, is not made; one that does not read is refused.
     #[test]
     fn the_jobs_path() {
-        let st = FsStat { dev: 7, ino: 12345, size: 99, mtime: -3, mode: 0 };
+        let st = FsStat { dev: 7, ino: 12345, size: 99, mtime: -3, mtime_nsec: 4, mode: 0 };
         let src = StoragePath::new(b"documents/a:b.png").unwrap();
         let p = job_path(&src, &st).unwrap();
-        assert_eq!(p, "7.12345.99.-3:documents/a:b.png");
+        assert_eq!(p, "7.12345.99.-3.4:documents/a:b.png");
         let (back, s) = job_parse(&p).unwrap();
         assert!(back.same(&st) && s == src);
         let long = StoragePath::new(&[b'a'; 590]).unwrap();
         assert!(job_path(&long, &st).is_none());
         assert!(job_path(&StoragePath::new(b"caf\xe9.png").unwrap(), &st).is_none());
-        for bad in ["", "1.2.3:a", "1.2.3.4.5:a", "x.2.3.4:a", "1.2.3.4:", "1.2.3.4:/etc/passwd", "1.2.3.4:a/../b"] {
+        for bad in ["", "1.2.3:a", "1.2.3.4:a", "1.2.3.4.5.6:a", "x.2.3.4.5:a", "1.2.3.4.5:", "1.2.3.4.5:/etc/passwd", "1.2.3.4.5:a/../b"] {
             assert!(job_parse(bad).is_none(), "{bad}");
         }
         assert_eq!(CopyTo::of("photos"), Some(CopyTo::Photos));

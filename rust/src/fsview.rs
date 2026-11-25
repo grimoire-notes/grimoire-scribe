@@ -200,9 +200,9 @@ impl FsStat {
             _ => FsKind::Other,
         }
     }
-    /// The same file as when it was listed: device, inode, size and time.
+    /// The same file as when it was listed: device, inode, size and time (to the nanosecond).
     pub fn same(&self, o: &FsStat) -> bool {
-        (self.dev, self.ino, self.size, self.mtime) == (o.dev, o.ino, o.size, o.mtime)
+        (self.dev, self.ino, self.size, self.mtime, self.mtime_nsec) == (o.dev, o.ino, o.size, o.mtime, o.mtime_nsec)
     }
 }
 
