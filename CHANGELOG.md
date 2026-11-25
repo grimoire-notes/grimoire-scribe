@@ -6,6 +6,12 @@
   Pen, Controls and System, each row opening its own sheet.
 - **Auto brightness** (#163, nebuff). Settings > Display can let the front light follow the room's light.
 - **Polish** (#181, nebuff): Grimoire's screens and documents in Polish.
+- **Folder icons and pictures** (#230). A folder's menu (its `...`) has Icon & picture...: pick one of 48 icons for
+  the folder's card, in two pages of ordinary uses (school, work, documents, photos, music, recipes, travel, pets
+  and more), or give it a picture from `grimoire/photos` (From a file... copies one in from anywhere on the Kindle).
+  Picking one clears the other: the card shows the picture in place of the icon, and the plain folder while the
+  picture's preview is made or if it goes. Kept in `grimoire/folder-looks.ini`, which older versions leave as it
+  is; renaming or moving a folder carries its look with it.
 - **Web links in PDFs** (#174). A PDF's web links, left out until now, are kept when you import the PDF: tap one and
   a card shows the address and a QR code to scan with your phone's camera, which opens it there (the Kindle opens
   nothing itself). Only http and https addresses of up to 200 characters whose host is written plainly are kept.
@@ -41,6 +47,15 @@
   pick a notebook and one of its pages, and that page as it looks now becomes the open page's template, drawn in
   the background while a notice says so. Over New notebook the notebook it creates opens on that page. The
   Templates and Photos sheets also open in the Paper sheet's rows now: six columns, three rows, the same tiles.
+- **Kindle notebooks** (#196). Copy a notebook's folder from the Kindle's `.notebooks/` into `grimoire/import/`
+  and Grimoire imports its ink: one page per page, strokes scaled to the Scribe's page, pressure kept, and
+  Amazon's brushes mapped to Grimoire's. It takes the Scribe's title where it has one, the folder's name
+  otherwise, and leaves out the blank `note_template_collection` templates. Text and other non-ink page content
+  are not imported. Settings > General > Import Kindle notebooks copies the Scribe's own notebooks in for you,
+  eight at a time, leaving `.notebooks/` untouched. It reads the Kindle's own `/mnt/us/.notebooks/` and
+  `ksdk.content.db` catalog, so it uses the Scribe's titles, skips a book's annotation folders, and says how
+  many notebooks are cloud-only (no `nbk` until opened once on the Kindle). The
+  reader and the format notes are in `rust/src/nbk.rs` and docs/KINDLE.md.
 - **Fonts from a file.** In the Library, Settings > Font ends with Add a font...: pick a `.ttf` or `.otf` file
   anywhere on the Kindle, the Kindle's own fonts folder first (Kindle fonts), and it is copied into
   `grimoire/fonts`, where it is checked as a font copied over USB is: its row says "Checking..." until it can be

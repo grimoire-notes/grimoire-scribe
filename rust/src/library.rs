@@ -9,6 +9,7 @@ use crate::ui::{ui_row, ui_row_page, ui_row_pager, Row as UiRow};
 use crate::browser::{BrowseMode, Browser, BrowserResult, FilesPrefs, PickSpec};
 use crate::fsview::{FsErr, StoragePath};
 use crate::home::{home_folder_there, Home};
+use crate::templates::Template;
 
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -70,6 +71,10 @@ enum Modal {
     Sort = 303,
     /// The Package Store (Rust only): the GitHub catalog of apps and widgets, over the Library.
     Store = 304,
+    /// A folder's icon and picture (2.2, issue #230, Rust only; a number of its own as the others past the C's)
+    FolderLook = 310,
+    /// The pictures a folder's card can show (2.2, issue #230): a grid of grimoire/photos/
+    FolderPicture = 311,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -245,6 +250,19 @@ const H_FILES_HIDE: i32 = 198;
 // A folder's menu's home row (2.2, issue #160): Set as home, or on the folder that is home, Reset home to Notebooks
 // (arg: 1 for the reset). Numbered apart from the ids above, which other work adds after.
 const H_FMORE_HOME: i32 = 210;
+// A folder's icon and picture (2.2, issue #230): its menu's row, the icon grid's tiles (arg: its index in
+// FOLDER_ICONS), the picture sheet's photos (arg: an index of look_photos) and pages, and its buttons.
+const H_FMORE_LOOK: i32 = 291;
+const H_LOOK_ICON: i32 = 292;
+const H_LOOK_PHOTO: i32 = 293;
+const H_LOOK_PICTURES: i32 = 294;
+const H_LOOK_NO_PICTURE: i32 = 295;
+const H_LOOK_FROM_FILE: i32 = 296;
+const H_LOOK_BACK: i32 = 297;
+const H_LOOK_PAGE: i32 = 298;
+const H_LOOK_DONE: i32 = 299;
+// The folder icon sheet's page arrows (2.2, issue #230; arg: -1 for the page before, 1 for the one after).
+const H_LOOK_ICON_PAGE: i32 = 300;
 // Settings > System's Darker lines in imported PDFs row (2.2, issue #173), its list's choices (arg: the level, 0 Off,
 // 1 Medium, 2 Strong: pdfwork::Gamma's index) and its Back. (Numbered in 250 to 259, apart from other work's ids.)
 const H_SET_DARKER: i32 = 250;
@@ -254,6 +272,9 @@ const H_DARKER_BACK: i32 = 252;
 const H_SET_PACKAGES: i32 = 260;
 // Settings > Packages > Apps: the same manager for the app package kind.
 const H_SET_APP_PACKAGES: i32 = 261;
+// Settings > General's Import Kindle notebooks (2.3, issue #196): copies the Kindle's own notebooks from
+// .notebooks/ into import/ and queues them (bgwork_template.rs).
+const H_SET_KINDLE: i32 = 283;
 // The home's global elements (2.3, issue #209): its filter chips (arg: 0 All, 1 Notebooks, 2 Folders),
 // the Sort select and its choices (arg: the sort), the Search button, the + button and its popup's rows
 // (arg: 0 notebook, 1 folder, 2 Share), the apps buttons and the All apps page.
@@ -370,6 +391,21 @@ pub struct LibraryState {
     reopen_settings: bool,
     books: Vec<NotebookInfo>,
     folders: Vec<String>,
+    /// Every folder's look (folder-looks.ini, 2.2, issue #230), read as the Library reloads; the card of a folder
+    /// with a picture shows it from look_photos
+    looks: Vec<(String, FolderLook)>,
+    /// The folder whose icon and picture are being picked (H_FMORE_LOOK), its icon's name and picture's file name as
+    /// the two sheets show them, the photos those sheets offer (grimoire/photos, scanned as they open), that sheet's
+    /// page, and a copy from a file it waits for.
+    look_folder: FixedStr<STORE_NAME_LEN>,
+    look_icon: String,
+    look_icon_page: i32,
+    look_picture: String,
+    look_photos: Vec<Template>,
+    look_photo_page: i32,
+    look_copying: bool,
+    /// when the picture sheet last looked for previews made meanwhile (H_LOOK_TICK_MS)
+    look_photos_ms: u32,
     items: Vec<Item>,
     /// "" = top level
     cur_folder: FixedStr<STORE_NAME_LEN>,
@@ -712,6 +748,8 @@ fn free_lists(s: &mut LibraryState) {
     s.card_stamp = Vec::new();
     s.books = Vec::new();
     s.folders = Vec::new();
+    s.looks = Vec::new();
+    crate::bgwork_template::template_list_free(&mut s.look_photos);
     s.items = Vec::new();
 }
 
@@ -819,11 +857,17 @@ fn refresh_view(a: &mut App) {
 fn reload(a: &mut App) {
     let pp = per_page(a);
     let files_card = a.settings.files_card;
+    let dpi = a.dpi;
     let s = lib(a);
     free_lists(s);
     s.card_gen = bgimage_generation(); // (the cards read from now on are up to date)
     store_list(&mut s.books);
     store_list_folders_from(&s.books, &mut s.folders); // (each notebook.ini read once)
+    s.looks = store_folder_looks();
+    // (the photos a folder's card may show: only when some folder has a picture)
+    if s.looks.iter().any(|(_, look)| !look.picture.is_empty()) {
+        crate::bgwork_template::photos_scan(&mut s.look_photos, dpi);
+    }
     let nbooks = s.books.len();
     s.thumbs = vec![Canvas::default(); nbooks];
     s.thumb_tried = vec![false; nbooks];
@@ -973,6 +1017,559 @@ fn thumb_for(s: &mut LibraryState, dpi: f32, nb: usize) -> Option<&Canvas> {
 
 // ---- drawing ----
 
+/// The icons a folder's card can be given (2.2, issue #230), by the name folder-looks.ini keeps. The first is the
+/// plain folder icon, which no line names. Two pages of six by four, each page a group of ordinary uses.
+const FOLDER_ICON_COLS: i32 = 6;
+const FOLDER_ICON_ROWS: i32 = 4;
+const FOLDER_ICON_PER: usize = (FOLDER_ICON_COLS * FOLDER_ICON_ROWS) as usize;
+
+#[derive(Clone, Copy)]
+struct FolderIcon {
+    name: &'static str,
+    art: fn(&mut Canvas, Rect),
+}
+
+const FOLDER_ICONS: [FolderIcon; 48] = [
+    FolderIcon { name: "folder", art: art_folder },
+    FolderIcon { name: "notebook", art: art_notebook },
+    FolderIcon { name: "book", art: art_book },
+    FolderIcon { name: "library", art: art_library },
+    FolderIcon { name: "documents", art: art_documents },
+    FolderIcon { name: "notes", art: art_notes },
+    FolderIcon { name: "journal", art: art_journal },
+    FolderIcon { name: "calendar", art: art_calendar },
+    FolderIcon { name: "home", art: art_home },
+    FolderIcon { name: "school", art: art_school },
+    FolderIcon { name: "work", art: art_work },
+    FolderIcon { name: "archive", art: art_archive },
+    FolderIcon { name: "photos", art: art_photos },
+    FolderIcon { name: "camera", art: art_camera },
+    FolderIcon { name: "music", art: art_music },
+    FolderIcon { name: "headphones", art: art_headphones },
+    FolderIcon { name: "video", art: art_video },
+    FolderIcon { name: "art", art: art_art },
+    FolderIcon { name: "writing", art: art_writing },
+    FolderIcon { name: "code", art: art_code },
+    FolderIcon { name: "science", art: art_science },
+    FolderIcon { name: "math", art: art_math },
+    FolderIcon { name: "language", art: art_language },
+    FolderIcon { name: "star", art: art_star },
+    FolderIcon { name: "heart", art: art_heart },
+    FolderIcon { name: "recipes", art: art_recipes },
+    FolderIcon { name: "health", art: art_health },
+    FolderIcon { name: "fitness", art: art_fitness },
+    FolderIcon { name: "finance", art: art_finance },
+    FolderIcon { name: "travel", art: art_travel },
+    FolderIcon { name: "map", art: art_map },
+    FolderIcon { name: "mail", art: art_mail },
+    FolderIcon { name: "gift", art: art_gift },
+    FolderIcon { name: "games", art: art_games },
+    FolderIcon { name: "film", art: art_film },
+    FolderIcon { name: "garden", art: art_garden },
+    FolderIcon { name: "pets", art: art_pets },
+    FolderIcon { name: "baby", art: art_baby },
+    FolderIcon { name: "tools", art: art_tools },
+    FolderIcon { name: "lock", art: art_lock },
+    FolderIcon { name: "key", art: art_key },
+    FolderIcon { name: "cloud", art: art_cloud },
+    FolderIcon { name: "computer", art: art_computer },
+    FolderIcon { name: "phone", art: art_phone },
+    FolderIcon { name: "microphone", art: art_microphone },
+    FolderIcon { name: "search", art: art_search },
+    FolderIcon { name: "flag", art: art_flag },
+    FolderIcon { name: "trash", art: art_trash },
+];
+
+/// The names older versions wrote for icons this list no longer shows, and the icon each is drawn as, so a look
+/// picked before the list grew still shows a sensible face.
+fn folder_icon_alias(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "castle" => "home",
+        "gear" => "tools",
+        "pin" => "flag",
+        "grid" => "documents",
+        "target" => "search",
+        "link" => "cloud",
+        "clock" => "calendar",
+        "font" => "writing",
+        "calculator" => "math",
+        "browser" => "computer",
+        "agenda" => "notes",
+        "files" => "documents",
+        "image" => "photos",
+        "gamepad" => "games",
+        "package" => "archive",
+        "update" => "cloud",
+        "copy" => "documents",
+        _ => return None,
+    })
+}
+
+/// A folder's icon by the name folder-looks.ini keeps (the plain folder icon for none, or one this version does
+/// not know).
+fn folder_icon_def(name: &str) -> &'static FolderIcon {
+    let name = if name.is_empty() { "folder" } else { folder_icon_alias(name).unwrap_or(name) };
+    FOLDER_ICONS.iter().find(|d| d.name == name).unwrap_or(&FOLDER_ICONS[0])
+}
+
+/// A folder's face: its icon's line art, in a 24 by 24 box scaled to r. Round joins and no grays, so the cards read
+/// at a glance under e-ink.
+fn draw_folder_art(c: &mut Canvas, name: &str, r: Rect) {
+    (folder_icon_def(name).art)(c, r);
+}
+
+fn art_box(r: Rect) -> (f32, f32, f32) {
+    let s = r.w.min(r.h) as f32 / 24.0;
+    (r.x as f32 + (r.w as f32 - 24.0 * s) * 0.5, r.y as f32 + (r.h as f32 - 24.0 * s) * 0.5, s)
+}
+fn art_pt(r: Rect, x: f32, y: f32) -> (f32, f32) {
+    let (ox, oy, s) = art_box(r);
+    (ox + x * s, oy + y * s)
+}
+fn art_w(r: Rect) -> f32 {
+    (art_box(r).2 * 1.7).max(2.0)
+}
+fn art_line(c: &mut Canvas, r: Rect, x1: f32, y1: f32, x2: f32, y2: f32) {
+    art_line_w(c, r, x1, y1, x2, y2, art_w(r));
+}
+fn art_line_w(c: &mut Canvas, r: Rect, x1: f32, y1: f32, x2: f32, y2: f32, w: f32) {
+    let a = art_pt(r, x1, y1);
+    let b = art_pt(r, x2, y2);
+    canvas_line_aa(c, a.0, a.1, b.0, b.1, w, 0);
+}
+fn art_poly(c: &mut Canvas, r: Rect, pts: &[(f32, f32)], close: bool) {
+    for p in pts.windows(2) {
+        art_line(c, r, p[0].0, p[0].1, p[1].0, p[1].1);
+    }
+    if close {
+        if let (Some(a), Some(b)) = (pts.first(), pts.last()) {
+            art_line(c, r, b.0, b.1, a.0, a.1);
+        }
+    }
+}
+fn art_rect(c: &mut Canvas, r: Rect, x: f32, y: f32, w: f32, h: f32) {
+    art_poly(c, r, &[(x, y), (x + w, y), (x + w, y + h), (x, y + h)], true);
+}
+fn art_fill_rect(c: &mut Canvas, r: Rect, x: f32, y: f32, w: f32, h: f32) {
+    let (x0, y0) = art_pt(r, x, y);
+    let (x1, y1) = art_pt(r, x + w, y + h);
+    canvas_fill(c, Rect::new(x0.round() as i32, y0.round() as i32, (x1 - x0).round() as i32, (y1 - y0).round() as i32), 0);
+}
+fn art_arc(c: &mut Canvas, r: Rect, cx: f32, cy: f32, rx: f32, ry: f32, a0: f32, a1: f32) {
+    let n = 32;
+    let pts: Vec<(f32, f32)> = (0..=n)
+        .map(|i| {
+            let a = a0 + (a1 - a0) * i as f32 / n as f32;
+            (cx + rx * a.cos(), cy + ry * a.sin())
+        })
+        .collect();
+    art_poly(c, r, &pts, false);
+}
+fn art_circle(c: &mut Canvas, r: Rect, cx: f32, cy: f32, rad: f32) {
+    art_arc(c, r, cx, cy, rad, rad, 0.0, std::f32::consts::TAU);
+}
+fn art_ellipse(c: &mut Canvas, r: Rect, cx: f32, cy: f32, rx: f32, ry: f32) {
+    art_arc(c, r, cx, cy, rx, ry, 0.0, std::f32::consts::TAU);
+}
+fn art_fill_poly(c: &mut Canvas, r: Rect, pts: &[(f32, f32)]) {
+    let pts: Vec<(f32, f32)> = pts.iter().map(|&(x, y)| art_pt(r, x, y)).collect();
+    let y0 = pts.iter().map(|p| p.1).fold(f32::INFINITY, f32::min).floor() as i32;
+    let y1 = pts.iter().map(|p| p.1).fold(f32::NEG_INFINITY, f32::max).ceil() as i32;
+    for y in y0..=y1 {
+        let yc = y as f32 + 0.5;
+        let mut xs: Vec<f32> = Vec::new();
+        for i in 0..pts.len() {
+            let (ax, ay) = pts[i];
+            let (bx, by) = pts[(i + 1) % pts.len()];
+            if (ay <= yc && by > yc) || (by <= yc && ay > yc) {
+                xs.push(ax + (yc - ay) * (bx - ax) / (by - ay));
+            }
+        }
+        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        for pair in xs.chunks_exact(2) {
+            let xa = pair[0].round() as i32;
+            let xb = pair[1].round() as i32;
+            if xb > xa {
+                canvas_fill(c, Rect::new(xa, y, xb - xa, 1), 0);
+            }
+        }
+    }
+}
+fn art_fill_circle(c: &mut Canvas, r: Rect, cx: f32, cy: f32, rad: f32) {
+    art_fill_ellipse(c, r, cx, cy, rad, rad);
+}
+fn art_fill_ellipse(c: &mut Canvas, r: Rect, cx: f32, cy: f32, rx: f32, ry: f32) {
+    let n = 28;
+    let pts: Vec<(f32, f32)> = (0..n)
+        .map(|i| {
+            let a = std::f32::consts::TAU * i as f32 / n as f32;
+            (cx + rx * a.cos(), cy + ry * a.sin())
+        })
+        .collect();
+    art_fill_poly(c, r, &pts);
+}
+fn art_round_rect(c: &mut Canvas, r: Rect, x: f32, y: f32, w: f32, h: f32, rad: f32) {
+    use std::f32::consts::{FRAC_PI_2, PI, TAU};
+    art_line(c, r, x + rad, y, x + w - rad, y);
+    art_line(c, r, x + w, y + rad, x + w, y + h - rad);
+    art_line(c, r, x + w - rad, y + h, x + rad, y + h);
+    art_line(c, r, x, y + h - rad, x, y + rad);
+    art_arc(c, r, x + rad, y + rad, rad, rad, PI, PI + FRAC_PI_2);
+    art_arc(c, r, x + w - rad, y + rad, rad, rad, PI + FRAC_PI_2, TAU);
+    art_arc(c, r, x + w - rad, y + h - rad, rad, rad, 0.0, FRAC_PI_2);
+    art_arc(c, r, x + rad, y + h - rad, rad, rad, FRAC_PI_2, PI);
+}
+fn art_star_shape(c: &mut Canvas, r: Rect, cx: f32, cy: f32, outer: f32, inner: f32) {
+    use std::f32::consts::PI;
+    let mut pts = Vec::new();
+    for i in 0..10 {
+        let rad = if i % 2 == 0 { outer } else { inner };
+        let a = -PI / 2.0 + i as f32 * PI / 5.0;
+        pts.push((cx + rad * a.cos(), cy + rad * a.sin()));
+    }
+    art_poly(c, r, &pts, true);
+}
+fn art_heart_shape(c: &mut Canvas, r: Rect) {
+    use std::f32::consts::TAU;
+    let mut pts = Vec::new();
+    for i in 0..=64 {
+        let t = TAU * i as f32 / 64.0;
+        let x = 16.0 * t.sin().powi(3);
+        let y = 13.0 * t.cos() - 5.0 * (2.0 * t).cos() - 2.0 * (3.0 * t).cos() - (4.0 * t).cos();
+        pts.push((12.0 + x * 0.5, 8.0 - y * 0.65));
+    }
+    art_poly(c, r, &pts, true);
+}
+
+fn art_folder(c: &mut Canvas, r: Rect) {
+    art_poly(c, r, &[(2.5, 20.5), (2.5, 7.0), (8.5, 7.0), (10.5, 9.5), (21.5, 9.5), (21.5, 20.5)], true);
+}
+fn art_notebook(c: &mut Canvas, r: Rect) {
+    art_rect(c, r, 5.0, 2.5, 14.0, 19.0);
+    art_line(c, r, 8.5, 2.5, 8.5, 21.5);
+    for y in [6.5, 11.5, 16.5] {
+        art_fill_circle(c, r, 5.0, y, 0.9);
+    }
+    art_line(c, r, 11.0, 7.5, 16.0, 7.5);
+    art_line(c, r, 11.0, 12.0, 16.0, 12.0);
+}
+fn art_book(c: &mut Canvas, r: Rect) {
+    art_poly(c, r, &[(12.0, 6.5), (4.0, 4.5), (4.0, 17.5), (12.0, 19.5)], true);
+    art_poly(c, r, &[(12.0, 6.5), (20.0, 4.5), (20.0, 17.5), (12.0, 19.5)], true);
+    art_line(c, r, 12.0, 6.5, 12.0, 19.5);
+    art_line(c, r, 6.5, 8.5, 10.0, 9.5);
+    art_line(c, r, 6.5, 11.5, 10.0, 12.5);
+    art_line(c, r, 14.0, 9.5, 17.5, 8.5);
+    art_line(c, r, 14.0, 12.5, 17.5, 11.5);
+}
+fn art_library(c: &mut Canvas, r: Rect) {
+    art_line(c, r, 2.5, 20.5, 21.5, 20.5);
+    art_rect(c, r, 4.0, 6.0, 4.0, 14.0);
+    art_rect(c, r, 9.0, 9.0, 4.0, 11.0);
+    art_rect(c, r, 14.0, 4.0, 4.0, 16.0);
+    art_line(c, r, 4.0, 9.0, 8.0, 9.0);
+    art_line(c, r, 9.0, 12.0, 13.0, 12.0);
+    art_line(c, r, 14.0, 7.0, 18.0, 7.0);
+}
+fn art_documents(c: &mut Canvas, r: Rect) {
+    art_rect(c, r, 7.5, 2.5, 10.0, 15.0);
+    art_poly(c, r, &[(4.5, 6.5), (14.5, 6.5), (14.5, 12.0), (12.0, 12.0), (12.0, 21.5), (4.5, 21.5)], true);
+    art_line(c, r, 7.5, 10.5, 11.5, 10.5);
+    art_line(c, r, 7.5, 13.5, 11.5, 13.5);
+    art_line(c, r, 7.5, 16.5, 11.5, 16.5);
+}
+fn art_notes(c: &mut Canvas, r: Rect) {
+    art_rect(c, r, 4.0, 2.5, 16.0, 19.0);
+    art_line(c, r, 8.0, 8.0, 16.0, 8.0);
+    art_line(c, r, 8.0, 12.0, 16.0, 12.0);
+    art_line(c, r, 8.0, 16.0, 13.0, 16.0);
+}
+fn art_journal(c: &mut Canvas, r: Rect) {
+    art_rect(c, r, 5.0, 2.5, 14.0, 19.0);
+    art_line(c, r, 8.5, 2.5, 8.5, 21.5);
+    art_poly(c, r, &[(13.5, 2.5), (18.0, 2.5), (18.0, 9.5), (15.75, 7.75), (13.5, 9.5)], true);
+}
+fn art_calendar(c: &mut Canvas, r: Rect) {
+    art_rect(c, r, 3.0, 5.0, 18.0, 16.5);
+    art_line(c, r, 3.0, 9.0, 21.0, 9.0);
+    art_line(c, r, 8.0, 2.5, 8.0, 7.0);
+    art_line(c, r, 16.0, 2.5, 16.0, 7.0);
+    for (x, y) in [(7.0, 12.0), (12.0, 12.0), (17.0, 12.0), (7.0, 16.0), (12.0, 16.0)] {
+        art_fill_circle(c, r, x, y, 1.0);
+    }
+}
+fn art_home(c: &mut Canvas, r: Rect) {
+    art_poly(c, r, &[(2.0, 11.5), (12.0, 3.0), (22.0, 11.5)], false);
+    art_poly(c, r, &[(5.0, 10.0), (5.0, 21.0), (19.0, 21.0), (19.0, 10.0)], false);
+    art_rect(c, r, 10.0, 15.0, 4.0, 6.0);
+}
+fn art_school(c: &mut Canvas, r: Rect) {
+    art_poly(c, r, &[(12.0, 2.5), (22.0, 8.0), (12.0, 13.5), (2.0, 8.0)], true);
+    art_line(c, r, 6.0, 10.5, 6.0, 16.0);
+    art_line(c, r, 18.0, 10.5, 18.0, 16.0);
+    art_line(c, r, 6.0, 16.0, 18.0, 16.0);
+    art_line(c, r, 21.0, 9.0, 21.0, 16.0);
+    art_fill_circle(c, r, 21.0, 17.0, 1.0);
+}
+fn art_work(c: &mut Canvas, r: Rect) {
+    art_rect(c, r, 3.0, 8.0, 18.0, 12.0);
+    art_poly(c, r, &[(9.0, 8.0), (9.0, 5.0), (15.0, 5.0), (15.0, 8.0)], false);
+    art_line(c, r, 3.0, 13.0, 21.0, 13.0);
+    art_rect(c, r, 10.0, 12.0, 4.0, 3.5);
+}
+fn art_archive(c: &mut Canvas, r: Rect) {
+    art_rect(c, r, 3.0, 5.0, 18.0, 4.5);
+    art_rect(c, r, 4.5, 9.5, 15.0, 11.0);
+    art_line(c, r, 9.0, 14.0, 15.0, 14.0);
+    art_line(c, r, 12.0, 9.5, 12.0, 14.0);
+}
+fn art_photos(c: &mut Canvas, r: Rect) {
+    art_rect(c, r, 3.0, 4.0, 18.0, 16.0);
+    art_poly(c, r, &[(5.0, 17.5), (9.0, 11.0), (12.0, 15.0), (15.0, 10.0), (19.0, 17.5)], false);
+    art_fill_circle(c, r, 8.0, 8.0, 1.4);
+}
+fn art_camera(c: &mut Canvas, r: Rect) {
+    art_rect(c, r, 3.0, 8.0, 18.0, 11.5);
+    art_poly(c, r, &[(8.0, 8.0), (9.5, 5.5), (14.5, 5.5), (16.0, 8.0)], false);
+    art_circle(c, r, 12.0, 13.75, 3.4);
+    art_fill_circle(c, r, 17.5, 10.5, 1.2);
+}
+fn art_music(c: &mut Canvas, r: Rect) {
+    art_fill_ellipse(c, r, 7.5, 18.0, 2.6, 1.9);
+    art_fill_ellipse(c, r, 18.5, 16.0, 2.6, 1.9);
+    art_line(c, r, 10.0, 18.0, 10.0, 6.0);
+    art_line(c, r, 21.0, 16.0, 21.0, 4.0);
+    art_line(c, r, 10.0, 9.0, 21.0, 7.0);
+    art_line(c, r, 10.0, 6.0, 21.0, 4.0);
+    art_line(c, r, 21.0, 4.0, 21.0, 7.0);
+}
+fn art_headphones(c: &mut Canvas, r: Rect) {
+    art_arc(c, r, 12.0, 13.0, 9.0, 9.0, std::f32::consts::PI, std::f32::consts::TAU);
+    art_rect(c, r, 2.5, 13.0, 4.5, 7.0);
+    art_rect(c, r, 17.0, 13.0, 4.5, 7.0);
+}
+fn art_video(c: &mut Canvas, r: Rect) {
+    art_rect(c, r, 2.0, 5.0, 20.0, 14.0);
+    art_fill_poly(c, r, &[(9.5, 8.5), (9.5, 15.5), (16.0, 12.0)]);
+}
+fn art_art(c: &mut Canvas, r: Rect) {
+    art_circle(c, r, 12.0, 12.0, 8.5);
+    for (x, y) in [(7.5, 8.0), (12.0, 6.5), (16.5, 8.5), (7.0, 14.0)] {
+        art_fill_circle(c, r, x, y, 1.2);
+    }
+    art_circle(c, r, 16.5, 16.5, 2.0);
+}
+fn art_writing(c: &mut Canvas, r: Rect) {
+    art_poly(c, r, &[(4.0, 17.0), (14.5, 6.5), (17.5, 9.5), (7.0, 20.0)], true);
+    art_poly(c, r, &[(4.0, 17.0), (7.0, 20.0), (2.5, 21.5)], true);
+    art_line(c, r, 13.5, 10.5, 16.5, 7.5);
+}
+fn art_code(c: &mut Canvas, r: Rect) {
+    art_poly(c, r, &[(8.0, 5.0), (2.0, 12.0), (8.0, 19.0)], false);
+    art_poly(c, r, &[(16.0, 5.0), (22.0, 12.0), (16.0, 19.0)], false);
+    art_line(c, r, 14.0, 4.5, 10.0, 19.5);
+}
+fn art_science(c: &mut Canvas, r: Rect) {
+    art_poly(c, r, &[(9.0, 3.0), (9.0, 8.5), (4.0, 19.5), (20.0, 19.5), (15.0, 8.5), (15.0, 3.0)], false);
+    art_line(c, r, 7.0, 14.0, 17.0, 14.0);
+    art_circle(c, r, 10.0, 17.0, 1.0);
+    art_circle(c, r, 14.0, 16.5, 1.3);
+}
+fn art_math(c: &mut Canvas, r: Rect) {
+    art_rect(c, r, 5.0, 2.0, 14.0, 20.0);
+    art_rect(c, r, 7.5, 4.5, 9.0, 3.5);
+    for row in 0..4 {
+        for col in 0..3 {
+            art_fill_rect(c, r, 7.5 + col as f32 * 3.4, 10.5 + row as f32 * 2.8, 2.0, 2.0);
+        }
+    }
+}
+fn art_language(c: &mut Canvas, r: Rect) {
+    art_circle(c, r, 12.0, 12.0, 9.0);
+    art_ellipse(c, r, 12.0, 12.0, 4.0, 9.0);
+    art_line(c, r, 3.0, 12.0, 21.0, 12.0);
+    art_line(c, r, 4.2, 7.5, 19.8, 7.5);
+    art_line(c, r, 4.2, 16.5, 19.8, 16.5);
+}
+fn art_star(c: &mut Canvas, r: Rect) {
+    art_star_shape(c, r, 12.0, 12.0, 9.5, 4.0);
+}
+fn art_heart(c: &mut Canvas, r: Rect) {
+    art_heart_shape(c, r);
+}
+fn art_recipes(c: &mut Canvas, r: Rect) {
+    art_arc(c, r, 12.0, 15.0, 7.0, 8.5, std::f32::consts::PI, std::f32::consts::TAU);
+    art_line(c, r, 5.0, 15.0, 5.0, 19.0);
+    art_line(c, r, 19.0, 15.0, 19.0, 19.0);
+    art_line(c, r, 5.0, 19.0, 19.0, 19.0);
+    art_line(c, r, 9.0, 15.0, 9.0, 19.0);
+    art_line(c, r, 12.0, 15.0, 12.0, 19.0);
+    art_line(c, r, 15.0, 15.0, 15.0, 19.0);
+}
+fn art_health(c: &mut Canvas, r: Rect) {
+    art_circle(c, r, 12.0, 12.0, 8.5);
+    let w = art_w(r) * 1.8;
+    art_line_w(c, r, 12.0, 6.5, 12.0, 17.5, w);
+    art_line_w(c, r, 6.5, 12.0, 17.5, 12.0, w);
+}
+fn art_fitness(c: &mut Canvas, r: Rect) {
+    art_line(c, r, 8.0, 12.0, 16.0, 12.0);
+    art_rect(c, r, 4.5, 7.0, 3.0, 10.0);
+    art_rect(c, r, 16.5, 7.0, 3.0, 10.0);
+    art_rect(c, r, 7.5, 9.0, 1.8, 6.0);
+    art_rect(c, r, 14.7, 9.0, 1.8, 6.0);
+}
+fn art_finance(c: &mut Canvas, r: Rect) {
+    art_circle(c, r, 12.0, 12.0, 9.0);
+    art_line(c, r, 12.0, 7.0, 12.0, 17.0);
+    art_poly(c, r, &[(15.0, 9.0), (10.0, 9.0), (10.0, 12.0), (14.0, 12.0), (14.0, 15.0), (9.0, 15.0)], false);
+}
+fn art_travel(c: &mut Canvas, r: Rect) {
+    art_poly(
+        c,
+        r,
+        &[(2.0, 12.0), (6.0, 12.0), (11.0, 4.0), (13.0, 4.0), (12.0, 12.0), (19.0, 12.0), (21.0, 14.5), (13.0, 14.5), (11.0, 20.0), (9.0, 20.0), (9.0, 14.5), (3.0, 14.5)],
+        true,
+    );
+}
+fn art_map(c: &mut Canvas, r: Rect) {
+    art_poly(c, r, &[(2.0, 5.0), (8.0, 3.0), (16.0, 5.0), (22.0, 3.0), (22.0, 19.0), (16.0, 21.0), (8.0, 19.0), (2.0, 21.0)], true);
+    art_line(c, r, 8.0, 3.0, 8.0, 19.0);
+    art_line(c, r, 16.0, 5.0, 16.0, 21.0);
+}
+fn art_mail(c: &mut Canvas, r: Rect) {
+    art_rect(c, r, 3.0, 6.0, 18.0, 12.0);
+    art_poly(c, r, &[(3.0, 6.0), (12.0, 13.0), (21.0, 6.0)], false);
+}
+fn art_gift(c: &mut Canvas, r: Rect) {
+    art_rect(c, r, 3.0, 9.0, 18.0, 11.0);
+    art_rect(c, r, 2.0, 6.0, 20.0, 3.5);
+    art_line(c, r, 12.0, 6.0, 12.0, 20.0);
+    art_circle(c, r, 8.5, 4.5, 2.2);
+    art_circle(c, r, 15.5, 4.5, 2.2);
+}
+fn art_games(c: &mut Canvas, r: Rect) {
+    art_poly(
+        c,
+        r,
+        &[(6.0, 8.0), (18.0, 8.0), (21.0, 11.0), (21.0, 16.0), (18.0, 19.0), (16.0, 19.0), (14.0, 16.0), (10.0, 16.0), (8.0, 19.0), (6.0, 19.0), (3.0, 16.0), (3.0, 11.0)],
+        true,
+    );
+    art_line(c, r, 6.0, 13.5, 10.0, 13.5);
+    art_line(c, r, 8.0, 11.5, 8.0, 15.5);
+    art_fill_circle(c, r, 16.0, 12.5, 1.1);
+    art_fill_circle(c, r, 18.0, 15.0, 1.1);
+}
+fn art_film(c: &mut Canvas, r: Rect) {
+    art_rect(c, r, 5.0, 2.0, 14.0, 20.0);
+    art_line(c, r, 9.0, 2.0, 9.0, 22.0);
+    art_line(c, r, 15.0, 2.0, 15.0, 22.0);
+    for y in [4.2, 8.2, 12.2, 16.2, 20.0] {
+        art_fill_rect(c, r, 6.0, y, 1.8, 1.8);
+        art_fill_rect(c, r, 16.2, y, 1.8, 1.8);
+    }
+}
+fn art_garden(c: &mut Canvas, r: Rect) {
+    art_poly(c, r, &[(4.0, 20.0), (4.5, 12.0), (9.0, 6.0), (16.0, 4.0), (20.0, 4.0), (19.5, 12.0), (15.0, 18.0), (9.5, 20.0)], true);
+    art_line(c, r, 4.0, 20.0, 12.0, 12.0);
+    art_line(c, r, 8.0, 16.0, 7.0, 11.0);
+    art_line(c, r, 12.0, 12.0, 16.5, 8.0);
+}
+fn art_pets(c: &mut Canvas, r: Rect) {
+    art_circle(c, r, 6.0, 9.0, 2.2);
+    art_circle(c, r, 10.0, 5.8, 2.2);
+    art_circle(c, r, 14.0, 5.8, 2.2);
+    art_circle(c, r, 18.0, 9.0, 2.2);
+    art_ellipse(c, r, 12.0, 16.0, 5.2, 3.6);
+}
+fn art_baby(c: &mut Canvas, r: Rect) {
+    art_circle(c, r, 12.0, 16.0, 4.2);
+    art_ellipse(c, r, 12.0, 10.5, 6.2, 2.6);
+    art_circle(c, r, 12.0, 6.5, 2.2);
+}
+fn art_tools(c: &mut Canvas, r: Rect) {
+    art_poly(c, r, &[(3.0, 8.5), (3.0, 5.0), (11.0, 5.0), (11.0, 8.5)], true);
+    art_poly(c, r, &[(6.5, 8.5), (8.5, 8.5), (18.5, 20.5), (16.5, 21.5)], true);
+}
+fn art_lock(c: &mut Canvas, r: Rect) {
+    art_rect(c, r, 5.0, 10.0, 14.0, 11.5);
+    art_arc(c, r, 12.0, 10.0, 4.5, 4.5, std::f32::consts::PI, std::f32::consts::TAU);
+    art_fill_circle(c, r, 12.0, 15.0, 1.3);
+    art_line(c, r, 12.0, 16.0, 12.0, 18.5);
+}
+fn art_key(c: &mut Canvas, r: Rect) {
+    art_circle(c, r, 7.0, 8.0, 3.5);
+    art_line(c, r, 9.5, 10.5, 20.5, 21.5);
+    art_line(c, r, 16.5, 17.5, 19.5, 14.5);
+    art_line(c, r, 18.5, 19.5, 21.5, 16.5);
+}
+fn art_cloud(c: &mut Canvas, r: Rect) {
+    art_poly(
+        c,
+        r,
+        &[
+            (4.0, 17.0), (4.0, 13.0), (4.5, 11.0), (6.0, 10.0), (7.5, 10.0), (8.0, 10.5), (9.0, 8.5), (11.0, 7.0), (13.0, 7.5), (14.5, 9.0), (16.0, 9.5), (17.5, 9.5), (19.0, 10.5), (20.0, 12.0), (20.0, 13.5), (20.0, 17.0),
+        ],
+        true,
+    );
+}
+fn art_computer(c: &mut Canvas, r: Rect) {
+    art_rect(c, r, 2.0, 3.0, 20.0, 14.0);
+    art_line(c, r, 12.0, 17.0, 12.0, 20.0);
+    art_line(c, r, 7.5, 21.0, 16.5, 21.0);
+}
+fn art_phone(c: &mut Canvas, r: Rect) {
+    art_round_rect(c, r, 7.0, 2.0, 10.0, 20.0, 2.5);
+    art_line(c, r, 10.0, 4.5, 14.0, 4.5);
+    art_fill_circle(c, r, 12.0, 19.0, 0.9);
+}
+fn art_microphone(c: &mut Canvas, r: Rect) {
+    art_round_rect(c, r, 9.0, 2.0, 6.0, 12.0, 3.0);
+    art_arc(c, r, 12.0, 12.0, 6.0, 5.0, 0.0, std::f32::consts::PI);
+    art_line(c, r, 12.0, 17.0, 12.0, 21.0);
+    art_line(c, r, 8.0, 21.0, 16.0, 21.0);
+}
+fn art_search(c: &mut Canvas, r: Rect) {
+    art_circle(c, r, 10.0, 10.0, 6.0);
+    art_line_w(c, r, 14.2, 14.2, 20.5, 20.5, art_w(r) * 1.2);
+}
+fn art_flag(c: &mut Canvas, r: Rect) {
+    art_line(c, r, 5.0, 2.5, 5.0, 21.5);
+    art_poly(c, r, &[(5.0, 4.0), (19.0, 4.0), (16.0, 9.0), (19.0, 14.0), (5.0, 14.0)], true);
+}
+fn art_trash(c: &mut Canvas, r: Rect) {
+    art_line(c, r, 3.0, 6.0, 21.0, 6.0);
+    art_poly(c, r, &[(9.0, 6.0), (9.0, 3.0), (15.0, 3.0), (15.0, 6.0)], false);
+    art_poly(c, r, &[(5.0, 6.0), (6.5, 21.5), (17.5, 21.5), (19.0, 6.0)], false);
+    art_line(c, r, 9.5, 9.5, 10.0, 18.0);
+    art_line(c, r, 14.5, 9.5, 14.0, 18.0);
+}
+
+/// A photo's file name, as folder-looks.ini keeps it (the last part of its path in grimoire/photos/).
+fn photo_file_name(t: &Template) -> &str {
+    t.path.as_str().rsplit('/').next().unwrap_or("")
+}
+
+/// A folder's card: its picture from grimoire/photos/ when it has one and its preview is made, else its icon.
+fn draw_folder_face(c: &mut Canvas, s: &mut LibraryState, tb: Rect, path: &str, inset: i32) {
+    let look = s.looks.iter().find(|(f, _)| f == path).map(|(_, l)| l.clone()).unwrap_or_default();
+    let mut pic: Option<&Canvas> = None;
+    if !look.picture.is_empty() {
+        if let Some(i) = s.look_photos.iter().position(|p| photo_file_name(p) == look.picture) {
+            pic = crate::bgwork_template::template_thumb(&mut s.look_photos[i]);
+        }
+    }
+    if let Some(pv) = pic {
+        let saved = c.clip;
+        canvas_set_clip(c, rect_inflate(tb, -ui_px(3.0)));
+        canvas_fill(c, tb, 255);
+        canvas_blit_fit(c, pv, rect_inflate(tb, -ui_px(3.0)));
+        c.clip = saved;
+    } else {
+        draw_folder_art(c, &look.icon, rect_inflate(tb, -inset));
+    }
+}
+
 fn draw_card(c: &mut Canvas, s: &mut LibraryState, dpi: f32, r: Rect, idx: usize) {
     let it = s.items[idx];
     if it.is_files {
@@ -983,7 +1580,7 @@ fn draw_card(c: &mut Canvas, s: &mut LibraryState, dpi: f32, r: Rect, idx: usize
     let tb = Rect::new(r.x, r.y, r.w, th);
     ui_frame(c, tb, gui_radius(), 255, true, 0);
     if it.is_folder {
-        ui_icon(c, IconKind::Folder, rect_inflate(tb, -r.w / 5), 0);
+        draw_folder_face(c, s, tb, it.folder.as_str(), r.w / 5);
     } else {
         let t = thumb_for(s, dpi, it.nb);
         let saved = c.clip;
@@ -1089,6 +1686,250 @@ fn draw_files_card(c: &mut Canvas, s: &mut LibraryState, r: Rect, idx: usize) {
     ui_button(c, mr, IconKind::More, "", ButtonStyle::Plain);
     hits_add(&mut s.hits, tb, H_CARD, idx as i32);
     hits_add(&mut s.hits, mr, H_CARD_MORE, idx as i32);
+}
+
+// The folder icon sheet (2.2, issue #230): a grid of FOLDER_ICONS, the folder's picture line, and the way to its
+// pictures. A tile picked saves the icon at once in place of any picture; Done closes.
+fn draw_folder_look(a: &mut App) {
+    let (aw, ah) = (a.w, a.h);
+    let App { screen: c, lib, .. } = a;
+    let s = lib.as_deref_mut().unwrap();
+    let card = sheet_rect(aw, ah, ui_px(2300.0));
+    let gap = ui_px(24.0);
+    let label_h = ui_px(50.0);
+    let w = ui_sheet_inner(card, true).w;
+    let tw = (w - (FOLDER_ICON_COLS - 1) * gap) / FOLDER_ICON_COLS;
+    let row_h = tw + label_h + gap;
+    let nav_h = ui_px(90.0);
+    let card = sheet_rect(aw, ah, ui_px(120.0) + ui_px(70.0) + FOLDER_ICON_ROWS * row_h + nav_h + ui_px(250.0));
+    // TRANSLATORS: the sheet a folder's menu opens (a row of 1470 px at 44 px in bold, Icon & picture...), where
+    // its card gets an icon or a picture: its title, about 1400 px at 56 px.
+    let in_ = ui_sheet(c, card, tr("Folder icon"));
+    let mut label = String::new();
+    let mut line = String::new();
+    // TRANSLATORS: at the top of the folder icon sheet (%s: the folder's name): whose card is being changed.
+    csnprintf!(&mut line, 320, tr("Folder: %s"), ui_name_label(s.look_folder.as_str(), &mut label, LABEL_CAP));
+    font_draw_left(c, FontFace::Bold, ui_text_size(), Rect::new(in_.x, in_.y, in_.w, ui_px(70.0)), &line, 0);
+    let gy = in_.y + ui_px(70.0);
+    let gridw = FOLDER_ICON_COLS * tw + (FOLDER_ICON_COLS - 1) * gap;
+    let gx = in_.x + (in_.w - gridw) / 2;
+    let current = if s.look_picture.is_empty() { folder_icon_def(&s.look_icon).name } else { "" };
+    let pages = (FOLDER_ICONS.len() as i32 + FOLDER_ICON_PER as i32 - 1) / FOLDER_ICON_PER as i32;
+    s.look_icon_page = clampi(s.look_icon_page, 0, pages - 1);
+    let first = s.look_icon_page as usize * FOLDER_ICON_PER;
+    for (k, def) in FOLDER_ICONS.iter().skip(first).take(FOLDER_ICON_PER).enumerate() {
+        let cell = k as i32;
+        let tile = Rect::new(
+            gx + (cell % FOLDER_ICON_COLS) * (tw + gap),
+            gy + (cell / FOLDER_ICON_COLS) * row_h,
+            tw,
+            tw,
+        );
+        canvas_fill(c, tile, 255);
+        (def.art)(c, rect_inflate(tile, -ui_px(30.0)));
+        let sel = def.name == current;
+        ui_frame(c, rect_inflate(tile, if sel { ui_px(8.0) } else { 0 }), ui_px(12.0), 0, false, if sel { ui_px(9.0) } else { ui_px(3.0) });
+        font_draw_centered(c, FontFace::Regular, ui_small_size(), Rect::new(tile.x, tile.y + tw, tile.w, label_h), def.name, 60);
+        hits_add(&mut s.hits, Rect::new(tile.x, tile.y, tile.w, tw + label_h), H_LOOK_ICON, (first + k) as i32);
+    }
+    let mut pic_line = String::new();
+    if s.look_picture.is_empty() {
+        // TRANSLATORS: the folder icon sheet's line about its picture, when it has none (about 1000 px at 34 px).
+        pic_line.push_str(tr("No picture"));
+    } else {
+        // TRANSLATORS: the folder icon sheet's line about its picture (%s: its file name in grimoire/photos/).
+        csnprintf!(&mut pic_line, 320, tr("Picture: %s"), &s.look_picture);
+    }
+    let py = gy + FOLDER_ICON_ROWS * row_h;
+    font_draw_left(c, FontFace::Regular, ui_small_size(), Rect::new(in_.x, py, in_.w - ui_px(520.0), nav_h), &pic_line, 60);
+    if pages > 1 {
+        let next = Rect::new(in_.x + in_.w - ui_px(110.0), py + (nav_h - ui_px(70.0)) / 2, ui_px(110.0), ui_px(70.0));
+        let prev = Rect::new(next.x - ui_px(130.0), next.y, ui_px(110.0), ui_px(70.0));
+        let page = Rect::new(prev.x - ui_px(190.0), next.y, ui_px(190.0), ui_px(70.0));
+        ui_button(c, prev, IconKind::Prev, "", if s.look_icon_page > 0 { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        ui_button(c, next, IconKind::Next, "", if s.look_icon_page + 1 < pages { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        hits_add(&mut s.hits, prev, H_LOOK_ICON_PAGE, -1);
+        hits_add(&mut s.hits, next, H_LOOK_ICON_PAGE, 1);
+        let mut pl = String::new();
+        csnprintf!(&mut pl, 96, "%d / %d", s.look_icon_page + 1, pages);
+        font_draw_centered(c, FontFace::Regular, ui_small_size(), page, &pl, 60);
+    }
+    let bh = ui_px(140.0);
+    let by = in_.y + in_.h - bh;
+    let bw = ui_px(500.0);
+    let pick = Rect::new(in_.x, by, bw, bh);
+    // TRANSLATORS: the folder icon sheet's button (348 px at 44 px inside Gothic's carved line): the pictures its
+    // card can show.
+    ui_button(c, pick, IconKind::Image, tr("Picture..."), ButtonStyle::Plain);
+    hits_add(&mut s.hits, pick, H_LOOK_PICTURES, 0);
+    if !s.look_picture.is_empty() {
+        let none = Rect::new(in_.x + bw + ui_px(20.0), by, bw, bh);
+        // TRANSLATORS: the folder icon sheet's button: its card goes back to the plain folder.
+        ui_button(c, none, IconKind::Ban, tr("No picture"), ButtonStyle::Plain);
+        hits_add(&mut s.hits, none, H_LOOK_NO_PICTURE, 0);
+    }
+    let done = Rect::new(in_.x + in_.w - ui_px(380.0), by, ui_px(380.0), bh);
+    ui_button(c, done, IconKind::None, tr("Done"), ButtonStyle::Primary);
+    hits_add(&mut s.hits, done, H_LOOK_DONE, 0);
+}
+
+// The folder picture sheet (2.2, issue #230): the pictures in grimoire/photos/, their previews, a page at a time; a
+// tap gives the folder that picture at once. From a file... copies one in, as the Photos sheet's does.
+const FOLDER_PHOTO_COLS: i32 = 4;
+const FOLDER_PHOTO_ROWS: i32 = 2;
+const FOLDER_PHOTO_PER: usize = (FOLDER_PHOTO_COLS * FOLDER_PHOTO_ROWS) as usize;
+/// How often the open picture sheet looks whether a photo's preview was made since (it reads the folder again
+/// only while one waits).
+const H_LOOK_TICK_MS: u32 = 1500;
+
+fn draw_folder_picture(a: &mut App) {
+    let (aw, ah) = (a.w, a.h);
+    let App { screen: c, lib, .. } = a;
+    let s = lib.as_deref_mut().unwrap();
+    let card = sheet_rect(aw, ah, ui_px(2300.0));
+    let gap = ui_px(30.0);
+    let label_h = ui_px(50.0);
+    let w = ui_sheet_inner(card, true).w;
+    let tw = (w - (FOLDER_PHOTO_COLS - 1) * gap) / FOLDER_PHOTO_COLS;
+    let th = tw * 4 / 3;
+    let row_h = th + label_h + gap;
+    let card = sheet_rect(aw, ah, ui_px(120.0) + ui_px(70.0) + FOLDER_PHOTO_ROWS * row_h + ui_px(170.0) + ui_px(140.0));
+    // TRANSLATORS: the sheet the folder icon sheet's Picture... button opens: the pictures in grimoire/photos/ its
+    // card can show (about 1400 px at 56 px).
+    let in_ = ui_sheet(c, card, tr("Folder picture"));
+    let pages = ((s.look_photos.len() + FOLDER_PHOTO_PER - 1) / FOLDER_PHOTO_PER).max(1) as i32;
+    s.look_photo_page = clampi(s.look_photo_page, 0, pages - 1);
+    let first = s.look_photo_page as usize * FOLDER_PHOTO_PER;
+    // Only the previews of the tiles on screen stay in memory (each about 130 KB).
+    for (i, t) in s.look_photos.iter_mut().enumerate() {
+        if i < first || i >= first + FOLDER_PHOTO_PER {
+            canvas_free(&mut t.thumb);
+        }
+    }
+    let top = in_.y + ui_px(70.0);
+    let gridw = FOLDER_PHOTO_COLS * tw + (FOLDER_PHOTO_COLS - 1) * gap;
+    let gx = in_.x + (in_.w - gridw) / 2;
+    let want = s.look_picture.clone();
+    if s.look_photos.is_empty() {
+        // TRANSLATORS: the folder picture sheet, with no picture there: where its pictures are copied in.
+        font_draw_centered(c, FontFace::Regular, ui_text_size(), Rect::new(in_.x, top, in_.w, row_h), tr("No pictures in grimoire/photos."), 60);
+    }
+    for k in 0..FOLDER_PHOTO_PER {
+        let i = first + k;
+        if i >= s.look_photos.len() {
+            break;
+        }
+        let t = &mut s.look_photos[i];
+        let tile = Rect::new(gx + (k as i32 % FOLDER_PHOTO_COLS) * (tw + gap), top + (k as i32 / FOLDER_PHOTO_COLS) * row_h, tw, th);
+        canvas_fill(c, tile, 255);
+        let mut drawn = false;
+        if let Some(pv) = crate::bgwork_template::template_thumb(t) {
+            let saved = c.clip;
+            canvas_set_clip(c, tile);
+            canvas_blit_fit(c, pv, rect_inflate(tile, -ui_px(3.0)));
+            c.clip = saved;
+            drawn = true;
+        } else if t.bad {
+            ui_icon(c, IconKind::Ban, rect_inflate(tile, -tile.w / 3), 60);
+        } else {
+            ui_tile_loading(c, rect_inflate(tile, -ui_px(3.0)));
+        }
+        let name = photo_file_name(t).to_string();
+        let sel = !want.is_empty() && name == want;
+        ui_frame(c, rect_inflate(tile, if sel { ui_px(8.0) } else { 0 }), ui_px(12.0), 0, false, if sel { ui_px(9.0) } else { ui_px(3.0) });
+        let mut label = String::new();
+        let short = ui_name_label(&name, &mut label, 40);
+        font_draw_centered(c, FontFace::Regular, ui_small_size(), Rect::new(tile.x, tile.y + th, tile.w, label_h), short, 60);
+        if drawn {
+            hits_add(&mut s.hits, Rect::new(tile.x, tile.y, tile.w, th + label_h), H_LOOK_PHOTO, i as i32);
+        }
+    }
+    let bh = ui_px(140.0);
+    let by = in_.y + in_.h - bh;
+    let from = Rect::new(in_.x, by, ui_px(500.0), bh);
+    // TRANSLATORS: the folder picture sheet's button (348 px at 44 px inside Gothic's carved line): the file picker
+    // over it, for a picture anywhere on the Kindle to copy into grimoire/photos/.
+    ui_button(c, from, IconKind::Image, tr("From a file..."), ButtonStyle::Plain);
+    hits_add(&mut s.hits, from, H_LOOK_FROM_FILE, 0);
+    let back = Rect::new(in_.x + in_.w - ui_px(380.0), by, ui_px(380.0), bh);
+    ui_button(c, back, IconKind::Back, tr("Back"), ButtonStyle::Plain);
+    hits_add(&mut s.hits, back, H_LOOK_BACK, 0);
+    if !s.look_picture.is_empty() {
+        let none = Rect::new(back.x - ui_px(400.0), by, ui_px(380.0), bh);
+        // TRANSLATORS: the folder picture sheet's button: its card goes back to the plain folder.
+        ui_button(c, none, IconKind::Ban, tr("No picture"), ButtonStyle::Plain);
+        hits_add(&mut s.hits, none, H_LOOK_NO_PICTURE, 0);
+    }
+    if pages > 1 {
+        let py = by - ui_px(170.0);
+        let next = Rect::new(in_.x + in_.w - ui_px(220.0), py, ui_px(220.0), ui_px(140.0));
+        let prev = Rect::new(next.x - ui_px(460.0), py, ui_px(220.0), ui_px(140.0));
+        ui_button(c, prev, IconKind::Prev, "", if s.look_photo_page > 0 { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        ui_button(c, next, IconKind::Next, "", if s.look_photo_page + 1 < pages { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        if s.look_photo_page > 0 {
+            hits_add(&mut s.hits, prev, H_LOOK_PAGE, -1);
+        }
+        if s.look_photo_page + 1 < pages {
+            hits_add(&mut s.hits, next, H_LOOK_PAGE, 1);
+        }
+        let mut pl = String::new();
+        csnprintf!(&mut pl, 96, tr("Page %d of %d"), s.look_photo_page + 1, pages);
+        font_draw_centered(c, FontFace::Bold, ui_text_size(), Rect::new(prev.x + prev.w, py, ui_px(240.0), ui_px(140.0)), &pl, 0);
+    }
+}
+
+// A folder's icon sheet opens on its look: its icon and picture, and the photos it may show.
+fn folder_look_open(a: &mut App, folder: &str) {
+    let dpi = a.dpi;
+    let s = lib(a);
+    s.look_folder.set_bytes(folder.as_bytes());
+    let look = store_folder_look(folder);
+    s.look_icon = look.icon;
+    s.look_icon_page = 0;
+    s.look_picture = look.picture;
+    s.look_photo_page = 0;
+    s.look_copying = false;
+    crate::bgwork_template::template_list_free(&mut s.look_photos);
+    crate::bgwork_template::photos_scan(&mut s.look_photos, dpi);
+    s.modal = Modal::FolderLook;
+    redraw(a, RefreshMode::Ui);
+}
+
+// The folder's icon or picture, as the two sheets have it, saved: the cards under the sheet show it at once
+// (reload reads folder-looks.ini again). A look with neither leaves no block in it.
+fn folder_look_save(a: &mut App) {
+    let (folder, look) = {
+        let s = lib(a);
+        (s.look_folder.as_str().to_string(), FolderLook { icon: s.look_icon.clone(), picture: s.look_picture.clone() })
+    };
+    if store_set_folder_look(&folder, &look) != 0 {
+        // TRANSLATORS: a toast (about 1700 px at 44 px in bold) when a folder's icon or picture could not be saved.
+        app_toast(a, tr("Couldn't save change."), 2500);
+        return;
+    }
+    reload(a);
+}
+
+// A copy into grimoire/photos/ that the folder picture sheet waited for has ended (made or not): the folder is read
+// again, and its page shows where the new picture is listed.
+fn folder_picture_copy_ended(a: &mut App) {
+    let dpi = a.dpi;
+    let had: Vec<String> = a
+        .lib
+        .as_deref()
+        .map(|s| s.look_photos.iter().map(|t| photo_file_name(t).to_string()).collect())
+        .unwrap_or_default();
+    {
+        let s = lib(a);
+        s.look_copying = false;
+        crate::bgwork_template::template_list_free(&mut s.look_photos);
+        crate::bgwork_template::photos_scan(&mut s.look_photos, dpi);
+        // (the picture that came: its tile's page shows)
+        if let Some(i) = s.look_photos.iter().position(|t| !had.iter().any(|n| n == photo_file_name(t))) {
+            s.look_photo_page = (i / FOLDER_PHOTO_PER) as i32;
+        }
+    }
+    redraw(a, RefreshMode::Ui);
 }
 
 fn draw_base(a: &mut App) {
@@ -5122,6 +5963,7 @@ fn setting_hit(id: settingsmenu::SettingId) -> i32 {
         Pair => H_PAIR_MENU,
         Gestures => H_GESTURES,
         Language => H_SET_LANGUAGE,
+        KindleImport => H_SET_KINDLE,
         Mirror => H_SET_MIRROR,
         Wifi => H_WIFI_MENU,
         KOReader => H_KOREADER,
@@ -5957,6 +6799,8 @@ fn draw_modal(a: &mut App) {
     let modal = lib(a).modal;
     match modal {
         Modal::New => draw_new(a),
+        Modal::FolderLook => draw_folder_look(a),
+        Modal::FolderPicture => draw_folder_picture(a),
         Modal::Apps => draw_apps(a),
         Modal::Add => draw_add(a),
         Modal::Sort => draw_sort(a),
@@ -6447,6 +7291,9 @@ fn draw_modal(a: &mut App) {
                     0,
                     ButtonStyle::Plain,
                 ),
+                // TRANSLATORS: a folder's menu (see Rename folder): the icon on its card, and a picture from
+                // grimoire/photos/ in its place.
+                menu_row(IconKind::Image, tr("Icon & picture..."), H_FMORE_LOOK, 0, ButtonStyle::Plain),
                 // TRANSLATORS: a folder's menu (see Rename folder): to another folder or the top level,
                 // with everything in it.
                 menu_row(IconKind::FolderMove, tr("Move folder"), H_FMORE_MOVE, 0, ButtonStyle::Plain),
@@ -8182,6 +9029,38 @@ fn act(a: &mut App, h: &Hit) {
             redraw(a, RefreshMode::Ui);
         }
         H_SET_LANGUAGE => open_modal(a, Modal::Language),
+        H_SET_KINDLE => {
+            let r = crate::bgwork_template::import_kindle_notebooks(a.dpi);
+            if !r.found_folder {
+                // TRANSLATORS: a toast after Import Kindle notebooks: the Kindle's notebook folder was not found.
+                app_toast(a, tr("Couldn't find the Kindle's notebooks folder."), 4000);
+            } else if r.cloud_only > 0 && r.new == 0 {
+                // TRANSLATORS: a toast after Import Kindle notebooks: the Kindle's catalog lists notebooks that
+                // have no notebook file on disk yet. They stay in Amazon's cloud until opened on the device.
+                let msg = cformat!(tr("%d Kindle notebooks are in the cloud only. Open them once in the Kindle app first."), r.cloud_only as i32);
+                app_toast(a, &msg, 6000);
+            } else if r.on_disk == 0 {
+                // TRANSLATORS: a toast after Import Kindle notebooks: the folders are there but hold no notebook
+                // file. The Kindle keeps a notebook in Amazon's cloud until it is opened on the device.
+                app_toast(a, tr("No Kindle notebooks on disk. Open them once in the Kindle app first."), 5000);
+            } else if r.new == 0 {
+                app_toast(a, tr("No new Kindle notebooks found."), 3500);
+            } else if r.copied == 0 {
+                app_toast(a, tr("Couldn't copy the Kindle notebooks."), 4000);
+            } else if r.copied < r.new {
+                // TRANSLATORS: a toast after Import Kindle notebooks: the first batch of the notebooks found is
+                // being imported; tapping it again imports the rest.
+                let msg = cformat!(tr("Importing %d of %d Kindle notebooks."), r.copied as i32, r.new as i32);
+                app_toast(a, &msg, 5000);
+            } else if r.copied == 1 {
+                app_toast(a, tr("Importing 1 Kindle notebook."), 4000);
+            } else {
+                // TRANSLATORS: a toast after Import Kindle notebooks: how many are being imported.
+                let msg = cformat!(tr("Importing %d Kindle notebooks."), r.copied as i32);
+                app_toast(a, &msg, 4000);
+            }
+            redraw(a, RefreshMode::Ui);
+        }
         H_LANG_PICK => {
             // Saved and applied at once: the Settings sheet comes back in the language picked.
             let code = if h.arg >= 0 {
@@ -8308,6 +9187,73 @@ fn act(a: &mut App, h: &Hit) {
             lib(a).modal = Modal::None;
             redraw(a, RefreshMode::Ui);
             app_toast_dismiss(a);
+        }
+        // The folder's icon and picture (2.2, issue #230): the icon grid, and the pictures of grimoire/photos/
+        H_FMORE_LOOK => {
+            if let Some(it) = it.filter(|it| it.is_folder) {
+                folder_look_open(a, it.folder.as_str());
+            }
+        }
+        H_LOOK_ICON => {
+            let Some(def) = FOLDER_ICONS.get(h.arg.max(0) as usize) else { return };
+            let s = lib(a);
+            s.look_icon = if def.name == "folder" { String::new() } else { def.name.to_string() };
+            s.look_picture.clear();
+            folder_look_save(a);
+            redraw(a, RefreshMode::Ui);
+        }
+        H_LOOK_ICON_PAGE => {
+            let pages = (FOLDER_ICONS.len() as i32 + FOLDER_ICON_PER as i32 - 1) / FOLDER_ICON_PER as i32;
+            let s = lib(a);
+            s.look_icon_page = clampi(s.look_icon_page + if h.arg < 0 { -1 } else { 1 }, 0, pages - 1);
+            redraw(a, RefreshMode::Ui);
+        }
+        H_LOOK_PICTURES => {
+            let dpi = a.dpi;
+            let s = lib(a);
+            crate::bgwork_template::template_list_free(&mut s.look_photos);
+            crate::bgwork_template::photos_scan(&mut s.look_photos, dpi);
+            s.look_photo_page = 0;
+            s.look_copying = bg_pending(BgKind::CopyFile, crate::bgwork_copy::CopyTo::Photos.folder());
+            s.modal = Modal::FolderPicture;
+            redraw(a, RefreshMode::Ui);
+        }
+        H_LOOK_PHOTO => {
+            let i = h.arg.max(0) as usize;
+            let Some(name) = a.lib.as_deref().and_then(|s| s.look_photos.get(i)).map(|t| photo_file_name(t).to_string()) else { return };
+            let s = lib(a);
+            s.look_picture = name;
+            s.look_icon.clear();
+            folder_look_save(a);
+            lib(a).modal = Modal::FolderLook;
+            redraw(a, RefreshMode::Ui);
+        }
+        H_LOOK_NO_PICTURE => {
+            let s = lib(a);
+            s.look_picture.clear();
+            s.look_icon.clear();
+            folder_look_save(a);
+            lib(a).modal = Modal::FolderLook;
+            redraw(a, RefreshMode::Ui);
+        }
+        H_LOOK_FROM_FILE => {
+            // (the picker over the picture sheet, which waits for the copy: a picture picked is copied into
+            // grimoire/photos/, and the sheet reads the folder again when the copy ends)
+            lib(a).look_copying = true;
+            files_open_picture(a, crate::bgwork_copy::CopyTo::Photos);
+        }
+        H_LOOK_BACK => {
+            lib(a).modal = Modal::FolderLook;
+            redraw(a, RefreshMode::Ui);
+        }
+        H_LOOK_PAGE => {
+            lib(a).look_photo_page += if h.arg < 0 { -1 } else { 1 };
+            redraw(a, RefreshMode::Ui);
+        }
+        H_LOOK_DONE => {
+            lib(a).modal = Modal::None;
+            reload(a);
+            redraw(a, RefreshMode::Ui);
         }
         H_FMORE_REMOVE => {
             if it.is_some_and(|it| it.count != 0 || it.has_children) {
@@ -9142,6 +10088,9 @@ pub fn library_back(a: &mut App) -> bool {
             lib(a).modal = Modal::DeviceInfo;
             redraw(a, RefreshMode::Ui);
         }
+        // The folder look's two sheets (2.2, issue #230): one step back, then the Library.
+        Modal::FolderPicture => tap(a, H_LOOK_BACK),
+        Modal::FolderLook => tap(a, H_LOOK_DONE),
         Modal::Language | Modal::Koreader | Modal::Shortcuts | Modal::PairMenu | Modal::Updates | Modal::Wifi
         | Modal::SideButton | Modal::EraserMode | Modal::DarkerLines | Modal::DeviceInfo => {
             if modal == Modal::Updates {
@@ -9774,6 +10723,28 @@ pub fn library_tick(a: &mut App, now: u32) {
     if s.modal == Modal::Buttons && s.buttons_group >= 0 && s.shown_hid_changes != a.hid_changes {
         redraw(a, RefreshMode::Ui);
     }
+    if lib(a).modal == Modal::FolderPicture && lib(a).pressed.is_none() && now.wrapping_sub(lib(a).look_photos_ms) >= H_LOOK_TICK_MS {
+        // a photo's preview made while the sheet was open: the folder read again (only while one waits)
+        let dpi = a.dpi;
+        let waiting = {
+            let s = lib(a);
+            s.look_photos_ms = now;
+            s.look_photos.iter().any(|t| !t.bad && !t.ready)
+        };
+        if waiting {
+            let s = lib(a);
+            crate::bgwork_template::template_list_free(&mut s.look_photos);
+            crate::bgwork_template::photos_scan(&mut s.look_photos, dpi);
+            redraw(a, RefreshMode::Ui);
+        }
+    }
+    if lib(a).modal == Modal::FolderPicture
+        && lib(a).look_copying
+        && lib(a).pressed.is_none()
+        && !bg_pending(BgKind::CopyFile, crate::bgwork_copy::CopyTo::Photos.folder())
+    {
+        folder_picture_copy_ended(a);
+    }
     if lib(a).modal == Modal::Pair {
         bt_send(lib(a));
     }
@@ -9944,7 +10915,19 @@ fn card_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
         return 0;
     }
     if it.is_folder {
-        csnprintf!(out, cap, "%s", if luma { "none" } else { "folder" });
+        if luma {
+            csnprintf!(out, cap, "none");
+            return 0;
+        }
+        // (2.2, issue #230: its picture's preview when the folder has one and it is drawn, else its icon)
+        let look = s.looks.iter().find(|(f, _)| f == it.folder.as_str()).map(|(_, l)| l.clone()).unwrap_or_default();
+        let mut picture = false;
+        if !look.picture.is_empty() {
+            if let Some(i) = s.look_photos.iter().position(|p| photo_file_name(p) == look.picture) {
+                picture = crate::bgwork_template::template_thumb(&mut s.look_photos[i]).is_some();
+            }
+        }
+        csnprintf!(out, cap, "%s", if picture { "picture" } else { "folder" });
         return 0;
     }
     let k = s.books[it.nb].paper;
@@ -10251,6 +11234,18 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
         csnprintf!(out, cap, "about-link");
     } else if key == "sheet" && s.modal == Modal::FilesMore {
         csnprintf!(out, cap, "files-more");
+    } else if key == "sheet" && s.modal == Modal::FolderLook {
+        csnprintf!(out, cap, "folder-look");
+    } else if key == "sheet" && s.modal == Modal::FolderPicture {
+        csnprintf!(out, cap, "folder-picture");
+    } else if key == "look.folder" {
+        csnprintf!(out, cap, "%s", s.look_folder.as_str());
+    } else if key == "look.page" {
+        csnprintf!(out, cap, "%d", s.look_icon_page + 1);
+    } else if key == "look.icon" {
+        csnprintf!(out, cap, "%s", &store_folder_look(s.look_folder.as_str()).icon);
+    } else if key == "look.picture" {
+        csnprintf!(out, cap, "%s", &store_folder_look(s.look_folder.as_str()).picture);
     } else if key == "sheet" {
         match SHEETS.get(s.modal as usize) {
             Some(m) => csnprintf!(out, cap, "%s", *m),
@@ -10360,7 +11355,13 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_MORE_GRAPH=>"more.graph",H_FMORE_GRAPH=>"fmore.graph",H_DELETE_YES=>"delete.yes",
                 H_SET_THEME=>"theme",H_NEW_CREATE=>"create",H_MORE_MOVE=>"more.move",
                 H_FMORE_RENAME=>"fmore.rename",H_FMORE_MOVE=>"fmore.move",H_FMORE_REMOVE=>"fmore.remove",
-                H_FMORE_HOME => "fmore.home",
+                H_FMORE_HOME => "fmore.home", H_FMORE_LOOK => "fmore.look",
+                H_LOOK_ICON => "folder-icon.", H_LOOK_PHOTO => "folder-picture.",
+                H_LOOK_PICTURES => "folder-picture.open", H_LOOK_NO_PICTURE => "folder-picture.none",
+                H_LOOK_FROM_FILE => "folder-picture.file", H_LOOK_BACK => "folder-picture.back",
+                H_LOOK_PAGE => if hit.arg < 0 { "folder-picture.prev" } else { "folder-picture.next" },
+                H_LOOK_ICON_PAGE => if hit.arg < 0 { "folder-look.prev" } else { "folder-look.next" },
+                H_LOOK_DONE => "folder-look.done",
                 H_MOVE_TOP=>"move.top",H_MOVE_TO=>"move.to.",H_MOVE_NEW=>"move.new",H_MOVE_PREV=>"move.prev",H_MOVE_NEXT=>"move.next",
                 H_SET_PENS => "pen-feel", H_SET_CALIB => "calibrate", H_SET_DISPLAY => "display",
                 H_SET_SLEEP => "sleep-clock", H_SET_CLOCK => "status-bar",
@@ -10417,6 +11418,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_SET_SIDE => "pen-button", H_SIDE_PICK => "pen-button.", H_SIDE_BACK => "pen-button.back",
                 H_SET_ERASER => "eraser-mode", H_ERASER_PICK => "eraser-mode.", H_ERASER_BACK => "eraser-mode.back",
                 H_SET_DARKER => "darker-lines", H_DARKER_PICK => "darker-lines.", H_DARKER_BACK => "darker-lines.back",
+                H_SET_KINDLE => "kindle-notebooks",
                 H_SET_PINCH => "pinch", H_SET_MIRROR => "mirror",
                 H_SET_DEVICE => "about-device", H_DEVICE_BACK => "about-device.back",
                 H_SET_PACKAGES => "settings.packages", H_SET_APP_PACKAGES => "settings.apps",
@@ -10426,6 +11428,13 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 name.push_str(i18n_language_code(hit.arg).unwrap_or("auto"));
             }
             if matches!(hit.id, H_SIDE_PICK | H_ERASER_PICK | H_DARKER_PICK) { name.push_str(&hit.arg.to_string()); }
+            // A folder look's tiles by name (2.2, issue #230): the icon's, or the picture's file name.
+            if hit.id == H_LOOK_ICON {
+                name.push_str(FOLDER_ICONS.get(hit.arg as usize).map_or("", |def| def.name));
+            }
+            if hit.id == H_LOOK_PHOTO {
+                name.push_str(s.look_photos.get(hit.arg as usize).map_or("", photo_file_name));
+            }
             if hit.id == H_FONT_PICK {
                 name.push_str(FONT_FAMILIES.get(hit.arg as usize).map_or("", |f| f.id));
             }
@@ -10663,6 +11672,80 @@ mod tests {
             seen.push((v, name));
         }
         assert!(seen.len() > 50);
+    }
+
+    // The folder icons a card can be given (2.2, issue #230) are named for folder-looks.ini: lowercase, one
+    // meaning each, and the plain folder icon for an unknown name.
+    #[test]
+    fn folder_icons_are_named_and_unique() {
+        let mut seen: Vec<&str> = Vec::new();
+        for def in FOLDER_ICONS {
+            assert!(folder_icon_valid(def.name), "{}", def.name);
+            assert!(!seen.contains(&def.name), "{} twice", def.name);
+            seen.push(def.name);
+            assert_eq!(folder_icon_def(def.name).name, def.name);
+        }
+        assert_eq!(FOLDER_ICONS.len(), 48);
+        assert_eq!(FOLDER_ICONS.len(), FOLDER_ICON_PER * 2);
+        assert_eq!(folder_icon_def("").name, "folder");
+        assert_eq!(folder_icon_def("nothing").name, "folder");
+        // a look picked before the list grew still shows a face
+        assert_eq!(folder_icon_def("castle").name, "home");
+        assert_eq!(folder_icon_def("image").name, "photos");
+        assert_eq!(folder_icon_def("copy").name, "documents");
+        assert!(FOLDER_PHOTO_PER == 8);
+    }
+
+    // A folder's menu's Icon & picture... picks one of FOLDER_ICONS for its card and opens its pictures' sheet
+    // (2.2, issue #230): what is picked is saved in folder-looks.ini and read back, Done closes, and the plain
+    // folder icon is no line in the file.
+    #[test]
+    fn a_folders_icon_and_picture_are_picked_from_its_menu() {
+        let (mut a, root) = home_app("look");
+        library_enter(&mut a);
+        let i = lib(&mut a).items.iter().position(|it| it.is_folder && it.folder.as_str() == "School").unwrap();
+        act(&mut a, &Hit { id: H_CARD_MORE, arg: i as i32, ..Default::default() });
+        let row = a.lib.as_ref().unwrap().hits.h.iter().find(|h| h.id == H_FMORE_LOOK).copied().expect("the icon row");
+        act(&mut a, &row);
+        assert_eq!(lib(&mut a).modal, Modal::FolderLook);
+        let tile = a
+            .lib
+            .as_ref()
+            .unwrap()
+            .hits
+            .h
+            .iter()
+            .find(|h| h.id == H_LOOK_ICON && FOLDER_ICONS.get(h.arg as usize).is_some_and(|def| def.name == "school"))
+            .copied()
+            .expect("the school tile");
+        act(&mut a, &tile);
+        assert_eq!(lib(&mut a).modal, Modal::FolderLook);
+        assert_eq!(store_folder_look("School").icon, "school");
+        assert_eq!(store_folder_look("School").picture, "");
+        assert_eq!(lib(&mut a).look_icon, "school");
+        // an icon picked takes the place of a picture
+        lib(&mut a).look_picture = "cover.jpg".to_string();
+        act(&mut a, &tile);
+        assert_eq!(store_folder_look("School").icon, "school");
+        assert_eq!(store_folder_look("School").picture, "");
+        // page two holds the second group, and the arrows move between the pages
+        act(&mut a, &Hit { id: H_LOOK_ICON_PAGE, arg: 1, ..Default::default() });
+        assert_eq!(lib(&mut a).look_icon_page, 1);
+        act(&mut a, &Hit { id: H_LOOK_ICON_PAGE, arg: -1, ..Default::default() });
+        assert_eq!(lib(&mut a).look_icon_page, 0);
+        act(&mut a, &Hit { id: H_LOOK_PICTURES, ..Default::default() });
+        assert_eq!(lib(&mut a).modal, Modal::FolderPicture);
+        act(&mut a, &Hit { id: H_LOOK_BACK, ..Default::default() });
+        assert_eq!(lib(&mut a).modal, Modal::FolderLook);
+        act(&mut a, &Hit { id: H_LOOK_DONE, ..Default::default() });
+        assert_eq!(lib(&mut a).modal, Modal::None);
+        assert_eq!(store_folder_look("School").icon, "school", "kept as the sheet closes");
+        // the plain folder icon is no line in folder-looks.ini
+        act(&mut a, &Hit { id: H_CARD_MORE, arg: i as i32, ..Default::default() });
+        act(&mut a, &Hit { id: H_FMORE_LOOK, ..Default::default() });
+        act(&mut a, &Hit { id: H_LOOK_ICON, arg: 0, ..Default::default() });
+        assert_eq!(store_folder_look("School"), FolderLook::default());
+        home_done(a, root);
     }
 
     // A sheet past the C's (0 to 18) takes a number from 300 on, never the next free number after the C's;

@@ -633,6 +633,36 @@ file name, title, key or hash ever appears in it: ids, page numbers, counts, siz
   are still drawn by the UI.
 - `bg: PDF import of <id> (pid N)` once per slice; `bg: PDF import pid N done`.
 
+## Kindle notebooks (2.2, #196)
+
+Grimoire imports notebooks made in the Kindle's own notebook app. Over USB (or MTP), each notebook is a folder
+in `/mnt/us/.notebooks/` named by an id and holding a file called `nbk`: copy that whole folder into
+`grimoire/import/` and the next scan takes it. **Settings > General > Import Kindle notebooks** does that for
+you: it reads `/mnt/us/.notebooks/` (the Scribe's own place) and the notebook catalog at
+`/var/local/ksdk.content.db`, then copies the notebooks that are not imported yet (eight at a time, then tap it
+again for the rest) into `grimoire/import/` and queues them. The catalog names them and keeps a book's
+annotation folders out. The notebooks in `.notebooks/` are never changed. A notebook that lives only in
+Amazon's cloud is listed in the catalog but has no `nbk` on the Kindle yet: open it once, close it, and tap
+the row again; the row says how many are cloud-only. The
+notebook appears with the name the Scribe gives it (its
+folder's name when its metadata holds none), one page per page, its ink scaled to the Scribe's page; the
+Scribe's paper is blank in Grimoire, its pressure is kept, and Amazon's brushes become Grimoire's (pen and
+original pen: ballpoint; pencil; fountain pen; marker; highlighter). Ink colour is not kept: Grimoire's ink is
+monochrome. The page order is the notebook's own; its blank `note_template_collection` pages are not imported,
+nor is text or any other non-ink content.
+
+Only `nbk` is read: the folder's other files (the Scribe's `.kfx`, say) are ignored, and the notebook folder
+moves to `import/done/` when it is done, as a picture folder does. The original folder under `.notebooks/` is
+never changed. An `nbk` is up to 256 MB and a notebook up to 2000 pages. A file that does not read as a
+Kindle notebook is refused: `import: <id>: <why>; nothing imported` (its folder stays in `import/` until its
+files change, as a refused picture folder does). The import's other lines are `import: <id>: N page(s) of a
+Kindle notebook, for WxH pages` and `import: notebook <id> made of N page(s), N stroke(s) of a Kindle
+notebook`. No file name, title or page content is logged.
+
+The container and fragment format were worked out from real notebooks, the open `kfxlib` sources and
+Walnut356's `de_scribe` reader (format reference only: no code is taken from it); docs/BACKLOG.md had the
+original notes. `rust/src/nbk.rs` is the reader, `bgwork_template.rs` the import child that writes the pages.
+
 ## Your own fonts (2.1.0-beta.2)
 
 Copy `.ttf` or `.otf` files into `grimoire/fonts/` (see README). Device checks are in TESTING.md. A font is
