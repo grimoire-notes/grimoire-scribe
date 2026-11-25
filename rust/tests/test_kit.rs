@@ -755,6 +755,8 @@ fn a_call_at_a_limit_runs_and_one_past_it_stops_as_out_of_instructions() {
             // (a pager has two regions: one region and as many pagers again go one past at the last one's second; the
             // pagers are above the body, where their frames take nothing from the budget by their pixels)
             ("the hit regions of pagers", repeat(hits / 2, &call("pager", &[1, 2, 0, -1000, 300, 1, 3])), seq(&[call("hit", &[1, 0, 0, 1, 1]), repeat(hits / 2, &call("pager", &[1, 2, 0, -1000, 300, 1, 3]))])),
+            // (and a pager on its last page, whose one region is its previous page's arrow)
+            ("the hit region of a pager's previous arrow", seq(&[repeat(hits - 1, &call("hit", &[1, 0, 0, 1, 1])), call("pager", &[1, 2, 0, -1000, 300, 2, 3])]), seq(&[repeat(hits, &call("hit", &[1, 0, 0, 1, 1])), call("pager", &[1, 2, 0, -1000, 300, 2, 3])])),
             ("the bytes of one text", call("text", &[0, 0, 100, 40, 0, one, 0, 0]), call("text", &[0, 0, 100, 40, 0, one + 1, 0, 0])),
             ("the bytes of one measured text", call("measure_width", &[0, one, 0]), call("measure_width", &[0, one + 1, 0])),
             ("the bytes of a label", call("row", &[-1, 0, 0, 10, 10, 0, 0, 0, one, 0, -1]), call("row", &[-1, 0, 0, 10, 10, 0, 0, 0, one + 1, 0, -1])),
@@ -949,6 +951,22 @@ fn an_unknown_role_style_or_tone_is_the_first_one() {
         ] {
             assert!(one(&format!("{}a", what.len()), &a).px == one(&format!("{}b", what.len()), &b).px, "{host:?}: {what}");
         }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_pager_counts_at_most_10000_pages() {
+    let root = fresh_root("pages");
+    for host in HOSTS {
+        let one = |id: &str, page: i32, pages: i32| {
+            let mut rt = loaded(&format!("test.kit.pages.{}.{id}", tag(host)), &pass(host, &[K::Pager(8, 9, 20, 100, 1100, page, pages)]));
+            drawn(&mut rt)
+        };
+        let most = one("most", 9999, 10_000);
+        assert!(one("more", 15_000, 20_000).px == most.px, "{host:?}: 20,000 pages are counted as 10,000, the page as the last");
+        assert!(one("max", MAX, MAX).px == most.px, "{host:?}");
+        assert!(one("fewer", 0, 3).px != most.px, "{host:?}: (a count that shows)");
     }
     let _ = std::fs::remove_dir_all(&root);
 }
