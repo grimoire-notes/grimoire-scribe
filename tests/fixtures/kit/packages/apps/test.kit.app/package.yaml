@@ -1,0 +1,15 @@
+name: Kit app
+id: test.kit.app
+type: app
+version: 1.0.0
+author: Grimoire tests
+description: A module of the package kit's tests.
+platforms: [all]
+artifact:
+  path: app.wasm
+  sha256: e6671137a6d31cb39a3b61cb2546ccc8a34df61fb1634ae5f5d7a260ac92e78a
+  size: 1671
+capabilities: []
+spec:
+  runtime: wasm
+  status_bar: true

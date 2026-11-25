@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "packages": [
+    {"id":"test.kit.app","name":"Kit app","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/apps/test.kit.app/app.wasm","sha":"e6671137a6d31cb39a3b61cb2546ccc8a34df61fb1634ae5f5d7a260ac92e78a","installed_at":1,"source_url":""},
+    {"id":"test.kit.lateapp","name":"Kit later app","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/apps/test.kit.lateapp/app.wasm","sha":"494be5d974806e9cd735465ab0357d9ebbfe5461cf8db9e5cff474af24a47ad2","installed_at":1,"source_url":""}
+  ]
+}
