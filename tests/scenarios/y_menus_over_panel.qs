@@ -41,7 +41,8 @@ wait 200
 expect editor.find.rows is 1
 expect editor.layers is ok
 shot 02-find-over-panel
-key 34 0
+# Esc closes it (G, which opened it, types on its keyboard: #266)
+key 1 0
 wait 400
 expect editor.modal is none
 expect editor.layers is ok
@@ -156,7 +157,7 @@ pen leave
 wait 600
 expect editor.layers is ok
 shot 09-sideways-find-after-a-stroke
-key 34 0
+key 1 0
 wait 400
 expect editor.modal is none
 expect editor.layers is ok
