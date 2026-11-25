@@ -15,7 +15,9 @@
 //! replaces a selection and delete takes it. The edit key opens the edit page: Select all, Cut, Copy and
 //! Paste, and Start and End for the caret. What Cut and Copy take is the keyboard's own clipboard, apart
 //! from the lasso's ink, kept until Grimoire closes (keyboard_clipboard). A hardware keyboard's arrows,
-//! Home and End, and Ctrl or Cmd with A, C, X and V do the same (keyboard_key_input, KbInput).
+//! Home and End, and Ctrl or Cmd with A, C, X and V do the same (keyboard_key_input, KbInput); its letters,
+//! digits, punctuation and Space type as the keys do (the US layout with Shift: keyboard_hw_char), Backspace
+//! is delete, Enter Done and Esc Cancel.
 
 use crate::prelude::*;
 
@@ -780,7 +782,8 @@ pub fn keyboard_field_rect(area: Rect) -> Rect {
 
 /// What a hardware key does to an open on-screen keyboard (app_type_text): Esc is its Cancel; the arrows, Home and
 /// End move the caret (with Shift held, the selection's end: `true`), and Ctrl or Cmd with A, C, X and V are
-/// the edit page's Select all, Copy, Cut and Paste (keyboard_key_input).
+/// the edit page's Select all, Copy, Cut and Paste; a character key types its character (`Char`, a code point:
+/// keyboard_hw_char), Backspace is delete and Enter is Done (keyboard_key_input).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KbInput {
     Cancel,
@@ -792,15 +795,21 @@ pub enum KbInput {
     Copy,
     Cut,
     Paste,
+    Char(u32),
+    Backspace,
+    Done,
 }
 
 /// What a hardware keyboard's key (Linux evdev code) with these modifiers (KEYMOD_* bits) does on an open text
 /// keyboard: Left and Right (105, 106) a character, Home and End (102, 107) to the start and the end, each
 /// selecting with Shift held; Ctrl or Cmd (Meta) with A, C, X or V (30, 46, 45, 47) Select all, Copy, Cut and
-/// Paste. None for every other key, which goes on as it did (Esc is the keyboard's Cancel by its shortcut).
+/// Paste; and with neither Ctrl, Alt nor Meta held, Esc (1) Cancel, Backspace (14) delete, Enter (28, the
+/// keypad's 96) Done and a character key its character (keyboard_hw_char). None for every other key, which goes
+/// on as it did.
 pub fn keyboard_key_input(code: i32, mods: u32) -> Option<KbInput> {
     let shift = mods & KEYMOD_SHIFT as u32 != 0;
     let cmd = mods & (KEYMOD_CTRL | KEYMOD_META) as u32 != 0 && mods & KEYMOD_ALT as u32 == 0;
+    let plain = mods & (KEYMOD_CTRL | KEYMOD_ALT | KEYMOD_META) as u32 == 0;
     Some(match code {
         105 => KbInput::Left(shift),
         106 => KbInput::Right(shift),
@@ -810,8 +819,44 @@ pub fn keyboard_key_input(code: i32, mods: u32) -> Option<KbInput> {
         46 if cmd => KbInput::Copy,
         45 if cmd => KbInput::Cut,
         47 if cmd => KbInput::Paste,
-        _ => return None,
+        1 if plain => KbInput::Cancel,
+        14 if plain => KbInput::Backspace,
+        28 | 96 if plain => KbInput::Done,
+        _ => return keyboard_hw_char(code, mods).map(KbInput::Char),
     })
+}
+
+/// The character a hardware keyboard's key (Linux evdev code) types with these modifiers (KEYMOD_* bits), as
+/// the US layout has it: the letters (their capitals with Shift), the digits (with Shift the signs over them),
+/// the punctuation (- = [ ] ; ' ` \ , . / and with Shift _ + { } : " ~ | < > ?), the space bar, and the keypad's
+/// digits, point and signs (Shift or not). None for any other key, and for every key with Ctrl, Alt or Meta held
+/// (those stay shortcuts). Caps Lock is no modifier the input reports, so it changes nothing.
+pub fn keyboard_hw_char(code: i32, mods: u32) -> Option<u32> {
+    if mods & (KEYMOD_CTRL | KEYMOD_ALT | KEYMOD_META) as u32 != 0 {
+        return None;
+    }
+    // The main block by code from 2 (1) to 53 (/), a zero where a code types nothing (Backspace, Tab, Enter,
+    // Ctrl, Shift).
+    const PLAIN: &[u8; 52] = b"1234567890-=\0\0qwertyuiop[]\0\0asdfghjkl;'`\0\\zxcvbnm,./";
+    const SHIFTED: &[u8; 52] = b"!@#$%^&*()_+\0\0QWERTYUIOP{}\0\0ASDFGHJKL:\"~\0|ZXCVBNM<>?";
+    let ch = match code {
+        2..=53 => {
+            let row = if mods & KEYMOD_SHIFT as u32 != 0 { SHIFTED } else { PLAIN };
+            row[(code - 2) as usize]
+        }
+        57 => b' ',
+        55 => b'*',
+        71..=73 => b'7' + (code - 71) as u8,
+        74 => b'-',
+        75..=77 => b'4' + (code - 75) as u8,
+        78 => b'+',
+        79..=81 => b'1' + (code - 79) as u8,
+        82 => b'0',
+        83 => b'.',
+        98 => b'/',
+        _ => 0,
+    };
+    (ch != 0).then_some(ch as u32)
 }
 
 // Backspace: the selection, or else the whole character before the caret (back over its continuation bytes to
@@ -868,6 +913,10 @@ pub fn keyboard_input(kb: &mut Keyboard, input: &KbInput, dirty: &mut Rect) -> K
             *dirty = kb.area;
             return KbResult::Cancel;
         }
+        // (delete and Done on every page, the count pad's as keyboard_press does them there)
+        KbInput::Backspace => KB_KEY_BKSP,
+        KbInput::Done => KB_KEY_DONE,
+        KbInput::Char(c) => return type_char(kb, c, dirty),
         // (the count pad has no caret to move and nothing to select: its keys are digits)
         _ if kb.page == 4 => return KbResult::None,
         KbInput::Left(extend) | KbInput::Right(extend) => {
@@ -886,6 +935,28 @@ pub fn keyboard_input(kb: &mut Keyboard, input: &KbInput, dirty: &mut Rect) -> K
         KbInput::Paste => KB_KEY_PASTE,
     };
     keyboard_press(kb, code, dirty)
+}
+
+// A hardware key's character (KbInput::Char) typed at the caret, in place of a selection, as the key with that
+// character types it: the character itself, whatever the on-screen shift shows (the hardware keyboard's own Shift
+// gave a capital), and the shift left as it is. A number pad (Go to page's, and its edit page) and the count pad
+// take a digit alone, as their keys and Paste do; a control character is never typed, nor one that would not fit
+// (None: the text as it was, nothing to draw).
+fn type_char(kb: &mut Keyboard, c: u32, dirty: &mut Rect) -> KbResult {
+    let Some(ch) = char::from_u32(c).filter(|ch| !ch.is_control()) else { return KbResult::None };
+    let digits = kb.page == 2 || kb.page == 4 || (kb.page == EDIT_PAGE && kb.prev_page == 2);
+    if digits && !ch.is_ascii_digit() {
+        return KbResult::None;
+    }
+    if kb.page == 4 {
+        return keyboard_press(kb, c, dirty);
+    }
+    let mut enc = [0u8; 4];
+    if !replace_selection(kb, ch.encode_utf8(&mut enc).as_bytes()) {
+        return KbResult::None;
+    }
+    kb.field_dirty = line_rect(kb.area);
+    KbResult::Changed
 }
 
 // A caret or selection that moved: the text line to refresh, and Moved; None when nothing moved.
@@ -3043,8 +3114,9 @@ mod tests {
     }
 
     /// keyboard_key_input: a hardware keyboard's keys on a text keyboard. Left, Right, Home and End, with Shift
-    /// selecting; Ctrl or Cmd with A, C, X and V (not with Alt); nothing else, not the plain letters (which type
-    /// nothing in a field) and not Up, Down or Esc.
+    /// selecting; Ctrl or Cmd with A, C, X and V (not with Alt); Esc, Backspace and Enter (the keypad's too) with
+    /// no Ctrl, Alt or Meta; a character key its character; nothing else, not Up, Down, Tab, Delete or a key with
+    /// Ctrl, Alt or Meta that is no edit key.
     #[test]
     fn hardware_keys_that_edit_text() {
         let (ctrl, shift, alt, meta) = (KEYMOD_CTRL as u32, KEYMOD_SHIFT as u32, KEYMOD_ALT as u32, KEYMOD_META as u32);
@@ -3058,9 +3130,155 @@ mod tests {
             assert_eq!(keyboard_key_input(45, m), Some(KbInput::Cut));
             assert_eq!(keyboard_key_input(47, m), Some(KbInput::Paste));
         }
-        for (code, m) in [(30, 0), (46, shift), (47, ctrl | alt), (103, 0), (108, 0), (1, 0), (28, 0), (14, 0)] {
+        for m in [0, shift] {
+            assert_eq!(keyboard_key_input(1, m), Some(KbInput::Cancel));
+            assert_eq!(keyboard_key_input(14, m), Some(KbInput::Backspace));
+            assert_eq!(keyboard_key_input(28, m), Some(KbInput::Done));
+            assert_eq!(keyboard_key_input(96, m), Some(KbInput::Done));
+        }
+        assert_eq!(keyboard_key_input(30, 0), Some(KbInput::Char('a' as u32)));
+        assert_eq!(keyboard_key_input(46, shift), Some(KbInput::Char('C' as u32)));
+        assert_eq!(keyboard_key_input(57, 0), Some(KbInput::Char(' ' as u32)));
+        for (code, m) in [(47, ctrl | alt), (103, 0), (108, 0), (15, 0), (111, 0), (1, ctrl), (14, alt), (28, meta), (31, ctrl), (16, alt), (57, meta)] {
             assert_eq!(keyboard_key_input(code, m), None, "key {code} mods {m}");
         }
+    }
+
+    /// keyboard_hw_char, the US layout: every letter small and with Shift its capital; the digits and with Shift
+    /// the signs over them; the punctuation both ways; the space bar either way; the keypad's digits, point and
+    /// signs; nothing for the keys that type no character, and nothing for any key with Ctrl, Alt or Meta held.
+    #[test]
+    fn the_us_layout_types_what_its_keys_show() {
+        let (ctrl, shift, alt, meta) = (KEYMOD_CTRL as u32, KEYMOD_SHIFT as u32, KEYMOD_ALT as u32, KEYMOD_META as u32);
+        let ch = |code: i32, m: u32| keyboard_hw_char(code, m).and_then(char::from_u32);
+        // The letters by their evdev codes, row by row.
+        let letters = [
+            (16, 'q'), (17, 'w'), (18, 'e'), (19, 'r'), (20, 't'), (21, 'y'), (22, 'u'), (23, 'i'), (24, 'o'), (25, 'p'),
+            (30, 'a'), (31, 's'), (32, 'd'), (33, 'f'), (34, 'g'), (35, 'h'), (36, 'j'), (37, 'k'), (38, 'l'),
+            (44, 'z'), (45, 'x'), (46, 'c'), (47, 'v'), (48, 'b'), (49, 'n'), (50, 'm'),
+        ];
+        assert_eq!(letters.len(), 26);
+        for (code, small) in letters {
+            assert_eq!(ch(code, 0), Some(small), "key {code}");
+            assert_eq!(ch(code, shift), Some(small.to_ascii_uppercase()), "key {code} with Shift");
+        }
+        // The digits' row: 1 to 9 and 0, and with Shift what a US keyboard prints over them.
+        for (i, (digit, sign)) in "1234567890".chars().zip("!@#$%^&*()".chars()).enumerate() {
+            let code = 2 + i as i32;
+            assert_eq!((ch(code, 0), ch(code, shift)), (Some(digit), Some(sign)), "key {code}");
+        }
+        // The punctuation, plain and with Shift.
+        for (code, plain, shifted) in [
+            (12, '-', '_'), (13, '=', '+'), (26, '[', '{'), (27, ']', '}'), (39, ';', ':'), (40, '\'', '"'),
+            (41, '`', '~'), (43, '\\', '|'), (51, ',', '<'), (52, '.', '>'), (53, '/', '?'),
+        ] {
+            assert_eq!((ch(code, 0), ch(code, shift)), (Some(plain), Some(shifted)), "key {code}");
+        }
+        // The space bar, Shift or not.
+        assert_eq!((ch(57, 0), ch(57, shift)), (Some(' '), Some(' ')));
+        // The keypad: its digits, point and signs, Shift or not.
+        for (code, c) in [
+            (82, '0'), (79, '1'), (80, '2'), (81, '3'), (75, '4'), (76, '5'), (77, '6'), (71, '7'), (72, '8'), (73, '9'),
+            (83, '.'), (98, '/'), (55, '*'), (74, '-'), (78, '+'),
+        ] {
+            assert_eq!((ch(code, 0), ch(code, shift)), (Some(c), Some(c)), "keypad key {code}");
+        }
+        // Keys that type no character: Esc, Backspace, Tab, Enter (both), the modifiers, Caps Lock, the F keys,
+        // the arrows, Home, End, PageUp, PageDown, Insert, Delete, power, and codes outside the table.
+        for code in [0, 1, 14, 15, 28, 96, 29, 97, 42, 54, 56, 100, 125, 126, 58, 59, 68, 87, 88, 103, 105, 106, 108, 102, 107, 104, 109, 110, 111, 116, 86, 117, 200, -1] {
+            assert_eq!(ch(code, 0), None, "key {code}");
+            assert_eq!(ch(code, shift), None, "key {code} with Shift");
+        }
+        // Ctrl, Alt and Meta, alone or with Shift, type nothing: those keys stay shortcuts.
+        for m in [ctrl, alt, meta, ctrl | shift, alt | shift, meta | shift, ctrl | alt] {
+            for code in [30, 2, 12, 57, 53, 82] {
+                assert_eq!(ch(code, m), None, "key {code} mods {m}");
+            }
+        }
+    }
+
+    /// A hardware key's character (KbInput::Char) types as the key with that character does: at the caret, in
+    /// place of a selection, never past the keyboard's length, its own case whatever the on-screen shift shows (and
+    /// the shift left as it is), masked on a password keyboard, digits alone on a number pad and the count pad.
+    /// Backspace is delete, Enter is Done and Esc is Cancel.
+    #[test]
+    fn a_hardware_character_types_as_its_key_does() {
+        let mut kb = laid_out("ab", 0);
+        assert_eq!(input(&mut kb, KbInput::Char('c' as u32)), KbResult::Changed);
+        assert_eq!(caret(&kb), "abc|");
+        assert_eq!(kb.field_dirty, line_rect(kb.area), "the text line, as a key's typing refreshes");
+        input(&mut kb, KbInput::Left(false));
+        input(&mut kb, KbInput::Char('X' as u32));
+        assert_eq!(caret(&kb), "abX|c", "at the caret");
+        input(&mut kb, KbInput::Home(false));
+        input(&mut kb, KbInput::End(true));
+        assert_eq!(input(&mut kb, KbInput::Char('z' as u32)), KbResult::Changed);
+        assert_eq!(caret(&kb), "z|", "in place of the selection");
+        assert_eq!(input(&mut kb, KbInput::Backspace), KbResult::Changed);
+        assert_eq!(caret(&kb), "|", "Backspace takes the character before the caret");
+        assert_eq!(input(&mut kb, KbInput::Backspace), KbResult::Changed, "as delete does on an empty text");
+        // The on-screen shift neither changes the case a hardware key types nor lets go.
+        press_code(&mut kb, KB_KEY_SHIFT);
+        assert_eq!(kb.shift, KbShift::Once);
+        input(&mut kb, KbInput::Char('h' as u32));
+        assert_eq!((caret(&kb).as_str(), kb.shift), ("h|", KbShift::Once));
+        press_code(&mut kb, 'i' as u32);
+        assert_eq!((caret(&kb).as_str(), kb.shift), ("hI|", KbShift::Off), "the next on-screen key still takes it");
+        // A control character, or no character at all, is never typed.
+        for c in [0u32, 9, 13, 27, 0x7F, 0x85, 0xD800, 0x110000] {
+            assert_eq!(input(&mut kb, KbInput::Char(c)), KbResult::None, "U+{c:X}");
+        }
+        assert_eq!(caret(&kb), "hI|");
+        // The length: 95 bytes and its end; one more is not typed and nothing is drawn.
+        let full = "x".repeat(KB_TEXT_MAX - 1);
+        let mut kb = laid_out(&full, 0);
+        assert_eq!(input(&mut kb, KbInput::Char('y' as u32)), KbResult::None);
+        assert_eq!(kb.text.as_str(), full);
+        assert!(rect_is_empty(kb.field_dirty));
+        input(&mut kb, KbInput::Left(true));
+        assert_eq!(input(&mut kb, KbInput::Char('y' as u32)), KbResult::Changed, "a selection replaced fits");
+        assert_eq!(kb.text.len(), KB_TEXT_MAX - 1);
+        assert!(kb.text.as_str().ends_with('y'));
+        // Enter is Done, the text kept for the caller; Esc is Cancel.
+        let mut kb = laid_out("name", 0);
+        assert_eq!(input(&mut kb, KbInput::Done), KbResult::Done);
+        assert!(!kb.open && kb.text.as_str() == "name");
+        let mut kb = laid_out("name", 0);
+        assert_eq!(input(&mut kb, KbInput::Cancel), KbResult::Cancel);
+        assert!(!kb.open);
+        assert_eq!(input(&mut kb, KbInput::Char('a' as u32)), KbResult::None, "a closed keyboard takes nothing");
+        // A password: typed and deleted, drawn as stars, never in a probe.
+        let mut kb = Keyboard::default();
+        keyboard_open_secret(&mut kb, "Password");
+        kb.area = keyboard_area(&kb, Rect { x: 0, y: 0, w: 1860, h: 2480 });
+        for c in "pa$$".chars() {
+            assert_eq!(input(&mut kb, KbInput::Char(c as u32)), KbResult::Changed);
+        }
+        input(&mut kb, KbInput::Backspace);
+        assert_eq!((kb.text.as_str(), caret(&kb).as_str()), ("pa$", ""));
+        assert_eq!(input(&mut kb, KbInput::Done), KbResult::Done);
+        // Go to page's number pad, and its edit page: digits alone.
+        for (page, prev) in [(2, 0), (EDIT_PAGE, 2)] {
+            let mut kb = laid_out("1", page);
+            kb.prev_page = prev;
+            assert_eq!(input(&mut kb, KbInput::Char('a' as u32)), KbResult::None);
+            assert_eq!(input(&mut kb, KbInput::Char(' ' as u32)), KbResult::None);
+            assert_eq!(input(&mut kb, KbInput::Char('2' as u32)), KbResult::Changed);
+            assert_eq!(kb.text.as_str(), "12");
+        }
+        // The count pad: a digit as its key types it (the opening 1 replaced), anything else nothing; Backspace and
+        // Enter as its del and Done.
+        let mut kb = Keyboard::default();
+        keyboard_open_count(&mut kb, "Pages to add", 50, |n| n.to_string());
+        kb.area = keyboard_area(&kb, Rect { x: 0, y: 0, w: 1860, h: 2480 });
+        assert_eq!(input(&mut kb, KbInput::Char('x' as u32)), KbResult::None);
+        assert_eq!(input(&mut kb, KbInput::Char(KB_KEY_DONE)), KbResult::None, "a key code is no character");
+        assert_eq!(input(&mut kb, KbInput::Char('4' as u32)), KbResult::Changed);
+        assert_eq!(input(&mut kb, KbInput::Char('2' as u32)), KbResult::Changed);
+        assert_eq!(keyboard_count(&kb), 42);
+        assert_eq!(input(&mut kb, KbInput::Backspace), KbResult::Changed);
+        assert_eq!(keyboard_count(&kb), 4);
+        assert_eq!(input(&mut kb, KbInput::Done), KbResult::Done);
     }
 
     /// A password keyboard shows stars, never exposes its text to a probe, and takes no edit or clipboard key; its

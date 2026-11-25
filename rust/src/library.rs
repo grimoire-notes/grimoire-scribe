@@ -14405,6 +14405,10 @@ fn turn(a: &mut App, next: bool) {
 /// The Library's open on-screen keyboard (a name being typed), None for none: where a hardware key's
 /// input goes (app_type_text).
 pub fn library_keyboard_area(a: &App) -> Option<Rect> {
+    if a.store.open {
+        // (the Package Store's search and repository keyboards: the Store takes every contact while it is up)
+        return (a.store.kb.open && !rect_is_empty(a.store.kb.area)).then_some(a.store.kb.area);
+    }
     if a.pkg.open && a.pkg.kb.open && !rect_is_empty(a.pkg.kb.area) {
         return Some(a.pkg.kb.area);
     }

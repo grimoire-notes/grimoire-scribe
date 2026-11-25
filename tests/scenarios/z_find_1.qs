@@ -3,7 +3,8 @@
 # Go to page or name: the bar's Go to (after staying on the page it shows), the go-to-page key and the Pages
 # view's "Go to page..." open the Find sheet, a keyboard along the bottom with its rows above it. A number
 # offers "Go to page 3" (a tap on the row goes there, one Full, the page left on the back list), or says the
-# notebook has no such page; the go-to-page key again closes it.
+# notebook has no such page; Esc closes it (the go-to-page key, G in this notebook's shortcuts.ini, types a g
+# on its keyboard: #266).
 # root: z_bar_0_make
 # (the clock corner held still: its minute's refresh would land among the counted ones)
 clock 1700000000
@@ -60,8 +61,8 @@ shot 03-find-no-page-9
 tap 1643 2365
 expect editor.find is go
 expect editor.text is 9
-# the key closes it, the Pages view still there behind it; its Back, and the key opens it again over the page
-key 34 0
+# Esc closes it, the Pages view still there behind it; its Back, and the key opens it again over the page
+key 1 0
 wait 300
 expect editor.find is 0
 expect editor.modal is pages
@@ -72,7 +73,7 @@ expect editor.modal is none
 key 34 0
 wait 300
 expect editor.find is go
-key 34 0
+key 1 0
 wait 300
 expect editor.find is 0
 # Cancel closes it too

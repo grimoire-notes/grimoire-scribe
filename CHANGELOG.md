@@ -31,6 +31,11 @@
   Tools group of Buttons and of Gestures). The new `quick-size` action, bound by name in shortcuts.ini or
   gestures.ini, opens the sizes card from a key or a gesture. An unedited shortcuts.ini gets the two keys at the
   next start.
+- **Typing on a paired keyboard** (#266). While one of Grimoire's keyboards is open (a notebook's or a folder's
+  name, a rename, Find, a page number, a Wi-Fi password, a search, the Package Store's), a paired keyboard's
+  letters, digits, punctuation and Space type into it as its keys do (the US layout, with Shift), Backspace
+  deletes, Enter is Done and Esc is Cancel. With no keyboard open its keys do what they did. On the Kindle, as
+  for every key, Settings > Shortcuts > Enable shortcuts must be on.
 - **Files**: the Kindle's storage as a place to browse. "Show Files in Library", the last row of New notebook >
   From a file..., puts a Files card at the end of the Library (its menu hides it again). Files lists Grimoire's
   places (Import, Templates, Photos, Fonts, PDF copies, Trash) and the Kindle's folders, with a path bar whose
