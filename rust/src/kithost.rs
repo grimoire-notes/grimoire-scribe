@@ -229,22 +229,42 @@ fn tone_gray(tone: i32) -> u8 {
     }
 }
 
-/// The bytes before which `s` may be cut: its characters' starts, and its end.
-fn cuts(s: &str) -> Vec<usize> {
-    s.char_indices().map(|(i, _)| i).skip(1).chain([s.len()]).collect()
-}
-
-/// How many bytes of `s` from its start fit `w` (at a character's start; 0 when not even the first does), found
-/// by halving: a few measures, however long `s` is.
+/// How many bytes of `s` from its start fit `w` (at a character's end; 0 when not even the first character
+/// does; all of `s` when it fits). The count of characters is found by doubling from one, then halving: the
+/// prefixes measured add up to a few times the part that fits, however long `s` is.
 fn fitting(f: FontFace, px: f32, s: &str, w: i32) -> usize {
-    let at = cuts(s);
-    let (mut lo, mut hi) = (0usize, at.len());
-    while lo < hi {
-        let mid = (lo + hi).div_ceil(2);
-        if font_measure(f, px, &s[..at[mid - 1]]) <= w {
+    let fits = |end: usize| font_measure(f, px, &s[..end]) <= w;
+    let mut ends = s.char_indices().map(|(i, c)| i + c.len_utf8());
+    // (at[k]: where the first k + 1 characters end, read as far as needed)
+    let mut at: Vec<usize> = Vec::new();
+    let (mut lo, mut step) = (0usize, 1usize);
+    let mut hi = loop {
+        let want = lo + step;
+        while at.len() < want {
+            match ends.next() {
+                Some(end) => at.push(end),
+                None => break,
+            }
+        }
+        if at.len() < want {
+            let all = at.len();
+            if all == lo || fits(at[all - 1]) {
+                return s.len();
+            }
+            break all;
+        }
+        if !fits(at[want - 1]) {
+            break want;
+        }
+        lo = want;
+        step *= 2;
+    };
+    while hi - lo > 1 {
+        let mid = lo + (hi - lo) / 2;
+        if fits(at[mid - 1]) {
             lo = mid;
         } else {
-            hi = mid - 1;
+            hi = mid;
         }
     }
     if lo == 0 {
@@ -257,7 +277,7 @@ fn fitting(f: FontFace, px: f32, s: &str, w: i32) -> usize {
 /// The lines of a text in a face for a width: at its own line breaks, then as many whole words as fit on each
 /// line, and a word wider than the width broken between its characters (at least one to a line). The license
 /// viewer breaks a license so (widgetpkgui.rs, `license_lines`); `text` with WRAP, `text_lines` and
-/// `measure_height` break a package's text so.
+/// `measure_height` break a package's text so, its work growing with the text's length times the log of a line's.
 pub fn kit_lines(f: FontFace, px: f32, text: &str, w: i32) -> Vec<String> {
     let space = font_measure(f, px, " ");
     let mut out = Vec::new();
@@ -280,9 +300,10 @@ pub fn kit_lines(f: FontFace, px: f32, text: &str, w: i32) -> Vec<String> {
                 lw += ww;
                 continue;
             }
-            // (a word wider than the line starts one of its own: as many of its characters to a line as fit)
+            // (a word wider than the line starts one of its own: as many of its characters to a line as fit, one at
+            // least, and the rest of the word, which fits, on the line words go on from)
             let mut rest = word;
-            while font_measure(f, px, rest) > w {
+            loop {
                 let n = fitting(f, px, rest, w).max(rest.chars().next().map_or(0, char::len_utf8));
                 if n >= rest.len() {
                     break;

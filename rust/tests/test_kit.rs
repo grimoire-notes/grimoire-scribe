@@ -101,13 +101,6 @@ impl Rt {
             Rt::A(r) => r.hit(id),
         }
     }
-    /// The whole budget of a call of this host.
-    fn budget(&self) -> u64 {
-        match self {
-            Rt::W(_) => WIDGET_CALL_FUEL,
-            Rt::A(_) => APP_CALL_FUEL,
-        }
-    }
     fn stopped(&self) -> &'static str {
         match self {
             Rt::W(_) => "The widget stopped: all fuel consumed by WebAssembly",
