@@ -9,7 +9,7 @@
 # sandboxed worker), so it refreshes nothing. From the tap that opens the Store: the tile's press, the page that
 # says the Store is being read, the list when the catalog has come, then four ui refreshes, each of an icon's own
 # place, 57 x 87 px, and no refresh of the whole screen among them. A package's page: the card's press, the page,
-# and one refresh of the screenshot's place when it comes, 721 x 840 px. A screenshot whose download fails (the
+# and one refresh of the screenshot's place when it comes, 724 x 843 px. A screenshot whose download fails (the
 # last package's is not served): the page, then only the words that said it was loading, as they go. Before, each
 # download's end refreshed the whole screen once more, with nothing new on it. (Each stretch is counted from
 # before its tap, so nothing depends on how fast the machine is; the script's clock stands still, so no refresh
@@ -31,7 +31,7 @@ waitfor library.store.shot.loaded is 1
 wait 200
 expect library.store.view is detail
 expect library.store.icon.loaded is 1
-expect display.presents is fast 645 338 570 372, ui 0 0 1860 2480, ui 561 1314 721 840
+expect display.presents is fast 645 338 570 372, ui 0 0 1860 2480, ui 559 1310 724 843
 shot 01-a-page
 waitbg
 tap library store.back
@@ -41,7 +41,7 @@ tap library store.package.com.example.p03
 waitfor library.store.shot.coming is 0
 wait 200
 expect library.store.shot.loaded is 0
-expect display.presents is fast 645 734 570 372, ui 0 0 1860 2480, ui 724 1786 408 36
+expect display.presents is fast 645 734 570 372, ui 0 0 1860 2480, ui 724 1784 408 36
 shot 02-no-screenshot
 tap library store.close
 wait 300

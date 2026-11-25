@@ -70,7 +70,7 @@ expect editor.tool is highlighter
 expect editor.strokes is 1
 expect toast is
 # Held over the Display sheet (under the pin now)
-pentap panel display
+action display
 wait 200
 expect editor.modal is display
 side on

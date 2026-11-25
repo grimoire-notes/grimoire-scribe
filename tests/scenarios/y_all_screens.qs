@@ -359,7 +359,7 @@ expect library.sheet is none
 tap library settings
 wait 50
 expect library.sheet is settings
-tap library settings.cat.6
+tap library settings.cat.5
 wait 50
 tap library ko
 wait 50
@@ -378,7 +378,7 @@ wait 100
 shot 03-settings-other-style
 tap library theme
 wait 100
-tap library settings.cat.6
+tap library settings.cat.5
 wait 50
 tap library mirror
 wait 50
@@ -884,7 +884,7 @@ expect editor.modal is paper
 tap 1562 2125
 wait 100
 expect editor.modal is none
-pentap panel display
+action display
 wait 100
 expect editor.modal is display
 shot 26-display-editor
@@ -1287,18 +1287,18 @@ tap library card.1
 wait 200
 expect screen is editor
 shot 48-editor-landscape
-touch down 2026 179
+touch down 2026 264
 wait 700
-touch up 2026 179
+touch up 2026 264
 wait 100
 expect editor.quicksize is ballpoint
 shot 48-quick-sizes-landscape
 tap 600 700
 wait 150
 expect editor.quicksize is 0
-touch down 2026 287
+touch down 2026 372
 wait 700
-touch up 2026 287
+touch up 2026 372
 wait 100
 expect editor.quicksize is eraser
 shot 48-quick-sizes-eraser-landscape
@@ -1611,7 +1611,7 @@ expect editor.page is 3
 expect editor.links is 1 1
 # the last page: with the Display sheet's "Swiping past the last page adds a page" row off, two fingers left turn
 # nowhere (no page is added) and say so
-pentap panel display
+action display
 wait 300
 expect editor.modal is display
 tap panel display.newpage
@@ -1784,7 +1784,7 @@ swipe 2 930 1300 0 -400
 wait 300
 expect editor.bar is 0
 # the Display sheet's sideways row, sideways: off (the width fills again), then on
-pentap panel display
+action display
 wait 150
 expect editor.modal is display
 shot 69-display-fit-landscape
@@ -1802,7 +1802,7 @@ expect editor.modal is none
 # upright, the same row says where it applies
 rotate 0
 wait 300
-pentap panel display
+action display
 wait 150
 expect editor.modal is display
 shot 69-display-fit

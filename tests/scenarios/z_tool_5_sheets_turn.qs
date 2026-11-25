@@ -118,7 +118,7 @@ expect editor.modal is none
 expect editor.paper is 9
 # The Display sheet: turned, its new-page row there (and back), asleep and awake, its X (the sleep screen row
 # is on Settings' Sleep settings page since the new Settings menu, #115)
-pentap panel display
+action display
 wait 200
 expect editor.modal is display
 rotate 1

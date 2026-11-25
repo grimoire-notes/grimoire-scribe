@@ -28,7 +28,7 @@ wait 200
 expect library.store.icon.loaded is 0
 expect library.store.shot.loaded is 0
 expect library.store.shot.coming is 0
-expect display.presents is ui 724 1786 408 36
+expect display.presents is ui 724 1784 408 36
 shot 00-refused-pictures
 tap library store.back
 wait 300

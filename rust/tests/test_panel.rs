@@ -1,6 +1,6 @@
 // The editor's floating panel. With 0 to 3 pens pinned it fits the
 // 2022/2024 Scribes' screen and the Scribe 3's and Colorsoft's, upright and sideways, keeping its
-// 12 px margins (one, two and three pins sideways on older Scribes take 99, 93 and 88 px buttons).
+// 12 px margins (two and three pens pinned sideways on older Scribes take 99 and 93 px buttons).
 // The collapsed square never changes. Next and previous
 // tool go through its pens alone, and the tool picker's next and previous through the picker's nine.
 // Index loops and float comparisons are written as the C test writes them.
@@ -11,7 +11,7 @@ use grimoire::prelude::*;
 use testlib::*;
 
 fn fits_both_scribes_both_ways() {
-    check!(PANEL_BUTTONS == 15);
+    check!(PANEL_BUTTONS == 14);
     check!(PANEL_PINS_MAX == 3);
     for (w,h) in [(1860,2480),(2480,1860),(1986,2648),(2648,1986)] {
         for pins in 0..=PANEL_PINS_MAX as i32 {
@@ -20,12 +20,12 @@ fn fits_both_scribes_both_ways() {
             check!(panel_w()+2*ui_px(PANEL_MARGIN as f32)<=w && f.scale >= 0.88 && f.space >= 0.5);
             check!(panel_btn_h(f)>=ui_px(88.0));
             // Two or three pins on the older Scribes in landscape need smaller buttons (the Widgets
-            // button leaves 89 px with three).
-            check!(panel_btn_h(f)==ui_px(if h==1860 && pins==3 {88.0}else if h==1860 && pins==2 {93.0}else if h==1860 && pins==1 {99.0}else if h==1986 && pins==3 {95.0}else{100.0}));
+            // button leaves 94 px with three).
+            check!(panel_btn_h(f)==ui_px(if h==1860 && pins==3 {93.0}else if h==1860 && pins==2 {99.0}else{100.0}));
             if h>=2480 {check!(f.scale==1.0 && f.space==1.0);}
         }
     }
-    check!(panel_height(PanelFit{scale:1.0,space:1.0},0)==1842);
+    check!(panel_height(PanelFit{scale:1.0,space:1.0},0)==1734);
     check!(panel_box()==ui_px(120.0));
 }
 
@@ -211,7 +211,7 @@ fn the_page_chip_keeps_one_form_in_a_notebook() {
     }
     let mut sizes: Vec<f32> = fits.iter().map(|f| panel_chip_px(*f)).collect();
     sizes.sort_by(|a, b| b.total_cmp(a));
-    check!(sizes == [34.0, 33.66, 32.3, 31.62, 29.92]);
+    check!(sizes == [34.0, 33.66, 31.62]);
     let every_page = |m: i32| m <= 250 || (990..=1010).contains(&m) || (1990..=2000).contains(&m) || m >= 9990;
     for (name, theme, family) in styles {
         ui_set_theme(theme);

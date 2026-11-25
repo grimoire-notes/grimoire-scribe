@@ -64,7 +64,7 @@ expect toast is
 # the Display sheet's row: the width again, at once, even pinched in
 pinch 1240 930 300 900 6
 wait 400
-pentap panel display
+action display
 wait 300
 expect editor.modal is display
 expect display.presents not clear
@@ -96,7 +96,7 @@ expect editor.modal is none
 rotate 0
 wait 1200
 expect editor.scale is 1.00
-pentap panel display
+action display
 wait 300
 expect display.presents not clear
 tap panel display.fit

@@ -1,22 +1,39 @@
 # settings: status_mode=1
 # settings: gestures=0
 # rust-only
+# env: GRIMOIRE_PACKAGE_STORE_OFFLINE=1
 # copy: tests/fixtures/apppkg .
-# Apps: Settings > Packages > Apps manages a type: app package exactly like widgets, and the
-# installed app is a launcher in the home app row and All Apps page. Opening it gives it the whole
-# screen and the status bar only when it asks; a tap closes it through its own close() API, and the
-# two-finger bottom-to-middle system swipe returns Home from a fresh launch even with Gestures off.
+# copy: tests/fixtures/package-store .
+# Apps: an installed type: app package is listed in the Package Store's Installed tab, the All apps
+# page's Manage apps... manages it exactly like widgets, and the installed app is a launcher in the
+# home app row and All Apps page. Opening it gives it the whole screen and the status bar only when it
+# asks; a tap closes it through its own close() API, and the two-finger bottom-to-middle system swipe
+# returns Home from a fresh launch even with Gestures off.
 wait 300
 expect library.apps is com.example.fixture
 # The app's bundled icon is decoded by the sandboxed worker (issue #236): its picture comes a moment after the
 # first draw, and every launcher below shows it (tests/scenarios/z_apps_icon.qs holds how it arrives).
 waitfor library.apps.icons is 1
-tap library settings
+# The Store's Installed tab (the saved catalog, offline) lists the app with the installed packages.
+tap library app.store
+wait 400
+expect library.sheet is store
+tap library store.filter.3
 wait 300
-tap library settings.cat.5
+expect library.store.filter is 3
+expect library.store.visible is com.example.fixture
+shot 00-store-installed
+tap library store.close
 wait 300
-shot 00-settings-packages
-tap library settings.apps
+expect library.sheet is none
+expect screen is library
+tap library apps
+wait 200
+shot 04-all-apps
+# The All apps page's Manage apps... opens the app package manager over the page, as the widget
+# popup's Manage widgets... opens the widget one: its list, a package's page and its settings, which
+# are saved as they are tapped. Back and the X come back to the All apps page.
+tap library apps.manage
 wait 400
 expect editor.packages.open is 1
 expect editor.packages is 1 com.example.fixture 1.0.0
@@ -36,12 +53,22 @@ tap library packages.back
 wait 200
 tap library packages.back
 wait 300
+tap library packages.back
+wait 300
+expect editor.packages.open is 0
+expect screen is library
+tap library apps.manage
+wait 400
+expect editor.packages.open is 1
 tap library packages.close
 wait 300
-expect screen is library
+expect editor.packages.open is 0
+# (the page's own X is there again: it is the All apps page, not Home)
+tap library apps.close
+wait 300
+expect library.sheet is none
 tap library apps
 wait 200
-shot 04-all-apps
 tap library app.com.example.fixture
 wait 400
 expect library.app.open is 1
@@ -77,11 +104,11 @@ expect screen is library
 shot 07-app-system-home
 # The app is first on the home row. Opening Settings must move Settings ahead of it, not push the
 # app behind every built-in.
-expect library.recent-apps is pkg:com.example.fixture,settings,files,share,store
+expect library.recent-apps is pkg:com.example.fixture,store,files,share,settings
 tap library app.settings
 wait 300
 expect library.sheet is settings
-expect library.recent-apps is settings,pkg:com.example.fixture,files,share,store
+expect library.recent-apps is settings,pkg:com.example.fixture,store,files,share
 shot 08-settings-after-app
 # Settings' main page closes with its X ("done"), unlike its submenus' settings.close.
 tap library done
