@@ -654,14 +654,16 @@ fn each_call_takes_its_charge_from_the_calls_budget_the_same_in_both_hosts() {
     for host in HOSTS {
         let h = |name: &str| format!("{}.{}", name.replace('_', "-"), tag(host));
         // Every call: the fixed charge, whatever it is given; the calls with no work of the host's beside it.
-        for (name, args) in [("level", vec![]), ("metric", vec![12]), ("metric", vec![MAX]), ("clock_ms", vec![]), ("list_page", vec![MAX, 0, MAX, MAX, MAX]), ("clip", vec![0, 0, 10, 10]), ("clip_clear", vec![]), ("hit", vec![1, 0, 0, 10, 10]), ("pager", vec![1, 2, 0, 0, 0, 0, 1])] {
+        // (and those that are given nothing to work on: no room to write in, no byte to measure)
+        for (name, args) in [("level", vec![]), ("metric", vec![12]), ("metric", vec![MAX]), ("clock_ms", vec![]), ("list_page", vec![MAX, 0, MAX, MAX, MAX]), ("clip", vec![0, 0, 10, 10]), ("clip_clear", vec![]), ("hit", vec![1, 0, 0, 10, 10]), ("pager", vec![1, 2, 0, 0, 0, 0, 1]), ("version", vec![8000, 0]), ("measure_width", vec![0, 0, 0]), ("measure_height", vec![0, 0, 0, 300])] {
             let one = call(name, &args);
             let n = charged(host, &h(name), times(2, &one), one.clone(), &letters);
             assert!((500..500 + 96).contains(&n), "{host:?} {name}: {n}");
         }
-        // version: and 4 for each byte written.
-        near(charged(host, &h("version"), call("version", &[8000, 64]), call("version", &[8000, 0]), &letters), 4 * GRIMOIRE_VERSION.len().min(32) as u64, "version");
-        near(charged(host, &h("version.3"), call("version", &[8000, 3]), call("version", &[8000, 0]), &letters), 12, "version, three bytes");
+        // version: and 4 for each byte written (ten calls, so that a few bytes show beside the interpreter's count).
+        let v = GRIMOIRE_VERSION.len().min(32) as u64;
+        near(charged(host, &h("version"), times(10, &call("version", &[8000, 64])), times(10, &call("version", &[8000, 0])), &letters), 10 * 4 * v, "version");
+        near(charged(host, &h("version.3"), times(10, &call("version", &[8000, 3])), times(10, &call("version", &[8000, 0])), &letters), 10 * 12, "version, three bytes");
         // measure_width: 32 for each byte; measure_height: 384 for each byte (the text broken into lines).
         near(charged(host, &h("width"), call("measure_width", &[0, 100, 0]), call("measure_width", &[0, 0, 0]), &letters), 3200, "measure_width");
         near(charged(host, &h("height"), call("measure_height", &[0, 100, 0, 300]), call("measure_height", &[0, 0, 0, 300]), &letters), 38_400, "measure_height");
@@ -707,6 +709,8 @@ fn each_call_takes_its_charge_from_the_calls_budget_the_same_in_both_hosts() {
         near(charged(host, &h("divider"), call("divider", &[0, 0, 900]), call("divider", &[0, 0, 1]), &letters), frame(900, 10, 0) - frame(1, 10, 0), "a divider: the room of the theme's rule");
         near(charged(host, &h("icon"), call("icon", &[0, 0, 96, 96, 0, 4, 0]), call("icon", &[0, 0, 1, 1, 0, 0, 0]), &letters), 96 * 96 * 2 - 2 + 16, "an icon and its name");
         near(charged(host, &h("icon.most"), call("icon", &[0, 0, 4000, 4000, 0, 0, 0]), call("icon", &[0, 0, 1, 1, 0, 0, 0]), &letters), 1024 * 1024 * 2 - 2, "an icon is 1,024 px at most");
+        near(charged(host, &h("icon.name"), call("icon", &[0, 0, 96, 96, 0, 64, 0]), call("icon", &[0, 0, 96, 96, 0, 0, 0]), &letters), 64 * 4, "an icon's name of 64 bytes");
+        near(charged(host, &h("icon.name.long"), call("icon", &[0, 0, 96, 96, 0, 65, 0]), call("icon", &[0, 0, 96, 96, 0, 0, 0]), &letters), 0, "a name longer than any is not read");
         near(charged(host, &h("fill"), call("fill", &[10, 10, 320, 200, 0]), call("fill", &[10, 10, 1, 0, 0]), &letters), 320 * 200 / 32, "a fill");
         near(charged(host, &h("fill.part"), call("fill", &[-50, -30, 320, 200, 0]), call("fill", &[10, 10, 1, 0, 0]), &letters), 270 * 170 / 32, "the part of it inside the body");
         let radius = ui_card_radius() as u64 + 2;
