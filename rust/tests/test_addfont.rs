@@ -240,7 +240,7 @@ fn a_covers_preview_is_the_workers_and_gives_nothing() {
     use grimoire::bgwork_previews::*;
     let (root, g) = tree("covers");
     let st = FsStorage::open(&root, &g).unwrap();
-    let arg = |s: &FsStat, p: &str| format!("{}.{}.{}.{}:{}", s.dev, s.ino, s.size, s.mtime, p);
+    let arg = |s: &FsStat, p: &str| format!("{}.{}.{}.{}.{}:{}", s.dev, s.ino, s.size, s.mtime, s.mtime_nsec, p);
     let serif = st.stat(&sp("fonts/Serif.ttf"), true).unwrap();
     check!(bg_copy_file("fonts", &arg(&serif, "fonts/Serif.ttf")) == 0);
     let p = sp("grimoire/fonts/Serif.ttf");
@@ -350,7 +350,7 @@ fn the_source_is_the_file_that_was_listed() {
     let mut a = screen();
     let mut b = pick_in(&mut a, "documents/Type");
     check!(probe(&b, "order") == "Sans.ttf");
-    let arg = |s: &FsStat, p: &str| format!("{}.{}.{}.{}:{}", s.dev, s.ino, s.size, s.mtime, p);
+    let arg = |s: &FsStat, p: &str| format!("{}.{}.{}.{}.{}:{}", s.dev, s.ino, s.size, s.mtime, s.mtime_nsec, p);
     // a link, asked for by hand: its own stat is no plain file's; the folder link is not walked
     let link = st.stat(&sp("documents/Type/Link.ttf"), true).unwrap();
     check!(copy_request(&st, &sp("documents/Type/Link.ttf"), &link, CopyTo::Fonts) == Err(FsWriteErr::Walk(FsErr::NotFile)));
@@ -457,7 +457,7 @@ fn a_name_longer_than_the_fonts_folder_takes() {
     let fonts = format!("{g}/fonts");
     let d = format!("{root}/documents/Type");
     let name = |n: usize| format!("{}.ttf", "L".repeat(n - 4));
-    let arg = |s: &FsStat, p: &str| format!("{}.{}.{}.{}:{}", s.dev, s.ino, s.size, s.mtime, p);
+    let arg = |s: &FsStat, p: &str| format!("{}.{}.{}.{}.{}:{}", s.dev, s.ino, s.size, s.mtime, s.mtime_nsec, p);
     let st = FsStorage::open(&root, &g).unwrap();
     let mut a = screen();
     for n in [USERFONT_REL_MAX + 1, FS_NAME_MAX] {

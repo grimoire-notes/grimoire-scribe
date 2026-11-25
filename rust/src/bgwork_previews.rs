@@ -6,7 +6,7 @@
 //!   the trash; a screen turned away from, another folder, the list and Files closed take the jobs still queued out
 //!   of the queue (the one running runs on: it is short, PREVIEW_TILES_MAX below).
 //! - The request (UI thread, `preview_request`, from the Covers view): a file the cache has nothing for is queued as
-//!   a job of its own (BgKind::FilePreviews; path: the file as listed, `<dev>.<ino>.<size>.<mtime>:` and its storage
+//!   a job of its own (BgKind::FilePreviews; path: the file as listed, `<dev>.<ino>.<size>.<mtime>.<mtime_nsec>:` and its storage
 //!   path, as the copy job's). It is work nobody asked for by name, so it ranks behind an export, a template's
 //!   picture, the PDF mirror, an import's slices and a font check (bgjob.rs `rank`), and ahead only of compaction and
 //!   the idle warm-ups.
@@ -380,7 +380,7 @@ fn fd_stat(fd: &OwnedFd) -> Option<FsStat> {
     if unsafe { libc::fstat(fd.as_raw_fd(), &mut md) } != 0 {
         return None;
     }
-    Some(FsStat { dev: md.st_dev as u64, ino: md.st_ino as u64, size: md.st_size as u64, mtime: md.st_mtime as i64, mode: md.st_mode as u32 })
+    Some(FsStat { dev: md.st_dev as u64, ino: md.st_ino as u64, size: md.st_size as u64, mtime: md.st_mtime as i64, mtime_nsec: md.st_mtime_nsec as i64, mode: md.st_mode as u32 })
 }
 
 fn make(path: &str) -> Result<(PreviewKind, Outcome), String> {
