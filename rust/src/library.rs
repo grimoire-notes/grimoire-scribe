@@ -3,7 +3,7 @@
 
 use crate::prelude::*;
 use crate::appicon::AppIcon;
-use crate::globalui::{gui_app_tile, gui_button, gui_chip, gui_fab, gui_gap, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_select, gui_status_bar, gui_status_h, gui_top_button_h, GuiPopupItem};
+use crate::globalui::{gui_app_tile, gui_button, gui_chip, gui_chip_h, gui_fab, gui_gap, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_row_h, gui_row_min_h, gui_select, gui_select_h, gui_status_bar, gui_status_h, gui_top_button_h, GuiPopupItem};
 use crate::settingsmenu;
 use crate::ui::{ui_row, ui_row_page, ui_row_pager, Row as UiRow};
 use crate::browser::{BrowseMode, Browser, BrowserResult, FilesPrefs, PickSpec};
@@ -622,7 +622,7 @@ fn app_tile_w() -> i32 {
     ui_px(240.0)
 }
 fn filters_h() -> i32 {
-    ui_px(88.0)
+    gui_chip_h()
 }
 fn grid_top() -> i32 {
     top_h() + 3 * gui_gap() + apps_h() + filters_h()
@@ -703,7 +703,7 @@ fn fab_rect(aw: i32, ah: i32) -> Rect {
 fn sort_rect(aw: i32) -> Rect {
     let sort_w = ui_px(400.0).min(aw / 3);
     let fy = top_h() + 2 * gui_gap() + apps_h();
-    Rect::new(aw - margin() - sort_w, fy, sort_w, filters_h())
+    Rect::new(aw - margin() - sort_w, fy, sort_w, gui_select_h())
 }
 
 /// The `...` of the card at `target` on `page`: the popup menus hang from the control that opened them.
@@ -6059,7 +6059,7 @@ fn draw_settings(a: &mut App) {
         .filter(|it| it.show.visible(classic, services))
         .collect();
     let list_area = Rect::new(content_x, list_top, content_w, content_bottom - list_top - ui_px(20.0));
-    let list = ui_row_page(list_area, shown.len(), s.settings_rows_page, ui_px(118.0), ui_px(90.0));
+    let list = ui_row_page(list_area, shown.len(), s.settings_rows_page, gui_row_h(), gui_row_min_h());
     s.settings_rows_page = list.page;
     let mut label_buf = String::new();
     let mut lang_buf = String::new();

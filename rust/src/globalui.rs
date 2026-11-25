@@ -45,6 +45,44 @@ pub fn gui_margin() -> i32 {
     ui_px(50.0)
 }
 
+// ---- the standard sizes: what Grimoire's own screens lay their elements out at, and what the package kit
+// (kithost.rs, `metric`) gives a package and draws an element at when it is given no size ----
+
+/// A row of a list: Settings' rows, and the rows of the package manager's lists.
+pub fn gui_row_h() -> i32 {
+    ui_px(118.0)
+}
+/// The shortest Settings lets its rows be when a list is tight, and the smallest control Grimoire draws.
+pub fn gui_row_min_h() -> i32 {
+    ui_px(90.0)
+}
+/// An action button: the package manager's actions.
+pub fn gui_button_h() -> i32 {
+    ui_px(112.0)
+}
+/// A text field: as tall as a button, so that a field and its button line up.
+pub fn gui_field_h() -> i32 {
+    gui_button_h()
+}
+/// A filter chip: the home's and the Package Store's.
+pub fn gui_chip_h() -> i32 {
+    ui_px(88.0)
+}
+/// The width a chip takes for its label: the label in the chip's face and 78 px, at least 170 (the Package
+/// Store's chips).
+pub fn gui_chip_w(label: &str) -> i32 {
+    (font_measure(FontFace::Bold, ui_text_size(), label) + ui_px(78.0)).max(ui_px(170.0))
+}
+/// A select: the home's Sort.
+pub fn gui_select_h() -> i32 {
+    ui_px(88.0)
+}
+/// The grays of the kit's elements: a field's hint, a disabled control, and a field's or a select's outline in
+/// Classic. (Ink is 0 and paper 255.)
+pub const GUI_GRAY_MUTED: u8 = 100;
+pub const GUI_GRAY_DISABLED: u8 = 170;
+pub const GUI_GRAY_RULE: u8 = 140;
+
 /// The top status bar's scale at size small, medium and large. Medium is the bar as it has always
 /// been; the Status bar settings page's size scales all of it, not just its clock.
 const STATUS_SCALE: [f32; 3] = [0.82, 1.0, 1.18];
@@ -157,10 +195,15 @@ pub fn gui_header(
     (GuiHeader { back: back_r, title: title_r, foot: top + th }, rects)
 }
 
+/// The size of a screen's title (`gui_page_title`): the title size, larger in Gothic's blackletter.
+pub fn gui_page_title_px() -> f32 {
+    ui_title_size() * if gui_gothic() { 1.75 } else { 1.1 }
+}
+
 /// A screen's title in the modern header's type: the same size and position on the home, Apps,
 /// Files and every Settings page.
 pub fn gui_page_title(c: &mut Canvas, r: Rect, title: &str) {
-    let px = ui_title_size() * if gui_gothic() { 1.75 } else { 1.1 };
+    let px = gui_page_title_px();
     if gui_gothic() {
         font_draw_left_name(c, FontFace::Title, px, r, title, 0);
     } else {
@@ -194,13 +237,13 @@ pub fn gui_button(c: &mut Canvas, r: Rect, icon: IconKind, label: &str, st: Butt
     }
     let filled = matches!(st, ButtonStyle::Selected | ButtonStyle::Primary);
     let fg: u8 = if st == ButtonStyle::Disabled {
-        170
+        GUI_GRAY_DISABLED
     } else if filled {
         255
     } else {
         0
     };
-    let edge = if st == ButtonStyle::Disabled { 170 } else { 0 };
+    let edge = if st == ButtonStyle::Disabled { GUI_GRAY_DISABLED } else { 0 };
     let rad = (r.h / 2).min(ui_px(30.0));
     ui_frame(c, r, rad, if filled { 0 } else { 255 }, true, 0);
     ui_frame(c, r, rad, edge, false, if st == ButtonStyle::Primary { ui_px(5.0) } else { ui_px(3.0) });
@@ -305,7 +348,7 @@ pub fn gui_chip(c: &mut Canvas, r: Rect, label: &str, selected: bool) {
 pub fn gui_text_field(c: &mut Canvas, r: Rect, icon: IconKind, text: &str, hint: &str) -> Rect {
     let rad = if gui_gothic() { ui_px(14.0) } else { r.h / 2 };
     ui_frame(c, r, rad, 255, true, 0);
-    ui_frame(c, r, rad, if gui_gothic() { 0 } else { 140 }, false, ui_px(3.0));
+    ui_frame(c, r, rad, if gui_gothic() { 0 } else { GUI_GRAY_RULE }, false, ui_px(3.0));
     let pad = ui_px(24.0);
     let isz = (r.h - ui_px(34.0)).max(ui_px(24.0));
     ui_icon(c, icon, Rect::new(r.x + pad, r.y + (r.h - isz) / 2, isz, isz), 0);
@@ -326,7 +369,7 @@ pub fn gui_text_field(c: &mut Canvas, r: Rect, icon: IconKind, text: &str, hint:
     if has_text {
         ui_text(c, FontFace::Regular, ui_text_size(), ui_small_size(), tr, text, 1, false, 0);
     } else {
-        ui_text(c, FontFace::Regular, ui_text_size(), ui_small_size(), tr, hint, 1, false, 100);
+        ui_text(c, FontFace::Regular, ui_text_size(), ui_small_size(), tr, hint, 1, false, GUI_GRAY_MUTED);
     }
     if has_text {
         ui_icon(c, IconKind::Close, rect_inflate(clear, -ui_px(10.0)), 0);
@@ -339,7 +382,7 @@ pub fn gui_text_field(c: &mut Canvas, r: Rect, icon: IconKind, text: &str, hint:
 pub fn gui_select(c: &mut Canvas, r: Rect, caption: &str, value: &str) {
     let rad = if gui_gothic() { ui_px(14.0) } else { r.h / 2 };
     ui_frame(c, r, rad, 255, true, 0);
-    ui_frame(c, r, rad, 140, false, ui_px(3.0));
+    ui_frame(c, r, rad, GUI_GRAY_RULE, false, ui_px(3.0));
     let pad = ui_px(24.0);
     let cs = ui_px(44.0);
     let chev = Rect::new(r.x + r.w - pad - cs, r.y + (r.h - cs) / 2, cs, cs);
@@ -866,6 +909,34 @@ mod tests {
         assert_eq!(actions[0].0.y + actions[0].0.h / 2, head.title.y + head.title.h / 2);
         canvas_free(&mut c);
         gui_status_style(1, false);
+    }
+
+    // The standard sizes the screens lay their elements out at (and the package kit gives a package): Settings' rows
+    // and their tightest, the package manager's actions, the home's and the Store's chips, the home's Sort, a field.
+    #[test]
+    fn the_standard_sizes_are_the_ones_the_screens_use() {
+        ui_init(300.0);
+        assert_eq!(font_init(), 0);
+        assert_eq!((gui_row_h(), gui_row_min_h(), gui_button_h(), gui_field_h(), gui_chip_h(), gui_select_h()), (118, 90, 112, 112, 88, 88));
+        assert_eq!((ui_row_icon(), ui_line(), crate::ui::ui_row_pager_button()), (60, 3, (130, 90)));
+        for (theme, radius, title) in [(UiTheme::Gothic, 16, 112.0), (UiTheme::Classic, 22, 70.4)] {
+            ui_set_theme(theme);
+            assert_eq!(ui_card_radius(), radius);
+            assert!((gui_page_title_px() - title).abs() < 0.01, "{theme:?}");
+            // (a chip is as wide as its label and 78 px, at least 170)
+            assert_eq!(gui_chip_w(""), 170);
+            assert_eq!(gui_chip_w("A label long enough"), font_measure(FontFace::Bold, ui_text_size(), "A label long enough") + 78);
+        }
+        // (ui_row_page lays its rows out by ui_row_page_fit: the same height, gap, rows a page and pages)
+        for (h, n) in [(2000, 30), (2000, 5), (300, 9), (0, 3), (1000, 0)] {
+            let p = crate::ui::ui_row_page(Rect::new(0, 0, 900, h), n, 0, gui_row_h(), gui_row_min_h());
+            let (rh, gap, per, pages) = crate::ui::ui_row_page_fit(h, n, gui_row_h(), gui_row_min_h());
+            assert_eq!((p.pages, p.rows.len()), (pages, per.min(n)), "{h} {n}");
+            if p.rows.len() > 1 {
+                assert_eq!((p.rows[0].h, p.rows[1].y - p.rows[0].y - p.rows[0].h), (rh, gap), "{h} {n}");
+            }
+        }
+        ui_set_theme(UiTheme::Gothic);
     }
 
     #[test]

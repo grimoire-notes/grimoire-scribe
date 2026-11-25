@@ -13,7 +13,7 @@
 //! until then, and when the worker refuses it or none can be had, a card or a page shows what it
 //! shows for a picture that is missing.
 
-use crate::globalui::{gui_button, gui_button_row, gui_chip, gui_gap, gui_header, gui_icon_button, gui_margin, gui_radius};
+use crate::globalui::{gui_button, gui_button_row, gui_chip, gui_chip_h, gui_chip_w, gui_gap, gui_header, gui_icon_button, gui_margin, gui_radius};
 use crate::pkgpics::{picture_cached, picture_request, Ask, Cached, PicForm, PicSrc};
 use crate::prelude::*;
 use crate::sha256::sha256_of;
@@ -2623,11 +2623,11 @@ fn draw_list(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
         hits_add(&mut ui.hits, xr, H_QUERY_CLEAR, 0);
         top += qh + gap;
     }
-    let chips_h = ui_px(86.0);
+    let chips_h = gui_chip_h();
     let labels = [tr("All"), tr("Apps"), tr("Widgets"), tr("Installed")];
     let mut widths = Vec::with_capacity(labels.len());
     for label in &labels {
-        widths.push((font_measure(FontFace::Bold, ui_text_size(), label) + ui_px(78.0)).max(ui_px(170.0)));
+        widths.push(gui_chip_w(label));
     }
     let total: i32 = widths.iter().sum::<i32>() + gap * 3;
     let max_w = (area.w - ui_px(12.0)).max(ui_px(240.0));

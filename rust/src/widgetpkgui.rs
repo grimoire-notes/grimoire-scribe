@@ -1196,7 +1196,7 @@ pub fn packages_ui_pointer(a: &mut App, ph: i32, ev: &InEvent) {
 }
 
 fn draw_actions(c: &mut Canvas, ui: &mut WidgetPkgUi, area: Rect, start_y: i32, labels: &[(&str, IconKind, i32)]) {
-    let bh = ui_px(112.0);
+    let bh = crate::globalui::gui_button_h();
     let gap = ui_px(18.0);
     let mut y = start_y;
     for (label, icon, id) in labels {
@@ -1316,7 +1316,7 @@ pub fn packages_ui_draw(a: &mut App) {
             let n = ui.items.len();
             let actions = 2 + n;
             let rows_area = Rect { x: content.x, y: content.y, w: content.w, h: bottom - content.y };
-            let list = ui_row_page(rows_area, actions, ui.page, ui_px(118.0), ui_px(74.0));
+            let list = ui_row_page(rows_area, actions, ui.page, crate::globalui::gui_row_h(), ui_px(74.0));
             ui.page = list.page;
             for (i, rr) in list.rows.iter().enumerate() {
                 let k = list.first + i;
@@ -1497,7 +1497,7 @@ pub fn packages_ui_draw(a: &mut App) {
             body_text(c, Rect { x: content.x, y: content.y, w: content.w, h: ui_px(60.0) }, &hint);
             let top = content.y + ui_px(70.0);
             let rows_area = Rect { x: content.x, y: top, w: content.w, h: bottom - top };
-            let list = ui_row_page(rows_area, n, ui.setting_page, ui_px(118.0), ui_px(74.0));
+            let list = ui_row_page(rows_area, n, ui.setting_page, crate::globalui::gui_row_h(), ui_px(74.0));
             ui.setting_page = list.page;
             for (i, rr) in list.rows.iter().enumerate() {
                 let k = list.first + i;
