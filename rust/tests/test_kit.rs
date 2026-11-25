@@ -969,8 +969,8 @@ fn a_module_that_imports_a_call_of_a_later_level_is_not_started_and_says_which()
         // (a module that imports every call of level 1 starts)
         assert!(load(&format!("test.kit.all.{}", tag(host)), &Kit::new(host, Vec::new()), true).is_ok());
     }
-    assert_eq!(KIT_CALLS.len(), KIT_IMPORTS.len());
-    assert!(KIT_IMPORTS.iter().all(|(n, _, _)| KIT_CALLS.contains(n)));
+    // (the calls the host links, with their signatures, are the ones the fixtures' writer imports)
+    assert_eq!(KIT_CALLS, KIT_IMPORTS);
     let _ = std::fs::remove_dir_all(&root);
 }
 

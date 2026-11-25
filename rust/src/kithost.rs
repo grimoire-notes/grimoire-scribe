@@ -28,17 +28,42 @@ use crate::globalui::{
 };
 use crate::prelude::*;
 use crate::wasmhost::{in_body, line_in_reach, on_screen, TextCharge};
-use wasmi::{Caller, Linker};
+use wasmi::{Caller, FuncType, Linker, Val, ValType};
 
 /// The import module's name.
 pub const KIT: &str = "grimoire_kit";
 /// The kit's level: the set of calls, metrics, roles and flags this Grimoire has (docs/KIT.md, Levels).
 pub const KIT_LEVEL: i32 = 1;
-/// The calls of level 1, every one a module may import from `grimoire_kit`.
-pub const KIT_CALLS: [&str; 26] = [
-    "level", "version", "metric", "clock_ms", "text", "text_lines", "measure_width", "measure_height", "button",
-    "icon_button", "row", "chip", "field", "select", "checkbox", "card", "divider", "icon", "fill", "frame", "line",
-    "clip", "clip_clear", "hit", "list_page", "pager",
+/// The calls of level 1, every one a module may import from `grimoire_kit`: the name, the types of the parameters
+/// (`i` an i32, `f` an f32) and of the result (`v` none, `i` an i32, `l` an i64). `dispatch` takes them by their
+/// place here.
+pub const KIT_CALLS: [(&str, &str, char); 26] = [
+    ("level", "", 'i'),
+    ("version", "ii", 'i'),
+    ("metric", "i", 'i'),
+    ("clock_ms", "", 'l'),
+    ("text", "iiiiiiii", 'i'),
+    ("text_lines", "iiiiiiiii", 'i'),
+    ("measure_width", "iii", 'i'),
+    ("measure_height", "iiii", 'i'),
+    ("button", "iiiiiiiiii", 'i'),
+    ("icon_button", "iiiiiiii", 'i'),
+    ("row", "iiiiiiiiiii", 'i'),
+    ("chip", "iiiiiiii", 'i'),
+    ("field", "iiiiiiiiiiii", 'i'),
+    ("select", "iiiiiiiii", 'i'),
+    ("checkbox", "iiiiiiii", 'i'),
+    ("card", "iiiii", 'v'),
+    ("divider", "iii", 'v'),
+    ("icon", "iiiiiii", 'v'),
+    ("fill", "iiiii", 'v'),
+    ("frame", "iiiiiii", 'v'),
+    ("line", "fffffi", 'v'),
+    ("clip", "iiii", 'v'),
+    ("clip_clear", "", 'v'),
+    ("hit", "iiiii", 'v'),
+    ("list_page", "iiiii", 'l'),
+    ("pager", "iiiiiii", 'i'),
 ];
 
 // ---- the limits of the kit's own (the rest are each host's: docs/KIT.md, Limits) ----
@@ -603,53 +628,87 @@ impl<T: KitHost> Call for With<'_, '_, T> {
     }
 }
 
-/// Installs every call of `grimoire_kit` in a host's linker. Each is the call of its work below with the call's
-/// numbers.
+/// Installs every call of `grimoire_kit` in a host's linker: each with its signature, and all of them one entry
+/// that hands the call, by its place in KIT_CALLS, to `dispatch` (one entry for each host, whatever the number of
+/// calls).
 pub fn kit_link<T: KitHost + 'static>(linker: &mut Linker<T>) -> Result<(), String> {
-    macro_rules! kit {
-        ($name:literal, $work:ident, $r:ty $(, $a:ident)*) => {
-            linker
-                .func_wrap(KIT, $name, |mut caller: Caller<'_, T>, $($a: i32),*| -> Result<$r, wasmi::Error> { $work(&mut With(&mut caller), [$($a),*]) })
-                .map_err(|e| e.to_string())?;
-        };
+    for (at, &(name, params, result)) in KIT_CALLS.iter().enumerate() {
+        linker
+            .func_new(KIT, name, func_type(params, result), move |mut caller: Caller<'_, T>, args: &[Val], out: &mut [Val]| {
+                dispatch(&mut With(&mut caller), at, args, out)
+            })
+            .map_err(|e| e.to_string())?;
     }
-    kit!("level", level, i32);
-    kit!("version", version, i32, ptr, cap);
-    kit!("metric", metric, i32, id);
-    kit!("clock_ms", clock_ms, i64);
-    kit!("text", text, i32, x, y, w, h, ptr, len, role, flags);
-    kit!("text_lines", text_lines, i32, x, y, w, h, ptr, len, role, flags, first);
-    kit!("measure_width", measure_width, i32, ptr, len, role);
-    kit!("measure_height", measure_height, i32, ptr, len, role, w);
-    kit!("button", button, i32, id, x, y, w, h, lp, ll, ip, il, style);
-    kit!("icon_button", icon_button, i32, id, x, y, w, h, ip, il, style);
-    kit!("row", row, i32, id, x, y, w, h, ip, il, lp, ll, style, switch);
-    kit!("chip", chip, i32, id, x, y, w, h, lp, ll, selected);
-    kit!("field", field, i32, id, x, y, w, h, ip, il, tp, tl, hp, hl, flags);
-    kit!("select", select, i32, id, x, y, w, h, cp, cl, vp, vl);
-    kit!("checkbox", checkbox, i32, id, x, y, w, h, lp, ll, checked);
-    kit!("card", card, (), x, y, w, h, style);
-    kit!("divider", divider, (), x, y, w);
-    kit!("icon", icon, (), x, y, w, h, np, nl, tone);
-    kit!("fill", fill, (), x, y, w, h, gray);
-    kit!("frame", frame, (), x, y, w, h, gray, filled, t);
-    kit!("clip", clip, (), x, y, w, h);
-    kit!("clip_clear", clip_clear, ());
-    kit!("hit", hit, (), id, x, y, w, h);
-    kit!("list_page", list_page, i64, n, page, area_h, pref_h, min_h);
-    kit!("pager", pager, i32, prev_id, next_id, x, y, w, page, pages);
-    linker
-        .func_wrap(KIT, "line", |mut caller: Caller<'_, T>, x0: f32, y0: f32, x1: f32, y1: f32, width: f32, gray: i32| -> Result<(), wasmi::Error> {
-            line(&mut With(&mut caller), [x0, y0, x1, y1, width], gray)
-        })
-        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn func_type(params: &str, result: char) -> FuncType {
+    let ty = |c: char| match c {
+        'f' => ValType::F32,
+        'l' => ValType::I64,
+        _ => ValType::I32,
+    };
+    let results: Vec<ValType> = if result == 'v' { Vec::new() } else { vec![ty(result)] };
+    FuncType::new(params.chars().map(ty).collect::<Vec<_>>(), results)
+}
+
+/// The first `N` numbers of a call.
+fn first<const N: usize>(a: &[i32; 12]) -> [i32; N] {
+    std::array::from_fn(|k| a[k])
+}
+
+/// Calls the work of the call at `at` in KIT_CALLS with the call's numbers (the interpreter has checked them against
+/// its signature), and gives back its result.
+fn dispatch(cx: &mut dyn Call, at: usize, args: &[Val], out: &mut [Val]) -> Result<(), wasmi::Error> {
+    let mut a = [0i32; 12];
+    let mut f = [0f32; 5];
+    for (k, v) in args.iter().enumerate().take(12) {
+        match v {
+            Val::I32(v) => a[k] = *v,
+            Val::F32(v) if k < 5 => f[k] = v.to_float(),
+            _ => {}
+        }
+    }
+    let i = |v: i32| Some(Val::I32(v));
+    let got = match at {
+        0 => i(level(cx, [])?),
+        1 => i(version(cx, first(&a))?),
+        2 => i(metric(cx, first(&a))?),
+        3 => Some(Val::I64(clock_ms(cx, [])?)),
+        4 => i(text(cx, first(&a))?),
+        5 => i(text_lines(cx, first(&a))?),
+        6 => i(measure_width(cx, first(&a))?),
+        7 => i(measure_height(cx, first(&a))?),
+        8 => i(button(cx, first(&a))?),
+        9 => i(icon_button(cx, first(&a))?),
+        10 => i(row(cx, first(&a))?),
+        11 => i(chip(cx, first(&a))?),
+        12 => i(field(cx, first(&a))?),
+        13 => i(select(cx, first(&a))?),
+        14 => i(checkbox(cx, first(&a))?),
+        15 => card(cx, first(&a)).map(|_| None)?,
+        16 => divider(cx, first(&a)).map(|_| None)?,
+        17 => icon(cx, first(&a)).map(|_| None)?,
+        18 => fill(cx, first(&a)).map(|_| None)?,
+        19 => frame(cx, first(&a)).map(|_| None)?,
+        20 => line(cx, f, a[5]).map(|_| None)?,
+        21 => clip(cx, first(&a)).map(|_| None)?,
+        22 => clip_clear(cx, []).map(|_| None)?,
+        23 => hit(cx, first(&a)).map(|_| None)?,
+        24 => Some(Val::I64(list_page(cx, first(&a))?)),
+        25 => i(pager(cx, first(&a))?),
+        _ => None,
+    };
+    if let (Some(v), Some(slot)) = (got, out.first_mut()) {
+        *slot = v;
+    }
     Ok(())
 }
 
 /// The first call of `grimoire_kit` a module imports that this Grimoire does not have, as `grimoire_kit.<name>`:
 /// a call of a later level. None when it has every one the module imports.
 pub fn kit_missing_import(module: &wasmi::Module) -> Option<String> {
-    module.imports().find(|i| i.module() == KIT && !KIT_CALLS.contains(&i.name())).map(|i| format!("{KIT}.{}", i.name()))
+    module.imports().find(|i| i.module() == KIT && !KIT_CALLS.iter().any(|c| c.0 == i.name())).map(|i| format!("{KIT}.{}", i.name()))
 }
 
 // ---- the work of each call ----
