@@ -110,6 +110,7 @@ pub enum SettingId {
     Pair,
     Gestures,
     Language,
+    KindleImport,
     Mirror,
     Wifi,
     KOReader,
@@ -227,7 +228,7 @@ pub const DISPLAY_NO_LIGHT: &str = n_("Display");
 /// The Settings page, category by category and row by row. Keep this table in the order the
 /// page shows; the layout never hardcodes a category or a row.
 // TRANSLATORS: Settings' categories, down the left of its page, each with its icon: General's
-// (language, updates, Wi-Fi), Display's (front light, theme, dark mode, font, rotation, zoom), Sleep &
+// (language, updates, Wi-Fi, Kindle notebooks), Display's (front light, theme, dark mode, font, rotation, zoom), Sleep &
 // Clock's (sleep screen, timer, clock), the Pen's (tool settings, its button, the eraser, calibration),
 // Controls'
 // (shortcuts, pairing, gestures), Packages' (Widgets and Apps), and System's (KOReader, USB PDF
@@ -239,6 +240,9 @@ pub static CATEGORIES: &[Category] = &[
         // TRANSLATORS: (Settings) the row that opens the Wi-Fi submenu: the radio and the Kindle's
         // saved networks.
         Item::open(IconKind::Share, n_("Wi-Fi"), SettingId::Wifi).when(Show::Wifi),
+        // TRANSLATORS: Settings' General category row: imports the notebooks of the Kindle's own notebook app.
+        // (last, so the rows above it keep their places)
+        Item::open(IconKind::Notebook, n_("Import Kindle notebooks"), SettingId::KindleImport),
     ]),
     Category::new(n_("Display"), IconKind::Brightness, &[
         // TRANSLATORS: the row that opens Display's sheet: brightness and warmth.
@@ -336,18 +340,19 @@ mod tests {
             CATEGORIES.iter().map(|c| c.title).collect::<Vec<_>>(),
             vec!["General", "Display", "Sleep & Clock", "Pen", "Controls", "Packages", "System"]
         );
-        assert_eq!(ids(0), vec![SettingId::Language, SettingId::Updates, SettingId::Wifi]);
+        assert_eq!(ids(0), vec![SettingId::Language, SettingId::Updates, SettingId::Wifi, SettingId::KindleImport]);
         assert_eq!(ids(1), vec![SettingId::Display, SettingId::Theme, SettingId::DarkMode, SettingId::Font, SettingId::Rotate, SettingId::Pinch]);
         assert_eq!(ids(2), vec![SettingId::SleepSettings, SettingId::ClockSettings]);
         assert_eq!(ids(3), vec![SettingId::PenFeel, SettingId::SideButton, SettingId::EraserMode, SettingId::Calibration]);
         assert_eq!(ids(4), vec![SettingId::Shortcuts, SettingId::Pair, SettingId::Gestures]);
         assert_eq!(ids(5), vec![SettingId::WidgetPackages, SettingId::AppPackages]);
         assert_eq!(ids(6), vec![SettingId::KOReader, SettingId::Mirror, SettingId::AboutDevice, SettingId::DarkerLines]);
-        assert_eq!(CATEGORIES.iter().map(|c| c.items.len()).sum::<usize>(), 24);
+        assert_eq!(CATEGORIES.iter().map(|c| c.items.len()).sum::<usize>(), 25);
 
         assert_eq!(text(2, 0), "Sleep settings");
         assert_eq!(text(2, 1), "Status bar");
         assert_eq!(text(0, 2), "Wi-Fi");
+        assert_eq!(text(0, 3), "Import Kindle notebooks");
         assert_eq!(text(6, 0), "KOReader");
         assert_eq!(text(6, 2), "About: device and storage");
         assert_eq!(text(5, 1), "Apps");

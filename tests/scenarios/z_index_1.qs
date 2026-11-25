@@ -6,6 +6,9 @@
 # settings: mirror_pdf=0
 # copy: tests/fixtures/link-keys .
 # rust-only
+# (the status bar's clock held still: a new minute between a drawing and a look at editor.screen_composed
+# would make the two differ)
+clock 1700000000
 wait 100
 tap library add
 tap library add.new-notebook

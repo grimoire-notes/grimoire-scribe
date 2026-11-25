@@ -1,0 +1,17 @@
+name: Changed
+id: test.host.changed
+type: widget
+version: 1.0.0
+author: Grimoire tests
+description: A module of the widget host's tests.
+platforms: [all]
+artifact:
+  path: module.bin
+  sha256: db9516bf984766322e31accdba54f284c0e965f254535fc7246567f1282fbce2
+  size: 389
+capabilities: [editor:overlay, storage:widget-local]
+spec:
+  runtime: wasm
+  size:
+    mode: fixed
+    default: [400, 300]

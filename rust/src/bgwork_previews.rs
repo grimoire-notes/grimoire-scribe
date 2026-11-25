@@ -123,14 +123,14 @@ pub enum NoPreview {
 }
 
 impl NoPreview {
-    fn word(self) -> &'static str {
+    pub(crate) fn word(self) -> &'static str {
         match self {
             NoPreview::Refused => "refused",
             NoPreview::Slow => "slow",
             NoPreview::Ended => "ended",
         }
     }
-    fn from_word(w: &str) -> Option<NoPreview> {
+    pub(crate) fn from_word(w: &str) -> Option<NoPreview> {
         [NoPreview::Refused, NoPreview::Slow, NoPreview::Ended].into_iter().find(|n| n.word() == w)
     }
 }
@@ -210,7 +210,7 @@ impl PreviewInfo {
 }
 
 /// A decimal number: digits only, no sign, no leading zero, at most 19 of them.
-fn num_u64(t: &str) -> Option<u64> {
+pub(crate) fn num_u64(t: &str) -> Option<u64> {
     if t.is_empty() || t.len() > 19 || !t.bytes().all(|c| c.is_ascii_digit()) || (t.len() > 1 && t.starts_with('0')) {
         return None;
     }
@@ -218,7 +218,7 @@ fn num_u64(t: &str) -> Option<u64> {
 }
 
 /// A time: num_u64's form, or a minus and a number other than 0.
-fn num_i64(t: &str) -> Option<i64> {
+pub(crate) fn num_i64(t: &str) -> Option<i64> {
     match t.strip_prefix('-') {
         Some(r) => i64::try_from(num_u64(r).filter(|&v| v != 0)?).ok().map(|v| -v),
         None => i64::try_from(num_u64(t)?).ok(),

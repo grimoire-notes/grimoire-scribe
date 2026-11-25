@@ -1,0 +1,16 @@
+name: Ticker
+id: test.runs.ticker
+type: widget
+version: 1.0.0
+author: Grimoire tests
+description: A module of the widget host's tests.
+platforms: [all]
+artifact:
+  path: module.bin
+  sha256: db4cc4a6d3445b99f77d0186b2bf8a5423a00f707842739115445e577aa4acea
+  size: 366
+capabilities: [editor:overlay, storage:widget-local]
+spec:
+  runtime: wasm
+  size:
+    mode: fixed

@@ -633,6 +633,36 @@ file name, title, key or hash ever appears in it: ids, page numbers, counts, siz
   are still drawn by the UI.
 - `bg: PDF import of <id> (pid N)` once per slice; `bg: PDF import pid N done`.
 
+## Kindle notebooks (2.2, #196)
+
+Grimoire imports notebooks made in the Kindle's own notebook app. Over USB (or MTP), each notebook is a folder
+in `/mnt/us/.notebooks/` named by an id and holding a file called `nbk`: copy that whole folder into
+`grimoire/import/` and the next scan takes it. **Settings > General > Import Kindle notebooks** does that for
+you: it reads `/mnt/us/.notebooks/` (the Scribe's own place) and the notebook catalog at
+`/var/local/ksdk.content.db`, then copies the notebooks that are not imported yet (eight at a time, then tap it
+again for the rest) into `grimoire/import/` and queues them. The catalog names them and keeps a book's
+annotation folders out. The notebooks in `.notebooks/` are never changed. A notebook that lives only in
+Amazon's cloud is listed in the catalog but has no `nbk` on the Kindle yet: open it once, close it, and tap
+the row again; the row says how many are cloud-only. The
+notebook appears with the name the Scribe gives it (its
+folder's name when its metadata holds none), one page per page, its ink scaled to the Scribe's page; the
+Scribe's paper is blank in Grimoire, its pressure is kept, and Amazon's brushes become Grimoire's (pen and
+original pen: ballpoint; pencil; fountain pen; marker; highlighter). Ink colour is not kept: Grimoire's ink is
+monochrome. The page order is the notebook's own; its blank `note_template_collection` pages are not imported,
+nor is text or any other non-ink content.
+
+Only `nbk` is read: the folder's other files (the Scribe's `.kfx`, say) are ignored, and the notebook folder
+moves to `import/done/` when it is done, as a picture folder does. The original folder under `.notebooks/` is
+never changed. An `nbk` is up to 256 MB and a notebook up to 2000 pages. A file that does not read as a
+Kindle notebook is refused: `import: <id>: <why>; nothing imported` (its folder stays in `import/` until its
+files change, as a refused picture folder does). The import's other lines are `import: <id>: N page(s) of a
+Kindle notebook, for WxH pages` and `import: notebook <id> made of N page(s), N stroke(s) of a Kindle
+notebook`. No file name, title or page content is logged.
+
+The container and fragment format were worked out from real notebooks, the open `kfxlib` sources and
+Walnut356's `de_scribe` reader (format reference only: no code is taken from it); docs/BACKLOG.md had the
+original notes. `rust/src/nbk.rs` is the reader, `bgwork_template.rs` the import child that writes the pages.
+
 ## Your own fonts (2.1.0-beta.2)
 
 Copy `.ttf` or `.otf` files into `grimoire/fonts/` (see README). Device checks are in TESTING.md. A font is
@@ -797,6 +827,39 @@ timings, memory, reasons):
 - `file previews: the cache holds N file(s) more than are looked at`: the folder holds over 8,000 files (it never
   does by itself); deleting it puts that right.
 - `bg: N file preview(s) dropped (Grimoire ends)`: previews still queued when Grimoire closed; none is made after.
+
+## Packages' pictures (2.3)
+
+An installed app's bundled icon and the Package Store's icons and screenshots are decoded by the sandboxed
+worker in the background (docs/DESIGN.md, "Packages' pictures"), never by Grimoire itself, and kept in
+`grimoire/.cache/packages/`, which may be deleted at any time (the pictures are made again). A picture shows a
+moment after its screen; until then, and when it cannot be made, the launcher shows the app's built-in icon and
+the Store its package glyph. A picture's job waits behind what Grimoire does in the background for someone who
+asked by name (an export, a map's layout, the PDF mirror, an import, a font check), runs in turn with Files'
+previews, and ahead of compaction and the idle page previews; it is given 6 s at most. In the Package Store the
+pictures of the page in front are asked for first. grimoire.log says, for each picture that was not in the cache
+(never a file's name: the form, timings, reasons):
+
+- `bg: package pictures of a file (pid N)`, then `bg: package pictures pid N done` or `FAILED`.
+- `package pictures: app-icon|icon|screenshot made in T ms`: T is the whole job (the worker's start, the file
+  read, the picture decoded, the cache written).
+- `package pictures: app-icon|icon|screenshot gave no picture (slow|ended) in T ms; one more try at another look`:
+  the worker ran out of the picture's time on the file, or ended on it, for the first time. The screen keeps its
+  glyph; the file is tried once more when Grimoire next starts (an app's icon) or the Store next shows it.
+- `package pictures: app-icon|icon|screenshot has no picture (refused|slow|ended), marked, in T ms`: the worker
+  refused the file (no `.ico` or picture it reads, sides over the limits), or it was the second try in a row that
+  ran out of time or ended. The screen keeps its glyph, and the file is not tried again until it changes.
+- `package pictures: nothing made (<why>)`: no sandboxed worker could be had, no memory, the storage is nearly
+  full, or the file changed since it was asked for (among others: it is not there, or is a link). Nothing is
+  written; a later look asks again.
+- `package pictures: the cache of icons|shots pruned: N file(s) removed`: past 1,200 files or 24 MiB of icons, or
+  32 files or 48 MiB of screenshots, the oldest go.
+- `bg: N package picture(s) dropped (Grimoire ends)`: pictures still queued when Grimoire closed; none is made
+  after.
+- `bg: the sandbox refused a package picture's worker a step: no worker is asked for again until Grimoire starts
+  again`: after a `nothing made (no sandboxed worker can be had)` whose worker could not take a sandbox step. No
+  picture is asked for again in that run, and the launcher and the Store keep their glyphs. Send the lines
+  around it.
 
 ## Touch gestures and the touch trace
 

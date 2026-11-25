@@ -8,6 +8,9 @@
 # two-finger bottom-to-middle system swipe returns Home from a fresh launch even with Gestures off.
 wait 300
 expect library.apps is com.example.fixture
+# The app's bundled icon is decoded by the sandboxed worker (issue #236): its picture comes a moment after the
+# first draw, and every launcher below shows it (tests/scenarios/z_apps_icon.qs holds how it arrives).
+waitfor library.apps.icons is 1
 tap library settings
 wait 300
 tap library settings.cat.5

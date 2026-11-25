@@ -34,6 +34,10 @@ pub fn child_margin(kind: BgKind) -> u64 {
         // a file's preview (bgwork_previews.rs): a picture read whole (64 MB at most) or a font (24 MB), handed to the
         // worker, and a 300 x 400 picture back. The worker it execs sets its own RLIMIT_AS (sandbox.rs).
         BgKind::FilePreviews => 128 * MIB,
+        // a package's picture (pkgpics.rs): an icon file (256 KiB at most) or a screenshot's (8 MiB), handed to the
+        // worker, a gray picture of at most 2560 x 2560 back and its cache file's bytes beside it. The worker it
+        // execs sets its own RLIMIT_AS (sandbox.rs).
+        BgKind::PackagePictures => 64 * MIB,
         _ => 256 * MIB,
     }
 }

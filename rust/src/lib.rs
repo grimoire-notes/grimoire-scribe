@@ -48,6 +48,7 @@ pub mod i18n;
 pub mod json_min;
 pub mod koreader;
 pub mod md5; // MD5 and KOReader's partial MD5, a book's key (2.1)
+pub mod nbk; // Kindle Scribe notebooks: .notebooks/<id>/nbk read into pages (2.3, issue #196)
 pub mod sha256; // SHA-256, the digest of a file's whole contents (2.2.0)
 pub mod latency;
 pub mod linkoutline;
@@ -80,6 +81,7 @@ pub mod bgwork_template; // templates.h + bg_template, bg_import_folder
 pub mod bgwork_copy; // a file copied into Grimoire's folders for the user's files: BgKind::CopyFile (2.2)
 pub mod bgwork_previews; // Files' previews and the Covers view's tiles: BgKind::FilePreviews and its cache (2.2)
 pub mod bgwork_tplpdf; // PDFs as templates: a PDF in grimoire/templates made into one template a page (2.2)
+pub mod pkgpics; // packages' pictures: an app's icon and the Package Store's pictures, by the worker: BgKind::PackagePictures and its cache (2.3)
 pub mod brush;
 pub mod compact; // compact.h's surface (bodies in bgwork_compact.rs)
 pub mod export;

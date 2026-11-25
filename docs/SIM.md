@@ -146,7 +146,7 @@ GRIMOIRE_ROOT=/tmp/q GRIMOIRE_SCRIPT=tests/scenarios/a_notebook.qs GRIMOIRE_SHOT
 | `powerhold` | the press, the 4 s hold and the release at once, with no time passing: Grimoire saves and quits (check that with `expect running is 0`) |
 | `pdfimport PATH [NAME [FOLDER]]` | the picker's entry point without the picker (kept for tests; the picker, Library > New > From a file..., calls the same function): imports the PDF at PATH (from the storage root: `GRIMOIRE_STORAGE`, else the folder around the data root), read in place and never moved, named NAME and put in Library folder FOLDER (`_` stands for a space in each). `waitbg` waits for it |
 | `powerd STATE` | what the simulated power service reports from now on: `active` (the start), `screenSaver`, `readyToSuspend` or `suspended`; `unknown` or nothing reads as unreadable |
-| `clock SECONDS` | the time the status bar shows, in unix seconds (`clock 1700000000` is 2023-11-14 22:13:20 UTC), kept where the script puts it: it does not run on, so no screen refreshes for a new minute until the script sets one (tests/scenarios/y_status_bar_clock.qs); `clock real` is the machine's clock again |
+| `clock SECONDS` | the time the status bar shows, in unix seconds (`clock 1700000000` is 2023-11-14 22:13:20 UTC), kept where the script puts it: it does not run on, so no screen refreshes for a new minute until the script sets one (tests/scenarios/y_status_bar_clock.qs). In a notebook that refresh waits while the pen is near (`pen hover` until `pen leave`, or until a finger comes down), a stroke or a drag is in progress or `display.pen_mode` is 1, and comes once when the pen has left; until then a refresh of the page under the bar shows the time the strip holds (tests/scenarios/y_status_bar_pen.qs); `clock real` is the machine's clock again |
 | `battery PERCENT [charging]` | the battery that corner shows (a pixel art battery with the percent beside it), 0 to 100, with the bolt over it when `charging` follows; `battery none` is a battery that cannot be read. The simulator starts at 100 and not charging |
 | `storage full`, `storage ok` | from now on every file write fails, as on a full userstore, or works again |
 | `storage move SRC DST` | on a `# storage: 1` run's storage root, the entry SRC renamed to DST (each a path from the root, `_` for a space), as a writer over USB would while Grimoire runs: nothing replaced (DST taken fails the line), the entry itself renamed (a link is moved, never followed); a path that is no storage path fails the line too (2.2, files_12_swap) |
@@ -180,7 +180,9 @@ Widgets popup's rows are `widgets.ID` (`widgets.com.example.timer`), and an open
 named by its index in the open list, which is how a scenario reaches the controls a package draws:
 `widget.0.hit.N` is the hit region with id N in the first frame's last draw, and
 `widget.0.hit.N` stays a valid name only while that region exists. A package's own status text is
-read with `editor.widget.0.status`. The Packages page is Settings → Packages
+read with `editor.widget.0.status`. A frame's due redraw (`request_redraw`) waits while the pen is near, as the
+status bar's minute refresh does in a notebook: a script follows a `pentap` with `pen leave` to let it come
+(tests/scenarios/z_widget_pen.qs). The Packages page is Settings → Packages
 → Widgets: `settings.cat.5` picks the Packages category and `settings.packages` opens the Widgets
 page. Its controls are `packages.close` (the X, which closes Settings), `packages.back` (to
 Settings), `packages.row.ID` (or its index, `packages.row.0`), `packages.update-all`,
@@ -194,9 +196,28 @@ The Package Store is the home app row's fourth built-in app, `library app.store`
 `store.install`, `store.trust`, `store.qr` and `store.retry`. Its state is read with
 `library.store.view` (`list`, `detail`, `trust`, `busy`, `error` or `qr`), `.open`, `.filter`,
 `.packages`, `.visible` (ids in catalog order), `.selected`, `.featured`, `.screenshots`, `.shot`,
-`.shot.loaded`, `.icon.loaded`, `.status`, `.error` and `.page`. `GRIMOIRE_PACKAGE_STORE_URL`
+`.shot.loaded`, `.shot.coming`, `.icon.loaded`, `.list.icons`, `.status`, `.error` and `.page`. `GRIMOIRE_PACKAGE_STORE_URL`
 points the Store at another catalog; `GRIMOIRE_PACKAGE_STORE_OFFLINE=1` reads only the saved
 catalog and its cached images (tests/scenarios/z_package_store.qs).
+The Store's icons and screenshots, and an installed app's bundled icon, are decoded by the
+sandboxed worker in a background job (issue #236), so each comes a moment after its screen: a
+scenario waits for one with `waitfor` (`library.store.list.icons`, the cards' icons shown;
+`library.store.icon.loaded` and `.shot.loaded`, the detail page's; `library.update.pkg.icons`,
+Settings > Updates' rows; `library.apps.icons`, how many installed apps' bundled icons a launcher
+draws now, an app that shows its built-in icon not counted). `library.store.shot.coming` is `1`
+while the detail page's screenshot is still to come (to download, or asked of the worker) and `0`
+once it is there or none will come. A picture's arrival is one `ui` refresh of its own place in
+`display.presents` (tests/scenarios/z_apps_icon.qs, z_package_store_pictures.qs);
+`GRIMOIRE_BG_DELAY_MS` holds its job back, and `GRIMOIRE_WORK_FAIL_STEP` leaves it with no worker
+(z_pictures_no_worker.qs). A scenario that counts these refreshes sets the script's clock first
+(`clock 1700000000`), so that no refresh for a new minute falls among them.
+A visit with a network runs without one: tests/store-curl/curl stands in for curl when a
+scenario's `# env:` line puts its folder first in `PATH` and names a catalog at
+`https://store.test/index.json`; it answers from the folder `package-store-served` of the
+scenario's data root, which tests/store_many_packages.py fills, 0.3 s a download
+(tests/scenarios/z_package_store_first_visit.qs: a download's end refreshes nothing by itself).
+The same generator makes a saved catalog of any number of packages
+(z_package_store_page_first.qs).
 A disabled button
 (Undo with nothing to undo, Clear on an empty page, Previous on page 1) has no hit and no name. A scenario
 that wants a panel button taps it by name, so that it does not break when the panel gains a button;
@@ -626,6 +647,7 @@ shows what the app holds.
 | `editor.packages`, `editor.packages.open` | the installed widget packages: their count, then their ids and versions (`0`, or `1 com.example.timer 1.0.0`), and `1` while the Packages page is up, else `0` |
 | `editor.widget.N.status`, `editor.widget.N.text` | the text the frame's package last passed to its `status` import, and the text it drew, joined by `\|`; empty until its first draw |
 | `editor.widget.N.hits`, `editor.widget.N.error` | how many hit regions its last draw registered, and the runtime error that stopped it, empty while it runs |
+| `editor.widget.N.says` | what a frame whose module failed says in place of its body, in the order it is drawn: the reason, ` \| `, then the package's name, version and author (`The widget stopped: ... \| Timer v1.0.0 · Jane Doe`); empty while it runs |
 | `editor.package.ID` | an installed package's version (`1.0.0`), or empty for an id that is not installed |
 | `editor.widget.ID.rect`, `editor.widget.ID.state` | an open frame's screen rect (`x y w h`, the minimized square while minimized) and `normal` or `minimized`; ID is its package id or its index in the open list; empty for a frame that is not open |
 | `editor.hold_eraser` | `1` while a controller's Erase while held is down (from its press to its release), else `0` |

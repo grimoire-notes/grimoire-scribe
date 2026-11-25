@@ -24,6 +24,7 @@ image papers, for example, and never calls them "Newer paper".
 root/settings.ini                       the device's settings (below)
 root/settings.ini.unread                a settings.ini that was there but could not be read, kept aside; never read (2.2.0; settings.ini)
 root/folders.ini                        "# Grimoire folders", then one folder name per line
+root/folder-looks.ini                   a folder's icon and picture, a block a folder (2.2, issue #230; Folder icons and pictures)
 root/sleep.pgm                          the pinned sleep screen (P5 PGM, full page)
 root/notebooks/<id>/notebook.ini        one notebook (below)
 root/notebooks/<id>/p<page id>.qpg      one page (below)
@@ -69,6 +70,7 @@ root/trash/                             deleted notebooks and pages, moved here,
 root/PDFs/                              the PDF mirror (an export, not data)
 root/.cache/pdf/<id>/                   the notebook PDF's page streams, disposable (2.1.0-beta.2)
 root/.cache/files/                      Files' previews of the files its Covers view shows, disposable (2.2; Files' previews)
+root/.cache/packages/                   the worker's pictures of installed apps' icons and of the Package Store's icons and screenshots, disposable (2.3; Packages' pictures)
 ```
 
 `root` is `/mnt/us/grimoire` on the Kindle. A notebook id is the folder's name: letters, digits,
@@ -1585,8 +1587,12 @@ critical on purpose.
 The editor's open widgets, one line each: an installed package's id (`com.example.timer`). A line
 is the widget's id, an `=`, and seven comma-separated numbers: x, y, width, height, minimized (0
 or 1), z-order, and a reserved flag (written as 0). Coordinates are screen pixels, as the panel's
-are. A closed widget has no line. Unknown ids and malformed lines are skipped. The file is at most
-64 KiB, written atomically.
+are. A closed widget has no line. An id here is read by the rule a manifest's `id` is checked by
+(lowercase letters, digits, dots and hyphens, at most 128 bytes, no dot first or last and no two in
+a row, and not ending in `.previous`), so the frame of any package that installs is found again. Unknown ids and malformed lines
+are skipped. The z-order only orders the frames (a greater number is drawn over a smaller): any
+number an `i32` holds is read, and the frames are numbered again from 0, in their order, when the
+next number would pass the largest. The file is at most 64 KiB, written atomically.
 
 ```
 # Grimoire widget layout. One line per open widget:
@@ -1603,11 +1609,11 @@ HTTPS `.yaml` address; the Widgets popup's **Manage widgets...** row opens the s
 The manifest is `package.yaml`; unknown keys are ignored. An install is refused before anything is
 written if the manifest is invalid, the platform does not match, or the artifact does not match its
 size and SHA-256. The artifact is one file under the package's folder; it cannot be `package.yaml`
-or anything under `state/`, which belongs to the host and the widget's saved data.
+or anything under `state/` (in any case of their letters), which belongs to the host and the widget's saved data.
 
 ```yaml
 name: Timer
-id: com.example.timer          # lowercase letters, digits, dots and hyphens
+id: com.example.timer          # lowercase letters, digits, dots and hyphens, at most 128 bytes; not ending in .previous
 version: 1.0.0                 # semantic version (a -prerelease suffix is allowed)
 type: widget
 author: Jane Doe
@@ -1618,7 +1624,7 @@ license_url: https://example.org/timer/LICENSE  # optional; without it, the repo
 min_grimoire_version: 2.1.0    # optional
 platforms: [all]               # or kindle-scribe-2022, kindle-scribe-2024
 repository: https://example.org/timer
-capabilities: [editor:overlay, storage:widget-local]
+capabilities: [editor:overlay, storage:widget-local]  # editor:overlay is required; the other is for saved state
 settings:                      # optional; a Settings... page of up to 32 rows
   - key: show_seconds          # lowercase letters, digits, . - _
     label: Show seconds
@@ -1654,7 +1660,8 @@ An omitted `platforms` means every supported device; an explicit empty list is r
 platform is `GRIMOIRE_WIDGET_PLATFORM` when set, otherwise the Kindle model in
 `/proc/device-tree/model`. The known values are `all`, `kindle-scribe-2022` and
 `kindle-scribe-2024`. The artifact is at most 32 MiB; at most 64 packages are installed. A manifest
-is at most 256 KiB.
+is at most 256 KiB, and its `name`, `author` and `description` at most 1,023 bytes each: what the
+reader of `packages/index.json` keeps of a string.
 
 `packages/index.json` lists what is installed, and is written atomically after the package's files
 are complete:
@@ -1686,14 +1693,18 @@ answer does.
 `source_url`, one after another, and installs the newer ones; an up-to-date package costs its
 manifest's fetch only. The packages were trusted when they were installed, so the batch does not
 ask again for each one. An update keeps the old directory as `<id>.previous` until the new one is in
-place, so a failed write can be rolled back. Removing a package closes its widget, deletes its files and its
+place, so a failed write can be rolled back; an id that ends in `.previous` is refused wherever an id is
+read (the manifest check, `packages/index.json`, `widgets.ini`), so that directory is no package's own. Removing a package closes its widget, deletes its files and its
 `widgets.ini` line. A package's own state is kept under `packages/widgets/<id>/state/` when the
 package is replaced or removed (Remove keeps that folder; nothing else of the package stays). The
 host's `settings.json` in that folder is kept too; a package should use another file for its own data.
 
 `spec.runtime` must be `wasm`: a package ships behavior as a WebAssembly module, and Grimoire carries
 no widget implementations of its own. A native runtime or entry is refused. The artifact is size-
-and SHA-256-checked at install, then instantiated in the frame when it first draws.
+and SHA-256-checked at install. Each time a frame loads it, it is checked again before it is
+instantiated: the index's `path` must be the installed manifest's `artifact.path` under the
+package's folder, the file a plain file there with no link between the package's folder and it, and
+its SHA-256 the index's `sha`; a file that fails is not loaded.
 
 A module exports `memory`, `widget_draw(width, height, scale_milli)` and
 `widget_tap(hit_id)`, and imports from the `grimoire` module:
@@ -1711,14 +1722,22 @@ state_set(ptr, len)
 now() -> i64
 ```
 
-Coordinates are screen pixels inside the frame body. `style` is `0` normal, `1` selected or `2`
-disabled. Strings are UTF-8 in the module's memory. `request_redraw` names the delay before the
-host draws the widget again (16 ms to 24 hours), for a clock or a countdown. `setting` returns the bytes written for one of
+Coordinates are screen pixels inside the frame body, and the body is all a module draws on: a
+command is clipped to it, and a hit region is the part of it inside the body. `style` is `0` normal,
+`1` selected or `2` disabled. Strings are UTF-8 in the module's memory. `request_redraw` names the delay before the
+host draws the widget again (100 ms to 24 hours), for a clock or a countdown. `setting` returns the bytes written for one of
 the package's saved settings (empty when it is missing); `state_get`/`state_set` read and write the
 widget's saved state in `packages/widgets/<id>/state/runtime.bin`, capped at 64 KiB. `status` sets
-the text read back by the editor's `editor.widget.N.status` probe. Each call has a fixed instruction
-budget and linear memory is capped at 32 MiB, so a looping or greedy widget stops with an error
-instead of freezing the device.
+the text read back by the editor's `editor.widget.N.status` probe. A module is given only what the
+manifest's `capabilities` declare: `editor:overlay` for `rect`, `text`, `button`, `hit` and `request_redraw`, and
+`storage:widget-local` for `state_get`, `state_set` and `state/runtime.bin`; a call without its
+capability does nothing (`state_get` returns 0), and no state file is read or written. A manifest
+that does not declare `editor:overlay` is refused by the manifest check, so every package an install
+writes can draw. Each call has a fixed instruction
+budget, from which the host's work for each import it calls is paid as well (WIDGETS.md, Limits), a module has one linear memory of at most 32 MiB and at most one table of at most 65,536 entries,
+and a drawing pass holds at most 512 commands, 512
+hit regions and 16 KiB of text (the whole list is in WIDGETS.md, Limits), so a looping or greedy
+widget stops with an error instead of freezing the device.
 
 [WIDGETS.md](WIDGETS.md#the-wasm-abi) is the guide to writing one.
 
@@ -2140,6 +2159,30 @@ beta.4 show the page and its picture and never read `links.ini`; 2.0.0-beta.5 to
 as a target they do not know (it does nothing there). The released 2.0.0-beta.1 (2026-11-01) follows `n:`
 targets into the other notebook, as every build since 2.0.0-rc.2 does. Moving pages needs nothing of any
 version: each reads the `pages` order it finds.
+
+## Folder icons and pictures: `root/folder-looks.ini`
+
+A folder's card in the Library can show an icon of its own instead of the plain folder, and a picture from
+`root/photos/` in its place (2.2, issue #230: a folder's menu, Icon & picture...). A folder with neither has
+no block:
+
+```
+# Grimoire: folder icons and pictures
+folder=School
+icon=school
+```
+
+`folder=` starts a folder's block: its logical path as `notebook.ini`'s `folder` writes it. `icon=` is the
+icon's name, one of the app's 48 (lowercase letters, digits and `-`), shown two pages of six by four, and
+`picture=` a file name in `root/photos/` (no folder part). They are alternatives: a block has one or neither,
+and a picture takes the icon's place. A block whose folder is gone draws nothing; an icon this version does not
+know draws as the plain folder, and an older name (`castle`, `image`, `files`) draws as the icon it became; a
+picture that is not there (or whose preview is not made yet) leaves the plain folder. Lines of another kind,
+paths that are no valid folder and names that are not
+those shapes are ignored; a file over 64 KiB names no look. Renaming or moving a folder moves its block and
+those of the folders inside it; removing an (empty) folder drops its block; with no folder left the file is
+removed. It is kept apart from `folders.ini`, whose every line older versions read as a folder's name: an
+older Grimoire keeps this file as it is.
 
 ## The trash: `root/trash/`
 
@@ -2680,3 +2723,44 @@ names is no longer there with that size and time. Past 2,000 files or 64 MiB sti
 their files' newest time, both files of an entry together), down to 1,500 files and 48 MiB. Deleting
 `.cache/files/` loses nothing: the previews are made again as their files show in Covers. No other version reads
 it.
+
+## Packages' pictures: `.cache/packages/` (2.3)
+
+The pictures the launcher and the Package Store draw of files that come from outside Grimoire (docs/DESIGN.md,
+"Packages' pictures"): an installed app's bundled icon (`packages/apps/<id>/<icon>.ico`) and the Store's catalog
+icons and screenshots (files of `package-store/assets/`), each decoded by the sandboxed picture worker and kept
+here as plain gray pixels. Two folders: `.cache/packages/icons/` (apps' icons and Store icons) and
+`.cache/packages/shots/` (screenshots). For each picture, two files named by its key, the FNV-1a 64 hash (16
+lowercase hex digits) of the file's path from Grimoire's folder followed by `/<size>/<mtime>` (its size in bytes
+and its modification time in seconds, in decimal): a file changed or replaced has another key.
+
+- `<key>.pgm`: the picture, a P5 PGM with the header `P5\n<w> <h>\n255\n` and w x h gray bytes, at most 256 x
+  256 for an icon and 2,560 x 2,560 for a screenshot. Present only beside a `.info` that says `made`.
+- `<key>.info`: five lines of text, each ended by a line break, at most 700 bytes:
+
+  ```text
+  grimoire-package-picture 1
+  of <size> <mtime>
+  form app-icon|icon|screenshot
+  made <w> <h>
+  path <the file's path from Grimoire's folder>
+  ```
+
+  The fourth line is `made <w> <h>` (the picture beside it), or `none refused|slow|ended` for a file that has no
+  picture (its worker refused it, took too long on it, or ended on it): a mark, kept so the file is not tried
+  again until it changes; or `once slow|ended`: one try on record, no mark yet (the job of another look tries once
+  more, and a second time in a row writes the mark). Numbers are decimal, without a sign (a time before 1970 has
+  a minus) or a leading zero. The path is UTF-8 without a control character or a backslash, with no empty, `.` or
+  `..` part, under `packages/apps/` for `app-icon` and under `package-store/assets/` for the other two. The first
+  line's number stands for this text and for the rules a mark was made by: an entry of another number is no
+  entry.
+
+Only the background job writes the folders, each file atomically (`<file>.tmp`, fsync, rename), the picture first
+and then the `.info`; they are made where they are missing, and neither read nor written through a link. A `.info`
+and its picture are read only when each is a plain file within its size, the `.info` exactly the text above for
+what it says and of the file asked for (its path, size, time and form), the picture exactly its header and
+w x h bytes for the size the `.info` says: anything else is no picture, and the entry is made again. After a job
+that wrote, a folder past 1,200 files or 24 MiB (icons), or 32 files or 48 MiB (screenshots), loses its oldest
+entries (by their files' newest time, both files of an entry together), down to three quarters of each. An app's
+entry is removed when the app is removed or updated. Deleting `.cache/packages/` loses nothing: the pictures are
+made again as their screens show. No other version reads it.
