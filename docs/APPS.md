@@ -399,6 +399,10 @@ itself: the app is closed, Home comes back, and a toast says why ("The app stopp
 consumed by WebAssembly" for the budget). A module whose start does not end within the budget is not
 started. An `app_stop` that is stopped ends the app all the same.
 
+A function's first call also pays for making it ready to run, which the interpreter does when a
+function is first called: about 7 for each byte of its code (an `app_draw` of 3,000,000 bytes of
+code takes 22,000,623 from its first call's budget and 1,000,511 from each later one).
+
 The limits leave room. The fixture app of `tests/fixtures/apppkg/` draws 3 commands and has 22 bytes
 read in a pass, which takes about 175,000 from its budget (0.6%). The pass of one of every command
 that `rust/tests/test_app_host.rs` draws, a page of a settings screen and a small board, is 47

@@ -61,7 +61,8 @@ const STATE_FILE: &str = "state/runtime.bin";
 // (The module's file is at most WIDGET_PKG_ARTIFACT_MAX, widgetpkg.rs.)
 /// A call's instruction budget: the module's own instructions and the host's work for its imports (the charges
 /// below) are paid from it. Every call of the module by the host has this much. A call that needs more is
-/// stopped.
+/// stopped. A function's first call also pays the interpreter for making it ready to run, about 7 for each
+/// byte of its code (docs/APPS.md, Limits).
 pub const APP_CALL_FUEL: u64 = 30_000_000;
 /// A module has one linear memory, and it may not grow past this.
 const MEMORY_MAX: usize = 48 * 1024 * 1024;

@@ -1402,6 +1402,27 @@ fn a_settings_value_and_a_requests_answer_are_paid_for_by_their_bytes() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+// A function's first call also pays the interpreter for making it ready to run: about 7 for each byte of its code
+// (docs/APPS.md, Limits). A drawing pass of 100,000 bytes of code, nothing but `nop`, takes about 700,000 more from
+// its first call's budget than from each later one, and the later ones take the same.
+#[test]
+fn a_functions_first_call_also_pays_for_making_it_ready() {
+    let root = fresh_root("first-call");
+    let code = 100_000;
+    let mut rt = loaded("test.first.call", &BOTH, &Wasm::new(times(code, &[0x01])));
+    let mut c = patterned(SCREEN.0, SCREEN.1);
+    let mut used = || {
+        rt.draw(&mut c, WHOLE, 0);
+        assert_eq!(rt.error(), None);
+        rt.fuel_used()
+    };
+    let (first, then, again) = (used(), used(), used());
+    assert_eq!(then, again, "a later call takes what the one before it took");
+    let ready = first - then;
+    assert!(ready.abs_diff(7 * code as u64) <= 64, "the first call took {ready} more, for {code} bytes of code");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// The canvas after a pass of `draw` on the whole screen, the app's error, and what the pass took from its budget.
 fn pass_of(id: &str, draw: Vec<u8>, data: &[u8]) -> (Canvas, Option<String>, u64) {
     let mut w = roomy(draw);
