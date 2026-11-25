@@ -269,9 +269,7 @@ const H_SET_DARKER: i32 = 250;
 const H_DARKER_PICK: i32 = 251;
 const H_DARKER_BACK: i32 = 252;
 // Settings > Packages > Widgets (2.2, issue #200): the widget package manager (widgetpkgui.rs).
-const H_SET_PACKAGES: i32 = 260;
 // Settings > Packages > Apps: the same manager for the app package kind.
-const H_SET_APP_PACKAGES: i32 = 261;
 // Settings > General's Import Kindle notebooks (2.3, issue #196): copies the Kindle's own notebooks from
 // .notebooks/ into import/ and queues them (bgwork_template.rs).
 const H_SET_KINDLE: i32 = 283;
@@ -5970,8 +5968,6 @@ fn setting_hit(id: settingsmenu::SettingId) -> i32 {
         Updates => H_UPDATES,
         AboutDevice => H_SET_DEVICE,
         DarkerLines => H_SET_DARKER,
-        WidgetPackages => H_SET_PACKAGES,
-        AppPackages => H_SET_APP_PACKAGES,
     }
 }
 
@@ -8856,8 +8852,6 @@ fn act(a: &mut App, h: &Hit) {
             settings_save(&a.settings);
             redraw(a, RefreshMode::Full);
         }
-        H_SET_PACKAGES => crate::widgetpkgui::packages_ui_open(a, crate::widgetpkgui::PkgKind::Widget),
-        H_SET_APP_PACKAGES => crate::widgetpkgui::packages_ui_open(a, crate::widgetpkgui::PkgKind::App),
         H_SET_DISPLAY => {
             let mut dm = std::mem::take(&mut lib(a).dm);
             dispmenu_open(&mut dm, a);
@@ -11421,7 +11415,6 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_SET_KINDLE => "kindle-notebooks",
                 H_SET_PINCH => "pinch", H_SET_MIRROR => "mirror",
                 H_SET_DEVICE => "about-device", H_DEVICE_BACK => "about-device.back",
-                H_SET_PACKAGES => "settings.packages", H_SET_APP_PACKAGES => "settings.apps",
                 _ => "",
             });
             if hit.id == H_LANG_PICK {

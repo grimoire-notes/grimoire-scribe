@@ -13,7 +13,7 @@
 //! until then, and when the worker refuses it or none can be had, a card or a page shows what it
 //! shows for a picture that is missing.
 
-use crate::globalui::{gui_button, gui_chip, gui_gap, gui_header, gui_icon_button, gui_margin, gui_radius};
+use crate::globalui::{gui_button, gui_button_row, gui_chip, gui_gap, gui_header, gui_icon_button, gui_margin, gui_radius};
 use crate::pkgpics::{picture_cached, picture_request, Ask, Cached, PicForm, PicSrc};
 use crate::prelude::*;
 use crate::sha256::sha256_of;
@@ -35,12 +35,35 @@ const H_QR: i32 = 810;
 const H_SHOT_PREV: i32 = 811;
 const H_SHOT_NEXT: i32 = 812;
 const H_RETRY: i32 = 813;
+const H_SEARCH: i32 = 814;
+const H_REPO: i32 = 815;
+const H_UNINSTALL: i32 = 816;
+const H_UNINSTALL_YES: i32 = 817;
+const H_QUERY_CLEAR: i32 = 818;
+const H_DESC_MORE: i32 = 819;
+const H_DESC_PREV: i32 = 820;
+const H_DESC_NEXT: i32 = 821;
+const H_LICENSE: i32 = 822;
+const H_LICENSE_PREV: i32 = 823;
+const H_LICENSE_NEXT: i32 = 824;
+const H_AGREE: i32 = 825;
+/// A card of the Installed tab in a hit: `H_CARD`'s argument from this number up is an index into
+/// `PackageStoreUi::installed` rather than the catalog.
+const INSTALLED_CARD: i32 = 10_000;
 
 const INDEX_MAX: usize = 512 * 1024;
 const INDEX_TOKENS: usize = 32 * 1024;
 const PACKAGE_MAX: usize = 200;
 const SCREENSHOT_MAX: usize = crate::pkgpics::SHOT_FILE_MAX;
 const INSTALL_ICON_MAX: usize = crate::apppkg::APP_ICON_MAX;
+const LICENSE_MAX: usize = 256 * 1024;
+
+/// Where a package being worked on is tried before it is published: a repository cloned into
+/// `packages/import/` (its `package.yaml` and the artifact beside it). Each package there is installed
+/// when the Store opens or is refreshed, so it is in the Launcher, the Widgets popup and the Installed
+/// tab without a catalog entry.
+const DEV_IMPORT_DIR: &str = "packages/import";
+const DEV_IMPORT_MAX: usize = 16;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StoreView {
@@ -51,6 +74,22 @@ pub enum StoreView {
     Busy,
     Error,
     Qr,
+    /// a GitHub repository or .yaml address is typed on the keyboard
+    InstallRepo,
+    /// asking before a package is uninstalled
+    Remove,
+    /// reading a package's license, installed or offered
+    License,
+    /// accepting a package's license before it is installed
+    Agree,
+}
+
+/// Which field the Store's keyboard edits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum KbFor {
+    #[default]
+    Search,
+    Repo,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -112,12 +151,16 @@ pub struct PackageUpdate {
 enum FetchStage {
     #[default]
     Catalog,
+    /// GitHub's repository answer, for its default branch (a repository install)
+    Branch,
     Manifest,
     Artifact,
     Icon,
     Screenshot,
     InstallIcon,
     ListIcon,
+    /// a repository's license file, for the License page
+    License,
 }
 
 struct FetchJob {
@@ -185,6 +228,19 @@ pub struct PackageStoreUi {
     pressed_hit: Option<Hit>,
     pub status: String,
     pub error: String,
+    /// the text a Search typed, which filters the catalog or the Installed tab
+    pub query: String,
+    /// every installed package, gathered when the Store opens or a package is installed or removed
+    pub installed: Vec<StorePackage>,
+    /// what importing the developers' packages left in `packages/import/` said, for the list's note
+    pub dev_note: String,
+    /// the one keyboard: a Search's text, or a repository to install from
+    pub kb: Keyboard,
+    kb_for: KbFor,
+    /// the manifest being installed from a repository rather than the catalog
+    repo_install: bool,
+    repo_input: String,
+    repo_pkg: Option<StorePackage>,
     index_url: String,
     catalog_job: Option<FetchJob>,
     install_job: Option<FetchJob>,
@@ -205,6 +261,17 @@ pub struct PackageStoreUi {
     shot_for: String,
     shot_tried: bool,
     shot_index: i32,
+    /// the package page's description is shown whole (its Read more was tapped)
+    desc_more: bool,
+    /// the description reader's page (0-based)
+    desc_page: i32,
+    /// the license text the repository answered with, and what is said while there is none
+    license_text: String,
+    license_note: String,
+    license_urls: Vec<String>,
+    license_try: usize,
+    /// the license page (0-based), for a license longer than one page
+    license_page: i32,
     /// the pictures asked of the worker and not there yet
     pic_waits: Vec<PicWait>,
     pub refreshing: bool,
@@ -220,11 +287,28 @@ pub struct PackageStoreUi {
 impl PackageStoreUi {
     fn selected_package(&self) -> Option<&StorePackage> {
         let id = self.selected.as_deref()?;
-        self.index.packages.iter().find(|p| p.id == id)
+        if self.repo_install {
+            if let Some(p) = self.repo_pkg.as_ref().filter(|p| p.id == id) {
+                return Some(p);
+            }
+        }
+        self.index
+            .packages
+            .iter()
+            .find(|p| p.id == id)
+            .or_else(|| self.installed.iter().find(|p| p.id == id))
+            .or_else(|| self.repo_pkg.as_ref().filter(|p| p.id == id))
     }
 
     fn clear_selection(&mut self) {
         self.selected = None;
+        self.desc_more = false;
+        self.desc_page = 0;
+        self.license_text.clear();
+        self.license_note.clear();
+        self.license_urls.clear();
+        self.license_try = 0;
+        self.license_page = 0;
         self.manifest = None;
         self.manifest_url.clear();
         self.manifest_yaml.clear();
@@ -247,6 +331,9 @@ impl PackageStoreUi {
         self.install_job = None;
         self.asset_job = None;
         self.refreshing = false;
+        self.repo_install = false;
+        self.repo_input.clear();
+        self.repo_pkg = None;
         self.drop_waits(&|_| true);
     }
 
@@ -298,7 +385,7 @@ fn unqueue_list_pictures(ui: &mut PackageStoreUi) {
 /// Whether the Store can be drawn again by itself now (a picture that came from the worker): not
 /// under a press, whose lift draws.
 pub(crate) fn store_at_rest(ui: &PackageStoreUi) -> bool {
-    ui.pressed.is_none()
+    ui.pressed.is_none() && !ui.kb.open
 }
 
 fn catalog_url() -> String {
@@ -311,6 +398,23 @@ fn catalog_url() -> String {
 
 fn offline() -> bool {
     std::env::var_os("GRIMOIRE_PACKAGE_STORE_OFFLINE").is_some_and(|v| !v.is_empty())
+}
+
+/// The address a fetch asks when its answer must not be one a cache kept: the address with a query
+/// that is new every time. GitHub's raw host keeps a file it served for five minutes
+/// (`cache-control: max-age=300`) and its copies are keyed by the whole address, query included, so
+/// a catalog or a manifest pushed a moment ago is read only from an address it has not seen. An
+/// address with no room left for the query is fetched as it is (`fetch_address_ok` takes at most
+/// WIDGET_PKG_URL_MAX bytes).
+fn fresh_url(url: &str) -> String {
+    let mark = if url.contains('?') { '&' } else { '?' };
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let fresh = format!("{url}{mark}v={now}");
+    if fresh.len() <= WIDGET_PKG_URL_MAX && !fresh.chars().any(|c| c.is_control() || c == ' ') {
+        fresh
+    } else {
+        url.to_string()
+    }
 }
 
 fn store_id_ok(id: &str) -> bool {
@@ -558,7 +662,7 @@ fn start_catalog(ui: &mut PackageStoreUi) {
         }
         return;
     }
-    match WidgetFetch::start(&ui.index_url, INDEX_MAX) {
+    match WidgetFetch::start(&fresh_url(&ui.index_url), INDEX_MAX) {
         Ok(fetch) => {
             ui.catalog_job = Some(FetchJob {
                 stage: FetchStage::Catalog,
@@ -602,11 +706,13 @@ fn load_cached_index(ui: &mut PackageStoreUi) -> bool {
 }
 
 pub fn store_open(a: &mut App) {
+    import_development(a);
     let ui = &mut a.store;
     ui.open = true;
     ui.view = StoreView::List;
     ui.filter = 0;
     ui.page = 0;
+    ui.query.clear();
     ui.status.clear();
     ui.error.clear();
     ui.index = StoreIndex::default();
@@ -614,6 +720,8 @@ pub fn store_open(a: &mut App) {
     ui.cancel_jobs();
     ui.clear_selection();
     ui.reset_list_icons();
+    keyboard_close(&mut ui.kb);
+    refresh_installed(ui);
     ui.index_url = catalog_url();
     let cached = load_cached_index(ui);
     if cached {
@@ -776,18 +884,258 @@ fn redraw(a: &mut App) {
     crate::library::store_redraw(a);
 }
 
-fn filtered(ui: &PackageStoreUi) -> Vec<usize> {
-    ui.index
-        .packages
-        .iter()
-        .enumerate()
-        .filter(|(_, p)| match ui.filter {
+/// One of the list's packages: a catalog entry (the All, Apps and Widgets tabs) or an installed
+/// one (the Installed tab).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PkgRef {
+    Catalog(usize),
+    Installed(usize),
+}
+
+fn pkg_matches(p: &StorePackage, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    let q = query.to_lowercase();
+    p.name.to_lowercase().contains(&q)
+        || p.id.to_lowercase().contains(&q)
+        || p.author.to_lowercase().contains(&q)
+        || p.category.to_lowercase().contains(&q)
+        || p.summary.to_lowercase().contains(&q)
+        || p.description.to_lowercase().contains(&q)
+        || p.tags.iter().any(|t| t.to_lowercase().contains(&q))
+}
+
+fn filtered(ui: &PackageStoreUi) -> Vec<PkgRef> {
+    let mut out = Vec::new();
+    if ui.filter == 3 {
+        for (i, p) in ui.installed.iter().enumerate() {
+            if pkg_matches(p, &ui.query) {
+                out.push(PkgRef::Installed(i));
+            }
+        }
+        return out;
+    }
+    for (i, p) in ui.index.packages.iter().enumerate() {
+        let kind = match ui.filter {
             1 => p.kind == "app",
             2 => p.kind == "widget",
             _ => true,
-        })
-        .map(|(i, _)| i)
-        .collect()
+        };
+        if kind && pkg_matches(p, &ui.query) {
+            out.push(PkgRef::Catalog(i));
+        }
+    }
+    out
+}
+
+fn pkg_at(ui: &PackageStoreUi, item: PkgRef) -> Option<&StorePackage> {
+    match item {
+        PkgRef::Catalog(i) => ui.index.packages.get(i),
+        PkgRef::Installed(i) => ui.installed.get(i),
+    }
+}
+
+fn card_arg(item: PkgRef) -> i32 {
+    match item {
+        PkgRef::Catalog(i) => i as i32,
+        PkgRef::Installed(i) => INSTALLED_CARD + i as i32,
+    }
+}
+
+fn card_ref(n: i32) -> Option<PkgRef> {
+    if n >= INSTALLED_CARD {
+        Some(PkgRef::Installed((n - INSTALLED_CARD) as usize))
+    } else if n >= 0 {
+        Some(PkgRef::Catalog(n as usize))
+    } else {
+        None
+    }
+}
+
+/// An installed package as a catalog entry looks, so the list and the detail page show both alike.
+fn installed_package(it: &WidgetInstall, kind: &str) -> StorePackage {
+    let manifest = if kind == "app" {
+        app_package_installed_manifest(&it.id)
+    } else {
+        widget_package_installed_manifest(&it.id)
+    };
+    let icon = if kind == "widget" {
+        if it.icon.trim().is_empty() { IconKind::Grid } else { widget_icon(&it.icon) }
+    } else {
+        IconKind::Package
+    };
+    StorePackage {
+        id: it.id.clone(),
+        name: it.name.clone(),
+        version: it.version.clone(),
+        kind: kind.to_string(),
+        author: it.author.clone(),
+        summary: it.description.clone(),
+        description: it.description.clone(),
+        license: manifest.as_ref().map_or(String::new(), |m| m.license.clone()),
+        repository: widget_github_repo_url(&it.source_url).unwrap_or_else(|| it.source_url.clone()),
+        manifest_url: it.source_url.clone(),
+        icon: StoreIconRef::Glyph(icon),
+        ..Default::default()
+    }
+}
+
+fn refresh_installed(ui: &mut PackageStoreUi) {
+    let mut out = Vec::new();
+    for it in widget_package_list() {
+        out.push(installed_package(&it, "widget"));
+    }
+    for it in app_package_list() {
+        out.push(installed_package(&it, "app"));
+    }
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.id.cmp(&b.id)));
+    ui.installed = out;
+}
+
+/// The package folders under `packages/import/`: the folder itself (a repository cloned into it) and
+/// one level of folders inside it (a repository cloned there), each only when it holds a
+/// `package.yaml`. A link is not a folder of the user's own and is left out.
+fn dev_import_folders() -> Vec<String> {
+    let base = format!("{}/{DEV_IMPORT_DIR}", store_root());
+    let mut out = Vec::new();
+    let holds_manifest = |dir: &std::path::Path| dir.join("package.yaml").is_file();
+    if holds_manifest(std::path::Path::new(&base)) {
+        out.push(base.clone());
+    }
+    let Ok(entries) = std::fs::read_dir(&base) else { return out };
+    let mut dirs: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|e| e.path())
+        .filter(|d| holds_manifest(d))
+        .map(|d| d.to_string_lossy().into_owned())
+        .collect();
+    dirs.sort();
+    out.append(&mut dirs);
+    out.truncate(DEV_IMPORT_MAX);
+    out
+}
+
+/// A path inside a package's folder, as its manifest names it: relative, with no `.` or `..` part and
+/// no backslash, the rules an installed package's `artifact.path` meets too.
+fn dev_rel_ok(p: &str) -> bool {
+    !p.is_empty()
+        && p.len() <= 240
+        && !p.starts_with('/')
+        && !p.contains('\\')
+        && p.split('/').all(|s| !s.is_empty() && s != "." && s != "..")
+}
+
+/// Installs one folder left in `packages/import/`: its manifest, its artifact and (for an app) the
+/// `.ico` its spec names, all read from beside it, then the package manager's own checks on the way in.
+/// A package already installed at that version and artifact is left alone; a newer one, and a rebuilt
+/// one at the same version, replaces it with its state kept. Returns the package's id and what the
+/// note should say, empty when there is nothing to say.
+fn import_dev_folder(dir: &str, w: i32, h: i32) -> Result<(String, String), String> {
+    let label = dir.rsplit('/').next().unwrap_or(dir).to_string();
+    let text = read_file_max(&format!("{dir}/package.yaml"), WIDGET_PKG_MANIFEST_MAX)
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .ok_or_else(|| format!("{label}: package.yaml could not be read"))?;
+    let p = widget_package_parse(&text).map_err(|e| format!("{label}: {e}"))?;
+    if !matches!(p.type_.as_str(), "app" | "widget") {
+        return Err(format!("{label}: package.yaml names no package type"));
+    }
+    let (want_sha, _) = widget_package_artifact_digest(&p);
+    let installed = if p.type_ == "app" { app_package_installed(&p.id) } else { widget_package_installed(&p.id) };
+    if let Some(it) = installed.as_ref() {
+        let rebuilt = it.version == p.version && !it.sha.eq_ignore_ascii_case(want_sha);
+        let newer = update_version_cmp(&p.version, &it.version) > 0;
+        if !newer && !rebuilt {
+            // (already installed, or at a version newer than the folder was left at)
+            return Ok((p.id.clone(), String::new()));
+        }
+    }
+    if !dev_rel_ok(&p.artifact.path) {
+        return Err(format!("{label}: artifact.path is not a safe relative path"));
+    }
+    let Some(artifact) = read_file_max(&format!("{dir}/{}", p.artifact.path), WIDGET_PKG_ARTIFACT_MAX as usize) else {
+        return Err(format!("{label}: {} could not be read beside package.yaml", p.artifact.path));
+    };
+    let icon = if p.type_ == "app" && app_icon_is_file(&p.spec.icon) {
+        let icon = p.spec.icon.trim();
+        if !dev_rel_ok(icon) {
+            return Err(format!("{label}: spec.icon is not a safe relative path"));
+        }
+        match read_file_max(&format!("{dir}/{icon}"), INSTALL_ICON_MAX) {
+            Some(bytes) => Some(bytes),
+            None => return Err(format!("{label}: {icon} could not be read beside package.yaml")),
+        }
+    } else {
+        None
+    };
+    // (the source an install records: the repository the package names, when it names one)
+    let repository = p.repository.trim();
+    let source = if repository.starts_with("https://") { repository.to_string() } else { String::new() };
+    let it = if p.type_ == "app" {
+        app_package_install(&text, &artifact, icon.as_deref(), &source, w, h)
+    } else {
+        widget_package_install(&text, &artifact, &source, w, h)
+    }
+    .map_err(|e| format!("{label}: {e}"))?;
+    qlog!("packages: %s %s imported from %s", &it.name, &it.version, dir);
+    Ok((it.id.clone(), format!("{} {}", tr("Imported"), it.name)))
+}
+
+/// Imports every package left in `packages/import/` and writes what happened on the note the Store's
+/// list shows: what was imported, and what could not be (so a developer sees a bad manifest or a
+/// missing artifact without the log).
+fn import_development_for(ui: &mut PackageStoreUi, w: i32, h: i32) {
+    let mut imported = Vec::new();
+    let mut failed = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+    for dir in dev_import_folders() {
+        match import_dev_folder(&dir, w, h) {
+            // (one package per id: two folders of one id would replace each other on every open)
+            Ok((id, _)) if seen.contains(&id) => {}
+            Ok((id, line)) => {
+                seen.push(id);
+                if !line.is_empty() {
+                    imported.push(line);
+                }
+            }
+            Err(e) => {
+                qlog!("packages: %s", &e);
+                failed.push(e);
+            }
+        }
+    }
+    let mut note = String::new();
+    if !imported.is_empty() {
+        note = format!("{}: {}", tr("Imported from packages/import"), imported.join(", "));
+    }
+    if !failed.is_empty() {
+        if !note.is_empty() {
+            note.push_str(" · ");
+        }
+        note.push_str(&format!("{}: {}", tr("Couldn't import"), failed.join("; ")));
+    }
+    ui.dev_note = note;
+}
+
+/// What the Store does as it opens: a developer's packages are put in before anything is listed.
+fn import_development(a: &mut App) {
+    let (w, h) = (a.w, a.h - status_reserved(a));
+    import_development_for(&mut a.store, w, h);
+    if !a.store.dev_note.is_empty() {
+        refresh_installed(&mut a.store);
+    }
+}
+
+/// Which package index `id` is in, whether it is installed at all.
+fn installed_kind(id: &str) -> Option<&'static str> {
+    if app_package_installed(id).is_some() {
+        Some("app")
+    } else if widget_package_installed(id).is_some() {
+        Some("widget")
+    } else {
+        None
+    }
 }
 
 fn installed_for(p: &StorePackage) -> Option<WidgetInstall> {
@@ -812,7 +1160,11 @@ enum FetchSlot {
 }
 
 fn begin_fetch(ui: &mut PackageStoreUi, slot: FetchSlot, stage: FetchStage, url: &str, cap: usize, key: &str) -> Result<(), String> {
-    let fetch = WidgetFetch::start(url, cap)?;
+    // A manifest, an artifact and a license are what an update reads, so they are asked for by an
+    // address no cache has seen: a copy kept a few minutes longer would name the version that was
+    // replaced. `job.url` stays the address as the catalog or the manifest wrote it.
+    let asked = if matches!(stage, FetchStage::Manifest | FetchStage::Artifact | FetchStage::License) { fresh_url(url) } else { url.to_string() };
+    let fetch = WidgetFetch::start(&asked, cap)?;
     let job = FetchJob {
         stage,
         fetch,
@@ -828,6 +1180,13 @@ fn begin_fetch(ui: &mut PackageStoreUi, slot: FetchSlot, stage: FetchStage, url:
 
 fn begin_install(a: &mut App) {
     let Some(pkg) = a.store.selected_package().cloned() else { return };
+    let newer = installed_for(&pkg).is_some_and(|it| update_version_cmp(&pkg.version, &it.version) > 0);
+    if installed_kind(&pkg.id).is_some() && !newer {
+        return;
+    }
+    // A catalog install is not a repository one, whatever the last try left behind.
+    a.store.repo_install = false;
+    a.store.repo_pkg = None;
     let (_, style, enabled) = install_label(&pkg);
     if !enabled && style == ButtonStyle::Disabled {
         return;
@@ -848,6 +1207,112 @@ fn begin_install(a: &mut App) {
         ui.view = StoreView::Error;
     }
     redraw(a);
+}
+
+/// Starts installing a package that is not in the catalog: `user/repo`, a GitHub address, or an
+/// https `.yaml`. Its manifest, artifact and hashes are checked as a catalog install's are.
+fn begin_repo_install(a: &mut App, input: &str) {
+    let mut input = input.trim().to_string();
+    // A pasted GitHub page address (https://github.com/user/repo) is the same repository as its
+    // user/repo shorthand.
+    if input.starts_with("https://github.com/") || input.starts_with("http://github.com/") {
+        if let Some(repo) = widget_github_repo(&input) {
+            input = repo;
+        }
+    }
+    let ui = &mut a.store;
+    ui.repo_input = input.clone();
+    ui.repo_pkg = None;
+    ui.selected = None;
+    ui.clear_selection();
+    ui.repo_install = false;
+    ui.error.clear();
+    ui.status.clear();
+    if input.is_empty() {
+        ui.error = tr("Enter a GitHub repository or a .yaml address.").to_string();
+        ui.view = StoreView::Error;
+        return;
+    }
+    ui.repo_install = true;
+    ui.view = StoreView::Busy;
+    ui.status = tr("Looking up the repository...").to_string();
+    if let Some(api) = widget_github_api(&input) {
+        if let Err(e) = begin_fetch(ui, FetchSlot::Install, FetchStage::Branch, &api, 512 * 1024, "") {
+            ui.error = e;
+            ui.view = StoreView::Error;
+        }
+        return;
+    }
+    match widget_manifest_url(&input) {
+        Ok((url, _)) => {
+            ui.manifest_url = url.clone();
+            ui.status = tr("Reading package.yaml...").to_string();
+            if let Err(e) = begin_fetch(ui, FetchSlot::Install, FetchStage::Manifest, &url, WIDGET_PKG_MANIFEST_MAX, "") {
+                ui.error = e;
+                ui.view = StoreView::Error;
+            }
+        }
+        Err(e) => {
+            ui.error = e;
+            ui.view = StoreView::Error;
+        }
+    }
+}
+
+/// The manifest of a repository install: validated by its own kind, then shown on the Trust page.
+fn after_repo_manifest(ui: &mut PackageStoreUi, data: &[u8], w: i32, h: i32) {
+    let text = String::from_utf8_lossy(data).into_owned();
+    let parsed = widget_package_parse(&text).and_then(|p| {
+        let checked = match p.type_.as_str() {
+            "app" => app_package_validate(&p, w, h),
+            "widget" => widget_package_validate(&p, w, h),
+            _ => Err("The manifest is neither an app nor a widget package.".to_string()),
+        };
+        checked.map(|_| p)
+    });
+    let p = match parsed {
+        Ok(p) => p,
+        Err(e) => {
+            ui.error = e;
+            ui.view = StoreView::Error;
+            return;
+        }
+    };
+    ui.manifest_yaml = text;
+    ui.artifact_url = widget_package_artifact_url(&ui.manifest_url, &p).unwrap_or_default();
+    ui.icon_url = if p.type_ == "app" { app_package_icon_url(&ui.manifest_url, &p) } else { None };
+    ui.install_icon_key.clear();
+    if ui.icon_url.is_some() {
+        if let Some(key) = safe_key(&format!("{}/{}", p.id, p.spec.icon)) {
+            ui.install_icon_key = key;
+        }
+    }
+    let icon = if p.type_ == "widget" {
+        if p.spec.icon.trim().is_empty() { IconKind::Grid } else { widget_icon(&p.spec.icon) }
+    } else {
+        IconKind::Package
+    };
+    let pkg = StorePackage {
+        id: p.id.clone(),
+        name: p.name.clone(),
+        version: p.version.clone(),
+        kind: p.type_.clone(),
+        author: p.author.clone(),
+        summary: p.description.clone(),
+        description: p.description.clone(),
+        license: p.license.clone(),
+        repository: p.repository.clone(),
+        homepage: p.repository.clone(),
+        manifest_url: ui.manifest_url.clone(),
+        icon: StoreIconRef::Glyph(icon),
+        ..Default::default()
+    };
+    ui.selected = Some(pkg.id.clone());
+    ui.repo_pkg = Some(pkg);
+    ui.manifest = Some(p);
+    ui.status.clear();
+    ui.error.clear();
+    ui.view = StoreView::Trust;
 }
 
 fn start_artifact(a: &mut App) {
@@ -907,18 +1372,23 @@ fn install_from_pending(a: &mut App, icon: Option<&[u8]>) -> Result<(String, Str
     let manifest = std::mem::take(&mut a.store.manifest_yaml);
     let artifact = std::mem::take(&mut a.store.pending_artifact);
     let source = a.store.manifest_url.clone();
-    let listed = a
-        .store
-        .index
-        .packages
-        .iter()
-        .find(|p| p.id == m.id)
-        .cloned()
-        .ok_or_else(|| tr("That package is no longer in the Store.").to_string())?;
-    let it = if listed.kind == "app" {
-        app_package_install(&manifest, &artifact, icon, &source, a.w, a.h - status_reserved(a))?
+    let kind = if a.store.repo_install {
+        m.type_.clone()
     } else {
+        a.store
+            .index
+            .packages
+            .iter()
+            .find(|p| p.id == m.id)
+            .map(|p| p.kind.clone())
+            .ok_or_else(|| tr("That package is no longer in the Store.").to_string())?
+    };
+    let it = if kind == "app" {
+        app_package_install(&manifest, &artifact, icon, &source, a.w, a.h - status_reserved(a))?
+    } else if kind == "widget" {
         widget_package_install(&manifest, &artifact, &source, a.w, a.h - status_reserved(a))?
+    } else {
+        return Err(tr("The Store does not know this package kind.").to_string());
     };
     Ok((it.name, it.version))
 }
@@ -926,9 +1396,22 @@ fn install_from_pending(a: &mut App, icon: Option<&[u8]>) -> Result<(String, Str
 fn install_pending(a: &mut App, icon: Option<&[u8]>) {
     match install_from_pending(a, icon) {
         Ok((name, _)) => {
+            let repo = a.store.repo_install;
             a.store.status = format!("{} {}", tr("Installed"), name);
-            a.store.view = StoreView::Detail;
             a.store.error.clear();
+            a.store.repo_install = false;
+            a.store.repo_input.clear();
+            a.store.repo_pkg = None;
+            refresh_installed(&mut a.store);
+            if repo {
+                a.store.selected = None;
+                a.store.filter = 3;
+                a.store.query.clear();
+                a.store.page = 0;
+                a.store.view = StoreView::List;
+            } else {
+                a.store.view = StoreView::Detail;
+            }
         }
         Err(e) => {
             a.store.error = e;
@@ -1268,6 +1751,21 @@ fn after_update_manifest(a: &mut App, data: &[u8]) {
     let h = a.h - status_reserved(a);
     match accept_manifest(&mut a.store, data, w, h) {
         Ok(p) => {
+            // The update would install terms the user never agreed to: it waits for an accept in the
+            // Store's package page, where the license can be read first.
+            let was = a.store.selected_package().map(installed_license).unwrap_or_default();
+            if !was.is_empty() && !p.license.is_empty() && !was.eq_ignore_ascii_case(&p.license) {
+                let mut msg = String::new();
+                csnprintf!(
+                    &mut msg,
+                    500,
+                    tr("The update changes the license from %s to %s. Open the package in the Store and accept it there."),
+                    &was,
+                    &p.license
+                );
+                update_failed(a, msg);
+                return;
+            }
             a.store.manifest = Some(p);
             a.store.update_status = tr("Downloading update...").to_string();
             a.store.update_error.clear();
@@ -1369,9 +1867,34 @@ fn tick_install(a: &mut App) -> bool {
     };
     match res {
         Ok(data) => match job.stage {
+            FetchStage::Branch => {
+                let input = a.store.repo_input.clone();
+                let fallback = widget_manifest_url(&input).map(|(u, _)| u).unwrap_or_default();
+                let url = widget_github_branch(&String::from_utf8_lossy(&data))
+                    .and_then(|b| {
+                        let parts: Vec<&str> = input.split('/').collect();
+                        (parts.len() == 2).then(|| format!("https://raw.githubusercontent.com/{}/{}/{b}/package.yaml", parts[0], parts[1]))
+                    })
+                    .unwrap_or(fallback);
+                if url.is_empty() {
+                    a.store.error = tr("That repository has no package.yaml.").to_string();
+                    a.store.view = StoreView::Error;
+                } else {
+                    a.store.manifest_url = url.clone();
+                    a.store.status = tr("Reading package.yaml...").to_string();
+                    if let Err(e) = begin_fetch(&mut a.store, FetchSlot::Install, FetchStage::Manifest, &url, WIDGET_PKG_MANIFEST_MAX, "") {
+                        a.store.error = e;
+                        a.store.view = StoreView::Error;
+                    }
+                }
+            }
             FetchStage::Manifest => {
                 if a.store.update_installing {
                     after_update_manifest(a, &data);
+                } else if a.store.repo_install {
+                    let w = a.w;
+                    let h = a.h - status_reserved(a);
+                    after_repo_manifest(&mut a.store, &data, w, h);
                 } else {
                     let w = a.w;
                     let h = a.h - status_reserved(a);
@@ -1403,11 +1926,39 @@ fn tick_install(a: &mut App) -> bool {
                     install_pending(a, Some(&icon));
                 }
             }
+            FetchStage::License => {
+                let text = String::from_utf8_lossy(&data).into_owned();
+                if text.trim().is_empty() {
+                    start_next_license(a);
+                } else {
+                    a.store.license_text = text;
+                    a.store.license_page = 0;
+                    a.store.license_note.clear();
+                }
+            }
             _ => {}
         },
         Err(e) => {
             if a.store.update_installing {
                 update_failed(a, e);
+            } else if job.stage == FetchStage::License {
+                start_next_license(a);
+            } else if job.stage == FetchStage::Branch {
+                // The GitHub API is an optimization: a failed lookup falls back to main's package.yaml.
+                let input = a.store.repo_input.clone();
+                match widget_manifest_url(&input) {
+                    Ok((url, _)) => {
+                        a.store.manifest_url = url.clone();
+                        if let Err(e) = begin_fetch(&mut a.store, FetchSlot::Install, FetchStage::Manifest, &url, WIDGET_PKG_MANIFEST_MAX, "") {
+                            a.store.error = e;
+                            a.store.view = StoreView::Error;
+                        }
+                    }
+                    Err(e) => {
+                        a.store.error = e;
+                        a.store.view = StoreView::Error;
+                    }
+                }
             } else {
                 a.store.error = e;
                 a.store.view = StoreView::Error;
@@ -1464,6 +2015,14 @@ pub fn store_tick(a: &mut App, _now: u32) {
     if !a.store.open {
         return;
     }
+    if a.store.kb.open {
+        // The keyboard draws by itself (app_keyboard_pointer): this is its held delete's repeats and
+        // the one grayscale clean-up after typing pauses. The page under it does not move.
+        let mut kb = std::mem::take(&mut a.store.kb);
+        app_keyboard_tick(a, &mut kb, _now);
+        a.store.kb = kb;
+        return;
+    }
     let mut changed = tick_catalog(a);
     changed |= tick_install(a);
     // A picture's download that ended puts nothing new on the screen by itself: its picture is still to come
@@ -1485,8 +2044,8 @@ pub fn store_tick(a: &mut App, _now: u32) {
 
 // ---- pointer ----
 
-fn open_detail(a: &mut App, n: usize) {
-    let Some(pkg) = a.store.index.packages.get(n).cloned() else { return };
+fn open_detail(a: &mut App, n: i32) {
+    let Some(pkg) = card_ref(n).and_then(|r| pkg_at(&a.store, r)).cloned() else { return };
     // A card icon still downloading must not hold up the page the tap asked for.
     if a.store.asset_job.as_ref().is_some_and(|job| job.stage == FetchStage::ListIcon) {
         a.store.asset_job = None;
@@ -1494,6 +2053,13 @@ fn open_detail(a: &mut App, n: usize) {
     // (nor the cards' pictures still queued for the worker)
     unqueue_list_pictures(&mut a.store);
     a.store.selected = Some(pkg.id.clone());
+    a.store.desc_more = false;
+    a.store.desc_page = 0;
+    a.store.license_text.clear();
+    a.store.license_note.clear();
+    a.store.license_urls.clear();
+    a.store.license_try = 0;
+    a.store.license_page = 0;
     a.store.view = StoreView::Detail;
     a.store.status.clear();
     a.store.error.clear();
@@ -1504,6 +2070,183 @@ fn open_detail(a: &mut App, n: usize) {
     a.store.shot_tried = false;
     start_selected_assets(a);
     redraw(a);
+}
+
+/// The license the installed version was installed under (the manifest saved with it), or nothing
+/// when the package is not installed.
+fn installed_license(p: &StorePackage) -> String {
+    if installed_kind(&p.id).is_none() {
+        return String::new();
+    }
+    let m = if p.kind == "app" {
+        app_package_installed_manifest(&p.id)
+    } else {
+        widget_package_installed_manifest(&p.id)
+    };
+    m.map(|m| m.license.trim().to_string()).filter(|l| !l.is_empty()).unwrap_or_default()
+}
+
+/// The Trust page's continue: the license is put in front of the user when the package has one
+/// (always for a first install, and for an update only when the license differs from the one the
+/// installed version was accepted under). With nothing to accept the download starts at once.
+fn after_trust(a: &mut App) {
+    let Some(p) = a.store.selected_package().cloned() else { return };
+    let mut new = a.store.manifest.as_ref().map_or(String::new(), |m| m.license.trim().to_string());
+    if new.is_empty() {
+        new = p.license.trim().to_string();
+    }
+    let was = installed_license(&p);
+    if new.is_empty() || (!was.is_empty() && was.eq_ignore_ascii_case(&new)) {
+        start_artifact(a);
+    } else {
+        open_agree(a);
+    }
+}
+
+/// The license of the version on offer, to read and accept before anything is downloaded.
+fn open_agree(a: &mut App) {
+    let Some(p) = a.store.selected_package().cloned() else { return };
+    let urls = match a.store.manifest.as_ref() {
+        Some(m) => crate::widgetpkgui::installed_license_candidates(&a.store.manifest_url, m),
+        None => {
+            let mut out = Vec::new();
+            if let Some((base, _)) = p.manifest_url.rsplit_once('/') {
+                out.extend(crate::widgetpkgui::license_urls(base));
+            }
+            if let Some(repo) = widget_github_repo(&p.repository) {
+                for branch in ["main", "master"] {
+                    out.extend(crate::widgetpkgui::license_urls(&format!("https://raw.githubusercontent.com/{repo}/{branch}")));
+                }
+            }
+            out
+        }
+    };
+    let ui = &mut a.store;
+    ui.view = StoreView::Agree;
+    ui.install_job = None;
+    ui.license_page = 0;
+    ui.license_text.clear();
+    ui.license_urls = urls;
+    ui.license_try = 0;
+    ui.license_note.clear();
+    if offline() {
+        ui.license_note = tr("Connect to the Internet to read the license's text.").to_string();
+        redraw(a);
+    } else if ui.license_urls.is_empty() {
+        ui.license_note = tr("The package names no license text the Store could read.").to_string();
+        redraw(a);
+    } else {
+        start_next_license(a);
+    }
+}
+
+/// Opens the selected package's license: the installed version's when it is installed (the one the
+/// install agreed to), else the one the Store offers. The text comes from the repository (its
+/// `license_url`, or the LICENSE file beside the manifest); the license's name shows while it is read.
+fn open_license(a: &mut App) {
+    let Some(p) = a.store.selected_package().cloned() else { return };
+    let installed = if p.kind == "app" {
+        app_package_installed_manifest(&p.id)
+    } else {
+        widget_package_installed_manifest(&p.id)
+    };
+    let source = installed_for(&p).map(|it| it.source_url).unwrap_or_default();
+    let mut urls = Vec::new();
+    match installed.as_ref() {
+        Some(m) => urls = crate::widgetpkgui::installed_license_candidates(&source, m),
+        None => {
+            if let Some((base, _)) = p.manifest_url.rsplit_once('/') {
+                urls.extend(crate::widgetpkgui::license_urls(base));
+            }
+            if let Some(repo) = widget_github_repo(&p.repository) {
+                for branch in ["main", "master"] {
+                    urls.extend(crate::widgetpkgui::license_urls(&format!("https://raw.githubusercontent.com/{repo}/{branch}")));
+                }
+            }
+        }
+    }
+    let ui = &mut a.store;
+    ui.view = StoreView::License;
+    ui.install_job = None;
+    ui.license_page = 0;
+    ui.license_text.clear();
+    ui.license_urls = urls;
+    ui.license_try = 0;
+    ui.license_note.clear();
+    if offline() {
+        ui.license_note = tr("Connect to the Internet to read the license's text.").to_string();
+        redraw(a);
+    } else if ui.license_urls.is_empty() {
+        ui.license_note = tr("The repository has no license text the Store could read.").to_string();
+        redraw(a);
+    } else {
+        start_next_license(a);
+    }
+}
+
+/// Asks for the next license file the repository may keep. With none left the page says so (the
+/// license's name still shows).
+fn start_next_license(a: &mut App) {
+    let mut started = false;
+    {
+        let ui = &mut a.store;
+        while ui.license_try < ui.license_urls.len() {
+            let url = ui.license_urls[ui.license_try].clone();
+            ui.license_try += 1;
+            ui.license_note = tr("Reading the license...").to_string();
+            if begin_fetch(ui, FetchSlot::Install, FetchStage::License, &url, LICENSE_MAX, "").is_ok() {
+                started = true;
+                break;
+            }
+        }
+        if !started {
+            ui.license_text.clear();
+            ui.license_note = tr("The repository has no license text the Store could read.").to_string();
+        }
+    }
+    redraw(a);
+}
+
+/// Removes the selected package from the Kindle (its files, not the user's layout) and returns to
+/// the Installed tab.
+fn uninstall_selected(a: &mut App) {
+    let Some(pkg) = a.store.selected_package().cloned() else { return };
+    let kind = installed_kind(&pkg.id).unwrap_or(pkg.kind.as_str());
+    let res = if kind == "app" {
+        app_package_remove(&pkg.id, true)
+    } else {
+        widget_package_remove(&pkg.id, true)
+    };
+    match res {
+        Ok(()) => {
+            // An open frame or app goes with its package.
+            if kind == "widget" {
+                if let Some(ed) = a.ed.as_deref_mut() {
+                    while let Some(i) = ed.widgets.index_of(&pkg.id) {
+                        ed.widgets.close(i);
+                    }
+                    ed.widgets.save();
+                }
+            } else if a.app_view.open && a.app_view.id == pkg.id {
+                crate::apphost::apphost_close(a);
+            }
+            a.store.selected = None;
+            a.store.clear_selection();
+            refresh_installed(&mut a.store);
+            a.store.filter = 3;
+            a.store.query.clear();
+            a.store.page = 0;
+            a.store.view = StoreView::List;
+            a.store.error.clear();
+            a.store.status = format!("{} {}", tr("Uninstalled"), pkg.name);
+            redraw(a);
+        }
+        Err(e) => {
+            a.store.error = e;
+            a.store.view = StoreView::Error;
+            redraw(a);
+        }
+    }
 }
 
 fn shot_move(a: &mut App, step: i32) {
@@ -1530,7 +2273,23 @@ fn tapped(a: &mut App, h: Hit) {
         H_BACK => {
             match a.store.view {
                 StoreView::List => close(a),
-                StoreView::Trust | StoreView::Error | StoreView::Qr => {
+                StoreView::Agree => {
+                    a.store.view = StoreView::Trust;
+                    a.store.install_job = None;
+                    a.store.drop_waits(&|stage| stage == FetchStage::License);
+                    redraw(a);
+                }
+                StoreView::Trust | StoreView::Error if a.store.repo_install => {
+                    a.store.view = StoreView::List;
+                    a.store.error.clear();
+                    a.store.install_job = None;
+                    a.store.repo_install = false;
+                    a.store.repo_input.clear();
+                    a.store.repo_pkg = None;
+                    a.store.selected = None;
+                    redraw(a);
+                }
+                StoreView::Trust | StoreView::Error | StoreView::Qr | StoreView::Remove | StoreView::License => {
                     a.store.view = StoreView::Detail;
                     a.store.error.clear();
                     a.store.install_job = None;
@@ -1547,15 +2306,60 @@ fn tapped(a: &mut App, h: Hit) {
         }
         H_REFRESH => {
             a.store.error.clear();
+            import_development(a);
             start_catalog(&mut a.store);
             redraw(a);
         }
         H_FILTER => {
-            a.store.filter = clampi(h.arg, 0, 2);
+            a.store.filter = clampi(h.arg, 0, 3);
             a.store.page = 0;
             redraw(a);
         }
-        H_CARD => open_detail(a, h.arg as usize),
+        H_CARD => open_detail(a, h.arg),
+        H_SEARCH => {
+            a.store.kb_for = KbFor::Search;
+            keyboard_open(&mut a.store.kb, tr("Search packages"), a.store.query.as_bytes());
+            redraw(a);
+        }
+        H_REPO => {
+            a.store.view = StoreView::InstallRepo;
+            a.store.kb_for = KbFor::Repo;
+            a.store.error.clear();
+            keyboard_open(&mut a.store.kb, tr("GitHub repository"), b"");
+            redraw(a);
+        }
+        H_QUERY_CLEAR => {
+            a.store.query.clear();
+            a.store.page = 0;
+            redraw(a);
+        }
+        H_DESC_MORE => {
+            a.store.desc_more = !a.store.desc_more;
+            a.store.desc_page = 0;
+            redraw(a);
+        }
+        H_DESC_PREV => {
+            a.store.desc_page = (a.store.desc_page - 1).max(0);
+            redraw(a);
+        }
+        H_DESC_NEXT => {
+            a.store.desc_page += 1;
+            redraw(a);
+        }
+        H_LICENSE => open_license(a),
+        H_LICENSE_PREV => {
+            a.store.license_page = (a.store.license_page - 1).max(0);
+            redraw(a);
+        }
+        H_LICENSE_NEXT => {
+            a.store.license_page += 1;
+            redraw(a);
+        }
+        H_UNINSTALL => {
+            a.store.view = StoreView::Remove;
+            redraw(a);
+        }
+        H_UNINSTALL_YES => uninstall_selected(a),
         H_PREV => {
             a.store.page = (a.store.page - 1).max(0);
             redraw(a);
@@ -1573,12 +2377,20 @@ fn tapped(a: &mut App, h: Hit) {
             redraw(a);
         }
         H_INSTALL => begin_install(a),
-        H_TRUST => start_artifact(a),
+        H_TRUST => after_trust(a),
+        H_AGREE => {
+            a.store.install_job = None;
+            a.store.drop_waits(&|stage| stage == FetchStage::License);
+            start_artifact(a);
+        }
         H_QR => {
             a.store.view = StoreView::Qr;
             redraw(a);
         }
         H_RETRY => {
+            a.store.repo_install = false;
+            a.store.repo_input.clear();
+            a.store.repo_pkg = None;
             if a.store.index.packages.is_empty() {
                 start_catalog(&mut a.store);
             } else {
@@ -1593,6 +2405,35 @@ fn tapped(a: &mut App, h: Hit) {
 
 pub fn store_pointer(a: &mut App, ph: i32, ev: &InEvent) {
     if !a.store.open {
+        return;
+    }
+    if a.store.kb.open {
+        let mut ui = std::mem::take(&mut a.store);
+        let r = app_keyboard_pointer(a, &mut ui.kb, ph, ev);
+        let finished = r == KbResult::Done || r == KbResult::Cancel;
+        if finished {
+            keyboard_close(&mut ui.kb);
+            let text = ui.kb.text.as_str().to_string();
+            let to_repo = ui.kb_for == KbFor::Repo;
+            a.store = ui;
+            if r == KbResult::Done {
+                if to_repo {
+                    begin_repo_install(a, &text);
+                } else {
+                    a.store.query = text;
+                    a.store.page = 0;
+                    a.store.view = StoreView::List;
+                    redraw(a);
+                }
+            } else {
+                if a.store.view == StoreView::InstallRepo {
+                    a.store.view = StoreView::List;
+                }
+                redraw(a);
+            }
+        } else {
+            a.store = ui;
+        }
         return;
     }
     if ph == 0 {
@@ -1627,41 +2468,56 @@ pub fn store_pointer(a: &mut App, ph: i32, ev: &InEvent) {
 
 const PAGER_H: i32 = 110;
 
+/// How many words of a package's description the page shows before it offers Read more.
+const DESC_WORDS: usize = 60;
+
 struct StorePage {
     content: Rect,
     back: Rect,
     close: Rect,
     refresh: Rect,
+    search: Rect,
+    repo: Rect,
 }
 
-fn store_page(c: &mut Canvas, aw: i32, ah: i32, title: &str, back: bool, refresh: bool) -> StorePage {
+fn store_page(c: &mut Canvas, aw: i32, ah: i32, title: &str, back: bool, tools: bool) -> StorePage {
     canvas_fill(c, Rect::new(0, 0, aw, ah), 255);
-    let mut actions: Vec<(IconKind, i32)> = Vec::with_capacity(2);
-    if refresh {
+    let mut actions: Vec<(IconKind, i32)> = Vec::with_capacity(4);
+    if tools {
         actions.push((IconKind::Update, 0));
+        actions.push((IconKind::Search, 0));
+        actions.push((IconKind::Download, 0));
     }
     actions.push((IconKind::Close, 0));
     let (head, rects) = gui_header(c, aw, title, back, &actions);
     let pad = gui_margin();
     let close = rects.last().map_or(RECT_EMPTY, |r| r.0);
-    let refresh_r = if refresh { rects.first().map_or(RECT_EMPTY, |r| r.0) } else { RECT_EMPTY };
+    let tool = |i: usize| if tools { rects.get(i).map_or(RECT_EMPTY, |r| r.0) } else { RECT_EMPTY };
     StorePage {
         content: Rect::new(pad, head.foot, aw - 2 * pad, ah - head.foot - pad),
         back: head.back,
         close,
-        refresh: refresh_r,
+        refresh: tool(0),
+        search: tool(1),
+        repo: tool(2),
     }
 }
 
-fn draw_header_hits(ui: &mut PackageStoreUi, page: &StorePage, refresh: bool) {
+fn draw_header_hits(ui: &mut PackageStoreUi, page: &StorePage) {
     if !rect_is_empty(page.back) {
         hits_add(&mut ui.hits, page.back, H_BACK, 0);
     }
     if !rect_is_empty(page.close) {
         hits_add(&mut ui.hits, page.close, H_CLOSE, 0);
     }
-    if refresh && !rect_is_empty(page.refresh) {
+    if !rect_is_empty(page.refresh) {
         hits_add(&mut ui.hits, page.refresh, H_REFRESH, 0);
+    }
+    if !rect_is_empty(page.search) {
+        hits_add(&mut ui.hits, page.search, H_SEARCH, 0);
+    }
+    if !rect_is_empty(page.repo) {
+        hits_add(&mut ui.hits, page.repo, H_REPO, 0);
     }
 }
 
@@ -1754,34 +2610,45 @@ fn draw_package_card(c: &mut Canvas, r: Rect, p: &StorePackage, featured: bool, 
 
 fn draw_list(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let page = store_page(c, aw, ah, tr("Package Store"), false, true);
-    draw_header_hits(ui, &page, true);
+    draw_header_hits(ui, &page);
     let area = page.content;
     let gap = gui_gap();
-    let chips_h = ui_px(86.0);
-    let labels = [tr("All"), tr("Apps"), tr("Widgets")];
-    let mut widths = Vec::with_capacity(3);
-    for label in &labels {
-        widths.push((font_measure(FontFace::Bold, ui_text_size(), label) + ui_px(78.0)).max(ui_px(190.0)));
+    let mut top = area.y;
+    if !ui.query.is_empty() {
+        let qh = ui_px(54.0);
+        let text = format!("{} {}", tr("Search:"), ui.query);
+        font_draw_left(c, FontFace::Regular, ui_small_size(), Rect::new(area.x, top, (area.w - ui_px(80.0)).max(0), qh), &text, 80);
+        let xr = Rect::new(area.x + area.w - ui_px(64.0), top, ui_px(64.0), qh);
+        gui_icon_button(c, xr, IconKind::Close, ButtonStyle::Plain);
+        hits_add(&mut ui.hits, xr, H_QUERY_CLEAR, 0);
+        top += qh + gap;
     }
-    let total: i32 = widths.iter().sum::<i32>() + gap * 2;
+    let chips_h = ui_px(86.0);
+    let labels = [tr("All"), tr("Apps"), tr("Widgets"), tr("Installed")];
+    let mut widths = Vec::with_capacity(labels.len());
+    for label in &labels {
+        widths.push((font_measure(FontFace::Bold, ui_text_size(), label) + ui_px(78.0)).max(ui_px(170.0)));
+    }
+    let total: i32 = widths.iter().sum::<i32>() + gap * 3;
     let max_w = (area.w - ui_px(12.0)).max(ui_px(240.0));
     if total > max_w {
-        let each = ((max_w - gap * 2) / 3).max(ui_px(120.0));
+        let each = ((max_w - gap * 3) / 4).max(ui_px(110.0));
         for w in &mut widths {
             *w = each;
         }
     }
     let mut x = area.x;
     for (i, label) in labels.iter().enumerate() {
-        let r = Rect::new(x, area.y, widths[i], chips_h);
+        let r = Rect::new(x, top, widths[i], chips_h);
         gui_chip(c, r, label, ui.filter == i as i32);
         hits_add(&mut ui.hits, r, H_FILTER, i as i32);
         x += widths[i] + gap;
     }
-    let top = area.y + chips_h + gap;
+    let grid_top = top + chips_h + gap;
     let bottom = area.y + area.h;
-    let pager = if filtered(ui).len() > 0 { PAGER_H + gap } else { 0 };
-    let grid_h = (bottom - top - pager).max(ui_px(200.0));
+    let vis = filtered(ui);
+    let pager = if vis.is_empty() { 0 } else { PAGER_H + gap };
+    let grid_h = (bottom - grid_top - pager).max(ui_px(200.0));
     let cols = if area.w >= ui_px(2550.0) {
         4
     } else if area.w >= ui_px(1700.0) {
@@ -1793,37 +2660,50 @@ fn draw_list(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let rows = ((grid_h + gap) / (ui_px(330.0) + gap)).max(1);
     let card_h = ((grid_h - gap * (rows - 1)) / rows).clamp(ui_px(260.0), ui_px(430.0));
     let per = (cols * rows).max(1) as usize;
-    let vis = filtered(ui);
     let pages = ((vis.len() + per - 1) / per).max(1) as i32;
     ui.page = ui.page.clamp(0, pages - 1);
     let first = ui.page as usize * per;
     if vis.is_empty() {
-        let msg = if ui.refreshing { tr("Reading the Store...") } else { tr("Nothing in the Store yet.") };
-        font_draw_centered(c, FontFace::Bold, ui_title_size(), Rect::new(area.x, top + ui_px(120.0), area.w, ui_px(90.0)), msg, 0);
+        let msg = if ui.refreshing {
+            tr("Reading the Store...").to_string()
+        } else if ui.filter == 3 {
+            tr("No packages are installed.").to_string()
+        } else if !ui.query.is_empty() {
+            tr("No packages match your search.").to_string()
+        } else {
+            tr("Nothing in the Store yet.").to_string()
+        };
+        font_draw_centered(c, FontFace::Bold, ui_title_size(), Rect::new(area.x, grid_top + ui_px(120.0), area.w, ui_px(90.0)), &msg, 0);
         let hint = if ui.error.is_empty() { tr("Tap Refresh to check again.") } else { ui.error.as_str() };
-        ui_text(c, FontFace::Regular, ui_text_size(), ui_small_size(), Rect::new(area.x, top + ui_px(230.0), area.w, ui_px(180.0)), hint, 2, true, 70);
+        ui_text(c, FontFace::Regular, ui_text_size(), ui_small_size(), Rect::new(area.x, grid_top + ui_px(230.0), area.w, ui_px(180.0)), hint, 2, true, 70);
         if !ui.error.is_empty() {
-            let r = Rect::new(area.x + area.w / 2 - ui_px(170.0), top + ui_px(430.0), ui_px(340.0), ui_px(100.0));
+            let r = Rect::new(area.x + area.w / 2 - ui_px(170.0), grid_top + ui_px(430.0), ui_px(340.0), ui_px(100.0));
             gui_button(c, r, IconKind::Update, tr("Refresh"), ButtonStyle::Plain);
             hits_add(&mut ui.hits, r, H_RETRY, 0);
         }
-        return;
+    } else {
+        let shown = vis.len().saturating_sub(first).min(per);
+        for (k, item) in vis.iter().skip(first).take(shown).enumerate() {
+            let row = (k / cols as usize) as i32;
+            let in_row = (shown - row as usize * cols as usize).min(cols as usize) as i32;
+            let row_w = in_row * card_w + (in_row - 1).max(0) * gap;
+            let x0 = area.x + (area.w - row_w) / 2;
+            let col = (k % cols as usize) as i32;
+            let r = Rect::new(x0 + col * (card_w + gap), grid_top + row * (card_h + gap), card_w, card_h);
+            let Some(p) = pkg_at(ui, *item) else { continue };
+            let featured = p.id == ui.index.featured && ui.filter != 3;
+            let icon_image = match item {
+                PkgRef::Catalog(n) => ui.list_icons.get(*n).filter(|icon| !icon.px.is_empty()),
+                PkgRef::Installed(_) => None,
+            };
+            draw_package_card(c, r, p, featured, icon_image);
+            hits_add(&mut ui.hits, r, H_CARD, card_arg(*item));
+        }
+        draw_pager(c, ui, Rect::new(area.x, bottom - PAGER_H, area.w, PAGER_H), ui.page, pages);
     }
-    let shown = vis.len().saturating_sub(first).min(per);
-    for (k, n) in vis.iter().skip(first).take(shown).enumerate() {
-        let row = (k / cols as usize) as i32;
-        let in_row = (shown - row as usize * cols as usize).min(cols as usize) as i32;
-        let row_w = in_row * card_w + (in_row - 1).max(0) * gap;
-        let x0 = area.x + (area.w - row_w) / 2;
-        let col = (k % cols as usize) as i32;
-        let r = Rect::new(x0 + col * (card_w + gap), top + row * (card_h + gap), card_w, card_h);
-        let p = &ui.index.packages[*n];
-        let featured = p.id == ui.index.featured;
-        let icon_image = ui.list_icons.get(*n).filter(|icon| !icon.px.is_empty());
-        draw_package_card(c, r, p, featured, icon_image);
-        hits_add(&mut ui.hits, r, H_CARD, *n as i32);
+    if !ui.dev_note.is_empty() {
+        font_draw_centered(c, FontFace::Regular, ui_small_size(), Rect::new(area.x, bottom - PAGER_H - ui_px(76.0), area.w, ui_px(34.0)), &ui.dev_note, 110);
     }
-    draw_pager(c, ui, Rect::new(area.x, bottom - PAGER_H, area.w, PAGER_H), ui.page, pages);
     if !ui.status.is_empty() {
         font_draw_centered(c, FontFace::Regular, ui_small_size(), Rect::new(area.x, bottom - PAGER_H - ui_px(38.0), area.w, ui_px(34.0)), &ui.status, 100);
     }
@@ -1917,35 +2797,90 @@ fn draw_description(c: &mut Canvas, r: Rect, p: &StorePackage) {
 fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let title = tr("Package");
     let page = store_page(c, aw, ah, title, true, false);
-    draw_header_hits(ui, &page, false);
+    draw_header_hits(ui, &page);
     let Some(p) = ui.selected_package().cloned() else {
         ui.view = StoreView::List;
         return;
     };
     let area = page.content;
+    // Reading the whole description: the page is the text, a page at a time, and the specs, the
+    // buttons and the screenshot are out of its way.
+    if ui.desc_more {
+        draw_description_page(c, ui, area, &p);
+        return;
+    }
     let gap = gui_gap();
     let wide = area.w > area.h;
     let icon_sz = if wide { ui_px(150.0) } else { ui_px(140.0) };
     let header_h = icon_sz.max(ui_px(150.0));
-    let action_h = ui_px(100.0);
-    let action_gap = ui_px(14.0);
-    let action_count = if p.repository.is_empty() { 1 } else { 2 };
-    let actions_h = action_h;
+    // Install (or Update), Uninstall and the repository link stand side by side, each with its
+    // icon and its name beside it. They wrap onto another row only when the width cannot hold them.
+    let installed_now = installed_kind(&p.id).is_some();
+    let has_update = installed_for(&p).is_some_and(|it| update_version_cmp(&p.version, &it.version) > 0);
+    let mut actions: Vec<(String, IconKind, i32, ButtonStyle)> = Vec::new();
+    if installed_now {
+        if has_update {
+            actions.push((format!("{} {}", tr("Update to"), p.version), IconKind::Download, H_INSTALL, ButtonStyle::Primary));
+        }
+        actions.push((tr("Uninstall").to_string(), IconKind::Close, H_UNINSTALL, ButtonStyle::Primary));
+    } else {
+        actions.push((tr("Install").to_string(), IconKind::Download, H_INSTALL, ButtonStyle::Primary));
+    }
+    if !p.repository.is_empty() {
+        actions.push((tr("Repository URL").to_string(), IconKind::Link, H_QR, ButtonStyle::Plain));
+    }
+    if !installed_license(&p).is_empty() || !p.license.is_empty() {
+        actions.push((tr("License").to_string(), IconKind::Paper, H_LICENSE, ButtonStyle::Plain));
+    }
+    let action_h = ui_px(96.0);
+    let action_gap = ui_px(12.0);
+    let action_w = if wide { area.w * 43 / 100 } else { area.w };
+    let mut widths: Vec<i32> = actions
+        .iter()
+        .map(|(label, _, _, _)| (font_measure(FontFace::Bold, ui_text_size(), label) + ui_px(150.0)).min(action_w))
+        .collect();
+    let mut action_rows: Vec<Vec<usize>> = Vec::new();
+    let mut row: Vec<usize> = Vec::new();
+    let mut row_w = 0;
+    for (i, w) in widths.iter().enumerate() {
+        if !row.is_empty() && row_w + action_gap + w > action_w {
+            action_rows.push(std::mem::take(&mut row));
+            row_w = 0;
+        }
+        row_w += if row.is_empty() { *w } else { *w + action_gap };
+        row.push(i);
+    }
+    if !row.is_empty() {
+        action_rows.push(row);
+    }
+    // Every row fills the width it has: the buttons share what their labels leave, so the row ends
+    // flush with the page's right edge instead of stopping short of it.
+    for row in &action_rows {
+        let n = row.len() as i32;
+        if n == 0 {
+            continue;
+        }
+        let used: i32 = row.iter().map(|&i| widths[i]).sum::<i32>() + action_gap * (n - 1);
+        let extra = (action_w - used).max(0);
+        for (k, &i) in row.iter().enumerate() {
+            widths[i] += if (k as i32) + 1 == n { extra - (extra / n) * (n - 1) } else { extra / n };
+        }
+    }
+    let rows_n = action_rows.len().max(1) as i32;
+    let actions_h = rows_n * action_h + (rows_n - 1) * action_gap;
     let meta_h = ui_px(228.0);
-    let (info, shot, desc_h) = if wide {
+    let status_h = if ui.status.is_empty() { 0 } else { ui_px(50.0) };
+    let (info, shot) = if wide {
         let info = Rect::new(area.x, area.y, area.w * 43 / 100, area.h);
         let shot = Rect::new(area.x + info.w + gap * 2, area.y, area.w - info.w - gap * 2, area.h);
-        let desc_h = (info.h - header_h - ui_px(18.0) - actions_h - meta_h - ui_px(52.0))
-            .clamp(ui_px(260.0), ui_px(760.0));
-        (info, shot, desc_h)
+        (info, shot)
     } else {
-        let desc_h = ui_px(460.0);
-        let fixed = header_h + ui_px(18.0) + desc_h + ui_px(8.0) + meta_h + ui_px(16.0) + actions_h + ui_px(14.0);
+        let fixed = header_h + ui_px(18.0) + ui_px(460.0) + ui_px(8.0) + meta_h + status_h + ui_px(16.0) + actions_h + ui_px(14.0);
         let max_info = (area.h - gap - ui_px(520.0)).max(ui_px(760.0));
         let info_h = fixed.min(max_info).max(ui_px(760.0));
         let info = Rect::new(area.x, area.y, area.w, info_h);
         let shot = Rect::new(area.x, info.y + info.h + gap, area.w, (area.y + area.h - info.y - info.h - gap).max(ui_px(240.0)));
-        (info, shot, desc_h)
+        (info, shot)
     };
     let icon_r = Rect::new(info.x, info.y, icon_sz, icon_sz);
     ui_frame(c, icon_r, gui_radius(), 255, true, 0);
@@ -1965,35 +2900,99 @@ fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let sub = format!("{} · {} · {}", kind_word(&p), p.version, p.category);
     font_draw_left(c, FontFace::Regular, ui_small_size(), Rect::new(tx, info.y + ui_px(76.0), tw, ui_px(36.0)), &sub, 90);
     let y = info.y + header_h + ui_px(18.0);
-    draw_description(c, Rect::new(info.x, y, info.w, desc_h), &p);
-    let meta_y = y + desc_h + ui_px(8.0);
-    draw_meta(c, Rect::new(info.x, meta_y, info.w, meta_h), &p);
-    let ay = if wide {
-        info.y + info.h - actions_h
+    // The description stops short of the spec rows and of the line above the actions, so a long one
+    // pushes neither off the page: past DESC_WORDS words it is cut and offers Read more.
+    let ay = info.y + info.h - actions_h;
+    let below = (ay - status_h - ui_px(8.0)).max(y);
+    let desc_h = (below - meta_h - ui_px(8.0) - y).clamp(0, ui_px(760.0));
+    let words: Vec<&str> = p.description.split_whitespace().collect();
+    let cut = words.len() > DESC_WORDS;
+    let btn_h = if cut && desc_h >= ui_px(120.0) { ui_px(46.0) } else { 0 };
+    let body = if cut && !ui.desc_more {
+        let mut t = words[..DESC_WORDS].join(" ");
+        t.push_str("...");
+        t
     } else {
-        (meta_y + meta_h + ui_px(14.0)).min(info.y + info.h - actions_h)
+        p.description.clone()
     };
-    let (label, style, enabled) = install_label(&p);
-    let action_w = if action_count == 2 { (info.w - action_gap) / 2 } else { info.w };
-    let install_r = Rect::new(info.x, ay, action_w, action_h);
-    gui_button(c, install_r, IconKind::Download, &label, style);
-    if enabled {
-        hits_add(&mut ui.hits, install_r, H_INSTALL, 0);
+    let text_h = (desc_h - btn_h - if btn_h > 0 { ui_px(6.0) } else { 0 }).max(0);
+    draw_description(c, Rect::new(info.x, y, info.w, text_h), &StorePackage { description: body, ..p.clone() });
+    if btn_h > 0 {
+        let label = if ui.desc_more { tr("Show less") } else { tr("Read more") };
+        let w = (font_measure(FontFace::Bold, ui_small_size(), label) + ui_px(56.0)).max(ui_px(170.0)).min(info.w);
+        let b = Rect::new(info.x, y + desc_h - btn_h, w, btn_h);
+        ui_frame(c, b, btn_h / 2, 255, true, 0);
+        ui_frame(c, b, btn_h / 2, 0, false, ui_px(3.0));
+        ui_text(c, FontFace::Bold, ui_small_size(), ui_small_size(), b, label, 1, true, 0);
+        hits_add(&mut ui.hits, b, H_DESC_MORE, 0);
     }
-    if !p.repository.is_empty() {
-        let r = Rect::new(info.x + action_w + action_gap, ay, action_w, action_h);
-        gui_button(c, r, IconKind::Link, tr("Repository QR"), ButtonStyle::Plain);
-        hits_add(&mut ui.hits, r, H_QR, 0);
-    }
+    let meta_y = y + desc_h + ui_px(8.0);
+    draw_meta(c, Rect::new(info.x, meta_y, info.w, (below - meta_y).clamp(0, meta_h)), &p);
     if !ui.status.is_empty() {
-        font_draw_left(c, FontFace::Regular, ui_small_size(), Rect::new(info.x, ay + action_h, info.w, ui_px(44.0)), &ui.status, 90);
+        font_draw_left(c, FontFace::Regular, ui_small_size(), Rect::new(info.x, ay - status_h, info.w, ui_px(44.0)), &ui.status, 90);
+    }
+    let mut row_y = ay;
+    for row in &action_rows {
+        let mut bx = info.x;
+        for &i in row {
+            let (label, icon, id, style) = &actions[i];
+            let r = Rect::new(bx, row_y, widths[i], action_h);
+            gui_button_row(c, r, *icon, label, *style);
+            hits_add(&mut ui.hits, r, *id, 0);
+            bx += widths[i] + action_gap;
+        }
+        row_y += action_h + action_gap;
     }
     draw_shot(c, ui, shot, &p);
 }
 
+/// The whole description, a page at a time: the package page's other parts are not drawn, so a long
+/// text is never cut off, and Show less goes back to the package page.
+fn draw_description_page(c: &mut Canvas, ui: &mut PackageStoreUi, area: Rect, p: &StorePackage) {
+    let px = ui_text_size();
+    let line_h = (font_ascent(FontFace::Regular, px) + font_descent(FontFace::Regular, px)).max(1) + ui_px(6.0);
+    let bar_h = ui_px(76.0);
+    let row1 = Rect::new(area.x, area.y + area.h - 2 * bar_h - ui_px(10.0), area.w, bar_h);
+    let row2 = Rect::new(area.x, area.y + area.h - bar_h, area.w, bar_h);
+    let body = Rect::new(area.x, area.y, area.w, (row1.y - ui_px(14.0) - area.y).max(line_h));
+    let lines = crate::widgetpkgui::license_lines(&p.description, px, body.w);
+    let per = (body.h / line_h).max(1);
+    let pages = (((lines.len() as i32) + per - 1) / per).max(1);
+    let page = ui.desc_page.clamp(0, pages - 1);
+    ui.desc_page = page;
+    let from = page as usize * per as usize;
+    let to = (from + per as usize).min(lines.len());
+    for (i, line) in lines[from..to].iter().enumerate() {
+        font_draw_left(c, FontFace::Regular, px, Rect::new(body.x, body.y + i as i32 * line_h, body.w, line_h), line, 0);
+    }
+    if pages > 1 {
+        let bw = ui_px(110.0);
+        let prev = Rect::new(row1.x, row1.y, bw, row1.h);
+        let next = Rect::new(row1.x + row1.w - bw, row1.y, bw, row1.h);
+        gui_icon_button(c, prev, IconKind::Prev, if page > 0 { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        gui_icon_button(c, next, IconKind::Next, if page + 1 < pages { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        if page > 0 {
+            hits_add(&mut ui.hits, prev, H_DESC_PREV, 0);
+        }
+        if page + 1 < pages {
+            hits_add(&mut ui.hits, next, H_DESC_NEXT, 0);
+        }
+        font_draw_centered(
+            c,
+            FontFace::Fixed,
+            ui_small_size(),
+            Rect::new(prev.x + prev.w, row1.y, (next.x - prev.x - prev.w).max(0), row1.h),
+            &format!("{}/{}", page + 1, pages),
+            0,
+        );
+    }
+    gui_button_row(c, row2, IconKind::Back, tr("Show less"), ButtonStyle::Plain);
+    hits_add(&mut ui.hits, row2, H_DESC_MORE, 0);
+}
+
 fn draw_trust(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let page = store_page(c, aw, ah, tr("Trust this package?"), true, false);
-    draw_header_hits(ui, &page, false);
+    draw_header_hits(ui, &page);
     let area = page.content;
     let Some(p) = ui.selected_package().cloned() else { ui.view = StoreView::List; return };
     let m = ui.manifest.clone().unwrap_or_default();
@@ -2022,23 +3021,244 @@ fn draw_trust(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
         if p.kind == "app" { "app" } else { "widget" }
     );
     let top = area.y + icon_sz + ui_px(34.0);
-    draw_description(c, Rect::new(area.x, top, area.w, ui_px(360.0)), &StorePackage { description: warn, ..p.clone() });
-    let mut meta = String::new();
-    if !p.license.is_empty() {
-        csnprintf!(&mut meta, 400, "{} {}", tr("License:"), &p.license);
-        font_draw_left(c, FontFace::Regular, ui_small_size(), Rect::new(area.x, top + ui_px(380.0), area.w, ui_px(42.0)), &meta, 80);
-    }
     let button = Rect::new(area.x, area.y + area.h - ui_px(110.0), area.w, ui_px(100.0));
-    gui_button(c, button, IconKind::Download, tr("I trust this author, continue"), ButtonStyle::Primary);
-    hits_add(&mut ui.hits, button, H_TRUST, 0);
     let cancel = Rect::new(area.x, button.y - ui_px(72.0), area.w, ui_px(58.0));
+    // An update whose license differs from the one the package was installed under says so here: the
+    // accept asks for the new terms, and the License page holds the text to read first.
+    let was = installed_license(&p);
+    let now = if m.license.is_empty() { p.license.clone() } else { m.license.clone() };
+    let mut notice = String::new();
+    if !was.is_empty() && !now.is_empty() && !was.eq_ignore_ascii_case(&now) {
+        csnprintf!(
+            &mut notice,
+            500,
+            tr("This update changes the license from %s to %s. Read it before you accept."),
+            &was,
+            &now
+        );
+    }
+    let notice_h = if notice.is_empty() { 0 } else { ui_px(110.0) };
+    let notice_r = Rect::new(area.x, cancel.y - ui_px(14.0) - notice_h, area.w, notice_h);
+    // Laid out from the buttons up, so the description takes what is left and never their room.
+    let desc_h = (notice_r.y - ui_px(14.0) - top).max(0);
+    draw_description(c, Rect::new(area.x, top, area.w, desc_h), &StorePackage { description: warn, ..p.clone() });
+    if !notice.is_empty() {
+        ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), notice_r, &notice, 3, true, 0);
+    }
+    gui_button_row(c, button, IconKind::Download, tr("I trust the author, continue"), ButtonStyle::Primary);
+    hits_add(&mut ui.hits, button, H_TRUST, 0);
     ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), cancel, tr("Back to the package"), 1, true, 120);
     hits_add(&mut ui.hits, cancel, H_BACK, 0);
 }
 
+/// Reading and accepting the license a package is installed under. The page is the text, and the
+/// install only starts with the accept at its bottom: an update whose license differs passes here
+/// again, so new terms are never installed under an old acceptance.
+fn draw_agree(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
+    let page = store_page(c, aw, ah, tr("Accept the license"), true, false);
+    draw_header_hits(ui, &page);
+    let area = page.content;
+    let Some(p) = ui.selected_package().cloned() else {
+        ui.view = StoreView::List;
+        return;
+    };
+    let mut name = ui.manifest.as_ref().map_or(String::new(), |m| m.license.trim().to_string());
+    if name.is_empty() {
+        name = p.license.trim().to_string();
+    }
+    let head = if name.is_empty() { tr("License") } else { name.as_str() };
+    font_draw_left(c, FontFace::Bold, ui_title_size() * 0.8, Rect::new(area.x, area.y, area.w, ui_px(76.0)), head, 0);
+    let was = installed_license(&p);
+    let mut note = String::new();
+    if !was.is_empty() && !was.eq_ignore_ascii_case(&name) {
+        csnprintf!(
+            &mut note,
+            400,
+            tr("The update changes the license from %s to %s. Read it and accept it to update %s."),
+            &was,
+            &name,
+            &p.name
+        );
+    } else {
+        csnprintf!(&mut note, 400, tr("Read the license and accept it to install %s."), &p.name);
+    }
+    let note_r = Rect::new(area.x, area.y + ui_px(80.0), area.w, ui_px(80.0));
+    ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), note_r, &note, 2, true, 80);
+    let px = ui_text_size();
+    let line_h = (font_ascent(FontFace::Regular, px) + font_descent(FontFace::Regular, px)).max(1) + ui_px(2.0);
+    let accept = Rect::new(area.x, area.y + area.h - ui_px(110.0), area.w, ui_px(100.0));
+    let cancel = Rect::new(area.x, accept.y - ui_px(72.0), area.w, ui_px(58.0));
+    let pager = Rect::new(area.x, cancel.y - ui_px(14.0) - PAGER_H, area.w, PAGER_H);
+    let top = note_r.y + note_r.h + ui_px(12.0);
+    let body_h = (pager.y - ui_px(10.0) - top).max(line_h);
+    let text = if ui.license_text.is_empty() { ui.license_note.as_str() } else { ui.license_text.as_str() };
+    let lines = crate::widgetpkgui::license_lines(text, px, area.w);
+    let per = (body_h / line_h).max(1);
+    let pages = (((lines.len() as i32) + per - 1) / per).max(1);
+    let pg = ui.license_page.clamp(0, pages - 1);
+    ui.license_page = pg;
+    let from = pg as usize * per as usize;
+    let to = (from + per as usize).min(lines.len());
+    let gray = if ui.license_text.is_empty() { 80 } else { 0 };
+    for (i, line) in lines[from..to].iter().enumerate() {
+        font_draw_left(c, FontFace::Regular, px, Rect::new(area.x, top + i as i32 * line_h, area.w, line_h), line, gray);
+    }
+    if pages > 1 {
+        let bw = ui_px(110.0);
+        let prev = Rect::new(pager.x, pager.y, bw, pager.h);
+        let next = Rect::new(pager.x + pager.w - bw, pager.y, bw, pager.h);
+        gui_icon_button(c, prev, IconKind::Prev, if pg > 0 { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        gui_icon_button(c, next, IconKind::Next, if pg + 1 < pages { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        if pg > 0 {
+            hits_add(&mut ui.hits, prev, H_LICENSE_PREV, 0);
+        }
+        if pg + 1 < pages {
+            hits_add(&mut ui.hits, next, H_LICENSE_NEXT, 0);
+        }
+        font_draw_centered(
+            c,
+            FontFace::Fixed,
+            ui_small_size(),
+            Rect::new(prev.x + prev.w, prev.y, (next.x - prev.x - prev.w).max(0), prev.h),
+            &format!("{}/{}", pg + 1, pages),
+            0,
+        );
+    }
+    gui_button_row(c, accept, IconKind::Check, tr("I accept the license"), ButtonStyle::Primary);
+    hits_add(&mut ui.hits, accept, H_AGREE, 0);
+    ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), cancel, tr("Don't install"), 1, true, 120);
+    hits_add(&mut ui.hits, cancel, H_BACK, 0);
+}
+
+fn draw_license(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
+    let page = store_page(c, aw, ah, tr("License"), true, false);
+    draw_header_hits(ui, &page);
+    let area = page.content;
+    let Some(p) = ui.selected_package().cloned() else {
+        ui.view = StoreView::Detail;
+        return;
+    };
+    let was = installed_license(&p);
+    // (the page is only opened from the package page: its entry is the installed one there, or the
+    // catalog's newer one, whose license is what an update would install)
+    let offered = p.license.clone();
+    let head = if !was.is_empty() {
+        was.as_str()
+    } else if !offered.is_empty() {
+        offered.as_str()
+    } else {
+        tr("License")
+    };
+    font_draw_left(c, FontFace::Bold, ui_title_size() * 0.8, Rect::new(area.x, area.y, area.w, ui_px(76.0)), head, 0);
+    let mut note = String::new();
+    if !was.is_empty() && !offered.is_empty() && !was.eq_ignore_ascii_case(&offered) {
+        csnprintf!(&mut note, 500, tr("This update changes the license from %s to %s."), &was, &offered);
+    } else if !was.is_empty() {
+        csnprintf!(&mut note, 500, tr("The license %s is installed under."), &p.name);
+    } else {
+        csnprintf!(&mut note, 500, tr("The license %s is published under."), &p.name);
+    }
+    let note_r = Rect::new(area.x, area.y + ui_px(80.0), area.w, ui_px(80.0));
+    ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), note_r, &note, 2, true, 80);
+    let px = ui_text_size();
+    let line_h = (font_ascent(FontFace::Regular, px) + font_descent(FontFace::Regular, px)).max(1) + ui_px(2.0);
+    let top = note_r.y + note_r.h + ui_px(12.0);
+    let bottom = area.y + area.h;
+    let body_h = (bottom - PAGER_H - top).max(line_h);
+    let text = if ui.license_text.is_empty() { ui.license_note.as_str() } else { ui.license_text.as_str() };
+    let lines = crate::widgetpkgui::license_lines(text, px, area.w);
+    let per = (body_h / line_h).max(1);
+    let pages = (((lines.len() as i32) + per - 1) / per).max(1);
+    let pg = ui.license_page.clamp(0, pages - 1);
+    ui.license_page = pg;
+    let from = pg as usize * per as usize;
+    let to = (from + per as usize).min(lines.len());
+    let gray = if ui.license_text.is_empty() { 80 } else { 0 };
+    for (i, line) in lines[from..to].iter().enumerate() {
+        font_draw_left(c, FontFace::Regular, px, Rect::new(area.x, top + i as i32 * line_h, area.w, line_h), line, gray);
+    }
+    if pages > 1 {
+        let y = bottom - PAGER_H;
+        let bw = ui_px(110.0);
+        let prev = Rect::new(area.x, y, bw, PAGER_H);
+        let next = Rect::new(area.x + area.w - bw, y, bw, PAGER_H);
+        gui_icon_button(c, prev, IconKind::Prev, if pg > 0 { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        gui_icon_button(c, next, IconKind::Next, if pg + 1 < pages { ButtonStyle::Plain } else { ButtonStyle::Disabled });
+        if pg > 0 {
+            hits_add(&mut ui.hits, prev, H_LICENSE_PREV, 0);
+        }
+        if pg + 1 < pages {
+            hits_add(&mut ui.hits, next, H_LICENSE_NEXT, 0);
+        }
+        font_draw_centered(
+            c,
+            FontFace::Fixed,
+            ui_small_size(),
+            Rect::new(prev.x + prev.w, y, (next.x - prev.x - prev.w).max(0), PAGER_H),
+            &format!("{}/{}", pg + 1, pages),
+            0,
+        );
+    }
+}
+
+fn draw_remove(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
+    let page = store_page(c, aw, ah, tr("Uninstall this package?"), true, false);
+    draw_header_hits(ui, &page);
+    let area = page.content;
+    let Some(p) = ui.selected_package().cloned() else {
+        ui.view = StoreView::List;
+        return;
+    };
+    let mut text = String::new();
+    csnprintf!(
+        &mut text,
+        1200,
+        tr("Uninstall %s? Its widget or app is closed and its files are deleted. Your layout is kept."),
+        &p.name
+    );
+    draw_description(c, Rect::new(area.x, area.y, area.w, ui_px(320.0)), &StorePackage { description: text, ..p.clone() });
+    let bh = ui_px(100.0);
+    let gap = ui_px(14.0);
+    let bw = (area.w - gap) / 2;
+    let yes = Rect::new(area.x, area.y + area.h - bh, bw, bh);
+    gui_button_row(c, yes, IconKind::Close, tr("Uninstall"), ButtonStyle::Primary);
+    hits_add(&mut ui.hits, yes, H_UNINSTALL_YES, 0);
+    let keep = Rect::new(area.x + bw + gap, yes.y, bw, bh);
+    gui_button_row(c, keep, IconKind::Back, tr("Keep it"), ButtonStyle::Plain);
+    hits_add(&mut ui.hits, keep, H_BACK, 0);
+}
+
+fn draw_install_repo(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
+    let page = store_page(c, aw, ah, tr("Install from GitHub"), true, false);
+    draw_header_hits(ui, &page);
+    let area = page.content;
+    ui_text(
+        c,
+        FontFace::Regular,
+        ui_text_size(),
+        ui_small_size(),
+        Rect::new(area.x, area.y, area.w, ui_px(220.0)),
+        tr("Type a GitHub repository as user/repo, or an https address ending in .yaml, on the keyboard below."),
+        4,
+        true,
+        0,
+    );
+    ui_text(
+        c,
+        FontFace::Regular,
+        ui_small_size(),
+        ui_small_size(),
+        Rect::new(area.x, area.y + ui_px(240.0), area.w, ui_px(120.0)),
+        tr("Tap Done to download it. Nothing is written until you trust the author."),
+        3,
+        true,
+        90,
+    );
+}
+
 fn draw_qr(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let page = store_page(c, aw, ah, tr("Repository"), true, false);
-    draw_header_hits(ui, &page, false);
+    draw_header_hits(ui, &page);
     let Some(p) = ui.selected_package() else { ui.view = StoreView::Detail; return };
     let area = page.content;
     let side = (area.w.min(area.h) - ui_px(260.0)).max(ui_px(260.0)).min(ui_px(900.0));
@@ -2052,7 +3272,7 @@ fn draw_qr(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
 
 fn draw_error(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let page = store_page(c, aw, ah, tr("Package Store"), true, false);
-    draw_header_hits(ui, &page, false);
+    draw_header_hits(ui, &page);
     let area = page.content;
     let title = if ui.index.packages.is_empty() { tr("Couldn't open the Store") } else { tr("Something went wrong") };
     font_draw_centered(c, FontFace::Bold, ui_title_size(), Rect::new(area.x, area.y + ui_px(80.0), area.w, ui_px(90.0)), title, 0);
@@ -2064,7 +3284,7 @@ fn draw_error(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
 
 fn draw_busy(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let page = store_page(c, aw, ah, tr("Package Store"), false, false);
-    draw_header_hits(ui, &page, false);
+    draw_header_hits(ui, &page);
     let area = page.content;
     ui_icon(c, IconKind::Hourglass, Rect::new(area.x + (area.w - ui_px(180.0)) / 2, area.y + ui_px(160.0), ui_px(180.0), ui_px(180.0)), 80);
     ui_text(c, FontFace::Bold, ui_title_size(), ui_text_size(), Rect::new(area.x, area.y + ui_px(400.0), area.w, ui_px(90.0)), &ui.status, 2, true, 0);
@@ -2083,6 +3303,14 @@ pub fn store_draw(a: &mut App) {
         StoreView::Qr => draw_qr(c, ui, *w, *h),
         StoreView::Error => draw_error(c, ui, *w, *h),
         StoreView::Busy => draw_busy(c, ui, *w, *h),
+        StoreView::InstallRepo => draw_install_repo(c, ui, *w, *h),
+        StoreView::Remove => draw_remove(c, ui, *w, *h),
+        StoreView::License => draw_license(c, ui, *w, *h),
+        StoreView::Agree => draw_agree(c, ui, *w, *h),
+    }
+    if ui.kb.open {
+        let screen = Rect::new(0, 0, *w, *h);
+        keyboard_draw(&mut ui.kb, c, screen);
     }
 }
 
@@ -2096,17 +3324,24 @@ pub fn store_probe(ui: &PackageStoreUi, key: &str) -> Option<String> {
         StoreView::Busy => "busy",
         StoreView::Error => "error",
         StoreView::Qr => "qr",
+        StoreView::InstallRepo => "install-repo",
+        StoreView::Remove => "remove",
+        StoreView::License => "license",
+        StoreView::Agree => "agree",
     };
     Some(match key {
         "view" => view.to_string(),
         "open" => (ui.open as i32).to_string(),
         "filter" => ui.filter.to_string(),
+        "query" => ui.query.clone(),
+        "installed" => ui.installed.len().to_string(),
         "featured" => ui.index.featured.clone(),
         "selected" => ui.selected.clone().unwrap_or_default(),
         "packages" => ui.index.packages.len().to_string(),
         "visible" => filtered(ui)
             .iter()
-            .map(|i| ui.index.packages[*i].id.clone())
+            .filter_map(|r| pkg_at(ui, *r))
+            .map(|p| p.id.clone())
             .collect::<Vec<_>>()
             .join(" "),
         "screenshots" => ui
@@ -2119,6 +3354,12 @@ pub fn store_probe(ui: &PackageStoreUi, key: &str) -> Option<String> {
         "icon.loaded" => (!ui.icon.image.px.is_empty() as i32).to_string(),
         "list.icons" => ui.list_icons.iter().filter(|icon| !icon.px.is_empty()).count().to_string(),
         "status" => ui.status.clone(),
+        "dev.note" => ui.dev_note.clone(),
+        "desc.more" => (ui.desc_more as i32).to_string(),
+        "desc.page" => ui.desc_page.to_string(),
+        "license" => ui.license_text.chars().take(120).collect::<String>(),
+        "license.note" => ui.license_note.clone(),
+        "license.page" => ui.license_page.to_string(),
         "error" => ui.error.clone(),
         "page" => ui.page.to_string(),
         _ => return None,
@@ -2131,7 +3372,11 @@ pub fn store_control_point(ui: &PackageStoreUi, name: &str) -> Option<(f32, f32)
         "close" => H_CLOSE,
         "back" => H_BACK,
         "refresh" => H_REFRESH,
+        "search" => H_SEARCH,
+        "repo" => H_REPO,
         "install" => H_INSTALL,
+        "uninstall" => H_UNINSTALL,
+        "uninstall-yes" => H_UNINSTALL_YES,
         "trust" => H_TRUST,
         "qr" => H_QR,
         "retry" => H_RETRY,
@@ -2139,17 +3384,32 @@ pub fn store_control_point(ui: &PackageStoreUi, name: &str) -> Option<(f32, f32)
         "next" => H_NEXT,
         "shot.prev" => H_SHOT_PREV,
         "shot.next" => H_SHOT_NEXT,
+        "license" => H_LICENSE,
+        "license.prev" => H_LICENSE_PREV,
+        "license.next" => H_LICENSE_NEXT,
+        "accept" => H_AGREE,
+        "desc.more" => H_DESC_MORE,
+        "desc.prev" => H_DESC_PREV,
+        "desc.next" => H_DESC_NEXT,
         _ => {
             if let Some(n) = name.strip_prefix("filter.") {
                 let i = n.parse::<i32>().ok()?;
                 return ui.hits.h.iter().find(|h| h.id == H_FILTER && h.arg == i).map(|h| ((h.r.x + h.r.w / 2) as f32, (h.r.y + h.r.h / 2) as f32));
             }
             let n = name.strip_prefix("package.").or_else(|| name.strip_prefix("row."))?;
-            let i = n
-                .parse::<usize>()
+            let found = n
+                .parse::<i32>()
                 .ok()
-                .or_else(|| ui.index.packages.iter().position(|p| p.id == n))?;
-            return ui.hits.h.iter().find(|h| h.id == H_CARD && h.arg == i as i32).map(|h| ((h.r.x + h.r.w / 2) as f32, (h.r.y + h.r.h / 2) as f32));
+                .and_then(card_ref)
+                .or_else(|| {
+                    ui.index
+                        .packages
+                        .iter()
+                        .position(|p| p.id == n)
+                        .map(PkgRef::Catalog)
+                        .or_else(|| ui.installed.iter().position(|p| p.id == n).map(PkgRef::Installed))
+                })?;
+            return ui.hits.h.iter().find(|h| h.id == H_CARD && h.arg == card_arg(found)).map(|h| ((h.r.x + h.r.w / 2) as f32, (h.r.y + h.r.h / 2) as f32));
         }
     };
     ui.hits.h.iter().find(|h| h.id == id).map(|h| ((h.r.x + h.r.w / 2) as f32, (h.r.y + h.r.h / 2) as f32))
@@ -2392,6 +3652,67 @@ mod tests {
         ui.view = StoreView::Qr;
         ui.pic_waits.push(wait(&src));
         assert!(!tick_pictures(&mut ui) && ui.pic_waits.is_empty());
+    }
+
+    // A package cloned into `packages/import/` is installed as the Store opens, and again only when the folder
+    // holds something newer (a higher version, or the same one rebuilt); a version older than the installed one
+    // is left alone. It is in the Installed tab through the same index an install writes.
+    #[test]
+    fn a_repository_left_in_the_import_folder_is_installed() {
+        let base = std::env::var("GRIMOIRE_TEST_TMP").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+        let root = base.join(format!("grimoire-store-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        let dir = root.join("packages/import/dev");
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |version: &str, bytes: &[u8]| {
+            let yaml = format!(
+                "name: Dev App\nid: com.example.dev\ntype: app\nversion: {version}\nauthor: Tests\ndescription: In the import folder.\nlicense: MIT\nartifact:\n  path: app.wasm\n  sha256: {}\n  size: {}\nspec:\n  runtime: wasm\n  entry: _start\n",
+                sha256_of(bytes),
+                bytes.len()
+            );
+            std::fs::write(dir.join("package.yaml"), yaml).unwrap();
+            std::fs::write(dir.join("app.wasm"), bytes).unwrap();
+        };
+        write("1.0.0", b"a module");
+        let mut ui = PackageStoreUi::default();
+        import_development_for(&mut ui, 1860, 2400);
+        let it = app_package_installed("com.example.dev").expect("the folder's package is installed");
+        assert_eq!(it.version, "1.0.0");
+        assert!(ui.dev_note.contains("Dev App"), "{}", ui.dev_note);
+        // (the same folder again: nothing installed, nothing said)
+        ui.dev_note.clear();
+        import_development_for(&mut ui, 1860, 2400);
+        assert!(ui.dev_note.is_empty(), "{}", ui.dev_note);
+        // a rebuild at the same version replaces it
+        write("1.0.0", b"a newer module");
+        import_development_for(&mut ui, 1860, 2400);
+        assert!(ui.dev_note.contains("Dev App"));
+        assert_eq!(app_package_installed("com.example.dev").unwrap().sha, sha256_of(b"a newer module"));
+        // a newer version updates it
+        write("1.1.0", b"a newer module");
+        import_development_for(&mut ui, 1860, 2400);
+        assert_eq!(app_package_installed("com.example.dev").unwrap().version, "1.1.0");
+        // an older one is left alone
+        write("1.0.0", b"a newer module");
+        ui.dev_note.clear();
+        import_development_for(&mut ui, 1860, 2400);
+        assert!(ui.dev_note.is_empty(), "{}", ui.dev_note);
+        assert_eq!(app_package_installed("com.example.dev").unwrap().version, "1.1.0");
+    }
+
+    #[test]
+    fn a_fresh_address_is_one_no_cache_has_seen() {
+        let a = fresh_url("https://example.org/store/index.json");
+        assert!(a.starts_with("https://example.org/store/index.json?v="), "{a}");
+        // an address that already names something (the GitHub API's `?ref=main`) gets another query
+        let b = fresh_url("https://api.example.org/repos/a/b/contents?ref=main");
+        assert!(b.starts_with("https://api.example.org/repos/a/b/contents?ref=main&v="), "{b}");
+        // an address with no room left for the query is fetched as it is
+        let long = format!("https://e.org/{}", "a".repeat(WIDGET_PKG_URL_MAX - "https://e.org/".len()));
+        assert_eq!(long.len(), WIDGET_PKG_URL_MAX);
+        assert_eq!(fresh_url(&long), long);
     }
 
     #[test]
