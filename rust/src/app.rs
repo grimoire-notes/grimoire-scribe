@@ -1075,16 +1075,16 @@ fn app_event_screens(a: &mut App, ev: &InEvent) {
             note_input(a);
             return;
         }
-        // A Library dialog with keys of its own (Exit Grimoire?, New notebook's Enter) takes them first.
-        if !a.asleep && !ev.gamepad && crate::library::library_modal_key(a, ev.value) {
+        // A keyboard that types a name, a page, Find, a password or a search takes the keys that type and edit text
+        // (the characters, Space, Backspace, Enter its Done, Esc its Cancel, the arrows, Home and End, and Ctrl or
+        // Cmd with A, C, X and V) before any shortcut or the sheet it is over: none of them reaches what is under it.
+        // (On the Kindle a keyboard is read only while Settings > Shortcuts is on.)
+        if !a.asleep && !ev.gamepad && app_text_key(a, ev) {
             note_input(a);
             return;
         }
-        // A keyboard that types a name, a page, Find, a password or a search takes the keys that type and edit text
-        // (the characters, Space, Backspace, Enter its Done, Esc its Cancel, the arrows, Home and End, and Ctrl or
-        // Cmd with A, C, X and V) before any shortcut: none of them reaches what is under it. (On the Kindle a
-        // keyboard is read only while Settings > Shortcuts is on.)
-        if !a.asleep && !ev.gamepad && app_text_key(a, ev) {
+        // A Library dialog with keys of its own (Exit Grimoire?, New notebook's Enter) takes them before any shortcut.
+        if !a.asleep && !ev.gamepad && crate::library::library_modal_key(a, ev.value) {
             note_input(a);
             return;
         }
