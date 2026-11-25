@@ -100,7 +100,7 @@ key and action twice is one line. Up and Down do nothing but in the Graph.
 | the Pages view | Left/Right its screens, Ctrl+N, Ctrl+F, Ctrl+A `select-all`, Ctrl+Z and Ctrl+Shift+Z its own Undo and Redo, P, G |
 | the Graph | the arrows `pan-*`, - and +, Ctrl+0, V `graph-view`, Ctrl+A, G |
 | Pen feel | 1 to 9 that pen's tab, 0 and E the eraser's |
-| a keyboard up (a name, Find, a page number) | Left/Right the caret a letter, Home/End to the start and end (with Shift they select), Ctrl or Cmd with A, C, X and V select all, copy, cut and paste the typed text (2.1.0-beta.2); these come before any shortcut and cannot be rebound; not on the count pad |
+| a keyboard up (a name, Find, a page number) | Left/Right the caret a letter, Home/End to the start and end (with Shift they select), Ctrl or Cmd with A, C, X and V select all, copy, cut and paste the typed text (2.1.0-beta.2); the letters, digits, punctuation and Space type as its keys do (the US layout, with Shift; #266), Backspace deletes, Enter is Done and Esc is Cancel; these come before any shortcut and cannot be rebound; the count pad takes its own keys |
 
 **Esc** (`back`) eats one layer a press, the first there is: a field or pad (its Cancel), a dialog or card
 (its No or Cancel), a drag, a selection (the lasso's, then Select mode; the Pages view's ticks; the Graph's), a
@@ -118,7 +118,7 @@ Down do nothing there). Esc goes back one layer: from a version's notes to the l
 Left and Right (`previous-page`, `next-page`) turn the list's and the notes' pages, as their arrows.
 
 **Space** (`two-finger-up`) does what two fingers swiped up do there (gestures.ini `touch.2.up`, built in the
-Links bar; with gestures off, the Links bar), and nothing while a keyboard is up (Find, a name). **Ctrl+S**
+Links bar; with gestures off, the Links bar), and types a space while a keyboard is up (Find, a name). **Ctrl+S**
 writes the page and
 its notebook now (in the Library, a setting waiting), with no toast. **R** opens the page's naming keyboard,
 back to the page after.

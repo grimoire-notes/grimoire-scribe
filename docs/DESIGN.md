@@ -365,7 +365,8 @@ draws them. White ink and the precise eraser make them.
   symbols page, where no label changes case (`shift_shows_on_keys`), and a letter typed with caps on refreshes
   only what any letter does. `keyboard_open` starts every keyboard with shift off, so caps
   on ends when the keyboard closes (Find's Done with no page to go to keeps its keyboard open, and the state
-  with it). A paired keyboard never reaches this state: its keys type nowhere but on the count pad.
+  with it). A paired keyboard's keys neither follow this state nor change it: each types its own character, its
+  own Shift giving the capital (`type_char`).
 - The caret, the selection and the clipboard (2.1.0-beta.2, issue #36). The text has a caret,
   `Keyboard.caret`, a byte offset at a character's first byte (or the end), and a selection's other end,
   `Keyboard.anchor` (the caret's own with nothing selected); `keyboard_open` puts both after the text, so
@@ -407,8 +408,14 @@ draws them. White ink and the precise eraser make them.
   pad (`keyboard_key_input`; `app_text_key` in app.rs, before any shortcut is looked up; a keyboard is read at
   all only while Settings > Shortcuts is on, as for every key):
   they reach the keyboard as Esc does, through `app_type_text`, whose touch-down on the text box now carries
-  the input too, so it is taken as a contact on no key and moves no caret. Letters typed on a paired keyboard
-  still type nothing in a field.
+  the input too, so it is taken as a contact on no key and moves no caret. Since #266 the same way, with
+  neither Ctrl, Alt nor Meta held, Esc is Cancel, Backspace delete, Enter Done, and a character key types its
+  character (`keyboard_hw_char`: the US layout with Shift, the keypad's digits and signs; `KbInput::Char`) at the
+  caret in place of a selection as the key with that character does, never past the 95 bytes the text holds and
+  never a control character; Go to page's number pad and the count pad take a digit alone. Each is drawn and
+  refreshed as a key's typing is, without a key of its own (the text line alone). The keys that type come
+  before the sheet under the keyboard too (`library_modal_key`: the Package Store's, the All apps page's), and
+  `library_keyboard_area` answers the Package Store's keyboard. With no keyboard up every key does what it did.
 - On the Library, the sheet a keyboard was opened from stays drawn under it, the Wi-Fi page included:
   `LibraryState.kb_parent` names that sheet, and `draw_modal` draws it before `keyboard_draw` puts the keys
   over its lower half. The keys take every contact; the page below is not a tap target while they are up.
