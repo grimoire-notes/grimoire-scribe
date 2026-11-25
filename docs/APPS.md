@@ -510,8 +510,8 @@ the Library. Removing the package while it runs does the same before deleting it
 ## Testing
 
 - `tests/fixtures/apppkg/` holds a small installed app, the fixture `tests/scenarios/z_apps.qs` opens
-  from the launcher, closes by its own `close()` and by the system swipe, and manages in
-  Settings → Packages → Apps.
+  from the launcher, closes by its own `close()` and by the system swipe, and manages from the All
+  apps page's **Manage apps...**.
 - `tests/fixtures/apphost/` holds small apps for the host's own rules. Their modules are written
   byte by byte by `rust/tests/appfix` (`make app-fixtures` writes the folder, and
   `rust/tests/test_app_fixtures.rs` checks it is what the writer makes), so each can pass the host
