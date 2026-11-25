@@ -513,6 +513,42 @@ fn lengths_are_held_before_memory_is_read() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+// setting and state_get write into the module's memory no more than the room it gives and the memory holds: the
+// bytes behind a short room are as they were, at the memory's end what fits is written, and at the end or past it
+// nothing. The status line is the last 26 bytes of the module's one page: two rooms of 8 bytes, the counts the
+// eight calls returned (as digits) and the page's last two bytes.
+#[test]
+fn what_setting_and_state_get_write_keeps_to_the_room_given() {
+    let root = fresh_root("writes");
+    let end = 65536;
+    let (rooms, counts) = (end - 26, end - 10);
+    // (a call whose answer is kept at `at` as a digit)
+    let counted = |at: i32, call: Vec<Op>| [vec![Op::I(at)], call, vec![Op::I(48), Op::Add, Op::Store8]].concat();
+    let draw = [
+        call("state_set", &[WORD_AT, 15]),
+        counted(counts, call("state_get", &[rooms, 3])),
+        counted(counts + 1, call("state_get", &[end - 2, 10])),
+        counted(counts + 2, call("state_get", &[end, 10])),
+        counted(counts + 3, call("state_get", &[end + 1, 10])),
+        counted(counts + 4, call("setting", &[100, 1, rooms + 8, 3])),
+        counted(counts + 5, call("setting", &[100, 1, end - 1, 10])),
+        counted(counts + 6, call("setting", &[100, 1, end, 10])),
+        counted(counts + 7, call("setting", &[100, 1, i32::MAX, 10])),
+        status(rooms, 26),
+    ]
+    .concat();
+    let marks = [b'#'; 26];
+    let module = module(&draw, &[], &[(WORD_AT as u32, &b"the saved state"[..]), (100, &b"k"[..]), (rooms as u32, &marks[..])]);
+    let m = format!("{}settings:\n  - key: k\n    label: K\n    type: choice\n    default: value\n    choices: [value, other]\n", manifest("test.writes", "Test", &BOTH, FIXED_400_300, &module));
+    widget_package_install(&m, &module, "", 1860, 2480).unwrap();
+    let mut rt = WidgetRuntime::new("test.writes").unwrap();
+    let mut c = patterned(700, 600);
+    rt.draw(&mut c, BODY);
+    assert_eq!(rt.error(), None);
+    assert_eq!(rt.status(), "the#####val#####32003100tv");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn request_redraw_has_a_shortest_and_a_longest_delay() {
     let root = fresh_root("redraw");
@@ -707,6 +743,8 @@ fn the_hosts_work_for_a_pass_is_paid_from_the_calls_budget() {
         ("512 texts of 32 letters at heights 512 to 257, no letter twice at a height", repeat(512, &tall), letters),
         ("16 buttons 9,000 px wide with labels of 512 one-letter words", repeat(16, &code(&button(1, 0, 0, 9000, 300, 0, 1023, 0))), &words),
         ("16 texts of 1,024 bytes cut short to 300 px", repeat(16, &code(&text(0, 0, 300, 100, 0, 1024, 40, 0))), &words),
+        // (one call, the last thing its pass does: it is the charge itself that ends the pass, wasmhost::charge)
+        ("one text of 1,024 bytes 512 px high", code(&text(0, 0, 60_000, 600, 0, 1024, 512, 0)), &words),
     ];
     for (i, (name, draw, data)) in long.into_iter().enumerate() {
         let mut w = Wasm::new(draw);

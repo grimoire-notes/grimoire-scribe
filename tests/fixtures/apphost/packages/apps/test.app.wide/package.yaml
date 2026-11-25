@@ -1,0 +1,15 @@
+name: Wide
+id: test.app.wide
+type: app
+version: 1.0.0
+author: Grimoire tests
+description: A module of the app host's tests.
+platforms: [all]
+artifact:
+  path: app.wasm
+  sha256: 87be93b724fbf1d53b80401e1b94b2bcc6649469c38c9994bcfbac89d78e9387
+  size: 1327
+capabilities: []
+spec:
+  runtime: wasm
+  status_bar: true

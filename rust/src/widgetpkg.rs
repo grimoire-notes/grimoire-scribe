@@ -688,7 +688,8 @@ pub const WIDGET_ID_PREVIOUS: &str = ".previous";
 /// Whether `id` is a package's id: lowercase letters, digits, dots and hyphens, at most WIDGET_ID_MAX, no dot
 /// first or last and no two in a row, and not ending in `.previous` (WIDGET_ID_PREVIOUS). The one rule for an
 /// id wherever one is read: a manifest, the packages index, a package's folder, and a frame's line in
-/// widgets.ini (widgets.rs), so a package that installs is one whose open frame is found again.
+/// widgets.ini (widgets.rs), so a package that installs is one whose open frame is found again. An app
+/// package's id follows it too (apppkg.rs).
 pub fn widget_id_ok(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= WIDGET_ID_MAX
@@ -744,8 +745,8 @@ pub const WIDGET_CAP_STORAGE: &str = "storage:widget-local";
 /// (`StoragePath::walked`), since the module is read through that walk when it is loaded. The manifest and the
 /// state folder are named without regard to the case of ASCII letters, as a storage that ignores case finds
 /// them (`Package.yaml`, `STATE/x`). The manifest check and the load ask this one question, so a path that
-/// installs is a path that loads.
-fn artifact_path_ok(p: &str) -> bool {
+/// installs is a path that loads. An app package's module is held to it too (apppkg.rs).
+pub(crate) fn artifact_path_ok(p: &str) -> bool {
     path_ok(p)
         && !p.eq_ignore_ascii_case("package.yaml")
         && !p.split('/').next().is_some_and(|first| first.eq_ignore_ascii_case("state"))
@@ -1040,54 +1041,64 @@ fn parse_installed(p: &WidgetInstall) -> Option<WidgetPackage> {
     (m.id == p.id).then_some(m)
 }
 
-/// An installed package's manifest and its module's bytes, for a load (widgetwasm.rs). The file is checked again
-/// here, each time a frame loads it, and it is read only if every check holds:
+/// An installed widget package's manifest and its module's bytes, for a load (widgetwasm.rs). The file is checked
+/// again here, each time a frame loads it (`package_artifact`), and it is read only if every check holds. What
+/// failed goes to the log; the frame says that the artifact could not be read.
+pub fn widget_package_artifact(id: &str) -> Result<(WidgetPackage, Vec<u8>), String> {
+    let installed = || "The widget package is not installed.".to_string();
+    let it = widget_package_installed(id).ok_or_else(installed)?;
+    let m = parse_installed(&it).ok_or_else(installed)?;
+    match package_artifact(&widget_package_dir(id), WIDGET_PKG_DIR, &it, &m) {
+        Ok(bytes) => Ok((m, bytes)),
+        Err(why) => {
+            qlog!("widget %s: its module is not loaded: %s", id, why);
+            Err("The widget's artifact could not be read.".to_string())
+        }
+    }
+}
+
+/// An installed package's module, for a load: a widget's (above) or an app's (apppkg.rs). `folder` is the
+/// package's own folder, `packages` where the packages of its kind are kept (WIDGET_PKG_DIR, APP_PKG_DIR: the
+/// index names a module from there), `it` its entry in the index and `m` its installed manifest. The file is
+/// read only if every check holds:
 ///
 /// - the installed manifest's `artifact.path` is one the manifest check takes (`artifact_path_ok`), and the
-///   index names the same file (`packages/widgets/<id>/<artifact.path>`);
+///   index names the same file (`<packages>/<id>/<artifact.path>`);
 /// - it is a plain file inside the package's own folder, reached with no link on the way: the folder and each
 ///   part of the path opened with O_NOFOLLOW from the one before, on the folder's device (fsview's walk);
 /// - it is no larger than an artifact may be, and its SHA-256 is the one the index recorded at the install.
 ///
-/// One read and one SHA-256 of the file a load. What failed goes to the log; the frame says that the artifact
-/// could not be read.
-pub fn widget_package_artifact(id: &str) -> Result<(WidgetPackage, Vec<u8>), String> {
+/// One read and one SHA-256 of the file a load. An error is the check that failed, in words for the log.
+pub(crate) fn package_artifact(folder: &str, packages: &str, it: &WidgetInstall, m: &WidgetPackage) -> Result<Vec<u8>, &'static str> {
     use std::io::Read;
-    let installed = || "The widget package is not installed.".to_string();
-    let it = widget_package_installed(id).ok_or_else(installed)?;
-    let m = parse_installed(&it).ok_or_else(installed)?;
-    let refused = |why: &str| {
-        qlog!("widget %s: its module is not loaded: %s", id, why);
-        "The widget's artifact could not be read.".to_string()
-    };
     if !artifact_path_ok(&m.artifact.path) {
-        return Err(refused("the installed manifest's artifact.path is not a path inside the package's folder"));
+        return Err("the installed manifest's artifact.path is not a path inside the package's folder");
     }
-    if it.path != format!("{}/{}/{}", WIDGET_PKG_DIR, id, m.artifact.path) {
-        return Err(refused("the index and the installed manifest name different files"));
+    if it.path != format!("{packages}/{}/{}", it.id, m.artifact.path) {
+        return Err("the index and the installed manifest name different files");
     }
     if !sha_ok(&it.sha) {
-        return Err(refused("the index holds no SHA-256 for it"));
+        return Err("the index holds no SHA-256 for it");
     }
     let file = crate::fsview::StoragePath::new(m.artifact.path.as_bytes())
-        .and_then(|sp| crate::fsview::FsStorage::open(&widget_package_dir(id), &root()).ok()?.open_file(&sp, false).ok())
-        .ok_or_else(|| refused("it is not a plain file inside the package's folder, reached without a link"))?;
+        .and_then(|sp| crate::fsview::FsStorage::open(folder, &root()).ok()?.open_file(&sp, false).ok())
+        .ok_or("it is not a plain file inside the package's folder, reached without a link")?;
     let mut file = std::fs::File::from(file);
-    let len = file.metadata().map_err(|_| refused("it cannot be read"))?.len();
+    let len = file.metadata().map_err(|_| "it cannot be read")?.len();
     if len > WIDGET_PKG_ARTIFACT_MAX {
-        return Err(refused("it is larger than an artifact may be"));
+        return Err("it is larger than an artifact may be");
     }
     let mut bytes = Vec::new();
     if bytes.try_reserve_exact(len as usize).is_err() || file.by_ref().take(WIDGET_PKG_ARTIFACT_MAX + 1).read_to_end(&mut bytes).is_err() {
-        return Err(refused("it cannot be read"));
+        return Err("it cannot be read");
     }
     if bytes.len() as u64 > WIDGET_PKG_ARTIFACT_MAX {
-        return Err(refused("it is larger than an artifact may be"));
+        return Err("it is larger than an artifact may be");
     }
     if !sha256_of(&bytes).eq_ignore_ascii_case(&it.sha) {
-        return Err(refused("its SHA-256 is not the one recorded when the package was installed"));
+        return Err("its SHA-256 is not the one recorded when the package was installed");
     }
-    Ok((m, bytes))
+    Ok(bytes)
 }
 
 /// The installed packages whose manifest still reads and whose device is supported.

@@ -43,8 +43,9 @@
 //! does nothing. `status`, `setting` and `now` need none.
 
 use crate::prelude::*;
+use crate::wasmhost::{charge, in_body as hit_in_body, on_screen, TextCharge};
 use crate::widgetpkg::{WIDGET_CAP_OVERLAY, WIDGET_CAP_STORAGE};
-use wasmi::{Caller, Config, Engine, Extern, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, TrapCode};
+use wasmi::{Caller, Config, Engine, Linker, Module, Store, StoreLimits};
 
 const ABI: &str = "grimoire";
 const STATE_FILE: &str = "state/runtime.bin";
@@ -61,13 +62,10 @@ const STATE_FILE: &str = "state/runtime.bin";
 /// A module has one linear memory, and it may not grow past this.
 const MEMORY_MAX: usize = 32 * 1024 * 1024;
 /// A module has at most one table, of at most this many entries (the function references its indirect
-/// calls go through), and a store holds one instance of one module. A module that declares a second
-/// memory or table, or one larger than its limit, is not started; `memory.grow` and `table.grow` past
-/// a limit fail as WebAssembly defines it (they return -1), and the module runs on.
+/// calls go through), and a store holds one instance of one module (`wasmhost::store_limits`). A module
+/// that declares a second memory or table, or one larger than its limit, is not started; `memory.grow`
+/// and `table.grow` past a limit fail as WebAssembly defines it (they return -1), and the module runs on.
 pub const WIDGET_TABLE_MAX: usize = 65_536;
-const MEMORIES_MAX: usize = 1;
-const TABLES_MAX: usize = 1;
-const INSTANCES_MAX: usize = 1;
 /// A call's instruction budget: the module's own instructions and the host's work for its imports
 /// (the charges below) are paid from it. A call that needs more is stopped.
 pub const WIDGET_CALL_FUEL: u64 = 20_000_000;
@@ -95,8 +93,9 @@ pub const WIDGET_TEXT_PX_MAX: i32 = 512;
 // ---- the charges: what the host's work for an import takes from the call's budget (docs/WIDGETS.md, Limits) ----
 //
 // The budget counts the module's instructions. The host's work for an import is no instruction of the
-// module's, so each import takes a charge for it from the same budget (`charge`): a fixed one for every
-// call, and one by size where the work grows with what the import is given. The numbers are in
+// module's, so each import takes a charge for it from the same budget (`wasmhost::charge`, which the app
+// host takes its own with): a fixed one for every call, and one by size where the work grows with what the
+// import is given. The numbers are in
 // instructions: about what the work costs beside a module's own, as measured in a release build on a
 // desktop machine, where the longest drawing a budget pays for takes about three times as long as the
 // same budget spent on instructions alone (not measured on a Kindle). When the budget cannot pay, the
@@ -124,10 +123,8 @@ pub const WIDGET_CHARGE_SQUARE_BYTES: u64 = 256;
 /// `status`, `setting`, `state_get`, `state_set`: each byte read from the module's memory or written to it.
 pub const WIDGET_CHARGE_BYTE: u64 = 4;
 
-/// How far outside the body, in pixels, an edge of a command's rectangle is still kept as given. A
-/// farther edge is moved in to this distance: what shows in the body is the same, and the sums the
-/// drawing makes with the rectangle stay small.
-const DRAW_REACH: i64 = 1 << 16;
+// (A command's rectangle is held near the body by `wasmhost::on_screen`, and a hit region is cut to it by
+// `wasmhost::in_body`: the two hosts share them.)
 
 /// A drawing command recorded by the module and rendered by the host. Coordinates are body-local.
 #[derive(Clone, Debug)]
@@ -221,13 +218,7 @@ impl WidgetRuntime {
             settings,
             status: String::new(),
             dirty: false,
-            limits: StoreLimitsBuilder::new()
-                .memory_size(MEMORY_MAX)
-                .memories(MEMORIES_MAX)
-                .tables(TABLES_MAX)
-                .table_elements(WIDGET_TABLE_MAX)
-                .instances(INSTANCES_MAX)
-                .build(),
+            limits: crate::wasmhost::store_limits(MEMORY_MAX, WIDGET_TABLE_MAX),
             redraw_at: None,
         });
         store.limiter(|st| &mut st.limits);
@@ -525,58 +516,24 @@ impl WidgetRuntime {
     }
 }
 
-/// A command's rectangle on the screen. A module passes any numbers: the edges are summed in 64
-/// bits and held within DRAW_REACH of the body, so no later sum overflows. A width or height that
-/// is not positive stays so (an empty rectangle draws nothing).
-fn on_screen(body: Rect, x: i32, y: i32, w: i32, h: i32) -> Rect {
-    fn edge(origin: i32, len: i32, at: i64) -> i32 {
-        (origin as i64 + at).clamp(origin as i64 - DRAW_REACH, origin as i64 + len.max(0) as i64 + DRAW_REACH) as i32
-    }
-    let (x0, x1) = (edge(body.x, body.w, x as i64), edge(body.x, body.w, x as i64 + w as i64));
-    let (y0, y1) = (edge(body.y, body.h, y as i64), edge(body.y, body.h, y as i64 + h as i64));
-    Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
-}
-
-/// The part of a hit region (body-local) that is inside the body, or None when no part is.
-fn hit_in_body(body: Rect, r: Rect) -> Option<Rect> {
-    let x0 = (r.x as i64).max(0);
-    let y0 = (r.y as i64).max(0);
-    let x1 = (r.x as i64 + r.w as i64).min(body.w as i64);
-    let y1 = (r.y as i64 + r.h as i64).min(body.h as i64);
-    (x1 > x0 && y1 > y0).then(|| Rect { x: x0 as i32, y: y0 as i32, w: (x1 - x0) as i32, h: (y1 - y0) as i32 })
-}
-
 /// Ends a call that went past a limit the way a call that used up its instructions ends: with the
 /// trap `draw` and `tap` report as the widget having stopped. The log says which limit it was.
 fn past(st: &HostState, limit: &str, max: usize) -> wasmi::Error {
     qlog!("widget %s: stopped, a call went past a limit: %s (%d)", &st.id, limit, max as i32);
-    wasmi::Error::from(TrapCode::OutOfFuel)
-}
-
-/// Takes `n` from the call's instruction budget for work the host does for the call. When the budget cannot
-/// pay, the call ends exactly as a call that used up its instructions ends: nothing is left of the budget,
-/// and the trap is the interpreter's own for that.
-fn charge(caller: &mut Caller<'_, HostState>, n: u64) -> Result<(), wasmi::Error> {
-    let left = caller.get_fuel().unwrap_or(0);
-    if n > left {
-        let _ = caller.set_fuel(0);
-        return Err(wasmi::Error::from(TrapCode::OutOfFuel));
-    }
-    let _ = caller.set_fuel(left - n);
-    Ok(())
+    crate::wasmhost::out_of_fuel()
 }
 
 /// The pixels of a command's rectangle (body-local) that lie inside the body the call draws on.
 fn area_in_body(st: &HostState, x: i32, y: i32, w: i32, h: i32) -> u64 {
-    let body = Rect { x: 0, y: 0, w: st.body.0, h: st.body.1 };
-    hit_in_body(body, Rect { x, y, w, h }).map_or(0, |r| r.w as u64 * r.h as u64)
+    crate::wasmhost::area_in_body(st.body, x, y, w, h)
 }
+
+/// The widget host's numbers for the charge of a text (`wasmhost::TextCharge`).
+const TEXT_CHARGE: TextCharge = TextCharge { byte_px: WIDGET_CHARGE_TEXT, tall_px: WIDGET_CHARGE_TALL_PX, square: WIDGET_CHARGE_SQUARE, px_max: WIDGET_TEXT_PX_MAX as u64 };
 
 /// The charge for drawing a text of `bytes` bytes `px` high, its bytes counted to `square_max` in the square.
 fn text_charge(bytes: usize, px: i32, square_max: u64) -> u64 {
-    let (n, h) = (bytes as u64, px.clamp(1, WIDGET_TEXT_PX_MAX) as u64);
-    let m = n.min(square_max);
-    n * h * h.max(WIDGET_CHARGE_TALL_PX) * WIDGET_CHARGE_TEXT / WIDGET_CHARGE_TALL_PX + WIDGET_CHARGE_SQUARE * m * m
+    TEXT_CHARGE.of(bytes, px as i64, square_max)
 }
 
 fn room_for_command(st: &HostState) -> Result<(), wasmi::Error> {
@@ -621,30 +578,11 @@ fn state_moved(st: &mut HostState, n: usize) -> Result<(), wasmi::Error> {
 /// `len` bytes of the module's memory from `ptr`, or as many as the memory has there. Every read of the
 /// module's memory is this one, and the bytes it copies are counted (`WidgetRuntime::bytes_read`).
 fn read_mem(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32) -> Vec<u8> {
-    if ptr < 0 || len <= 0 {
-        return Vec::new();
-    }
-    let Some(memory) = caller.get_export("memory").and_then(Extern::into_memory) else { return Vec::new() };
-    let data = memory.data(&*caller);
-    let start = ptr as usize;
-    let end = start.saturating_add(len as usize).min(data.len());
-    if start >= end { return Vec::new() }
-    let bytes = data[start..end].to_vec();
+    let bytes = crate::wasmhost::read_mem(caller, ptr, len);
     caller.data_mut().read_bytes += bytes.len();
     bytes
 }
 
 fn write_mem(caller: &mut Caller<'_, HostState>, ptr: i32, cap: i32, bytes: &[u8]) -> i32 {
-    if ptr < 0 || cap <= 0 {
-        return 0;
-    }
-    let Some(memory) = caller.get_export("memory").and_then(Extern::into_memory) else { return 0 };
-    let data = memory.data_mut(caller);
-    let start = ptr as usize;
-    if start >= data.len() {
-        return 0;
-    }
-    let n = bytes.len().min(cap as usize).min(data.len() - start);
-    data[start..start + n].copy_from_slice(&bytes[..n]);
-    n as i32
+    crate::wasmhost::write_mem(caller, ptr, cap, bytes)
 }

@@ -311,7 +311,11 @@ draws them. White ink and the precise eraser make them.
   Cyrillic, arrows, the Latin Extended-A letters Atkinson lacks) comes from Terminess at the asked size,
   a bold face's from Terminess Bold (`FaceMap.fallback`), then from DotGothic16, so Japanese is drawn
   as in every theme; kerning stays inside a face (the families keep their GPOS pairs, which stb reads).
-  The glyph cache keys a glyph by its file, so a change of font loses nothing cached. The files are
+  The glyph cache keys a glyph by its file, so a change of font loses nothing cached. A glyph's bitmap
+  has a greatest size, whoever draws it and at whatever size: 4,096 px each way and 4 MiB in all, what
+  the cache holds (font.rs, `GLYPH_SIDE_MAX`, `CACHE_BYTES_MAX`). Its size is worked out before anything
+  is made; a larger glyph has no bitmap, keeps its advance in a line and leaves its place empty, and an
+  icon of that size is not drawn. A screen's text and icons are far under it. The files are
   static Regular and Bold instances of Google Fonts' variable fonts, cut to Latin, Latin-1, Latin
   Extended-A and General Punctuation (238 KB for the six: `assets/README.md`).
 - Settings > Font (library.rs, `Modal::Font`, 2.1; a page of the new Settings menu since #115): in Classic

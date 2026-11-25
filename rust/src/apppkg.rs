@@ -37,13 +37,11 @@ fn now_secs() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
 
+/// An app package's id follows the one rule for a package's id (`widget_id_ok`, widgetpkg.rs): lowercase
+/// letters, digits, dots and hyphens, at most 128, no dot first or last and no two in a row, and not ending
+/// in `.previous`, the name an update keeps the replaced version's folder under.
 fn id_ok(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 128
-        && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
-        && id.as_bytes()[0] != b'.'
-        && id.as_bytes()[id.len() - 1] != b'.'
-        && !id.contains("..")
+    widget_id_ok(id)
 }
 
 fn semver_ok(v: &str) -> bool {
@@ -86,8 +84,13 @@ fn in_state(p: &str) -> bool {
     p.split('/').next().is_some_and(|first| first.eq_ignore_ascii_case("state"))
 }
 
+/// The capabilities a manifest may declare, and what the host gives a module for each (apphost.rs): its own
+/// saved state, and the `http_*` calls. An app needs neither to draw and to be touched.
+pub const APP_CAP_STORAGE: &str = "storage:app-local";
+pub const APP_CAP_NETWORK: &str = "network:http";
+
 fn cap_ok(c: &str) -> bool {
-    matches!(c, "storage:app-local" | "network:http")
+    c == APP_CAP_STORAGE || c == APP_CAP_NETWORK
 }
 
 /// Whether `spec.icon` names a bundled file rather than one of Grimoire's built-in icon names.
@@ -134,11 +137,20 @@ pub fn app_package_validate(p: &WidgetPackage, _canvas_w: i32, _canvas_h: i32) -
     if p.type_ != "app" {
         return Err("This repository is not an app package".into());
     }
+    if p.id.ends_with(WIDGET_ID_PREVIOUS) {
+        return Err("`id` cannot end in `.previous`; an update keeps the replaced version's folder under that name".into());
+    }
     if !id_ok(&p.id) {
         return Err("`id` must be lowercase letters, digits, dots and hyphens".into());
     }
     if p.name.trim().is_empty() {
         return Err("`name` is missing".into());
+    }
+    // (the index keeps these three of a package: no longer than its reader takes of a string)
+    for (field, text) in [("name", &p.name), ("author", &p.author), ("description", &p.description)] {
+        if text.len() > WIDGET_PKG_TEXT_MAX {
+            return Err(format!("`{field}` is longer than {WIDGET_PKG_TEXT_MAX} bytes"));
+        }
     }
     if !semver_ok(&p.version) {
         return Err(format!("`version` (`{}`) is not a valid version", p.version));
@@ -187,11 +199,9 @@ pub fn app_package_validate(p: &WidgetPackage, _canvas_w: i32, _canvas_h: i32) -
     } else if !p.spec.icon_sha256.trim().is_empty() || p.spec.icon_size != 0 {
         return Err("`spec.icon_sha256` and `spec.icon_size` are only for a `.ico` icon".into());
     }
-    if !path_ok(&p.artifact.path)
-        || p.artifact.path == "package.yaml"
-        || p.artifact.path == "state"
-        || p.artifact.path.starts_with("state/")
-    {
+    // (the one rule for a package's module, widgetpkg.rs: a relative path inside the package's folder, neither the
+    // manifest nor anything of `state/` in any case of their letters, of names the storage walk takes)
+    if !crate::widgetpkg::artifact_path_ok(&p.artifact.path) {
         return Err("`artifact.path` is not a safe relative path (it cannot be package.yaml or inside state/)".into());
     }
     if !sha_ok(&p.artifact.sha256) {
@@ -270,7 +280,7 @@ fn json_get_str(text: &[u8], toks: &[JsonTok], obj: i32, key: &str) -> String {
         return String::new();
     }
     let mut b = Vec::new();
-    if json_string(text, &toks[v as usize], &mut b, 1024) {
+    if json_string(text, &toks[v as usize], &mut b, WIDGET_PKG_TEXT_MAX + 1) {
         String::from_utf8_lossy(&b).into_owned()
     } else {
         String::new()
@@ -336,6 +346,25 @@ fn parse_installed(p: &WidgetInstall) -> Option<WidgetPackage> {
 
 pub fn app_package_installed_manifest(id: &str) -> Option<WidgetPackage> {
     parse_installed(&app_package_installed(id)?)
+}
+
+/// An installed app's index entry, its manifest and its module's bytes, for a launch (apphost.rs). The file is
+/// checked again here, each time the app is opened, by the check a widget's module has
+/// (`widgetpkg::package_artifact`): the installed manifest's `artifact.path` is one the manifest check takes and
+/// the index names the same file; it is a plain file inside the app's own folder, reached with no link on the
+/// way; it is no larger than an artifact may be, and its SHA-256 is the one the index recorded at the install.
+/// What failed goes to the log; the launch says that the artifact could not be read.
+pub fn app_package_artifact(id: &str) -> Result<(WidgetInstall, WidgetPackage, Vec<u8>), String> {
+    let installed = || "That app is no longer installed.".to_string();
+    let it = app_package_installed(id).ok_or_else(installed)?;
+    let m = parse_installed(&it).ok_or_else(installed)?;
+    match crate::widgetpkg::package_artifact(&app_package_dir(id), APP_PKG_DIR, &it, &m) {
+        Ok(bytes) => Ok((it, m, bytes)),
+        Err(why) => {
+            qlog!("app %s: its module is not loaded: %s", id, why);
+            Err("The app's artifact could not be read.".to_string())
+        }
+    }
 }
 
 pub fn app_package_list() -> Vec<WidgetInstall> {
@@ -408,7 +437,7 @@ pub fn app_package_install(manifest: &str, artifact: &[u8], icon: Option<&[u8]>,
             return Err("Could not write the app's icon.".into());
         }
     }
-    let old = format!("{dir}.previous");
+    let old = format!("{dir}{WIDGET_ID_PREVIOUS}");
     let _ = std::fs::remove_dir_all(&old);
     if let Some(was) = index.iter().find(|x| x.id == p.id) {
         forget_icon_picture(was);
@@ -669,6 +698,176 @@ settings:
             let err = with_icon(icon).unwrap_err();
             assert!(err.contains("`spec.icon` is not a safe relative path"), "{icon}: {err}");
         }
+    }
+
+    /// A data root of one test's own.
+    fn fresh_root(name: &str) -> std::path::PathBuf {
+        ui_init(300.0);
+        let base = std::env::var("GRIMOIRE_TEST_TMP").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+        let root = base.join(format!("grimoire-apppkg-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        root
+    }
+
+    /// The test manifest for these bytes as its artifact.
+    fn manifest_for(artifact: &[u8]) -> String {
+        manifest()
+            .replace("0000000000000000000000000000000000000000000000000000000000000000", &sha256_of(artifact))
+            .replace("size: 8", &format!("size: {}", artifact.len()))
+    }
+
+    // An app's id follows the one rule for a package's id (widget_id_ok): an update keeps the replaced
+    // version's folder as <id>.previous, so no id ends in that. Through the manifest check, an install, the
+    // index's reader, a removal and the settings.
+    #[test]
+    fn an_apps_id_follows_the_rule_for_a_packages_id() {
+        for (id, ok) in [
+            ("test.app", true),
+            ("test.app.previous", false),
+            ("a.previous", false),
+            ("x-1.previous", false),
+            // (only the end of an id: these name no replaced version's folder)
+            ("previous", true),
+            ("test.previous.app", true),
+            ("test.app-previous", true),
+            ("test.app.previous.previous", false),
+            // (and the rest of the rule)
+            ("Test.App", false),
+            (".test.app", false),
+            ("test.app.", false),
+            ("test..app", false),
+            ("test app", false),
+            ("", false),
+        ] {
+            assert_eq!(id_ok(id), ok, "{id}");
+            assert_eq!(id_ok(id), widget_id_ok(id), "{id}: the same rule as a widget's");
+            let p = widget_package_parse(&manifest().replace("id: test.app", &format!("id: {id}"))).unwrap();
+            assert_eq!(app_package_validate(&p, 1000, 1000).is_ok(), ok, "{id}");
+        }
+        assert!(id_ok(&"a".repeat(128)) && !id_ok(&"a".repeat(129)));
+        let refused = |id: &str| app_package_validate(&widget_package_parse(&manifest().replace("id: test.app", &format!("id: {id}"))).unwrap(), 1000, 1000).unwrap_err();
+        assert_eq!(refused("test.app.previous"), "`id` cannot end in `.previous`; an update keeps the replaced version's folder under that name");
+        assert_eq!(refused("Test.App"), "`id` must be lowercase letters, digits, dots and hyphens");
+
+        let root = fresh_root("id");
+        let artifact = b"fixture app bytes";
+        let m = manifest_for(artifact);
+        // An app, and one whose id is that id with `.previous` after it: the second is not installed.
+        let it = app_package_install(&m, artifact, None, "", 1860, 2480).unwrap();
+        let e = app_package_install(&m.replace("id: test.app", "id: test.app.previous"), artifact, None, "", 1860, 2480).unwrap_err();
+        assert!(e.contains("`id` cannot end in `.previous`"), "{e}");
+        assert!(!root.join("packages/apps/test.app.previous").exists());
+        // An update of the first keeps the replaced version in that folder, which is nobody else's, and the
+        // app's state goes on with the new version.
+        let state = format!("{}/state", app_package_dir(&it.id));
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(format!("{state}/session"), b"keep").unwrap();
+        app_package_install(&m.replace("version: 1.0.0", "version: 1.1.0"), artifact, None, "", 1860, 2480).unwrap();
+        let kept = std::fs::read_to_string(root.join("packages/apps/test.app.previous/package.yaml")).unwrap();
+        assert!(kept.contains("version: 1.0.0") && kept.contains("id: test.app\n"));
+        assert_eq!(std::fs::read(format!("{state}/session")).unwrap(), b"keep");
+        // The index reads no such id, whoever wrote it there; a removal and the settings take none either.
+        let index = std::fs::read_to_string(app_package_index_path()).unwrap();
+        std::fs::write(app_package_index_path(), index.replace("\"id\":\"test.app\"", "\"id\":\"test.app.previous\"")).unwrap();
+        assert!(app_package_index_load().is_empty(), "an index entry with such an id is skipped");
+        assert!(app_package_list().is_empty() && app_package_installed("test.app.previous").is_none());
+        assert!(app_package_remove("test.app.previous", false).is_err());
+        assert!(root.join("packages/apps/test.app.previous").exists(), "and removing by that id touches nothing");
+        assert_eq!(app_settings_save("test.app.previous", &[("color".to_string(), "Grey".to_string())]), -1);
+        assert!(!root.join("packages/apps/test.app.previous/state").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // A name, an author and a description are no longer than the index keeps of each (WIDGET_PKG_TEXT_MAX, as
+    // for a widget): what an install writes into the index is what is read back.
+    #[test]
+    fn an_apps_name_author_and_description_are_no_longer_than_the_index_keeps() {
+        assert_eq!(WIDGET_PKG_TEXT_MAX, 1023);
+        let artifact = b"fixture app bytes";
+        let good = manifest_for(artifact);
+        // (words, `n` bytes of them, the last a letter)
+        let long = |n: usize| {
+            let mut s = "word ".repeat((n - 1) / 5);
+            s.push_str(&"x".repeat(n - s.len()));
+            s
+        };
+        assert_eq!(long(1023).len(), 1023);
+        for (line, field) in [("name: Test App", "name"), ("author: Tester", "author"), ("description: An app", "description")] {
+            let at = widget_package_parse(&good.replace(line, &format!("{field}: {}", long(1023)))).unwrap();
+            assert_eq!(app_package_validate(&at, 1860, 2480), Ok(()), "{field} of 1,023 bytes");
+            let past = widget_package_parse(&good.replace(line, &format!("{field}: {}", long(1024)))).unwrap();
+            assert_eq!(app_package_validate(&past, 1860, 2480), Err(format!("`{field}` is longer than 1023 bytes")), "{field} of 1,024 bytes");
+            let far = widget_package_parse(&good.replace(line, &format!("{field}: {}", long(200_000)))).unwrap();
+            assert_eq!(app_package_validate(&far, 1860, 2480), Err(format!("`{field}` is longer than 1023 bytes")), "{field} of 200,000 bytes");
+        }
+        let root = fresh_root("texts");
+        let m = good.replace("name: Test App", &format!("name: {}", long(1023))).replace("author: Tester", &format!("author: {}", long(1023))).replace("description: An app", &format!("description: {}", long(1023)));
+        app_package_install(&m, artifact, None, "", 1860, 2480).unwrap();
+        let read = app_package_index_load();
+        assert_eq!(read.len(), 1);
+        assert_eq!((read[0].name.as_str(), read[0].author.as_str(), read[0].description.as_str()), (long(1023).as_str(), long(1023).as_str(), long(1023).as_str()));
+        // (and a manifest with a longer one is not installed, and leaves the index as it was)
+        let e = app_package_install(&m.replace("id: test.app", "id: test.other").replace(&format!("description: {}", long(1023)), &format!("description: {}", long(255_000))), artifact, None, "", 1860, 2480).unwrap_err();
+        assert_eq!(e, "`description` is longer than 1023 bytes");
+        assert_eq!(app_package_index_load(), read);
+        assert!(!root.join("packages/apps/test.other").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // `artifact.path` follows the one rule for a package's module (artifact_path_ok, as for a widget): a relative
+    // path inside the package's folder, neither the manifest nor anything of `state/` in any case of their
+    // letters, and of names the storage walk takes. A refused path is not installed.
+    #[test]
+    fn an_apps_artifact_path_follows_the_rule_for_a_packages_module() {
+        let artifact = b"fixture app bytes";
+        let good = manifest_for(artifact);
+        let with = |path: &str| good.replace("path: app.wasm", &format!("path: {path}"));
+        let check = |path: &str| app_package_validate(&widget_package_parse(&with(path)).unwrap(), 1860, 2480);
+        for path in ["app.wasm", "dist/app.wasm", "a/b/c/app.bin", "stateful/app.wasm", "States/app.wasm", "art/state/app.wasm", "package.yaml.wasm", "App.Wasm"] {
+            assert_eq!(check(path), Ok(()), "{path}");
+        }
+        let longest = format!("{}/app.wasm", "d".repeat(231));
+        assert_eq!((longest.len(), check(&longest)), (240, Ok(())));
+        assert!(check(&format!("d{longest}")).is_err());
+        let refused = "`artifact.path` is not a safe relative path (it cannot be package.yaml or inside state/)";
+        for path in [
+            "package.yaml",
+            "state",
+            "state/app.wasm",
+            // (the manifest and the state folder in any case of their letters: a storage that ignores case finds them)
+            "Package.yaml",
+            "PACKAGE.YAML",
+            "STATE/runtime.bin",
+            "State/settings.json",
+            "sTaTe",
+            "state/http/1-2.body",
+            "../app.wasm",
+            "dist/../app.wasm",
+            "./app.wasm",
+            "/app.wasm",
+            "dist//app.wasm",
+            "dist\\app.wasm",
+            // (names the storage walk does not take: the module is read through it when the app is opened)
+            ".dist/app.wasm",
+            "dist/.app.wasm",
+            "dist./app.wasm",
+            "app.sdr/app.wasm",
+            "system/app.wasm",
+        ] {
+            assert_eq!(check(path), Err(refused.to_string()), "{path}");
+        }
+        let root = fresh_root("path");
+        for path in ["Package.yaml", "STATE/runtime.bin", ".dist/app.wasm"] {
+            assert_eq!(app_package_install(&with(path), artifact, None, "", 1860, 2480).unwrap_err(), refused, "{path}");
+            assert!(!root.join("packages/apps/test.app").exists() && app_package_index_load().is_empty(), "{path}: nothing is installed");
+        }
+        // A path the rule takes installs where it says.
+        let it = app_package_install(&with("dist/App.Wasm"), artifact, None, "", 1860, 2480).unwrap();
+        assert_eq!(it.path, "packages/apps/test.app/dist/App.Wasm");
+        assert_eq!(std::fs::read(root.join("packages/apps/test.app/dist/App.Wasm")).unwrap(), artifact);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
