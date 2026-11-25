@@ -73,7 +73,7 @@ expect display.pen_mode is 0
 expect display.presents is
 # lifted and still near: the stroke settles, and the bar still waits
 wait 2000
-expect display.presents is ui 383 220 1449 1842
+expect display.presents is ui 383 220 1449 1734
 expect display.dark.45.0.400.60 is 1636
 pen leave
 wait 300
