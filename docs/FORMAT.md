@@ -1745,7 +1745,8 @@ widget stops with an error instead of freezing the device.
 ## App packages (2.3)
 
 The Package Store installs a full-screen app from its catalog, or from a GitHub repository
-(`user/repo`) or a HTTPS `.yaml` address. Apps use the same package manager as widgets, with their
+(`user/repo`) or a HTTPS `.yaml` address; the All apps page's **Manage apps...** opens the app package
+manager, which installs from the same addresses. Apps use the same package manager as widgets, with their
 own folder and index: `packages/apps/<id>/` and `packages/apps-index.json`. A manifest is `type: app` and has the
 same fields as a widget manifest, except that `spec.size` is ignored (an app owns the screen) and
 `spec.status_bar` chooses whether Grimoire's shared status bar starts over the app. `spec.icon` may

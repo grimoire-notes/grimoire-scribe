@@ -183,8 +183,9 @@ named by its index in the open list, which is how a scenario reaches the control
 read with `editor.widget.0.status`. A frame's due redraw (`request_redraw`) waits while the pen is near, as the
 status bar's minute refresh does in a notebook: a script follows a `pentap` with `pen leave` to let it come
 (tests/scenarios/z_widget_pen.qs). The Packages page opens from the widget popup's Manage widgets…
-(`widgets.manage`); packages are installed from the Package Store now. Its controls are
-`packages.close` (the X, which closes Settings), `packages.back` (to Settings),
+(`widgets.manage`), and for apps from the All apps page's Manage apps... (`apps.manage`, over that
+page, to which its Back and its X come back); packages are installed from the Package Store now. Its
+controls are `packages.close` (the X, which closes Settings), `packages.back` (to Settings),
 `packages.row.ID` (or its index, `packages.row.0`), `packages.update-all`,
 `packages.install`, `packages.remove`, `packages.remove-yes`, `packages.update`, `packages.trust`,
 `packages.license-yes`, `packages.license-view`, `packages.license-prev`, `packages.license-next` and

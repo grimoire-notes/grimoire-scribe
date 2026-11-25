@@ -1,15 +1,17 @@
 # Apps
 
 Apps are full-screen programs packaged for Grimoire. They are installed and managed in the
-**Package Store**, open from the home app row or the **All apps** page, and run in a
-WebAssembly host that gives them the whole display. They are a package kind of their own: an app is
-not a widget, and a widget is not an app. Anyone can publish one from a GitHub repository or a
-HTTPS `package.yaml`, exactly as widget packages are published.
+**Package Store** and with **Manage apps...** at the foot of the **All apps** page, open from the
+home app row or the **All apps** page, and run in a WebAssembly host that gives them the whole
+display. They are a package kind of their own: an app is not a widget, and a widget is not an app.
+Anyone can publish one from a GitHub repository or a HTTPS `package.yaml`, exactly as widget
+packages are published.
 
-An app goes through the same manifest checks, trust prompt, license prompt, digest checks and
-installer as a widget package. What differs is the folder (`packages/apps` instead of
-`packages/widgets`), the index (`packages/apps-index.json`), the manifest type (`type: app`) and
-the runtime.
+The package manager (**Manage apps...** at the foot of the **All apps** page), trust prompt,
+license prompt, settings page, update check and Remove are the same as the widget package
+manager's (**Manage widgets...** at the foot of a notebook's Widgets popup). What differs is the
+folder (`packages/apps` instead of `packages/widgets`), the index (`packages/apps-index.json`), the
+manifest type (`type: app`) and the runtime.
 
 ## Package Store
 
@@ -21,8 +23,9 @@ license prompt, digest checks and installer. The Store is also where installed p
 managed: its **Installed** tab lists every installed app and widget, an installed package's page has
 **Uninstall** (and **Update to** the newer version when the catalog has one), and the header's
 repository button installs a package that is not in the catalog from a GitHub repository
-(`user/repo`) or an HTTPS `.yaml` address. A widget package's own page, with its settings, is opened
-by **Manage widgets...** at the foot of a notebook's Widgets popup.
+(`user/repo`) or an HTTPS `.yaml` address. A package's own page, with its settings, is in the
+package manager: **Manage apps...** at the foot of the **All apps** page opens it for apps, and
+**Manage widgets...** at the foot of a notebook's Widgets popup for widgets.
 
 The catalog is cached at `grimoire/package-store/index.json`, and its images at
 `grimoire/package-store/assets/`, so the last store still opens without a network. The Store itself

@@ -4,11 +4,11 @@
 # env: GRIMOIRE_PACKAGE_STORE_OFFLINE=1
 # copy: tests/fixtures/apppkg .
 # copy: tests/fixtures/package-store .
-# Apps: an installed type: app package is listed in the Package Store's Installed tab, and the
-# installed app is a launcher in the home app row and All Apps page. Opening it gives it the whole
-# screen and the status bar only when it asks; a tap closes it through its own close() API, and the
-# two-finger bottom-to-middle system swipe returns Home from a fresh launch even with Gestures off.
-# Last, the app package's own settings page.
+# Apps: an installed type: app package is listed in the Package Store's Installed tab, the All apps
+# page's Manage apps... manages it exactly like widgets, and the installed app is a launcher in the
+# home app row and All Apps page. Opening it gives it the whole screen and the status bar only when it
+# asks; a tap closes it through its own close() API, and the two-finger bottom-to-middle system swipe
+# returns Home from a fresh launch even with Gestures off.
 wait 300
 expect library.apps is com.example.fixture
 # The app's bundled icon is decoded by the sandboxed worker (issue #236): its picture comes a moment after the
@@ -30,6 +30,45 @@ expect screen is library
 tap library apps
 wait 200
 shot 04-all-apps
+# The All apps page's Manage apps... opens the app package manager over the page, as the widget
+# popup's Manage widgets... opens the widget one: its list, a package's page and its settings, which
+# are saved as they are tapped. Back and the X come back to the All apps page.
+tap library apps.manage
+wait 400
+expect editor.packages.open is 1
+expect editor.packages is 1 com.example.fixture 1.0.0
+expect editor.package.com.example.fixture is 1.0.0
+expect editor.package.com.example.fixture.settings.dark is true
+shot 01-apps-manager
+tap library packages.row.com.example.fixture
+wait 300
+shot 02-app-package-detail
+tap library packages.settings
+wait 300
+shot 03-app-package-settings
+tap library packages.setting.dark
+wait 200
+expect editor.package.com.example.fixture.settings.dark is false
+tap library packages.back
+wait 200
+tap library packages.back
+wait 300
+tap library packages.back
+wait 300
+expect editor.packages.open is 0
+expect screen is library
+tap library apps.manage
+wait 400
+expect editor.packages.open is 1
+tap library packages.close
+wait 300
+expect editor.packages.open is 0
+# (the page's own X is there again: it is the All apps page, not Home)
+tap library apps.close
+wait 300
+expect library.sheet is none
+tap library apps
+wait 200
 tap library app.com.example.fixture
 wait 400
 expect library.app.open is 1
@@ -76,34 +115,4 @@ tap library done
 wait 300
 expect library.sheet is none
 shot 09-home-order
-# The app package's own settings (the manifest's settings rows, which the app reads through the host)
-# are on the package manager's page for apps. Settings > Packages > Apps was the one way to that page,
-# and #260 took the Packages category out of Settings without another: the Store's package page has
-# Uninstall, the repository and the license, and the widget popup's Manage widgets... opens the page
-# for widgets. So the step below fails until a way to it is chosen (issue #263).
-tap library settings
-wait 300
-tap library settings.apps
-wait 400
-expect editor.packages.open is 1
-expect editor.packages is 1 com.example.fixture 1.0.0
-expect editor.package.com.example.fixture is 1.0.0
-expect editor.package.com.example.fixture.settings.dark is true
-shot 01-apps-manager
-tap library packages.row.com.example.fixture
-wait 300
-shot 02-app-package-detail
-tap library packages.settings
-wait 300
-shot 03-app-package-settings
-tap library packages.setting.dark
-wait 200
-expect editor.package.com.example.fixture.settings.dark is false
-tap library packages.back
-wait 200
-tap library packages.back
-wait 300
-tap library packages.close
-wait 300
-expect screen is library
 quit

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Grimoire 2.1.0\n"
 "Report-Msgid-Bugs-To: https://github.com/ganten1998/grimoire-scribe/issues\n"
-"POT-Creation-Date: 2026-11-17 14:38-0600\n"
+"POT-Creation-Date: 2026-11-25 10:19-0600\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -25,41 +25,10 @@ msgstr ""
 msgid "unreleased"
 msgstr ""
 
-#. TRANSLATORS: the What's new card's title (520 px at 44 px in bold), and the title of Read all's
-#. list of every version's notes and of a version's notes that have no title of their own (the
-#. sheet's title type): what this version brings.
-#: rust/src/about.rs
+#. TRANSLATORS: the title of the What's new screen (the Settings frame's title type): every
+#. version's notes, with the versions down the left.
+#: rust/src/about.rs rust/src/library.rs
 msgid "What's new"
-msgstr ""
-
-#. TRANSLATORS: What's new's button that closes it, on the card, on Read all's list and on a
-#. version's notes (a word under an icon, at 34 px: 200 px). What's new opens by itself once after
-#. every update and from the bat in the Library's top bar; this only closes it until then (it is
-#. not "never again").
-#: rust/src/about.rs
-msgctxt "what's new"
-msgid "Dismiss"
-msgstr ""
-
-#. TRANSLATORS: the What's new card's button to the list of every version's notes (330 px at 44 px
-#. in bold).
-#: rust/src/about.rs
-msgid "Read all"
-msgstr ""
-
-#. TRANSLATORS: What's new: the button on a version's notes back to the list of every
-#. version's notes (Read all), at the left of the sheet's foot (a word under an icon, at 34 px:
-#. 300 px).
-#. TRANSLATORS: the Templates sheet's button back to the papers, under its icon (348 px at
-#. 34 px).
-#: rust/src/about.rs rust/src/tplsheet.rs
-msgid "Back"
-msgstr ""
-
-#. TRANSLATORS: What's new's list of versions (Read all): the mark beside the version running,
-#. white on a black box in its row (34 px in bold: at most 360 px).
-#: rust/src/about.rs
-msgid "This version"
 msgstr ""
 
 #: rust/src/actions.rs
@@ -219,11 +188,11 @@ msgstr ""
 msgid "Redo"
 msgstr ""
 
-#: rust/src/actions.rs
+#: rust/src/actions.rs rust/src/widgetpkgui.rs
 msgid "Previous page"
 msgstr ""
 
-#: rust/src/actions.rs
+#: rust/src/actions.rs rust/src/widgetpkgui.rs
 msgid "Next page"
 msgstr ""
 
@@ -288,7 +257,7 @@ msgid "Fold the toolbar"
 msgstr ""
 
 #. TRANSLATORS: the share index's heading over the notebooks in no folder.
-#: rust/src/actions.rs rust/src/httpd.rs
+#: rust/src/actions.rs rust/src/httpd.rs rust/src/library.rs
 msgid "Library"
 msgstr ""
 
@@ -508,7 +477,7 @@ msgstr ""
 
 #. TRANSLATORS: (the keyboard shortcuts lists, about 1100 px at 44 px in bold) Ctrl+F in the Library: a new
 #. folder's name keyboard, as the top bar's Folder button.
-#: rust/src/actions.rs
+#: rust/src/actions.rs rust/src/library.rs
 msgid "New folder"
 msgstr ""
 
@@ -520,7 +489,7 @@ msgstr ""
 
 #. TRANSLATORS: (the keyboard shortcuts lists, about 1100 px at 44 px in bold) O in the Library: the
 #. Settings sheet, as the top bar's Settings button.
-#: rust/src/actions.rs rust/src/library.rs
+#: rust/src/actions.rs rust/src/library.rs rust/src/quick.rs
 msgid "Settings"
 msgstr ""
 
@@ -1118,6 +1087,8 @@ msgstr ""
 
 #. TRANSLATORS: (also) the title of the file picker the Templates and Photos sheets' From a file... tile
 #. opens, to pick a picture to copy in (the Library's header, about 1400 px at 56 px).
+#. TRANSLATORS: the folder picture sheet's button (348 px at 44 px inside Gothic's carved line): the file picker
+#. over it, for a picture anywhere on the Kindle to copy into grimoire/photos/.
 #. TRANSLATORS: New notebook's button (348 px at 44 px, or 34 px, or two lines of that): it opens the file picker
 #. to make a notebook of a PDF or a folder of pictures anywhere on the Kindle.
 #. TRANSLATORS: (also) the last tile of the Templates and Photos sheets, under its picture (a tile of about 250
@@ -1234,7 +1205,7 @@ msgstr ""
 msgid "Free: %s of %s"
 msgstr ""
 
-#: rust/src/browser.rs rust/src/notebookpicker.rs
+#: rust/src/browser.rs rust/src/library.rs rust/src/notebookpicker.rs
 msgid "Notebooks"
 msgstr ""
 
@@ -1322,7 +1293,7 @@ msgid "Waiting"
 msgstr ""
 
 #. TRANSLATORS: a row of the Import place: this file became a notebook.
-#: rust/src/browser.rs
+#: rust/src/browser.rs rust/src/packagestore.rs
 msgid "Imported"
 msgstr ""
 
@@ -1356,7 +1327,7 @@ msgstr ""
 msgid "Delete (moves it to %s)"
 msgstr ""
 
-#: rust/src/browser.rs rust/src/library.rs
+#: rust/src/browser.rs rust/src/library.rs rust/src/packagestore.rs
 msgid "Keep it"
 msgstr ""
 
@@ -1487,6 +1458,7 @@ msgid "Nothing here to use."
 msgstr ""
 
 #. TRANSLATORS: between the Library's page buttons (1320 px at 44 px).
+#. TRANSLATORS: between the home's page buttons, as before (1320 px at 44 px).
 #. TRANSLATORS: (also) between the Templates sheet's page buttons, in bold: 440 px at 44 px.
 #: rust/src/browser.rs rust/src/library.rs rust/src/tplsheet.rs
 #, c-format
@@ -1694,48 +1666,29 @@ msgstr ""
 msgid "Calibration saved"
 msgstr ""
 
-#. TRANSLATORS: the Clock settings page's row for how large the clock and battery on a notebook page
-#. are, which a tap moves to the next size. Two lines of about 365 px at 34 px.
+#. TRANSLATORS: the Status bar settings page's row for how large the shared status bar is, which a
+#. tap moves to the next size. Two lines of about 365 px at 34 px.
 #: rust/src/dispmenu.rs
-msgid "Clock size: small"
+msgid "Size: small"
 msgstr ""
 
 #: rust/src/dispmenu.rs
-msgid "Clock size: medium"
+msgid "Size: medium"
 msgstr ""
 
 #: rust/src/dispmenu.rs
-msgid "Clock size: large"
-msgstr ""
-
-#. TRANSLATORS: the Clock settings page's row under the clock's size: which corner of a notebook page
-#. the clock and battery sit in, which a tap moves to the next (clockwise). Two lines of about 365 px
-#. at 34 px.
-#: rust/src/dispmenu.rs
-msgid "Clock corner: top left"
-msgstr ""
-
-#: rust/src/dispmenu.rs
-msgid "Clock corner: top right"
-msgstr ""
-
-#: rust/src/dispmenu.rs
-msgid "Clock corner: bottom right"
-msgstr ""
-
-#: rust/src/dispmenu.rs
-msgid "Clock corner: bottom left"
+msgid "Size: large"
 msgstr ""
 
 #. TRANSLATORS: Live view's slider in the browser, under Warmth: the picture's light from dim
 #. to full, this browser's own (the Kindle's light is unchanged). About 12 characters.
-#: rust/src/dispmenu.rs rust/src/httpd.rs
+#: rust/src/dispmenu.rs rust/src/httpd.rs rust/src/quick.rs
 msgid "Brightness"
 msgstr ""
 
 #. TRANSLATORS: Live view's slider in the browser: the picture's light from white to warm,
 #. following the Kindle's front light warmth until it is moved ("As on the Kindle" again).
-#: rust/src/dispmenu.rs rust/src/httpd.rs
+#: rust/src/dispmenu.rs rust/src/httpd.rs rust/src/quick.rs
 msgid "Warmth"
 msgstr ""
 
@@ -1760,15 +1713,18 @@ msgstr ""
 msgid "Sleep settings"
 msgstr ""
 
-#. TRANSLATORS: the row that opens the clock settings' page: the clock and battery on a
-#. notebook page.
+#. TRANSLATORS: the row that opens the status bar's page: its size and its 12-hour clock.
 #: rust/src/dispmenu.rs rust/src/settingsmenu.rs
-msgid "Clock settings"
+msgid "Status bar"
 msgstr ""
 
 #. TRANSLATORS: in the Display page where the sliders would be (1420 px at 44 px).
 #: rust/src/dispmenu.rs
 msgid "Front light controls are not available here."
+msgstr ""
+
+#: rust/src/dispmenu.rs
+msgid "Auto brightness (follow the room's light)"
 msgstr ""
 
 #: rust/src/dispmenu.rs
@@ -1781,6 +1737,10 @@ msgstr ""
 
 #: rust/src/dispmenu.rs
 msgid "Sleep screen: Kindle PIN (native unlock)"
+msgstr ""
+
+#: rust/src/dispmenu.rs
+msgid "Hide status bar inside Notebooks"
 msgstr ""
 
 #: rust/src/dispmenu.rs
@@ -1892,6 +1852,15 @@ msgstr ""
 #: rust/src/editor.rs
 msgctxt "tool"
 msgid "Calligraphy"
+msgstr ""
+
+#. TRANSLATORS: the widget popup's title, beside the toolbar's Widgets button.
+#: rust/src/editor.rs rust/src/packagestore.rs rust/src/widgetpkgui.rs
+msgid "Widgets"
+msgstr ""
+
+#: rust/src/editor.rs
+msgid "Manage widgets..."
 msgstr ""
 
 #: rust/src/editor.rs
@@ -2090,7 +2059,7 @@ msgstr ""
 msgid "Couldn't redo."
 msgstr ""
 
-#: rust/src/editor.rs
+#: rust/src/editor.rs rust/src/library.rs
 msgid "Couldn't read notebooks."
 msgstr ""
 
@@ -2287,9 +2256,15 @@ msgctxt "eraser"
 msgid "Whole strokes"
 msgstr ""
 
-#. TRANSLATORS: in a toast (about 1700 px at 44 px in bold, or two lines): a template picked
-#. on the Templates sheet could not become the page's paper (or the new notebook's); %s is
-#. the log file that says why.
+#. TRANSLATORS: the staying notice while a notebook's page is drawn as the open page's template (the
+#. Templates sheet's From a notebook..., issue #195): a few seconds on a dense page.
+#: rust/src/editor.rs
+msgid "Making template..."
+msgstr ""
+
+#. TRANSLATORS: in a toast (about 1700 px at 44 px in bold, or two lines): a template picked on the Templates
+#. sheet (or a page of a notebook, issue #195) could not become the page's paper; %s is the log file that says
+#. why.
 #: rust/src/editor.rs rust/src/library.rs
 #, c-format
 msgid "Couldn't use template (see %s)."
@@ -3037,6 +3012,26 @@ msgctxt "key"
 msgid "space"
 msgstr ""
 
+#: rust/src/library.rs rust/src/packagestore.rs
+msgid "Package Store"
+msgstr ""
+
+#: rust/src/library.rs
+msgid "Name (A-Z)"
+msgstr ""
+
+#: rust/src/library.rs
+msgid "Name (Z-A)"
+msgstr ""
+
+#: rust/src/library.rs
+msgid "Newest first"
+msgstr ""
+
+#: rust/src/library.rs
+msgid "Oldest first"
+msgstr ""
+
 #: rust/src/library.rs
 #, c-format
 msgid "%d notebook"
@@ -3051,17 +3046,81 @@ msgid_plural "%d pages, %s"
 msgstr[0] ""
 msgstr[1] ""
 
+#. TRANSLATORS: the sheet a folder's menu opens (a row of 1470 px at 44 px in bold, Icon & picture...), where
+#. its card gets an icon or a picture: its title, about 1400 px at 56 px.
 #: rust/src/library.rs
-msgid "Exit"
+msgid "Folder icon"
 msgstr ""
 
-#. TRANSLATORS: the Library's top bar (see Exit): makes a new folder.
+#. TRANSLATORS: at the top of the folder icon sheet (%s: the folder's name): whose card is being changed.
 #: rust/src/library.rs
-msgid "Folder"
+#, c-format
+msgid "Folder: %s"
+msgstr ""
+
+#. TRANSLATORS: the folder icon sheet's line about its picture, when it has none (about 1000 px at 34 px).
+#. TRANSLATORS: the folder icon sheet's button: its card goes back to the plain folder.
+#. TRANSLATORS: the folder picture sheet's button: its card goes back to the plain folder.
+#: rust/src/library.rs
+msgid "No picture"
+msgstr ""
+
+#. TRANSLATORS: the folder icon sheet's line about its picture (%s: its file name in grimoire/photos/).
+#: rust/src/library.rs
+#, c-format
+msgid "Picture: %s"
+msgstr ""
+
+#. TRANSLATORS: the folder icon sheet's button (348 px at 44 px inside Gothic's carved line): the pictures its
+#. card can show.
+#: rust/src/library.rs
+msgid "Picture..."
+msgstr ""
+
+#. TRANSLATORS: the sheet the folder icon sheet's Picture... button opens: the pictures in grimoire/photos/ its
+#. card can show (about 1400 px at 56 px).
+#: rust/src/library.rs
+msgid "Folder picture"
+msgstr ""
+
+#. TRANSLATORS: the folder picture sheet, with no picture there: where its pictures are copied in.
+#: rust/src/library.rs
+msgid "No pictures in grimoire/photos."
+msgstr ""
+
+#. TRANSLATORS: the Templates sheet's button back to the papers, under its icon (348 px at
+#. 34 px).
+#: rust/src/library.rs rust/src/tplsheet.rs
+msgid "Back"
+msgstr ""
+
+#. TRANSLATORS: a toast (about 1700 px at 44 px in bold) when a folder's icon or picture could not be saved.
+#. TRANSLATORS: a toast (about 1700 px at 44 px in bold) after a notebook's or a folder's menu row that
+#. leaves its pages out of the Graph of all notebooks, or shows them there again: the change could
+#. not be saved.
+#: rust/src/library.rs
+msgid "Couldn't save change."
 msgstr ""
 
 #: rust/src/library.rs
-msgid "New"
+msgid "Show All"
+msgstr ""
+
+#: rust/src/library.rs rust/src/mapview.rs rust/src/packagestore.rs
+msgid "All"
+msgstr ""
+
+#: rust/src/library.rs
+msgid "Folders"
+msgstr ""
+
+#: rust/src/library.rs
+msgid "Sort"
+msgstr ""
+
+#. TRANSLATORS: the home's search found nothing, above the hint under it.
+#: rust/src/library.rs
+msgid "No matches"
 msgstr ""
 
 #: rust/src/library.rs
@@ -3072,8 +3131,14 @@ msgstr ""
 msgid "No notebooks yet"
 msgstr ""
 
+#. TRANSLATORS: under "No matches": what to do (change the search).
 #: rust/src/library.rs
-msgid "Tap New to start one."
+msgid "Try another search."
+msgstr ""
+
+#. TRANSLATORS: under the empty Library (or folder): the + button makes one.
+#: rust/src/library.rs
+msgid "Tap + to start one."
 msgstr ""
 
 #. TRANSLATORS: the new notebook's name, then its Rename button (268 px at 29 px, under its
@@ -3508,45 +3573,102 @@ msgstr ""
 msgid "Couldn't forget controller"
 msgstr ""
 
+#: rust/src/library.rs
+msgid "App update"
+msgstr ""
+
+#: rust/src/library.rs
+msgid "Widget update"
+msgstr ""
+
+#: rust/src/library.rs
+msgid "Updating..."
+msgstr ""
+
+#: rust/src/library.rs rust/src/packagestore.rs
+msgid "Update"
+msgstr ""
+
 #: rust/src/library.rs rust/src/settingsmenu.rs
 msgid "Updates"
 msgstr ""
 
 #: rust/src/library.rs
-msgid "Checking for updates..."
+msgid "System Updates"
 msgstr ""
 
 #: rust/src/library.rs
-msgid "Updates come through KPM, which is not here."
+msgid "System updates use KPM, which isn't installed."
 msgstr ""
 
-#. TRANSLATORS: Settings > Updates' button when the check found a newer Grimoire (%s): a tap
-#. closes Grimoire, KPM installs it, and Grimoire starts again.
+#: rust/src/library.rs
+msgid "Checking for system updates..."
+msgstr ""
+
+#. TRANSLATORS: (Settings > Font, a row of Your fonts) the font file is being checked in the background
+#. before Grimoire uses it. Each of these row notes: about 900 px at 34 px, one line.
+#: rust/src/library.rs
+msgid "Checking..."
+msgstr ""
+
+#. TRANSLATORS: Settings > Updates, the system update's version change (%s is the version
+#. installed, %s the one the update branch offers).
 #: rust/src/library.rs
 #, c-format
-msgid "Update to %s"
+msgid "Version %s → %s"
 msgstr ""
 
+#. TRANSLATORS: Settings > Updates, when the system update branch has nothing newer (%s is
+#. the Grimoire version in use).
 #: rust/src/library.rs
 #, c-format
-msgid "Grimoire %s is the newest."
+msgid "Grimoire %s is up to date."
 msgstr ""
 
 #: rust/src/library.rs
-msgid "Could not check. Is Wi-Fi on?"
+msgid "Couldn't check for system updates. Is Wi-Fi on?"
+msgstr ""
+
+#. TRANSLATORS: starts the share server again.
+#: rust/src/library.rs rust/src/share.rs
+msgid "Retry"
 msgstr ""
 
 #: rust/src/library.rs
-msgid "Could not check for updates."
+msgid "Couldn't check for system updates."
 msgstr ""
 
 #: rust/src/library.rs
-msgid "Check for updates"
+msgid "System update not checked yet."
+msgstr ""
+
+#: rust/src/library.rs
+msgid "Check"
+msgstr ""
+
+#: rust/src/library.rs
+msgid "Grimoire"
 msgstr ""
 
 #. TRANSLATORS: Settings > Updates, the row whose switch picks the branch updates come from.
 #: rust/src/library.rs
 msgid "Update branch"
+msgstr ""
+
+#: rust/src/library.rs
+msgid "Package Updates"
+msgstr ""
+
+#: rust/src/library.rs
+msgid "Checking the Package Store..."
+msgstr ""
+
+#: rust/src/library.rs
+msgid "Looking for package updates..."
+msgstr ""
+
+#: rust/src/library.rs
+msgid "All your packages are up to date."
 msgstr ""
 
 #: rust/src/library.rs
@@ -3630,11 +3752,6 @@ msgstr ""
 
 #: rust/src/library.rs rust/src/share.rs
 msgid "Wi-Fi unavailable"
-msgstr ""
-
-#. TRANSLATORS: starts the share server again.
-#: rust/src/library.rs rust/src/share.rs
-msgid "Retry"
 msgstr ""
 
 #: rust/src/library.rs rust/src/share.rs
@@ -3839,7 +3956,7 @@ msgstr ""
 msgid "Use"
 msgstr ""
 
-#: rust/src/library.rs
+#: rust/src/library.rs rust/src/packagestore.rs
 msgid "Try again"
 msgstr ""
 
@@ -3852,6 +3969,10 @@ msgstr ""
 #: rust/src/library.rs
 #, c-format
 msgid "Automatic (%s)"
+msgstr ""
+
+#: rust/src/library.rs
+msgid "Exit"
 msgstr ""
 
 #. TRANSLATORS: (Settings, Classic only) the row that opens the Font sheet, with the font in use
@@ -3884,12 +4005,6 @@ msgstr ""
 #: rust/src/library.rs
 #, c-format
 msgid "Mirror PDFs to %s (USB)"
-msgstr ""
-
-#. TRANSLATORS: (Settings > Font, a row of Your fonts) the font file is being checked in the background
-#. before Grimoire uses it. Each of these row notes: about 900 px at 34 px, one line.
-#: rust/src/library.rs
-msgid "Checking..."
 msgstr ""
 
 #. TRANSLATORS: (a row of Your fonts) the font can be used, but lacks some letters of the
@@ -3968,6 +4083,24 @@ msgid "Checking %d font..."
 msgid_plural "Checking %d fonts..."
 msgstr[0] ""
 msgstr[1] ""
+
+#: rust/src/library.rs rust/src/packagestore.rs rust/src/widgetpkgui.rs
+msgid "Apps"
+msgstr ""
+
+#: rust/src/library.rs
+msgid "About"
+msgstr ""
+
+#. TRANSLATORS: the All apps page's button that opens the app package manager (as the widget
+#. popup's Manage widgets... opens the widget one).
+#: rust/src/library.rs
+msgid "Manage apps..."
+msgstr ""
+
+#: rust/src/library.rs
+msgid "Import over Wi-Fi"
+msgstr ""
 
 #: rust/src/library.rs
 msgid "Searching... Put the controller in pairing mode."
@@ -4137,6 +4270,12 @@ msgstr ""
 msgid "Rename folder"
 msgstr ""
 
+#. TRANSLATORS: a folder's menu (see Rename folder): the icon on its card, and a picture from
+#. grimoire/photos/ in its place.
+#: rust/src/library.rs
+msgid "Icon & picture..."
+msgstr ""
+
 #. TRANSLATORS: a folder's menu (see Rename folder): to another folder or the top level,
 #. with everything in it.
 #: rust/src/library.rs
@@ -4245,10 +4384,6 @@ msgid "Ganten's GitHub"
 msgstr ""
 
 #: rust/src/library.rs
-msgid "About"
-msgstr ""
-
-#: rust/src/library.rs
 #, c-format
 msgid "Grimoire %s"
 msgstr ""
@@ -4276,7 +4411,8 @@ msgstr ""
 
 #. TRANSLATORS: Settings > System > About > a link, above the link's QR code.
 #. TRANSLATORS: also a web link's card, above the address's QR code (about 680 px at 34 px).
-#: rust/src/library.rs rust/src/linkcard.rs
+#: rust/src/library.rs rust/src/linkcard.rs rust/src/packagestore.rs
+#: rust/src/widgetpkgui.rs
 msgid "Scan with a phone's camera"
 msgstr ""
 
@@ -4326,6 +4462,12 @@ msgstr ""
 msgid "Notebook %s"
 msgstr ""
 
+#. TRANSLATORS: Link to...'s tool button that finds a page by its number or name for the link (in caps
+#. at 34 px under its icon: about 540 px, or two lines; 860 px when there are two buttons).
+#: rust/src/library.rs rust/src/linkbar.rs
+msgid "Search"
+msgstr ""
+
 #. TRANSLATORS: a toast: the update could not be asked for (the storage is full, say).
 #: rust/src/library.rs
 msgid "Couldn't start update"
@@ -4339,11 +4481,49 @@ msgstr ""
 msgid "Couldn't update KOReader. Patch conflict or storage error?"
 msgstr ""
 
-#. TRANSLATORS: a toast (about 1700 px at 44 px in bold) after a notebook's or a folder's menu row that
-#. leaves its pages out of the Graph of all notebooks, or shows them there again: the change could
-#. not be saved.
+#. TRANSLATORS: a toast after Import Kindle notebooks: the Kindle's notebook folder was not found.
 #: rust/src/library.rs
-msgid "Couldn't save change."
+msgid "Couldn't find the Kindle's notebooks folder."
+msgstr ""
+
+#. TRANSLATORS: a toast after Import Kindle notebooks: the Kindle's catalog lists notebooks that
+#. have no notebook file on disk yet. They stay in Amazon's cloud until opened on the device.
+#: rust/src/library.rs
+#, c-format
+msgid ""
+"%d Kindle notebooks are in the cloud only. Open them once in the Kindle app "
+"first."
+msgstr ""
+
+#. TRANSLATORS: a toast after Import Kindle notebooks: the folders are there but hold no notebook
+#. file. The Kindle keeps a notebook in Amazon's cloud until it is opened on the device.
+#: rust/src/library.rs
+msgid "No Kindle notebooks on disk. Open them once in the Kindle app first."
+msgstr ""
+
+#: rust/src/library.rs
+msgid "No new Kindle notebooks found."
+msgstr ""
+
+#: rust/src/library.rs
+msgid "Couldn't copy the Kindle notebooks."
+msgstr ""
+
+#. TRANSLATORS: a toast after Import Kindle notebooks: the first batch of the notebooks found is
+#. being imported; tapping it again imports the rest.
+#: rust/src/library.rs
+#, c-format
+msgid "Importing %d of %d Kindle notebooks."
+msgstr ""
+
+#: rust/src/library.rs
+msgid "Importing 1 Kindle notebook."
+msgstr ""
+
+#. TRANSLATORS: a toast after Import Kindle notebooks: how many are being imported.
+#: rust/src/library.rs
+#, c-format
+msgid "Importing %d Kindle notebooks."
 msgstr ""
 
 #. TRANSLATORS: a toast after a file was picked to import while an import from an earlier run is
@@ -4442,12 +4622,6 @@ msgstr ""
 msgid "Where does the link go?"
 msgstr ""
 
-#. TRANSLATORS: Link to...'s tool button that finds a page by its number or name for the link (in caps
-#. at 34 px under its icon: about 540 px, or two lines; 860 px when there are two buttons).
-#: rust/src/linkbar.rs
-msgid "Search"
-msgstr ""
-
 #. TRANSLATORS: Link to...'s tool button that opens the Pages view to tap the page the link goes to (in
 #. caps at 34 px under its icon: about 540 px, or two lines).
 #: rust/src/linkbar.rs
@@ -4517,10 +4691,6 @@ msgstr ""
 #. card button that shows its adjacent pages, a third of the card (up to 360 px at 34 px).
 #: rust/src/mapview.rs
 msgid "Adjacent"
-msgstr ""
-
-#: rust/src/mapview.rs
-msgid "All"
 msgstr ""
 
 #: rust/src/mapview.rs
@@ -4674,6 +4844,22 @@ msgstr ""
 msgid "Notebook gone"
 msgstr ""
 
+#. TRANSLATORS: the title of the pick the Templates sheet's From a notebook... tile opens (issue
+#. #195), while the notebook whose page it takes is picked.
+#: rust/src/notebookpicker.rs
+msgid "From a notebook"
+msgstr ""
+
+#. TRANSLATORS: the line under the title of the pick From a notebook... opens (small text, nearly
+#. the screen's width): first while picking the notebook, then over its pages.
+#: rust/src/notebookpicker.rs
+msgid "Tap the page to use as this page's template."
+msgstr ""
+
+#: rust/src/notebookpicker.rs
+msgid "Pick the notebook whose page it takes."
+msgstr ""
+
 #. TRANSLATORS: Copy to notebook...'s button over the picked notebook's pages (about 400 px,
 #. 44 px text): the copies go after its last page.
 #: rust/src/notebookpicker.rs
@@ -4692,6 +4878,357 @@ msgstr ""
 
 #: rust/src/notebookpicker.rs
 msgid "No notebooks here."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "No saved catalog. Connect to the Internet, then tap Refresh."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Showing the saved catalog."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Reading the Store..."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Refreshing the Store..."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Couldn't refresh the Store."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Downloading update..."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Imported from packages/import"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Couldn't import"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Installed"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Install"
+msgstr ""
+
+#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
+msgid "Reading package.yaml..."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Enter a GitHub repository or a .yaml address."
+msgstr ""
+
+#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
+msgid "Looking up the repository..."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "The manifest names no artifact that can be downloaded."
+msgstr ""
+
+#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
+msgid "Downloading the package..."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Downloading the package icon..."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "The package's manifest was lost."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "That package is no longer in the Store."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "The Store does not know this package kind."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid "Updated %s to %s."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "The selected package is gone."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "The manifest does not match its Store listing."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "The manifest's version does not match its Store listing."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid ""
+"The update changes the license from %s to %s. Open the package in the Store "
+"and accept it there."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Updated"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "That repository has no package.yaml."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Connect to the Internet to read the license's text."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "The package names no license text the Store could read."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "The repository has no license text the Store could read."
+msgstr ""
+
+#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
+msgid "Reading the license..."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Uninstalled"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Search packages"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "GitHub repository"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "App"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Widget"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Featured"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Search:"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "No packages are installed."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "No packages match your search."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Nothing in the Store yet."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Tap Refresh to check again."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Refresh"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "No screenshots yet."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Loading screenshot..."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Screenshot"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "By"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Category:"
+msgstr ""
+
+#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
+msgid "License:"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "GitHub:"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Homepage:"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Tags:"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Added:"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Package"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Update to"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Uninstall"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Repository URL"
+msgstr ""
+
+#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
+msgid "License"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Show less"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Read more"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Trust this package?"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "by"
+msgstr ""
+
+#. TRANSLATORS: the Package Store's trust page. %s is the package kind (app or widget).
+#: rust/src/packagestore.rs
+#, c-format
+msgid ""
+"You MUST trust the author of this package. Grimoire does not review, vet, or "
+"verify %s code and is not responsible for any damage, data loss, or "
+"malfunction caused by installing or running it."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid ""
+"This update changes the license from %s to %s. Read it before you accept."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "I trust the author, continue"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Back to the package"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Accept the license"
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid ""
+"The update changes the license from %s to %s. Read it and accept it to "
+"update %s."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid "Read the license and accept it to install %s."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "I accept the license"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Don't install"
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid "This update changes the license from %s to %s."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid "The license %s is installed under."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid "The license %s is published under."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Uninstall this package?"
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid ""
+"Uninstall %s? Its widget or app is closed and its files are deleted. Your "
+"layout is kept."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Install from GitHub"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid ""
+"Type a GitHub repository as user/repo, or an https address ending in .yaml, "
+"on the keyboard below."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Tap Done to download it. Nothing is written until you trust the author."
+msgstr ""
+
+#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
+msgid "Repository"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Couldn't open the Store"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Something went wrong"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Back to the Store"
 msgstr ""
 
 #. TRANSLATORS: under each page's picture in the Pages view (436 px at 44 px sideways), the
@@ -5144,6 +5681,18 @@ msgid ""
 "The eraser takes away only what it touches; harder pressure = bigger reach."
 msgstr ""
 
+#: rust/src/quick.rs
+msgid "Quick settings"
+msgstr ""
+
+#: rust/src/quick.rs
+msgid "Rotation lock"
+msgstr ""
+
+#: rust/src/quick.rs
+msgid "Auto brightness"
+msgstr ""
+
 #. TRANSLATORS: Settings' Pen category, the row that opens the pen button's choices, with the
 #. choice in use: "Pen button: Nothing".
 #: rust/src/settingsmenu.rs
@@ -5231,6 +5780,12 @@ msgstr ""
 
 #: rust/src/settingsmenu.rs
 msgid "General"
+msgstr ""
+
+#. TRANSLATORS: Settings' General category row: imports the notebooks of the Kindle's own notebook app.
+#. (last, so the rows above it keep their places)
+#: rust/src/settingsmenu.rs
+msgid "Import Kindle notebooks"
 msgstr ""
 
 #. TRANSLATORS: the row that turns Grimoire's dark mode (white on black) on or off.
@@ -5380,33 +5935,11 @@ msgstr ""
 msgid "Wake the Kindle to share again."
 msgstr ""
 
-#. TRANSLATORS: a toast (about 1700 px at 44 px in bold, or two lines): the clock and battery were turned
-#. on with a shortcut where no notebook page is in front; they show on a page only.
-#: rust/src/status.rs
-msgid "Clock and battery on (shown on notebook pages)."
-msgstr ""
-
-#. TRANSLATORS: a toast: the clock and battery were turned off with a shortcut.
-#: rust/src/status.rs
-msgid "Clock and battery off."
-msgstr ""
-
-#. TRANSLATORS: a toast (about 1700 px at 44 px in bold, or two lines) when the status-corner shortcut moves the
-#. clock and battery where no notebook page is in front: which corner of the page they sit in now.
-#: rust/src/status.rs
-msgid "Clock and battery: top left corner of page"
-msgstr ""
-
-#: rust/src/status.rs
-msgid "Clock and battery: top right corner of page"
-msgstr ""
-
-#: rust/src/status.rs
-msgid "Clock and battery: bottom right corner of page"
-msgstr ""
-
-#: rust/src/status.rs
-msgid "Clock and battery: bottom left corner of page"
+#. TRANSLATORS: (also) the tile after From a file... on the Templates sheet, under its picture (a tile of about
+#. 250 px, on two lines if need be): it opens a pick of a notebook and one of its pages, to use that page as the
+#. open page's template.
+#: rust/src/tplsheet.rs
+msgid "From a notebook..."
 msgstr ""
 
 #. TRANSLATORS: the heading of the Templates sheet when grimoire/templates has no picture to
@@ -5588,6 +6121,99 @@ msgstr ""
 #, c-format
 msgctxt "date"
 msgid "%s %d"
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "Settings reset to defaults."
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "Installing"
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "Install this app?"
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "Install this widget?"
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "License agreement"
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "Remove this package?"
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "Update all"
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "Install from repository..."
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "Author:"
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "Repository:"
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "Settings..."
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "Check for updates"
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "View license"
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "View QR code"
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "Remove..."
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid ""
+"Enter a GitHub repository as user/repo, or an https address ending in .yaml."
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "Tap Done on the keyboard to install."
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "I trust this author, continue"
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "No license text was found in the repository."
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "I have read and agree"
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "Changes are saved on this Kindle."
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "Reset all to defaults"
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
+msgid "Remove"
 msgstr ""
 
 #. TRANSLATORS: the studio's presets, each a whole look, on buttons.
