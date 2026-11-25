@@ -1236,6 +1236,12 @@ fn an_import_takes_its_charge_from_the_calls_budget() {
     near(charged("field.icon.flat", field(900, 10, 4, 0, 0), field(900, 10, 0, 0, 0)), 64 * 64 * 2 + 4 * 4, "the icon of a field 10 px high");
     near(charged("field.icon.none", field(0, 0, 4, 0, 0), field(0, 0, 0, 0, 0)), 64 * 64 * 2 + 4 * 4, "the icon of a field of no size");
     near(charged("field.texts", field(900, 100, 0, 5, 6), field(900, 100, 0, 0, 0)), 5 * 48 * 32 + 16 * 5 * 5 + 6 * 48 * 32 + 16 * 6 * 6, "its text and its hint");
+    // A select's chevron and the mark that clears a text field, each an icon of 64 px: against a chip of the same
+    // size, which is the same two round frames with no icon.
+    near(charged("select.chevron", select(660, 100, 0, 0), chip(660, 100, 0)), 64 * 64 * 2, "a select's chevron");
+    near(charged("select.chevron.none", select(0, 0, 0, 0), chip(0, 0, 0)), 64 * 64 * 2, "a select of no size has its chevron");
+    near(charged("field.mark", field(900, 100, 0, 0, 0), chip(900, 100, 0)), 64 * 64 * 2, "the mark that clears a text field");
+    near(charged("field.mark.none", field(0, 0, 0, 0, 0), chip(0, 0, 0)), 64 * 64 * 2, "a text field of no size has its mark");
     // A row: its card (one frame), its icon and its switch (each of one size), and its label on up to two lines.
     let row = |w: i32, h: i32, icon: i32, label: i32, switch: i32| call("row", &[0, 0, w, h, 0, icon, 0, label, 0, switch]);
     near(charged("row", row(900, 120, 0, 0, -1), row(0, 0, 0, 0, -1)), frame(900, 120, 32), "a row");
