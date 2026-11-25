@@ -805,8 +805,8 @@ announcements: goingToScreenSaver draws the sleep screen, outOfScreenSaver is th
   LICENSE or musl's COPYRIGHT, or one of those notices. A vendored directory with no license file,
   a font without its OFL text, or a missing notice fails package-check, and so does a change to
   FBINK_SRC until its notice is added. package-check also holds the size guard (the owner's
-  decision D23, raised for 2.1.0-beta.2 and again for 2.2): the Kindle binary under 13 MB (13,000,000 bytes) and the
-  zip under 7 MB.
+  decision D23, raised for 2.1.0-beta.2, for 2.2, and on main after 2.2 for the Kindle binary): the Kindle binary
+  under 14 MB (14,000,000 bytes) and the zip under 7 MB.
 
 ## Tests
 
