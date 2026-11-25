@@ -82,7 +82,7 @@ pub const KIT_THICKNESS_MAX: i32 = 4096;
 /// Every call of the kit, whatever it is given and whether or not the package may draw.
 pub const KIT_CHARGE_CALL: u64 = APP_CHARGE_CALL;
 /// A text broken into lines (`text` with WRAP, `text_lines`, `measure_height`): this for each byte. Each word is
-/// measured once, and a word wider than the line is broken between its letters by halving (`kit_lines`).
+/// measured once, and a word wider than the line is broken between its letters by doubling and halving (`kit_lines`).
 pub const KIT_CHARGE_WRAP: u64 = 384;
 
 // ---- metric ids (docs/KIT.md, Metrics) ----
