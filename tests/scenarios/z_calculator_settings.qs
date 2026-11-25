@@ -10,12 +10,10 @@ wait 100
 tap 1564 2254
 wait 300
 expect screen is editor
-# Settings → Packages → Widgets → the calculator's detail page and settings.
-tap panel settings
-wait 400
-tap panel settings.cat.5
+# The widget popup's Manage widgets... → the calculator's detail page and settings.
+tap panel widgets
 wait 300
-tap panel settings.packages
+tap panel widgets.manage
 wait 400
 expect editor.packages is 1 com.grimoire.calculator 1.2.0
 tap panel packages.row.0
@@ -46,11 +44,9 @@ wait 400
 expect editor.widget.0.status is scientific|0|scientific,programming
 shot 02-calculator-settings-frame
 # Turning off the mode a frame is showing falls back to the first enabled calculator.
-tap panel settings
-wait 400
-tap panel settings.cat.5
+tap panel widgets
 wait 300
-tap panel settings.packages
+tap panel widgets.manage
 wait 400
 tap panel packages.row.0
 wait 300
@@ -65,11 +61,9 @@ wait 400
 expect editor.widget.0.status is scientific|0|scientific
 shot 03-calculator-settings-fallback
 # Reset restores all three calculators; the open frame keeps its valid mode.
-tap panel settings
-wait 400
-tap panel settings.cat.5
+tap panel widgets
 wait 300
-tap panel settings.packages
+tap panel widgets.manage
 wait 400
 tap panel packages.row.0
 wait 300
