@@ -375,7 +375,7 @@ fn start_job(ui: &mut WidgetPkgUi, stage: FetchStage, url: String, input: &str, 
 /// The license files a repository may keep beside its manifest, in the order tried.
 const LICENSE_FILES: [&str; 5] = ["LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING", "COPYING.md"];
 
-fn license_urls(base: &str) -> Vec<String> {
+pub(crate) fn license_urls(base: &str) -> Vec<String> {
     LICENSE_FILES.iter().map(|name| format!("{base}/{name}")).collect()
 }
 
@@ -398,7 +398,7 @@ fn manifest_license_candidates(manifest_url: &str, p: &WidgetPackage) -> Vec<Str
 
 /// The same for a package that is already installed: its `license_url`, else the LICENSE file of
 /// the repository it came from (a direct `.yaml` address or a GitHub repository).
-fn installed_license_candidates(source: &str, p: &WidgetPackage) -> Vec<String> {
+pub(crate) fn installed_license_candidates(source: &str, p: &WidgetPackage) -> Vec<String> {
     if !p.license_url.is_empty() {
         return vec![p.license_url.clone()];
     }
@@ -1229,7 +1229,7 @@ fn action_row(c: &mut Canvas, ui: &mut WidgetPkgUi, r: Rect, label: &str, icon: 
 /// A license's text as lines that fit `width` at `px`, at its own line breaks (a license therefore
 /// keeps its paragraphs instead of shrinking to one size-fit block). A word longer than the page is
 /// broken between its characters.
-fn license_lines(text: &str, px: f32, width: i32) -> Vec<String> {
+pub(crate) fn license_lines(text: &str, px: f32, width: i32) -> Vec<String> {
     let f = FontFace::Regular;
     let space = font_measure(f, px, " ");
     let mut out: Vec<String> = Vec::new();

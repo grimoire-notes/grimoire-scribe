@@ -182,10 +182,10 @@ named by its index in the open list, which is how a scenario reaches the control
 `widget.0.hit.N` stays a valid name only while that region exists. A package's own status text is
 read with `editor.widget.0.status`. A frame's due redraw (`request_redraw`) waits while the pen is near, as the
 status bar's minute refresh does in a notebook: a script follows a `pentap` with `pen leave` to let it come
-(tests/scenarios/z_widget_pen.qs). The Packages page is Settings → Packages
-→ Widgets: `settings.cat.5` picks the Packages category and `settings.packages` opens the Widgets
-page. Its controls are `packages.close` (the X, which closes Settings), `packages.back` (to
-Settings), `packages.row.ID` (or its index, `packages.row.0`), `packages.update-all`,
+(tests/scenarios/z_widget_pen.qs). The Packages page opens from the widget popup's Manage widgets…
+(`widgets.manage`); packages are installed from the Package Store now. Its controls are
+`packages.close` (the X, which closes Settings), `packages.back` (to Settings),
+`packages.row.ID` (or its index, `packages.row.0`), `packages.update-all`,
 `packages.install`, `packages.remove`, `packages.remove-yes`, `packages.update`, `packages.trust`,
 `packages.license-yes`, `packages.license-view`, `packages.license-prev`, `packages.license-next` and
 `packages.qr`; a settings row is `packages.setting.KEY` (or `packages.setting.N`); the repository
@@ -193,10 +193,16 @@ address is typed on the regular keyboard (its Done installs, as Done answers eve
 The Package Store is the home app row's fourth built-in app, `library app.store`. Its controls are
 `store.close`, `store.back`, `store.refresh`, `store.filter.N` (0 all, 1 apps, 2 widgets),
 `store.package.ID`, `store.prev`, `store.next`, `store.shot.prev`, `store.shot.next`,
-`store.install`, `store.trust`, `store.qr` and `store.retry`. Its state is read with
-`library.store.view` (`list`, `detail`, `trust`, `busy`, `error` or `qr`), `.open`, `.filter`,
-`.packages`, `.visible` (ids in catalog order), `.selected`, `.featured`, `.screenshots`, `.shot`,
-`.shot.loaded`, `.shot.coming`, `.icon.loaded`, `.list.icons`, `.status`, `.error` and `.page`. `GRIMOIRE_PACKAGE_STORE_URL`
+`store.install`, `store.trust`, `store.accept`, `store.qr` and `store.retry`, the package page's
+`store.license` (read the license), `store.desc.more` (Read more / Show less) and
+`store.license.prev`/`store.license.next`/`store.desc.prev`/`store.desc.next` (their pages). Its
+state is read with `library.store.view` (`list`, `detail`, `trust`, `agree` (accepting the
+license before an install or a license-changing update), `license`, `busy`, `error` or `qr`),
+`.open`, `.filter`, `.packages`, `.visible` (ids in catalog order), `.selected`, `.featured`,
+`.screenshots`, `.shot`, `.shot.loaded`, `.shot.coming`, `.icon.loaded`, `.list.icons`,
+`.status`, `.error`, `.page`, `.license` (the license text read so far), `.license.note` (what
+is said while there is none, or why), `.license.page`, `.desc.more`, `.desc.page` and `.dev.note` (what importing
+`packages/import/` said). `GRIMOIRE_PACKAGE_STORE_URL`
 points the Store at another catalog; `GRIMOIRE_PACKAGE_STORE_OFFLINE=1` reads only the saved
 catalog and its cached images (tests/scenarios/z_package_store.qs).
 The Store's icons and screenshots, and an installed app's bundled icon, are decoded by the
@@ -215,7 +221,9 @@ A visit with a network runs without one: tests/store-curl/curl stands in for cur
 scenario's `# env:` line puts its folder first in `PATH` and names a catalog at
 `https://store.test/index.json`; it answers from the folder `package-store-served` of the
 scenario's data root, which tests/store_many_packages.py fills, 0.3 s a download
-(tests/scenarios/z_package_store_first_visit.qs: a download's end refreshes nothing by itself).
+(tests/scenarios/z_package_store_first_visit.qs: a download's end refreshes nothing by itself). The
+`?v=<time>` query a catalog, manifest, artifact or license fetch adds, so that no cache's copy is
+read, is not part of the path it answers from.
 The same generator makes a saved catalog of any number of packages
 (z_package_store_page_first.qs).
 A disabled button

@@ -232,6 +232,34 @@ pub fn gui_button(c: &mut Canvas, r: Rect, icon: IconKind, label: &str, st: Butt
     }
 }
 
+/// The kit's button with its icon at the left and its label beside it on the right, in both themes.
+/// ui_button puts a Gothic label under the icon (carved buttons); a row of actions whose names must
+/// be read beside their icons (the Store's Install, Uninstall, Repository URL) needs this instead.
+pub fn gui_button_row(c: &mut Canvas, r: Rect, icon: IconKind, label: &str, st: ButtonStyle) {
+    if r.w <= 0 || r.h <= 0 {
+        return;
+    }
+    if !gui_gothic() {
+        gui_button(c, r, icon, label, st);
+        return;
+    }
+    // The carved frame alone, then the glyph and the label on one line.
+    ui_button(c, r, IconKind::None, "", st);
+    let fg: u8 = match st {
+        ButtonStyle::Disabled => 170,
+        ButtonStyle::Selected => 255,
+        _ => 0,
+    };
+    let pad = ui_px(24.0);
+    let inner_h = r.h - 2 * ui_px(8.0);
+    let isz = inner_h.min(ui_px(70.0)).max(ui_px(30.0));
+    ui_icon(c, icon, Rect::new(r.x + pad, r.y + (r.h - isz) / 2, isz, isz), fg);
+    let lx = r.x + pad + isz + ui_px(18.0);
+    let lw = (r.x + r.w - pad - lx).max(0);
+    let ts = ui_small_size().min(inner_h as f32 * 0.34);
+    ui_text(c, FontFace::Caps, ts, ui_small_size().min(ts), Rect::new(lx, r.y, lw, r.h), label, 1, false, fg);
+}
+
 /// A round icon button (Classic) or the carved square one (Gothic): the header's search, apps and
 /// settings, a sheet's close, a card's `...`.
 pub fn gui_icon_button(c: &mut Canvas, r: Rect, icon: IconKind, st: ButtonStyle) {
