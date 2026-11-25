@@ -3611,6 +3611,102 @@ mod tests {
         assert!(memory_of(&mut rt).iter().all(|b| *b == 0));
     }
 
+    /// What a call of `write` (a place, a room: the import's answer) writes into the module's memory, for the
+    /// rooms an app may give, against `held`, what the host has to write: the first bytes of it that the room and
+    /// the memory take, and nothing before the place or behind what was written. A place at or past the memory's
+    /// end or under nothing, and a room of nothing or under it, write nothing.
+    fn keeps_to_its_room(rt: &mut AppRuntime, write: &dyn Fn(&mut AppRuntime, i32, i32) -> i32, held: &[u8], what: &str) {
+        let (len, size) = (held.len(), memory_of(rt).len());
+        assert!(len >= 3, "{what}");
+        let rooms = [(16, len + 100, len), (16, len, len), (16, len - 1, len - 1), (16, 1, 1), (size - 3, 10, 3), (size - 1, len, 1), (size - 1, i32::MAX as usize, 1)];
+        for (at, room, n) in rooms {
+            let before = memory_of(rt).to_vec();
+            assert_eq!(write(rt, at as i32, room as i32), n as i32, "{what}: at {at}, room {room}");
+            let after = memory_of(rt);
+            assert!(after[at..at + n] == held[..n], "{what}: at {at}, room {room}");
+            assert!(after[..at] == before[..at] && after[at + n..] == before[at + n..], "{what}: at {at}, room {room}: a byte beside its room changed");
+            after[at..at + n].copy_from_slice(&before[at..at + n]);
+        }
+        let before = memory_of(rt).to_vec();
+        for (at, room) in [(16, 0), (16, -1), (16, i32::MIN), (-1, 10), (i32::MIN, 10), (size as i32, 10), (size as i32 + 1, i32::MAX), (i32::MAX, 10)] {
+            assert_eq!(write(rt, at, room), 0, "{what}: at {at}, room {room}");
+        }
+        assert!(*memory_of(rt) == before[..], "{what}: written with no room or no place");
+    }
+
+    // Each import that writes into the module's memory writes no more than the room the module gives and the
+    // memory holds (http_body and http_error: the test above): state_get, setting, time_text, date_text and
+    // wifi_ssid. wifi_ssid writes the connected network's name, which is 32 bytes at most: the Wi-Fi helper's
+    // report of a longer name is not read (wifi.rs), and no name is written for it.
+    #[test]
+    fn each_import_that_writes_keeps_to_the_room_given_and_the_memory() {
+        type Write = wasmi::TypedFunc<(i32, i32), i32>;
+        type Setting = wasmi::TypedFunc<(i32, i32, i32, i32), i32>;
+        let dir = scratch("writes");
+        // (a module of one page calling the import, its memory a byte no text has)
+        let calling = |st: HostState, import: &str, params: u8| {
+            let mut rt = runtime_of(st, &module_calling(import, params, 1));
+            memory_of(&mut rt).fill(0xa5);
+            rt
+        };
+
+        let state = b"the saved state of an app".to_vec();
+        let mut st = host(&dir);
+        st.state = state.clone();
+        let mut rt = calling(st, "state_get", 2);
+        let get: Write = rt.instance.get_typed_func(&rt.store, "call").unwrap();
+        keeps_to_its_room(&mut rt, &|rt: &mut AppRuntime, at, room| get.call(&mut rt.store, (at, room)).unwrap(), &state, "state_get");
+
+        let value = "the value of a setting";
+        let mut st = host(&dir);
+        st.settings = vec![("key".to_string(), value.to_string())];
+        let mut rt = calling(st, "setting", 4);
+        memory_of(&mut rt)[40_000..40_003].copy_from_slice(b"key");
+        let setting: Setting = rt.instance.get_typed_func(&rt.store, "call").unwrap();
+        keeps_to_its_room(&mut rt, &|rt: &mut AppRuntime, at, room| setting.call(&mut rt.store, (40_000, 3, at, room)).unwrap(), value.as_bytes(), "setting");
+
+        // (the clock's texts, worked out here as the host works them out, out of the last two seconds of a minute:
+        // the calls give the same texts)
+        while wall_time() % 60 >= 58 {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let mut time = String::new();
+        format_clock_short(wall_time(), false, &mut time, 64);
+        let tm = local_tm(wall_time());
+        let date = format!("{:04}-{:02}-{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+        for (import, held) in [("time_text", time.as_bytes()), ("date_text", date.as_bytes())] {
+            let mut rt = calling(host(&dir), import, 2);
+            let text: Write = rt.instance.get_typed_func(&rt.store, "call").unwrap();
+            keeps_to_its_room(&mut rt, &|rt: &mut AppRuntime, at, room| text.call(&mut rt.store, (at, room)).unwrap(), held, import);
+        }
+
+        // (the Wi-Fi state, as the helper's report of the network connected to sets it)
+        let script = format!("{dir}/wifi-helper.sh");
+        let connected_to = |name: &[u8]| {
+            let hex: String = name.iter().map(|b| format!("{b:02x}")).collect();
+            std::fs::write(&script, format!("printf 'wireless=1\\nenabled=1\\nconnected=1\\ncurrent={hex}\\n'\n")).unwrap();
+            wifi_init(Some(&script));
+            assert!(wifi_request(WifiAction::Current));
+            let end = Instant::now() + Duration::from_secs(20);
+            while wifi_busy() {
+                assert!(Instant::now() < end, "the Wi-Fi helper did not end");
+                wifi_tick();
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            wifi_current()
+        };
+        let longest: Vec<u8> = (0..APP_SSID_MAX).map(|k| b'a' + (k % 26) as u8).collect();
+        assert_eq!((APP_SSID_MAX, connected_to(&longest)), (32, Some(longest.clone())));
+        let mut rt = calling(host(&dir), "wifi_ssid", 2);
+        let ssid: Write = rt.instance.get_typed_func(&rt.store, "call").unwrap();
+        keeps_to_its_room(&mut rt, &|rt: &mut AppRuntime, at, room| ssid.call(&mut rt.store, (at, room)).unwrap(), &longest, "wifi_ssid");
+        let longer = [&longest[..], b"z"].concat();
+        assert_eq!(connected_to(&longer), None, "a report of a name of 33 bytes is not read");
+        assert_eq!(ssid.call(&mut rt.store, (16, 64)).unwrap(), 0);
+        assert!(memory_of(&mut rt).iter().all(|b| *b == 0xa5));
+        wifi_init(None);
+    }
+
     // The http_start import answers from the capability, the request in flight and the request's
     // four lengths before it reads the request: -2, -3 and -1 in that order, and a refused call
     // copies nothing of the module's memory. The measure is time: the module's whole 48 MiB is
