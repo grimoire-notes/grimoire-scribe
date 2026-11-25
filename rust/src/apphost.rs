@@ -20,26 +20,161 @@
 //! ```
 //!
 //! `phase` is 0 down, 1 move, 2 up; `source` is 0 touch, 1 pen. Coordinates are body-local.
+//! The body is all a module draws on: every command is drawn with the canvas clipped to it, whatever
+//! coordinates and sizes it carries, and the `clip` call makes that part smaller, never larger
+//! (`AppRuntime::draw`). The shared status bar, when it is shown, is above the body.
 //! `app_stop` is called exactly once when the app is leaving, whether by gesture, `close()`, an
 //! update, or removal. It is the safe place to save state.
 //!
 //! Imports (`grimoire`): drawing and Grimoire's global UI elements, state and settings, time and
 //! date, battery and Wi-Fi state, screen geometry, and `close()`. All strings are UTF-8 in the
 //! module's memory. See docs/APPS.md for the full list.
+//!
+//! A module has the capabilities its manifest declares and no other (docs/APPS.md, Capabilities):
+//! `storage:app-local` is the saved state (`state_get`, `state_set`, the state file), and `network:http`
+//! the `http_*` calls. Without the capability the call is still there to link against: `state_get`
+//! gives nothing, `state_set` keeps nothing, and `http_start` answers -2. Drawing, touches, keys and
+//! every other call need none: an app is what it draws.
+//!
+//! Each call of the module has a fixed instruction budget, from which the host's work for the imports it calls
+//! is paid as well, and is held to the limits below (docs/APPS.md, Limits).
 
 use crate::globalui::{gui_app_tile, gui_chip, gui_fab, gui_select, gui_status_bar, gui_status_h, gui_surface, gui_text_field};
 use crate::prelude::*;
-use std::time::{Duration, Instant};
+use crate::wasmhost::{charge, in_body, on_screen, TextCharge};
+use std::time::Instant;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
-use wasmi::{Caller, Config, Engine, Extern, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
+use wasmi::{Caller, Config, Engine, Linker, Module, Store, StoreLimits};
 
 const ABI: &str = "grimoire";
-const ARTIFACT_MAX: usize = 32 * 1024 * 1024;
-const STATE_MAX: usize = 256 * 1024;
 const STATE_FILE: &str = "state/runtime.bin";
-const FUEL_PER_CALL: u64 = 30_000_000;
+
+// ---- the limits: what one app and one call of its module may ask for (docs/APPS.md, Limits) ----
+//
+// The host calls a module's `app_draw` (a drawing pass), `app_pointer`, `app_key`, `app_status_bar` and
+// `app_stop`, and runs its start. These are the numbers by which the host counts what a call asks of it, and
+// what a module may hold. The counts start at nothing with each call, a count or a length is compared with
+// its limit before the module's memory is read, and a call that goes past one is stopped as a call that used
+// up its instructions is (`past`).
+
+// (The module's file is at most WIDGET_PKG_ARTIFACT_MAX, widgetpkg.rs.)
+/// A call's instruction budget: the module's own instructions and the host's work for its imports (the charges
+/// below) are paid from it. Every call of the module by the host has this much. A call that needs more is
+/// stopped. A function's first call also pays the interpreter for making it ready to run, about 7 for each
+/// byte of its code (docs/APPS.md, Limits).
+pub const APP_CALL_FUEL: u64 = 30_000_000;
+/// A module has one linear memory, and it may not grow past this.
 const MEMORY_MAX: usize = 48 * 1024 * 1024;
+/// A module has at most one table, of at most this many entries (the function references its indirect calls
+/// go through), and a store holds one instance of one module (`wasmhost::store_limits`). A module that
+/// declares a second memory or table, or one larger than its limit, is not started; `memory.grow` and
+/// `table.grow` past a limit fail as WebAssembly defines it (they return -1), and the module runs on.
+pub const APP_TABLE_MAX: usize = 65_536;
+/// The saved state: `state_set` keeps the first this many bytes.
+pub const APP_STATE_MAX: usize = 256 * 1024;
+/// The bytes `state_get` and `state_set` may move in one call, all their uses together: the whole state read
+/// and written several times over.
+pub const APP_CALL_STATE_MAX: usize = 16 * APP_STATE_MAX;
+/// The drawing commands of one call, of every kind together (the eighteen drawing calls, `clip` and
+/// `clip_clear` among them).
+pub const APP_CALL_COMMANDS_MAX: usize = 4096;
+/// The bytes of one text: a `text`'s, a `text_at`'s, what `text_width` measures, and each label, caption,
+/// value and hint of the kit's elements.
+pub const APP_TEXT_MAX: usize = 1024;
+/// The bytes of all those texts of one call together.
+pub const APP_CALL_TEXT_MAX: usize = 64 * 1024;
+/// The bytes of an icon's name. No icon has a longer one: such a name is not read, and names no icon.
+pub const APP_ICON_NAME_MAX: usize = 64;
+/// The bytes of the status line.
+pub const APP_STATUS_MAX: usize = 256;
+/// The bytes of a toast's text that are read: its first this many (a toast shows no more).
+pub const APP_TOAST_MAX: usize = 256;
+/// The bytes of the connected network's name that `wifi_ssid` writes: the longest a network's name is.
+pub const APP_SSID_MAX: usize = 32;
+/// The delay `request_redraw` may name, in milliseconds; one outside is taken as the nearer end. The shortest
+/// is how often an app can have itself drawn again, and the screen refreshed, by asking.
+pub const APP_REDRAW_MIN_MS: i32 = 100;
+pub const APP_REDRAW_MAX_MS: i32 = 86_400_000;
+/// A text is drawn and measured at most this many pixels high; a larger height is taken as this one. Five
+/// digits this high are as wide as the screen.
+pub const APP_TEXT_PX_MAX: i32 = 768;
+/// An icon is drawn at most this many pixels each way; in a larger rectangle it is this size, in the middle.
+/// (Under the greatest size the font makes a glyph at, for any caller: font.rs, GLYPH_SIDE_MAX.)
+pub const APP_ICON_PX_MAX: i32 = 1024;
+/// A line is drawn at most this many pixels wide, wider than any body; a wider one is drawn at this width.
+pub const APP_LINE_WIDTH_MAX: f32 = 4096.0;
+/// A thickness (an outline's, a round rectangle's, a surface's) is held within this of nothing: a line
+/// thicker than half of the largest rectangle `on_screen` gives fills it as this one does, and one less than
+/// nothing draws as nothing does.
+const THICK_REACH: i32 = 1 << 17;
+
+// ---- the charges: what the host's work for an import takes from the call's budget (docs/APPS.md, Limits) ----
+//
+// The budget counts the module's instructions. The host's work for an import is no instruction of the module's,
+// so each import takes a charge for it from the same budget (`wasmhost::charge`, which the widget host takes
+// its own with): a fixed one for every call, and one by size where the work grows with what the import is
+// given. The numbers are in instructions: about what the work costs beside a module's own, as measured in a
+// release build on a desktop machine, where the longest drawing a budget pays for takes about four times as long
+// as the same budget spent on instructions alone (labels broken into a line for every letter, in the Gothic
+// theme), and a label's time follows the font in use, for the same charge (not measured on a Kindle). When the
+// budget cannot pay, the call ends exactly as a call that used up its instructions ends. The charges are the
+// same in both themes: where the themes draw an element differently, the charge is for the one that takes more
+// work.
+
+/// Every call of an import, whatever it is given and whether or not the app has the capability for it.
+pub const APP_CHARGE_CALL: u64 = 500;
+/// A shape (a rectangle, an outline, a round rectangle, each fill and outline of the kit's elements): one for
+/// this many pixels of the part of it inside the body, which are filled by rows.
+pub const APP_CHARGE_FILL_PX: u64 = 32;
+/// And this for each pixel of it that is worked out by itself: those within a round rectangle's radius or an
+/// outline's thickness of its left and right sides, a line's, and the corners and round ends of the kit's
+/// elements.
+pub const APP_CHARGE_EDGE_PX: u64 = 2;
+/// How far from its left and right sides one of the kit's elements with square ends is worked out pixel by
+/// pixel (its corners and its outline), in pixels. One with round ends: half its smaller side more.
+pub const APP_CHARGE_CORNER: i64 = 32;
+/// `line`: this for each row of the body the line crosses, beside the row's pixels.
+pub const APP_CHARGE_LINE_ROW: u64 = 16;
+/// `text`, `text_at` and the texts of the kit's elements: for each byte, this for each pixel of the height up
+/// to APP_CHARGE_TALL_PX; a taller letter costs by its area, so above that height a byte is charged by the
+/// square of the height (the same at APP_CHARGE_TALL_PX exactly).
+pub const APP_CHARGE_TEXT: u64 = 32;
+pub const APP_CHARGE_TALL_PX: u64 = 64;
+/// A text in the bold, the title or the caps face: and, for each byte, one for this much of the cube of its
+/// height. Where such a face has no bold of its own (the pixel face of the Gothic theme, a font of the owner's
+/// without one), each letter is printed over again and again, more times the taller it is.
+pub const APP_CHARGE_BOLD: u64 = 128;
+/// An icon: this for each pixel of the square of its side (its glyph is made that large, and laid on the body).
+pub const APP_CHARGE_ICON_PX: u64 = 2;
+/// A text that is fitted to its room: this for the square of its bytes. A `text` wider than its room is cut
+/// short by steps that each measure it again, and so is the one line of a chip, a select, an app tile and a
+/// text field: their bytes are counted to APP_CHARGE_SQUARE_BYTES (a text is cut to its first 251 bytes before
+/// those steps: font.rs, `fit`). The label of a button or a row may be broken into two lines, by steps that
+/// measure all of it: all its bytes are counted.
+pub const APP_CHARGE_SQUARE: u64 = 16;
+pub const APP_CHARGE_SQUARE_BYTES: u64 = 256;
+/// The height the texts of the kit's elements are charged at: the kit draws them at its own sizes, all under it.
+pub const APP_CHARGE_LABEL_PX: i64 = 48;
+/// The side the kit's icons of one size are charged at: a row's icon, a select's chevron, the mark that clears a
+/// text field. (And the least a text field's own icon is charged at: that one is as tall as the field.)
+pub const APP_CHARGE_SMALL_ICON_PX: i64 = 64;
+/// A row's switch: its two round frames, of one size.
+pub const APP_CHARGE_SWITCH: u64 = 30_000;
+/// `text_width`: each byte measured.
+pub const APP_CHARGE_MEASURE: u64 = 32;
+/// `status`, `toast`, `setting`, an icon's name: each byte read from the module's memory, or written to it, as
+/// text.
+pub const APP_CHARGE_BYTE: u64 = 4;
+/// `state_get`, `state_set`, what `http_start` reads, `http_body`, `http_error`: one for this many bytes copied
+/// as they are.
+pub const APP_CHARGE_COPY_BYTES: u64 = 4;
+/// `time_text`, `date_text`, `battery_percent`, `battery_charging`, `http_poll`: the calls that ask the system
+/// for something each time.
+pub const APP_CHARGE_SYSTEM: u64 = 20_000;
+/// `http_start`, for a request that is read (the capability declared, none in flight, its lengths within their
+/// limits): the start of its curl, whether or not the request then starts.
+pub const APP_CHARGE_REQUEST: u64 = 7_500_000;
 
 /// A drawing command recorded by the module and rendered by the host. Coordinates are body-local.
 #[derive(Clone, Debug)]
@@ -65,7 +200,19 @@ enum DrawCmd {
 }
 
 struct HostState {
+    /// the package's id, for the log
+    id: String,
+    /// the manifest declares `storage:app-local`: the state is read, kept and saved
+    storage: bool,
+    /// the size of the body the call draws on (a drawing pass's; another call keeps the last pass's), for the
+    /// charge of a shape by the part of it inside the body
+    body: (i32, i32),
     commands: Vec<DrawCmd>,
+    /// the bytes of the texts read in this call, and the bytes state_get and state_set moved in it
+    text_bytes: usize,
+    state_bytes: usize,
+    /// the bytes read from the module's memory in this call (`read_mem`)
+    read_bytes: usize,
     state: Vec<u8>,
     state_path: String,
     settings: Vec<(String, String)>,
@@ -76,7 +223,9 @@ struct HostState {
     toast: Option<(String, u32)>,
     dirty: bool,
     limits: StoreLimits,
-    redraw_at: Option<Instant>,
+    /// when the module asked to be drawn again, by the app's clock (`now_ms`); None while no request stands.
+    /// One request stands at a time, the soonest asked for, until the host's tick takes it (`redraw_taken`).
+    redraw_at: Option<u32>,
     screen_w: i32,
     screen_h: i32,
     clock_12h: bool,
@@ -232,6 +381,10 @@ pub struct AppRuntime {
     status: String,
     texts: Vec<String>,
     error: Option<String>,
+    /// what the last call took from its budget
+    used: u64,
+    /// the drawing commands of the last drawing pass
+    drawn: usize,
 }
 
 impl std::fmt::Debug for AppRuntime {
@@ -301,12 +454,12 @@ impl AppRun {
         }
     }
 
-    fn draw(&mut self, c: &mut Canvas, body: Rect, status_h: i32) {
+    fn draw(&mut self, c: &mut Canvas, body: Rect) {
         let now = Instant::now();
         let elapsed = self.last_draw.map_or(0, |at| now.duration_since(at).as_millis().min(i32::MAX as u128) as i32);
         self.last_draw = Some(now);
         let Some(r) = self.runtime.as_mut() else { return };
-        r.draw(c, body, status_h, elapsed);
+        r.draw(c, body, elapsed);
     }
 
     fn tick(&mut self) {
@@ -335,19 +488,19 @@ pub fn apphost_launch(a: &mut App, id: &str) -> bool {
     if a.app_view.open {
         apphost_close(a);
     }
-    let Some(m) = crate::apppkg::app_package_installed_manifest(id) else {
+    if crate::apppkg::app_package_installed_manifest(id).is_none() {
         app_toast(a, "That app is no longer installed.", 3000);
-        return false;
-    };
-    let Some(it) = crate::apppkg::app_package_installed(id) else {
-        app_toast(a, "That app is no longer installed.", 3000);
-        return false;
-    };
-    if m.type_ != "app" {
-        app_toast(a, "That package is not an app.", 3000);
         return false;
     }
-    match AppRuntime::new(&it, &m, a.w, a.h, a.settings.clock_12h) {
+    // (the app's module, once its file has been checked again: apppkg.rs)
+    let (it, m, module) = match crate::apppkg::app_package_artifact(id) {
+        Ok(loaded) => loaded,
+        Err(e) => {
+            app_toast(a, &e, 5000);
+            return false;
+        }
+    };
+    match AppRuntime::new(&it, &m, &module, a.w, a.h, a.settings.clock_12h) {
         Ok(r) => {
             let icon = if m.spec.icon.trim().is_empty() { IconKind::Grid } else { widget_icon(&m.spec.icon) };
             a.app_view = AppRun {
@@ -375,7 +528,11 @@ pub fn apphost_launch(a: &mut App, id: &str) -> bool {
             crate::library::library_app_launched(a);
             a.app_view.last_draw = Some(Instant::now());
             let App { screen: c, app_view, .. } = a;
-            app_view.draw(c, app_view.body, gui_status_h());
+            app_view.draw(c, app_view.body);
+            // (a first drawing pass that stopped the module: the app is not left open with nothing drawn)
+            if apphost_failed(a) {
+                return false;
+            }
             app_invalidate_all(a, RefreshMode::Full);
             true
         }
@@ -425,7 +582,7 @@ pub fn apphost_draw(a: &mut App) {
     }
     if !rect_is_empty(body) {
         app_view.body = body;
-        app_view.draw(c, body, gui_status_h());
+        app_view.draw(c, body);
     }
     if let Some(err) = app_view.runtime.as_ref().and_then(|r| r.error.as_deref()) {
         app_view.error = err.to_string();
@@ -505,10 +662,7 @@ fn apphost_after_call(a: &mut App) -> bool {
     if let Some((text, ms)) = toast {
         app_toast(a, &text, ms.max(500) as i32);
     }
-    if let Some(e) = error {
-        a.app_view.error = e;
-        app_toast(a, &a.app_view.error.clone(), 5000);
-        apphost_close(a);
+    if error.is_some() && apphost_failed(a) {
         return true;
     }
     if close {
@@ -521,14 +675,31 @@ fn apphost_after_call(a: &mut App) -> bool {
     false
 }
 
+/// An app whose module was stopped (a call that failed, used up its budget or went past a limit) is closed,
+/// and a toast says why. After a touch or a key that is at once; for a drawing pass, which nothing waits for,
+/// the launch and the tick ask this. Returns whether the app was closed.
+fn apphost_failed(a: &mut App) -> bool {
+    let Some(e) = a.app_view.last_error() else { return false };
+    a.app_view.error = e;
+    app_toast(a, &a.app_view.error.clone(), 5000);
+    apphost_close(a);
+    true
+}
+
 /// Ticks an app's timers and its requested redraws. Called from the Library tick.
 pub fn apphost_tick(a: &mut App, now: u32) {
     if !a.app_view.open {
         return;
     }
     a.app_view.tick();
-    let due = a.app_view.runtime.as_ref().is_some_and(|r| r.redraw_due(Instant::now()));
-    if due {
+    // (a drawing pass stopped the module since the last tick)
+    if apphost_failed(a) {
+        return;
+    }
+    // A request that is due is taken, and the app is drawn and the screen refreshed once for it. A pass that
+    // wants another asks again, and gets it no sooner than APP_REDRAW_MIN_MS later; while no request is due
+    // nothing is drawn and nothing is refreshed.
+    if a.app_view.runtime.as_mut().is_some_and(|r| r.redraw_taken(now)) {
         apphost_draw(a);
         app_invalidate_all(a, RefreshMode::Fast);
     }
@@ -539,7 +710,6 @@ pub fn apphost_tick(a: &mut App, now: u32) {
             app_invalidate(a, Rect::new(0, 0, a.w, gui_status_h()), RefreshMode::Ui);
         }
     }
-    let _ = now;
 }
 
 /// The runner's control point for an app: the body's centre (apps receive absolute taps too).
@@ -554,18 +724,34 @@ pub fn apphost_control_point(a: &App, name: &str) -> Option<(f32, f32)> {
 // ---- the runtime ----
 
 impl AppRuntime {
-    fn new(it: &WidgetInstall, m: &WidgetPackage, screen_w: i32, screen_h: i32, clock_12h: bool) -> Result<Self, String> {
-        let path = format!("{}/{}", crate::apppkg::app_package_dir(&it.id), m.artifact.path);
-        let bytes = read_file_max(&path, ARTIFACT_MAX).ok_or("The app's artifact could not be read.")?;
+    /// Loads an installed app's module and starts it, for a screen of `screen_w` by `screen_h` pixels: what a
+    /// launch does, without the screen (the host's tests drive a module through this). The module's file is
+    /// checked again before it is loaded (`app_package_artifact`: a plain file inside the app's folder, with the
+    /// SHA-256 recorded at the install), once for each launch.
+    pub fn open(id: &str, screen_w: i32, screen_h: i32, clock_12h: bool) -> Result<Self, String> {
+        let (it, m, module) = crate::apppkg::app_package_artifact(id)?;
+        Self::new(&it, &m, &module, screen_w, screen_h, clock_12h)
+    }
+
+    /// Compiles and instantiates an installed app's module, whose bytes `app_package_artifact` read.
+    fn new(it: &WidgetInstall, m: &WidgetPackage, bytes: &[u8], screen_w: i32, screen_h: i32, clock_12h: bool) -> Result<Self, String> {
         let mut config = Config::default();
         config.consume_fuel(true);
         let engine = Engine::new(&config);
-        let module = Module::new(&engine, &bytes[..]).map_err(|e| format!("The app's WebAssembly is invalid: {e}"))?;
+        let module = Module::new(&engine, bytes).map_err(|e| format!("The app's WebAssembly is invalid: {e}"))?;
         let state_path = format!("{}/{STATE_FILE}", crate::apppkg::app_package_dir(&it.id));
-        let state = read_file_max(&state_path, STATE_MAX).unwrap_or_default();
+        let storage = m.capabilities.iter().any(|c| c == APP_CAP_STORAGE);
+        // (a state file left by a version that declared the capability is not read, and stays as it is)
+        let state = if storage { read_file_max(&state_path, APP_STATE_MAX).unwrap_or_default() } else { Vec::new() };
         let settings = crate::apppkg::app_settings_load(&it.id, &m.settings);
         let mut store = Store::new(&engine, HostState {
+            id: it.id.clone(),
+            storage,
+            body: (0, 0),
             commands: Vec::new(),
+            text_bytes: 0,
+            state_bytes: 0,
+            read_bytes: 0,
             state,
             state_path,
             settings,
@@ -575,18 +761,19 @@ impl AppRuntime {
             texts: Vec::new(),
             toast: None,
             dirty: false,
-            limits: StoreLimitsBuilder::new().memory_size(MEMORY_MAX).build(),
+            limits: crate::wasmhost::store_limits(MEMORY_MAX, APP_TABLE_MAX),
             redraw_at: None,
             screen_w,
             screen_h,
             clock_12h,
-            network_http: m.capabilities.iter().any(|c| c == "network:http"),
+            network_http: m.capabilities.iter().any(|c| c == APP_CAP_NETWORK),
             http: None,
             #[cfg(test)]
             http_stand_in: Vec::new(),
         });
         store.limiter(|st| &mut st.limits);
-        let _ = store.set_fuel(FUEL_PER_CALL);
+        // The start section runs here, before the app can draw: it has the budget of a call.
+        let _ = store.set_fuel(APP_CALL_FUEL);
         let mut linker = Linker::new(&engine);
         install_imports(&mut linker)?;
         let instance = linker.instantiate_and_start(&mut store, &module).map_err(|e| format!("The app could not start: {e}"))?;
@@ -600,10 +787,13 @@ impl AppRuntime {
             status: String::new(),
             texts: Vec::new(),
             error: None,
+            used: 0,
+            drawn: 0,
         })
     }
 
-    fn draw(&mut self, c: &mut Canvas, body: Rect, status_h: i32, elapsed_ms: i32) {
+    /// Calls `app_draw` and renders its commands into `body`, and nowhere else on the canvas.
+    pub fn draw(&mut self, c: &mut Canvas, body: Rect, elapsed_ms: i32) {
         if self.error.is_some() {
             return;
         }
@@ -614,103 +804,123 @@ impl AppRuntime {
                 return;
             }
         };
-        self.store.data_mut().commands.clear();
         self.store.data_mut().status.clear();
         self.store.data_mut().texts.clear();
-        let _ = self.store.set_fuel(FUEL_PER_CALL);
+        self.begin_call();
+        self.store.data_mut().body = (body.w, body.h);
         let scale = ui_px(1000.0);
-        if let Err(e) = draw.call(&mut self.store, (body.w, body.h, scale, elapsed_ms)) {
+        let called = draw.call(&mut self.store, (body.w, body.h, scale, elapsed_ms));
+        self.end_call();
+        if let Err(e) = called {
             self.error = Some(format!("The app stopped: {e}"));
             return;
         }
         self.save();
         let commands = std::mem::take(&mut self.store.data_mut().commands);
+        self.drawn = commands.len();
         self.status = std::mem::take(&mut self.store.data_mut().status);
         self.texts = std::mem::take(&mut self.store.data_mut().texts);
-        let _ = status_h;
-        canvas_fill(c, body, 255);
+        // Nothing below draws outside the body: the canvas is clipped to it (and to what the caller already
+        // clipped to) until the commands are drawn, and a `clip` of the module's is a part of that.
         let saved_clip = c.clip;
-        for cmd in commands {
-            match cmd {
-                DrawCmd::Fill(r, gray) => canvas_fill(c, abs(body, r), gray),
-                DrawCmd::Outline(r, t, gray) => canvas_rect_outline(c, abs(body, r), t, gray),
-                DrawCmd::Round(r, radius, gray, filled, t) => {
-                    canvas_round_rect(c, abs(body, r), radius, gray, filled, t)
-                }
-                DrawCmd::Line(x0, y0, x1, y1, width, gray) => {
-                    canvas_line_aa(c, body.x as f32 + x0, body.y as f32 + y0, body.x as f32 + x1, body.y as f32 + y1, width, gray)
-                }
-                DrawCmd::Text(r, text, px, face, center, gray) => {
-                    let r = abs(body, r);
-                    ui_text(c, face, px, px, r, &text, 1, center, gray);
-                    self.texts.push(text);
-                }
-                DrawCmd::TextAt(x, y, text, px, face, gray) => {
-                    font_draw(c, face, px, body.x + x, body.y + y, &text, gray);
-                    self.texts.push(text);
-                }
-                DrawCmd::Icon(name, r, gray) => ui_icon(c, widget_icon(&name), abs(body, r), gray),
-                DrawCmd::Button(r, label, icon, style) => {
-                    ui_button(c, abs(body, r), if icon.is_empty() { IconKind::None } else { widget_icon(&icon) }, &label, button_style(style));
-                    self.texts.push(label);
-                }
-                DrawCmd::Chip(r, label, selected) => {
-                    gui_chip(c, abs(body, r), &label, selected);
-                    self.texts.push(label);
-                }
-                DrawCmd::Row(r, icon, label, style, switch) => {
-                    let mut row = Row::new(if icon.is_empty() { IconKind::None } else { widget_icon(&icon) }, &label);
-                    row.style = button_style(style);
-                    if switch >= 0 {
-                        row.switch = Some(switch != 0);
+        let in_body = rect_intersect(saved_clip, body);
+        canvas_set_clip(c, in_body);
+        canvas_fill(c, body, 255);
+        // A module passes any numbers. Each rectangle's edges are held within a reach of the body
+        // (`on_screen`), a place and a line's ends likewise, a thickness within THICK_REACH, a text's height
+        // and a line's width within their limits (when they were recorded), and no icon is made larger than
+        // APP_ICON_PX_MAX: no sum the drawing makes overflows, and nothing is drawn at a size without bound.
+        let at = |r: Rect| on_screen(body, r.x, r.y, r.w, r.h);
+        let texts = &mut self.texts;
+        font_with_icon_side_max(icon_px_max(), || {
+            for cmd in commands {
+                match cmd {
+                    DrawCmd::Fill(r, gray) => canvas_fill(c, at(r), gray),
+                    DrawCmd::Outline(r, t, gray) => canvas_rect_outline(c, at(r), thick(t), gray),
+                    DrawCmd::Round(r, radius, gray, filled, t) => canvas_round_rect(c, at(r), radius, gray, filled, thick(t)),
+                    DrawCmd::Line(x0, y0, x1, y1, width, gray) => {
+                        if let Some((x0, y0, x1, y1)) = line_in_reach(body, x0, y0, x1, y1) {
+                            canvas_line_aa(c, body.x as f32 + x0, body.y as f32 + y0, body.x as f32 + x1, body.y as f32 + y1, width, gray)
+                        }
                     }
-                    ui_row(c, abs(body, r), &row);
-                    self.texts.push(label);
+                    DrawCmd::Text(r, text, px, face, center, gray) => {
+                        ui_text(c, face, px, px, at(r), &text, 1, center, gray);
+                        texts.push(text);
+                    }
+                    DrawCmd::TextAt(x, y, text, px, face, gray) => {
+                        let p = at(Rect::new(x, y, 0, 0));
+                        font_draw(c, face, px, p.x, p.y, &text, gray);
+                        texts.push(text);
+                    }
+                    DrawCmd::Icon(name, r, gray) => ui_icon(c, widget_icon(&name), at(r), gray),
+                    DrawCmd::Button(r, label, icon, style) => {
+                        ui_button(c, at(r), if icon.is_empty() { IconKind::None } else { widget_icon(&icon) }, &label, button_style(style));
+                        texts.push(label);
+                    }
+                    DrawCmd::Chip(r, label, selected) => {
+                        gui_chip(c, at(r), &label, selected);
+                        texts.push(label);
+                    }
+                    DrawCmd::Row(r, icon, label, style, switch) => {
+                        let mut row = Row::new(if icon.is_empty() { IconKind::None } else { widget_icon(&icon) }, &label);
+                        row.style = button_style(style);
+                        if switch >= 0 {
+                            row.switch = Some(switch != 0);
+                        }
+                        ui_row(c, at(r), &row);
+                        texts.push(label);
+                    }
+                    DrawCmd::Surface(r, filled, t) => gui_surface(c, at(r), filled, thick(t)),
+                    DrawCmd::Select(r, caption, value) => {
+                        gui_select(c, at(r), &caption, &value);
+                        texts.push(value);
+                    }
+                    DrawCmd::AppTile(r, icon, label, selected) => {
+                        let icon = AppIcon::glyph(widget_icon(&icon));
+                        gui_app_tile(c, at(r), &icon, &label, selected);
+                        texts.push(label);
+                    }
+                    DrawCmd::Fab(r, icon) => gui_fab(c, at(r), widget_icon(&icon)),
+                    DrawCmd::Card(r, style) => ui_card(c, at(r), button_style(style)),
+                    DrawCmd::TextField(r, icon, text, hint) => {
+                        gui_text_field(c, at(r), if icon.is_empty() { IconKind::None } else { widget_icon(&icon) }, &text, &hint);
+                        texts.push(text);
+                        texts.push(hint);
+                    }
+                    DrawCmd::Clip(r) => canvas_set_clip(c, rect_intersect(at(r), in_body)),
+                    DrawCmd::ClipClear => canvas_set_clip(c, in_body),
                 }
-                DrawCmd::Surface(r, filled, thick) => gui_surface(c, abs(body, r), filled, thick),
-                DrawCmd::Select(r, caption, value) => {
-                    gui_select(c, abs(body, r), &caption, &value);
-                    self.texts.push(value);
-                }
-                DrawCmd::AppTile(r, icon, label, selected) => {
-                    let icon = AppIcon::glyph(widget_icon(&icon));
-                    gui_app_tile(c, abs(body, r), &icon, &label, selected);
-                    self.texts.push(label);
-                }
-                DrawCmd::Fab(r, icon) => gui_fab(c, abs(body, r), widget_icon(&icon)),
-                DrawCmd::Card(r, style) => ui_card(c, abs(body, r), button_style(style)),
-                DrawCmd::TextField(r, icon, text, hint) => {
-                    gui_text_field(c, abs(body, r), if icon.is_empty() { IconKind::None } else { widget_icon(&icon) }, &text, &hint);
-                    self.texts.push(text);
-                    self.texts.push(hint);
-                }
-                DrawCmd::Clip(r) => canvas_set_clip(c, abs(body, r)),
-                DrawCmd::ClipClear => canvas_set_clip(c, saved_clip),
             }
-        }
+        });
         c.clip = saved_clip;
     }
 
-    fn pointer(&mut self, phase: i32, x: i32, y: i32, source: i32) {
+    /// Calls `app_pointer`, when the module has one: a pointer phase at a place of the body.
+    pub fn pointer(&mut self, phase: i32, x: i32, y: i32, source: i32) {
         if self.error.is_some() {
             return;
         }
         let Some(f) = self.instance.get_typed_func::<(i32, i32, i32, i32), ()>(&self.store, "app_pointer").ok() else { return };
-        let _ = self.store.set_fuel(FUEL_PER_CALL);
-        if f.call(&mut self.store, (phase, x, y, source)).is_err() {
+        self.begin_call();
+        let called = f.call(&mut self.store, (phase, x, y, source));
+        self.end_call();
+        if called.is_err() {
             self.error = Some("The app stopped while handling a touch.".into());
             return;
         }
         self.save();
     }
 
-    fn key(&mut self, code: i32, mods: i32, down: bool) {
+    /// Calls `app_key`, when the module has one.
+    pub fn key(&mut self, code: i32, mods: i32, down: bool) {
         if self.error.is_some() {
             return;
         }
         let Some(f) = self.instance.get_typed_func::<(i32, i32, i32), ()>(&self.store, "app_key").ok() else { return };
-        let _ = self.store.set_fuel(FUEL_PER_CALL);
-        if f.call(&mut self.store, (code, mods, i32::from(down))).is_err() {
+        self.begin_call();
+        let called = f.call(&mut self.store, (code, mods, i32::from(down)));
+        self.end_call();
+        if called.is_err() {
             self.error = Some("The app stopped while handling a key.".into());
             return;
         }
@@ -719,18 +929,56 @@ impl AppRuntime {
 
     fn export_status_bar(&mut self) -> Option<bool> {
         let f = self.instance.get_typed_func::<(), i32>(&self.store, "app_status_bar").ok()?;
-        let _ = self.store.set_fuel(FUEL_PER_CALL);
-        f.call(&mut self.store, ()).ok().map(|v| v != 0)
+        self.begin_call();
+        let called = f.call(&mut self.store, ());
+        self.end_call();
+        called.ok().map(|v| v != 0)
     }
 
-    fn stop(&mut self) {
+    /// Calls `app_stop`, when the module has one and has not stopped with an error, and saves its state.
+    pub fn stop(&mut self) {
         if self.error.is_none() {
             if let Ok(f) = self.instance.get_typed_func::<(), ()>(&self.store, "app_stop") {
-                let _ = self.store.set_fuel(FUEL_PER_CALL);
+                self.begin_call();
                 let _ = f.call(&mut self.store, ());
+                self.end_call();
             }
         }
         self.save();
+    }
+
+    /// Starts a call of the module: its instruction budget, and nothing recorded and nothing counted yet. What
+    /// an earlier call left recorded (a touch that drew) is dropped: a call holds its own commands only, so
+    /// its limits are the most the host ever keeps.
+    fn begin_call(&mut self) {
+        let st = self.store.data_mut();
+        st.commands.clear();
+        st.text_bytes = 0;
+        st.state_bytes = 0;
+        st.read_bytes = 0;
+        let _ = self.store.set_fuel(APP_CALL_FUEL);
+    }
+
+    /// After a call: what it took from its budget, whether it ended or was stopped.
+    fn end_call(&mut self) {
+        self.used = APP_CALL_FUEL.saturating_sub(self.store.get_fuel().unwrap_or(0));
+    }
+
+    /// What the last call of the module took from its budget: its own instructions and the charges for the
+    /// host's work. At most APP_CALL_FUEL, which a call that was stopped for it has used up.
+    pub fn fuel_used(&self) -> u64 {
+        self.used
+    }
+
+    /// The drawing commands the last drawing pass recorded and the host drew. At most APP_CALL_COMMANDS_MAX.
+    pub fn commands(&self) -> usize {
+        self.drawn
+    }
+
+    /// The bytes the host read from the module's memory in the last call, all its imports together. Never more
+    /// than the limits let an import read, whatever lengths the module passed.
+    pub fn bytes_read(&self) -> usize {
+        self.store.data().read_bytes
     }
 
     fn tick(&mut self) {
@@ -742,9 +990,11 @@ impl AppRuntime {
         // The host has no autonomous app callbacks yet; redraw requests are polled by AppRun.
     }
 
+    /// Writes the state file after a call that changed the state. An app without `storage:app-local` has no
+    /// state to change, and no file is made for it.
     fn save(&mut self) {
         let st = self.store.data_mut();
-        if !st.dirty {
+        if !st.storage || !st.dirty {
             return;
         }
         st.dirty = false;
@@ -756,13 +1006,109 @@ impl AppRuntime {
         }
     }
 
-    fn redraw_due(&self, now: Instant) -> bool {
-        self.store.data().redraw_at.is_some_and(|at| at <= now)
+    /// Whether the module asked for a drawing pass that is due at `now`, by the app's clock (`now_ms`, which
+    /// wraps: the longest delay is far under half its range). Nothing is due for a module that has stopped.
+    pub fn redraw_due(&self, now: u32) -> bool {
+        self.error.is_none() && self.store.data().redraw_at.is_some_and(|at| now.wrapping_sub(at) as i32 >= 0)
+    }
+
+    /// `redraw_due`, and the request is taken: the host's tick asks this once and then draws the app, so one
+    /// request brings one drawing pass and one refresh, whatever the pass does.
+    pub fn redraw_taken(&mut self, now: u32) -> bool {
+        let due = self.redraw_due(now);
+        if due {
+            self.store.data_mut().redraw_at = None;
+        }
+        due
+    }
+
+    /// What the app shows in place of going on, once a call of its module has failed.
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    /// The status line of the last drawing pass, for tests and a debug view.
+    pub fn status(&self) -> &str {
+        &self.status
+    }
+
+    /// The text drawn in the last drawing pass, joined by `|`, for generic scenario probes.
+    pub fn text(&self) -> String {
+        self.texts.join("|")
     }
 }
 
-fn abs(body: Rect, r: Rect) -> Rect {
-    Rect { x: body.x + r.x, y: body.y + r.y, w: r.w, h: r.h }
+#[cfg(test)]
+thread_local! {
+    /// Tests: the host's own greatest sizes of a text and an icon are set aside (`text_px_max`, `icon_px_max`), so
+    /// that a module's sizes reach the font as given and meet the font's own greatest glyph.
+    static OWN_SIZES_ASIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The height a text is drawn at most, in pixels: APP_TEXT_PX_MAX.
+fn text_px_max() -> i32 {
+    #[cfg(test)]
+    if OWN_SIZES_ASIDE.get() {
+        return i32::MAX / 1000;
+    }
+    APP_TEXT_PX_MAX
+}
+
+/// The side an icon is drawn at most, in pixels: APP_ICON_PX_MAX.
+fn icon_px_max() -> i32 {
+    #[cfg(test)]
+    if OWN_SIZES_ASIDE.get() {
+        return i32::MAX;
+    }
+    APP_ICON_PX_MAX
+}
+
+/// The height a text is drawn and measured at, in pixels, from the thousandths a module passes: from one
+/// thousandth to APP_TEXT_PX_MAX, a value outside taken as the nearer end.
+fn text_px(px_milli: i32) -> f32 {
+    px_milli.clamp(1, text_px_max() * 1000) as f32 / 1000.0
+}
+
+/// An end of a line farther from the body than this, each way by itself, is first taken at this distance: the
+/// cut below is then worked out to a small part of a pixel, whatever numbers the module passed.
+const LINE_FAR: f64 = (1u64 << 30) as f64;
+
+/// A line's ends, relative to the body's top left, held within DRAW_REACH of the body: a line inside that reach
+/// is kept as given, and one that reaches farther is cut where it leaves the reach, on the line it is on, so
+/// what shows in the body is the same. None for a line with no part in that reach, or with an end that is not a
+/// number.
+fn line_in_reach(body: Rect, x0: f32, y0: f32, x1: f32, y1: f32) -> Option<(f32, f32, f32, f32)> {
+    if !(x0.is_finite() && y0.is_finite() && x1.is_finite() && y1.is_finite()) {
+        return None;
+    }
+    let reach = crate::wasmhost::DRAW_REACH as f64;
+    let (far_x, far_y) = (body.w.max(0) as f64 + reach, body.h.max(0) as f64 + reach);
+    let within = |x: f32, y: f32| (-reach..=far_x).contains(&(x as f64)) && (-reach..=far_y).contains(&(y as f64));
+    if within(x0, y0) && within(x1, y1) {
+        return Some((x0, y0, x1, y1));
+    }
+    // (the part of the line between its ends that lies in the reach: from t0 to t1 of the way along it)
+    let near = |v: f32| (v as f64).clamp(-LINE_FAR, LINE_FAR);
+    let (ax, ay, bx, by) = (near(x0), near(y0), near(x1), near(y1));
+    let (dx, dy) = (bx - ax, by - ay);
+    let (mut t0, mut t1) = (0.0f64, 1.0f64);
+    for (step, room) in [(-dx, ax + reach), (dx, far_x - ax), (-dy, ay + reach), (dy, far_y - ay)] {
+        if step == 0.0 {
+            if room < 0.0 {
+                return None;
+            }
+        } else if step < 0.0 {
+            t0 = t0.max(room / step);
+        } else {
+            t1 = t1.min(room / step);
+        }
+    }
+    // (an end that is in the reach stays the number it is)
+    let at = |t: f64| if t <= 0.0 { (ax as f32, ay as f32) } else if t >= 1.0 { (bx as f32, by as f32) } else { ((ax + t * dx) as f32, (ay + t * dy) as f32) };
+    (t0 <= t1).then(|| {
+        let ((x0, y0), (x1, y1)) = (at(t0), at(t1));
+        (x0, y0, x1, y1)
+    })
 }
 
 fn button_style(v: i32) -> ButtonStyle {
@@ -788,200 +1134,382 @@ fn face(v: i32) -> FontFace {
 fn install_imports(linker: &mut Linker<HostState>) -> Result<(), String> {
     let e = |x: wasmi::errors::LinkerError| x.to_string();
 
+    // Every import pays the fixed charge first, whatever it is given and whether or not the app has the
+    // capability for it (`called`; a drawing call also needs room for one more command: `drawing`), and then for
+    // its work where that grows with what it is given: `pay_shape`, `pay_icon`, `call_text` and the bytes moved.
+
     // ---- drawing ----
-    linker.func_wrap(ABI, "fill_rect", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, gray: i32| {
+    // (each records one command, once the call has paid for drawing it)
+    linker.func_wrap(ABI, "fill_rect", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, gray: i32| -> Result<(), wasmi::Error> {
+        drawing(&mut caller)?;
+        pay_shape(&mut caller, x, y, w, h, 0, 1)?;
         caller.data_mut().commands.push(DrawCmd::Fill(Rect::new(x, y, w, h), gray.clamp(0, 255) as u8));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "outline_rect", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, t: i32, gray: i32| {
+    linker.func_wrap(ABI, "outline_rect", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, t: i32, gray: i32| -> Result<(), wasmi::Error> {
+        drawing(&mut caller)?;
+        // (an outline is four bands of rows: no more of them than the rectangle has)
+        pay_shape(&mut caller, x, y, w, h, 0, 1)?;
         caller.data_mut().commands.push(DrawCmd::Outline(Rect::new(x, y, w, h), t, gray.clamp(0, 255) as u8));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "round_rect", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, radius: i32, gray: i32, filled: i32, t: i32| {
+    linker.func_wrap(ABI, "round_rect", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, radius: i32, gray: i32, filled: i32, t: i32| -> Result<(), wasmi::Error> {
+        drawing(&mut caller)?;
+        // (the pixels within its corners' radius, or its outline's thickness, of its sides are worked out one by one)
+        let r = drawn(caller.data(), x, y, w, h);
+        let edge = radius.clamp(0, (r.w.min(r.h) / 2).max(0)).max(thick(t)) as i64 + 2;
+        pay_shape(&mut caller, x, y, w, h, edge, 1)?;
         caller.data_mut().commands.push(DrawCmd::Round(Rect::new(x, y, w, h), radius, gray.clamp(0, 255) as u8, filled != 0, t));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "line", |mut caller: Caller<'_, HostState>, x0: f32, y0: f32, x1: f32, y1: f32, width: f32, gray: i32| {
-        caller.data_mut().commands.push(DrawCmd::Line(x0, y0, x1, y1, width.max(0.1), gray.clamp(0, 255) as u8));
+    linker.func_wrap(ABI, "line", |mut caller: Caller<'_, HostState>, x0: f32, y0: f32, x1: f32, y1: f32, width: f32, gray: i32| -> Result<(), wasmi::Error> {
+        drawing(&mut caller)?;
+        let width = width.max(0.1).min(APP_LINE_WIDTH_MAX);
+        let n = line_charge(caller.data(), x0, y0, x1, y1, width);
+        charge(&mut caller, n)?;
+        caller.data_mut().commands.push(DrawCmd::Line(x0, y0, x1, y1, width, gray.clamp(0, 255) as u8));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "text", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, ptr: i32, len: i32, px_milli: i32, face_: i32, center: i32, gray: i32| {
-        let text = String::from_utf8_lossy(&read_mem(&caller, ptr, len)).into_owned();
-        caller.data_mut().commands.push(DrawCmd::Text(Rect::new(x, y, w, h), text, (px_milli.max(1) as f32) / 1000.0, face(face_), center != 0, gray.clamp(0, 255) as u8));
+    linker.func_wrap(ABI, "text", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, ptr: i32, len: i32, px_milli: i32, face_: i32, center: i32, gray: i32| -> Result<(), wasmi::Error> {
+        drawing(&mut caller)?;
+        let px = text_px(px_milli);
+        let text = call_text(&mut caller, ptr, len, |n| drawn_text_charge(n, px, face(face_)))?;
+        // (a text wider than its room is cut short, by steps that each measure it again)
+        if font_measure(face(face_), px, &text) > drawn(caller.data(), x, y, w, h).w {
+            charge(&mut caller, cut_text_charge(len))?;
+        }
+        caller.data_mut().commands.push(DrawCmd::Text(Rect::new(x, y, w, h), text, px, face(face_), center != 0, gray.clamp(0, 255) as u8));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "text_at", |mut caller: Caller<'_, HostState>, x: i32, baseline: i32, ptr: i32, len: i32, px_milli: i32, face_: i32, gray: i32| {
-        let text = String::from_utf8_lossy(&read_mem(&caller, ptr, len)).into_owned();
-        caller.data_mut().commands.push(DrawCmd::TextAt(x, baseline, text, (px_milli.max(1) as f32) / 1000.0, face(face_), gray.clamp(0, 255) as u8));
+    linker.func_wrap(ABI, "text_at", |mut caller: Caller<'_, HostState>, x: i32, baseline: i32, ptr: i32, len: i32, px_milli: i32, face_: i32, gray: i32| -> Result<(), wasmi::Error> {
+        drawing(&mut caller)?;
+        let px = text_px(px_milli);
+        let text = call_text(&mut caller, ptr, len, |n| drawn_text_charge(n, px, face(face_)))?;
+        caller.data_mut().commands.push(DrawCmd::TextAt(x, baseline, text, px, face(face_), gray.clamp(0, 255) as u8));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "text_width", |caller: Caller<'_, HostState>, ptr: i32, len: i32, px_milli: i32, face_: i32| -> i32 {
-        let text = String::from_utf8_lossy(&read_mem(&caller, ptr, len)).into_owned();
-        font_measure(face(face_), (px_milli.max(1) as f32) / 1000.0, &text)
+    linker.func_wrap(ABI, "text_width", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, px_milli: i32, face_: i32| -> Result<i32, wasmi::Error> {
+        called(&mut caller)?;
+        let text = call_text(&mut caller, ptr, len, |n| n as u64 * APP_CHARGE_MEASURE)?;
+        Ok(font_measure(face(face_), text_px(px_milli), &text))
     }).map_err(e)?;
-    linker.func_wrap(ABI, "text_height", |_caller: Caller<'_, HostState>, px_milli: i32, face_: i32| -> i32 {
-        let px = (px_milli.max(1) as f32) / 1000.0;
-        font_ascent(face(face_), px) + font_descent(face(face_), px)
+    linker.func_wrap(ABI, "text_height", |mut caller: Caller<'_, HostState>, px_milli: i32, face_: i32| -> Result<i32, wasmi::Error> {
+        called(&mut caller)?;
+        let px = text_px(px_milli);
+        Ok(font_ascent(face(face_), px) + font_descent(face(face_), px))
     }).map_err(e)?;
-    linker.func_wrap(ABI, "icon", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, x: i32, y: i32, w: i32, h: i32, gray: i32| {
-        let name = String::from_utf8_lossy(&read_mem(&caller, ptr, len)).into_owned();
+    linker.func_wrap(ABI, "icon", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, x: i32, y: i32, w: i32, h: i32, gray: i32| -> Result<(), wasmi::Error> {
+        drawing(&mut caller)?;
+        let name = icon_name(&mut caller, ptr, len)?;
+        pay_icon(&mut caller, x, y, w, h, 1)?;
         caller.data_mut().commands.push(DrawCmd::Icon(name, Rect::new(x, y, w, h), gray.clamp(0, 255) as u8));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "button", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, label_ptr: i32, label_len: i32, icon_ptr: i32, icon_len: i32, style: i32| {
-        let label = String::from_utf8_lossy(&read_mem(&caller, label_ptr, label_len)).into_owned();
-        let icon = String::from_utf8_lossy(&read_mem(&caller, icon_ptr, icon_len)).into_owned();
+    linker.func_wrap(ABI, "button", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, label_ptr: i32, label_len: i32, icon_ptr: i32, icon_len: i32, style: i32| -> Result<(), wasmi::Error> {
+        drawing(&mut caller)?;
+        // (its fill, its outline and its inner line; a label alone may take two lines)
+        pay_shape(&mut caller, x, y, w, h, APP_CHARGE_CORNER, 3)?;
+        let label = call_text(&mut caller, label_ptr, label_len, |n| label_charge(n, true))?;
+        let icon = icon_name(&mut caller, icon_ptr, icon_len)?;
+        if !icon.is_empty() {
+            pay_icon(&mut caller, x, y, w, h, 1)?;
+        }
         caller.data_mut().commands.push(DrawCmd::Button(Rect::new(x, y, w, h), label, icon, style));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "chip", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, ptr: i32, len: i32, selected: i32| {
-        let label = String::from_utf8_lossy(&read_mem(&caller, ptr, len)).into_owned();
+    linker.func_wrap(ABI, "chip", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, ptr: i32, len: i32, selected: i32| -> Result<(), wasmi::Error> {
+        drawing(&mut caller)?;
+        let edge = round_end(caller.data(), x, y, w, h);
+        pay_shape(&mut caller, x, y, w, h, edge, 2)?;
+        let label = call_text(&mut caller, ptr, len, |n| label_charge(n, false))?;
         caller.data_mut().commands.push(DrawCmd::Chip(Rect::new(x, y, w, h), label, selected != 0));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "row", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, icon_ptr: i32, icon_len: i32, label_ptr: i32, label_len: i32, style: i32, switch: i32| {
-        let icon = String::from_utf8_lossy(&read_mem(&caller, icon_ptr, icon_len)).into_owned();
-        let label = String::from_utf8_lossy(&read_mem(&caller, label_ptr, label_len)).into_owned();
+    linker.func_wrap(ABI, "row", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, icon_ptr: i32, icon_len: i32, label_ptr: i32, label_len: i32, style: i32, switch: i32| -> Result<(), wasmi::Error> {
+        drawing(&mut caller)?;
+        // (its card; its icon and its switch are of one size whatever the row's; its label may take two lines)
+        pay_shape(&mut caller, x, y, w, h, APP_CHARGE_CORNER, 1)?;
+        let icon = icon_name(&mut caller, icon_ptr, icon_len)?;
+        let small = if icon.is_empty() { 0 } else { icon_charge(APP_CHARGE_SMALL_ICON_PX) } + if switch >= 0 { APP_CHARGE_SWITCH } else { 0 };
+        charge(&mut caller, small)?;
+        let label = call_text(&mut caller, label_ptr, label_len, |n| label_charge(n, true))?;
         caller.data_mut().commands.push(DrawCmd::Row(Rect::new(x, y, w, h), icon, label, style, switch));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "surface", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, filled: i32, thick: i32| {
-        caller.data_mut().commands.push(DrawCmd::Surface(Rect::new(x, y, w, h), filled != 0, thick));
+    linker.func_wrap(ABI, "surface", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, filled: i32, t: i32| -> Result<(), wasmi::Error> {
+        drawing(&mut caller)?;
+        // (its fill, and its outline or its inner line: the outline is as thick as the module says)
+        pay_shape(&mut caller, x, y, w, h, APP_CHARGE_CORNER, 1)?;
+        pay_shape(&mut caller, x, y, w, h, APP_CHARGE_CORNER + if filled != 0 { 0 } else { thick(t).max(0) as i64 }, 1)?;
+        caller.data_mut().commands.push(DrawCmd::Surface(Rect::new(x, y, w, h), filled != 0, t));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "select", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, cap_ptr: i32, cap_len: i32, val_ptr: i32, val_len: i32| {
-        let caption = String::from_utf8_lossy(&read_mem(&caller, cap_ptr, cap_len)).into_owned();
-        let value = String::from_utf8_lossy(&read_mem(&caller, val_ptr, val_len)).into_owned();
+    linker.func_wrap(ABI, "select", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, cap_ptr: i32, cap_len: i32, val_ptr: i32, val_len: i32| -> Result<(), wasmi::Error> {
+        drawing(&mut caller)?;
+        let edge = round_end(caller.data(), x, y, w, h);
+        pay_shape(&mut caller, x, y, w, h, edge, 2)?;
+        // (its chevron is of one size)
+        charge(&mut caller, icon_charge(APP_CHARGE_SMALL_ICON_PX))?;
+        let caption = call_text(&mut caller, cap_ptr, cap_len, |n| label_charge(n, false))?;
+        let value = call_text(&mut caller, val_ptr, val_len, |n| label_charge(n, false))?;
         caller.data_mut().commands.push(DrawCmd::Select(Rect::new(x, y, w, h), caption, value));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "app_tile", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, icon_ptr: i32, icon_len: i32, label_ptr: i32, label_len: i32, selected: i32| {
-        let icon = String::from_utf8_lossy(&read_mem(&caller, icon_ptr, icon_len)).into_owned();
-        let label = String::from_utf8_lossy(&read_mem(&caller, label_ptr, label_len)).into_owned();
+    linker.func_wrap(ABI, "app_tile", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, icon_ptr: i32, icon_len: i32, label_ptr: i32, label_len: i32, selected: i32| -> Result<(), wasmi::Error> {
+        drawing(&mut caller)?;
+        pay_shape(&mut caller, x, y, w, h, APP_CHARGE_CORNER, 2)?;
+        let icon = icon_name(&mut caller, icon_ptr, icon_len)?;
+        pay_icon(&mut caller, x, y, w, h, 1)?;
+        let label = call_text(&mut caller, label_ptr, label_len, |n| label_charge(n, false))?;
         caller.data_mut().commands.push(DrawCmd::AppTile(Rect::new(x, y, w, h), icon, label, selected != 0));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "fab", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, icon_ptr: i32, icon_len: i32| {
-        let icon = String::from_utf8_lossy(&read_mem(&caller, icon_ptr, icon_len)).into_owned();
+    linker.func_wrap(ABI, "fab", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, icon_ptr: i32, icon_len: i32| -> Result<(), wasmi::Error> {
+        drawing(&mut caller)?;
+        let edge = round_end(caller.data(), x, y, w, h);
+        pay_shape(&mut caller, x, y, w, h, edge, 1)?;
+        let icon = icon_name(&mut caller, icon_ptr, icon_len)?;
+        // (its icon is under half its size)
+        pay_icon(&mut caller, x, y, w, h, 2)?;
         caller.data_mut().commands.push(DrawCmd::Fab(Rect::new(x, y, w, h), icon));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "card", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, style: i32| {
+    linker.func_wrap(ABI, "card", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, style: i32| -> Result<(), wasmi::Error> {
+        drawing(&mut caller)?;
+        pay_shape(&mut caller, x, y, w, h, APP_CHARGE_CORNER, 1)?;
         caller.data_mut().commands.push(DrawCmd::Card(Rect::new(x, y, w, h), style));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "text_field", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, icon_ptr: i32, icon_len: i32, text_ptr: i32, text_len: i32, hint_ptr: i32, hint_len: i32| {
-        let icon = String::from_utf8_lossy(&read_mem(&caller, icon_ptr, icon_len)).into_owned();
-        let text = String::from_utf8_lossy(&read_mem(&caller, text_ptr, text_len)).into_owned();
-        let hint = String::from_utf8_lossy(&read_mem(&caller, hint_ptr, hint_len)).into_owned();
+    linker.func_wrap(ABI, "text_field", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, icon_ptr: i32, icon_len: i32, text_ptr: i32, text_len: i32, hint_ptr: i32, hint_len: i32| -> Result<(), wasmi::Error> {
+        drawing(&mut caller)?;
+        let edge = round_end(caller.data(), x, y, w, h);
+        pay_shape(&mut caller, x, y, w, h, edge, 2)?;
+        let icon = icon_name(&mut caller, icon_ptr, icon_len)?;
+        if !icon.is_empty() {
+            // (its icon is as tall as the field, whatever the field's width, and never smaller than the kit's
+            // small icons: globalui.rs, gui_text_field)
+            let tall = drawn(caller.data(), x, y, w, h).h as i64;
+            charge(&mut caller, icon_charge(tall.max(APP_CHARGE_SMALL_ICON_PX)))?;
+        }
+        // (the mark that clears a field with text in it is of one size)
+        charge(&mut caller, icon_charge(APP_CHARGE_SMALL_ICON_PX))?;
+        let text = call_text(&mut caller, text_ptr, text_len, |n| label_charge(n, false))?;
+        let hint = call_text(&mut caller, hint_ptr, hint_len, |n| label_charge(n, false))?;
         caller.data_mut().commands.push(DrawCmd::TextField(Rect::new(x, y, w, h), icon, text, hint));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "clip", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32| {
+    linker.func_wrap(ABI, "clip", |mut caller: Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32| -> Result<(), wasmi::Error> {
+        drawing(&mut caller)?;
         caller.data_mut().commands.push(DrawCmd::Clip(Rect::new(x, y, w, h)));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "clip_clear", |mut caller: Caller<'_, HostState>| {
+    linker.func_wrap(ABI, "clip_clear", |mut caller: Caller<'_, HostState>| -> Result<(), wasmi::Error> {
+        drawing(&mut caller)?;
         caller.data_mut().commands.push(DrawCmd::ClipClear);
+        Ok(())
     }).map_err(e)?;
 
     // ---- state, settings, system ----
-    linker.func_wrap(ABI, "state_get", |mut caller: Caller<'_, HostState>, ptr: i32, cap: i32| -> i32 {
-        let state = caller.data().state.clone();
-        write_mem(&mut caller, ptr, cap, &state)
+    // (state_get and state_set need `storage:app-local`: without it the one gives nothing and the other keeps
+    // nothing)
+    linker.func_wrap(ABI, "state_get", |mut caller: Caller<'_, HostState>, ptr: i32, cap: i32| -> Result<i32, wasmi::Error> {
+        called(&mut caller)?;
+        if !caller.data().storage {
+            return Ok(0);
+        }
+        let n = caller.data().state.len().min(cap.max(0) as usize);
+        state_moved(caller.data_mut(), n)?;
+        charge(&mut caller, copy_charge(n))?;
+        let state = caller.data().state[..n].to_vec();
+        Ok(write_mem(&mut caller, ptr, cap, &state))
     }).map_err(e)?;
-    linker.func_wrap(ABI, "state_set", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| {
-        let state = read_mem(&caller, ptr, len);
+    linker.func_wrap(ABI, "state_set", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<(), wasmi::Error> {
+        called(&mut caller)?;
+        if !caller.data().storage {
+            return Ok(());
+        }
+        // (the first APP_STATE_MAX bytes are the state: no more than those are read)
+        let n = (len.max(0) as usize).min(APP_STATE_MAX);
+        state_moved(caller.data_mut(), n)?;
+        charge(&mut caller, copy_charge(n))?;
+        let state = read_mem(&mut caller, ptr, n as i32);
         let st = caller.data_mut();
-        st.state = state.into_iter().take(STATE_MAX).collect();
+        st.state = state;
         st.dirty = true;
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "setting", |mut caller: Caller<'_, HostState>, key_ptr: i32, key_len: i32, out_ptr: i32, out_cap: i32| -> i32 {
-        let key = read_mem(&caller, key_ptr, key_len);
+    linker.func_wrap(ABI, "setting", |mut caller: Caller<'_, HostState>, key_ptr: i32, key_len: i32, out_ptr: i32, out_cap: i32| -> Result<i32, wasmi::Error> {
+        called(&mut caller)?;
+        // (no setting has a longer key: nothing is read for one)
+        if key_len.max(0) as usize > crate::widgetpkg::WIDGET_SETTINGS_KEY_MAX {
+            return Ok(0);
+        }
+        charge(&mut caller, key_len.max(0) as u64 * APP_CHARGE_BYTE)?;
+        let key = read_mem(&mut caller, key_ptr, key_len);
         let value = caller.data().settings.iter().find(|(k, _)| k.as_bytes() == key.as_slice()).map(|(_, v)| v.as_bytes().to_vec()).unwrap_or_default();
-        write_mem(&mut caller, out_ptr, out_cap, &value)
+        charge(&mut caller, value.len().min(out_cap.max(0) as usize) as u64 * APP_CHARGE_BYTE)?;
+        Ok(write_mem(&mut caller, out_ptr, out_cap, &value))
     }).map_err(e)?;
-    linker.func_wrap(ABI, "status", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| {
-        caller.data_mut().status = String::from_utf8_lossy(&read_mem(&caller, ptr, len)).into_owned();
+    linker.func_wrap(ABI, "status", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<(), wasmi::Error> {
+        called(&mut caller)?;
+        if len.max(0) as usize > APP_STATUS_MAX {
+            return Err(past(caller.data(), "the bytes of the status line", APP_STATUS_MAX));
+        }
+        charge(&mut caller, len.max(0) as u64 * APP_CHARGE_BYTE)?;
+        caller.data_mut().status = String::from_utf8_lossy(&read_mem(&mut caller, ptr, len)).into_owned();
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "request_redraw", |mut caller: Caller<'_, HostState>, after_ms: i32| {
-        let ms = after_ms.clamp(16, 86_400_000) as u64;
-        caller.data_mut().redraw_at = Some(Instant::now() + Duration::from_millis(ms));
+    linker.func_wrap(ABI, "request_redraw", |mut caller: Caller<'_, HostState>, after_ms: i32| -> Result<(), wasmi::Error> {
+        called(&mut caller)?;
+        let at = now_ms().wrapping_add(after_ms.clamp(APP_REDRAW_MIN_MS, APP_REDRAW_MAX_MS) as u32);
+        let st = caller.data_mut();
+        // (one request stands, the soonest asked for: a later call does not put an earlier one off)
+        st.redraw_at = Some(match st.redraw_at {
+            Some(was) if was.wrapping_sub(at) as i32 <= 0 => was,
+            _ => at,
+        });
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "close", |mut caller: Caller<'_, HostState>| {
+    linker.func_wrap(ABI, "close", |mut caller: Caller<'_, HostState>| -> Result<(), wasmi::Error> {
+        called(&mut caller)?;
         caller.data_mut().close_requested = true;
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "show_status_bar", |mut caller: Caller<'_, HostState>, on: i32| {
+    linker.func_wrap(ABI, "show_status_bar", |mut caller: Caller<'_, HostState>, on: i32| -> Result<(), wasmi::Error> {
+        called(&mut caller)?;
         caller.data_mut().status_bar = on != 0;
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "toast", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, ms: i32| {
-        let text = String::from_utf8_lossy(&read_mem(&caller, ptr, len)).into_owned();
+    linker.func_wrap(ABI, "toast", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, ms: i32| -> Result<(), wasmi::Error> {
+        called(&mut caller)?;
+        // (a toast shows the first 255 bytes of its text: no more than APP_TOAST_MAX are read)
+        let n = len.clamp(0, APP_TOAST_MAX as i32);
+        charge(&mut caller, n as u64 * APP_CHARGE_BYTE)?;
+        let text = String::from_utf8_lossy(&read_mem(&mut caller, ptr, n)).into_owned();
         caller.data_mut().toast = Some((text, ms.clamp(500, 30_000) as u32));
+        Ok(())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "now", || -> i64 {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+    linker.func_wrap(ABI, "now", |mut caller: Caller<'_, HostState>| -> Result<i64, wasmi::Error> {
+        called(&mut caller)?;
+        Ok(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64))
     }).map_err(e)?;
-    linker.func_wrap(ABI, "now_ms", || -> i64 {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
+    linker.func_wrap(ABI, "now_ms", |mut caller: Caller<'_, HostState>| -> Result<i64, wasmi::Error> {
+        called(&mut caller)?;
+        Ok(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64))
     }).map_err(e)?;
-    linker.func_wrap(ABI, "time_text", |mut caller: Caller<'_, HostState>, ptr: i32, cap: i32| -> i32 {
+    // (the calls below that ask the system for something pay APP_CHARGE_SYSTEM beside the fixed charge: the
+    // time and the date as text, the battery's state, and a request's state)
+    linker.func_wrap(ABI, "time_text", |mut caller: Caller<'_, HostState>, ptr: i32, cap: i32| -> Result<i32, wasmi::Error> {
+        asked_of_the_system(&mut caller)?;
         let mut s = String::new();
         format_clock_short(wall_time(), caller.data().clock_12h, &mut s, 64);
-        write_mem(&mut caller, ptr, cap, s.as_bytes())
+        Ok(write_mem(&mut caller, ptr, cap, s.as_bytes()))
     }).map_err(e)?;
-    linker.func_wrap(ABI, "date_text", |mut caller: Caller<'_, HostState>, ptr: i32, cap: i32| -> i32 {
+    linker.func_wrap(ABI, "date_text", |mut caller: Caller<'_, HostState>, ptr: i32, cap: i32| -> Result<i32, wasmi::Error> {
+        asked_of_the_system(&mut caller)?;
         let tm = local_tm(wall_time());
         let s = format!("{:04}-{:02}-{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
-        write_mem(&mut caller, ptr, cap, s.as_bytes())
+        Ok(write_mem(&mut caller, ptr, cap, s.as_bytes()))
     }).map_err(e)?;
-    linker.func_wrap(ABI, "battery_percent", || -> i32 {
-        battery_from_sysfs("/sys/class/power_supply").map_or(-1, |b| b.percent)
+    linker.func_wrap(ABI, "battery_percent", |mut caller: Caller<'_, HostState>| -> Result<i32, wasmi::Error> {
+        asked_of_the_system(&mut caller)?;
+        Ok(battery_from_sysfs("/sys/class/power_supply").map_or(-1, |b| b.percent))
     }).map_err(e)?;
-    linker.func_wrap(ABI, "battery_charging", || -> i32 {
-        battery_from_sysfs("/sys/class/power_supply").is_some_and(|b| b.charging) as i32
+    linker.func_wrap(ABI, "battery_charging", |mut caller: Caller<'_, HostState>| -> Result<i32, wasmi::Error> {
+        asked_of_the_system(&mut caller)?;
+        Ok(battery_from_sysfs("/sys/class/power_supply").is_some_and(|b| b.charging) as i32)
     }).map_err(e)?;
-    linker.func_wrap(ABI, "wifi_connected", || -> i32 {
-        wifi_status().and_then(|s| s.connected).map_or(-1, i32::from)
+    linker.func_wrap(ABI, "wifi_connected", |mut caller: Caller<'_, HostState>| -> Result<i32, wasmi::Error> {
+        called(&mut caller)?;
+        Ok(wifi_status().and_then(|s| s.connected).map_or(-1, i32::from))
     }).map_err(e)?;
-    linker.func_wrap(ABI, "wifi_ssid", |mut caller: Caller<'_, HostState>, ptr: i32, cap: i32| -> i32 {
-        let name = wifi_current().unwrap_or_default();
-        write_mem(&mut caller, ptr, cap, &name)
+    linker.func_wrap(ABI, "wifi_ssid", |mut caller: Caller<'_, HostState>, ptr: i32, cap: i32| -> Result<i32, wasmi::Error> {
+        called(&mut caller)?;
+        let mut name = wifi_current().unwrap_or_default();
+        name.truncate(APP_SSID_MAX);
+        Ok(write_mem(&mut caller, ptr, cap, &name))
     }).map_err(e)?;
-    linker.func_wrap(ABI, "screen_width", |caller: Caller<'_, HostState>| -> i32 { caller.data().screen_w }).map_err(e)?;
-    linker.func_wrap(ABI, "screen_height", |caller: Caller<'_, HostState>| -> i32 { caller.data().screen_h }).map_err(e)?;
-    linker.func_wrap(ABI, "ui_scale_milli", || -> i32 { ui_px(1000.0) }).map_err(e)?;
-    linker.func_wrap(ABI, "theme", || -> i32 { matches!(ui_theme(), UiTheme::Classic) as i32 }).map_err(e)?;
-    linker.func_wrap(ABI, "status_bar_height", || -> i32 { gui_status_h() }).map_err(e)?;
+    linker.func_wrap(ABI, "screen_width", |mut caller: Caller<'_, HostState>| -> Result<i32, wasmi::Error> {
+        called(&mut caller)?;
+        Ok(caller.data().screen_w)
+    }).map_err(e)?;
+    linker.func_wrap(ABI, "screen_height", |mut caller: Caller<'_, HostState>| -> Result<i32, wasmi::Error> {
+        called(&mut caller)?;
+        Ok(caller.data().screen_h)
+    }).map_err(e)?;
+    linker.func_wrap(ABI, "ui_scale_milli", |mut caller: Caller<'_, HostState>| -> Result<i32, wasmi::Error> {
+        called(&mut caller)?;
+        Ok(ui_px(1000.0))
+    }).map_err(e)?;
+    linker.func_wrap(ABI, "theme", |mut caller: Caller<'_, HostState>| -> Result<i32, wasmi::Error> {
+        called(&mut caller)?;
+        Ok(matches!(ui_theme(), UiTheme::Classic) as i32)
+    }).map_err(e)?;
+    linker.func_wrap(ABI, "status_bar_height", |mut caller: Caller<'_, HostState>| -> Result<i32, wasmi::Error> {
+        called(&mut caller)?;
+        Ok(gui_status_h())
+    }).map_err(e)?;
 
     // ---- HTTP (network:http) ----
     // An app starts one request and polls it. The request runs in a child curl while the app keeps
     // drawing; `request_redraw` is how it asks to be called again.
-    linker.func_wrap(ABI, "http_start", |mut caller: Caller<'_, HostState>, method_ptr: i32, method_len: i32, url_ptr: i32, url_len: i32, headers_ptr: i32, headers_len: i32, body_ptr: i32, body_len: i32| -> i32 {
+    linker.func_wrap(ABI, "http_start", |mut caller: Caller<'_, HostState>, method_ptr: i32, method_len: i32, url_ptr: i32, url_len: i32, headers_ptr: i32, headers_len: i32, body_ptr: i32, body_len: i32| -> Result<i32, wasmi::Error> {
+        called(&mut caller)?;
         // Nothing of the request is read from the module's memory before the capability, the
         // request in flight and the four lengths have been checked.
         let lengths = [method_len, url_len, headers_len, body_len].map(|len| len.max(0) as usize);
         let before = caller.data().http_start_before_read(lengths);
         if before != 0 {
-            return before;
+            return Ok(before);
         }
-        let method = String::from_utf8_lossy(&read_mem(&caller, method_ptr, method_len)).into_owned();
-        let url = String::from_utf8_lossy(&read_mem(&caller, url_ptr, url_len)).into_owned();
-        let headers = String::from_utf8_lossy(&read_mem(&caller, headers_ptr, headers_len)).into_owned();
-        let body = read_mem(&caller, body_ptr, body_len);
-        caller.data_mut().http_start(&method, &url, &headers, &body)
+        // (a request that is read is paid for as one that starts: its bytes, and the start of a curl)
+        charge(&mut caller, APP_CHARGE_REQUEST + copy_charge(lengths.iter().sum()))?;
+        let method = String::from_utf8_lossy(&read_mem(&mut caller, method_ptr, method_len)).into_owned();
+        let url = String::from_utf8_lossy(&read_mem(&mut caller, url_ptr, url_len)).into_owned();
+        let headers = String::from_utf8_lossy(&read_mem(&mut caller, headers_ptr, headers_len)).into_owned();
+        let body = read_mem(&mut caller, body_ptr, body_len);
+        Ok(caller.data_mut().http_start(&method, &url, &headers, &body))
     }).map_err(e)?;
-    linker.func_wrap(ABI, "http_poll", |mut caller: Caller<'_, HostState>| -> i32 {
-        caller.data_mut().http_poll()
+    linker.func_wrap(ABI, "http_poll", |mut caller: Caller<'_, HostState>| -> Result<i32, wasmi::Error> {
+        asked_of_the_system(&mut caller)?;
+        Ok(caller.data_mut().http_poll())
     }).map_err(e)?;
-    linker.func_wrap(ABI, "http_status", |caller: Caller<'_, HostState>| -> i32 {
-        caller.data().http.as_ref().map_or(-1, |j| j.code)
+    linker.func_wrap(ABI, "http_status", |mut caller: Caller<'_, HostState>| -> Result<i32, wasmi::Error> {
+        called(&mut caller)?;
+        Ok(caller.data().http.as_ref().map_or(-1, |j| j.code))
     }).map_err(e)?;
-    linker.func_wrap(ABI, "http_body_len", |caller: Caller<'_, HostState>| -> i32 {
-        caller.data().http.as_ref().map_or(0, |j| j.body.len() as i32)
+    linker.func_wrap(ABI, "http_body_len", |mut caller: Caller<'_, HostState>| -> Result<i32, wasmi::Error> {
+        called(&mut caller)?;
+        Ok(caller.data().http.as_ref().map_or(0, |j| j.body.len() as i32))
     }).map_err(e)?;
     // The answer and the error text are written from where the host holds them: each is lent to
     // the write and put back, and is not copied for the call.
-    linker.func_wrap(ABI, "http_body", |mut caller: Caller<'_, HostState>, ptr: i32, cap: i32| -> i32 {
-        let Some(body) = caller.data_mut().http.as_mut().map(|j| std::mem::take(&mut j.body)) else { return 0 };
+    linker.func_wrap(ABI, "http_body", |mut caller: Caller<'_, HostState>, ptr: i32, cap: i32| -> Result<i32, wasmi::Error> {
+        called(&mut caller)?;
+        let held = caller.data().http.as_ref().map_or(0, |j| j.body.len());
+        charge(&mut caller, copy_charge(held.min(cap.max(0) as usize)))?;
+        let Some(body) = caller.data_mut().http.as_mut().map(|j| std::mem::take(&mut j.body)) else { return Ok(0) };
         let n = write_mem(&mut caller, ptr, cap, &body);
         if let Some(j) = caller.data_mut().http.as_mut() {
             j.body = body;
         }
-        n
+        Ok(n)
     }).map_err(e)?;
-    linker.func_wrap(ABI, "http_error", |mut caller: Caller<'_, HostState>, ptr: i32, cap: i32| -> i32 {
-        let Some(text) = caller.data_mut().http.as_mut().map(|j| std::mem::take(&mut j.error)) else { return 0 };
+    linker.func_wrap(ABI, "http_error", |mut caller: Caller<'_, HostState>, ptr: i32, cap: i32| -> Result<i32, wasmi::Error> {
+        called(&mut caller)?;
+        let held = caller.data().http.as_ref().map_or(0, |j| j.error.len());
+        charge(&mut caller, copy_charge(held.min(cap.max(0) as usize)))?;
+        let Some(text) = caller.data_mut().http.as_mut().map(|j| std::mem::take(&mut j.error)) else { return Ok(0) };
         let n = write_mem(&mut caller, ptr, cap, text.as_bytes());
         if let Some(j) = caller.data_mut().http.as_mut() {
             j.error = text;
         }
-        n
+        Ok(n)
     }).map_err(e)?;
-    linker.func_wrap(ABI, "http_cancel", |mut caller: Caller<'_, HostState>| {
+    linker.func_wrap(ABI, "http_cancel", |mut caller: Caller<'_, HostState>| -> Result<(), wasmi::Error> {
+        called(&mut caller)?;
         caller.data_mut().http_cancel();
+        Ok(())
     }).map_err(e)?;
     Ok(())
 }
@@ -1283,44 +1811,341 @@ impl HostState {
     }
 }
 
-fn read_mem(caller: &Caller<'_, HostState>, ptr: i32, len: i32) -> Vec<u8> {
-    if ptr < 0 || len <= 0 {
-        return Vec::new();
+/// Ends a call that went past a limit the way a call that used up its instructions ends: with the trap the
+/// host reports as the app having stopped. The log says which limit it was.
+fn past(st: &HostState, limit: &str, max: usize) -> wasmi::Error {
+    qlog!("app %s: stopped, a call went past a limit: %s (%d)", &st.id, limit, max as i32);
+    crate::wasmhost::out_of_fuel()
+}
+
+/// The fixed charge of a call of an import: every import pays it first, whatever it is given.
+fn called(caller: &mut Caller<'_, HostState>) -> Result<(), wasmi::Error> {
+    charge(caller, APP_CHARGE_CALL)
+}
+
+/// The same for a call that asks the system for something beside the host's own work.
+fn asked_of_the_system(caller: &mut Caller<'_, HostState>) -> Result<(), wasmi::Error> {
+    charge(caller, APP_CHARGE_CALL + APP_CHARGE_SYSTEM)
+}
+
+/// The start of a drawing call: the fixed charge, and room in the call for one more command.
+fn drawing(caller: &mut Caller<'_, HostState>) -> Result<(), wasmi::Error> {
+    called(caller)?;
+    room_for_command(caller.data())
+}
+
+/// A command's rectangle as it is drawn (`on_screen`), relative to the top left of the body the call draws on.
+fn drawn(st: &HostState, x: i32, y: i32, w: i32, h: i32) -> Rect {
+    on_screen(Rect::new(0, 0, st.body.0, st.body.1), x, y, w, h)
+}
+
+/// A thickness as it is drawn: within THICK_REACH of nothing.
+fn thick(t: i32) -> i32 {
+    t.clamp(-THICK_REACH, THICK_REACH)
+}
+
+/// How far from its sides an element with round ends is worked out pixel by pixel: half its smaller side (the
+/// radius of its ends in the theme that rounds them) and the kit's corner.
+fn round_end(st: &HostState, x: i32, y: i32, w: i32, h: i32) -> i64 {
+    let r = drawn(st, x, y, w, h);
+    (r.w.min(r.h).max(0) / 2) as i64 + APP_CHARGE_CORNER
+}
+
+/// The charge for one frame of a shape (a fill, or an outline): one for every APP_CHARGE_FILL_PX pixels of its
+/// rectangle inside the body, which are filled by rows, and APP_CHARGE_EDGE_PX for each of those within `edge`
+/// pixels of its left and right sides, which are worked out one by one (a corner, a round end, a thick outline).
+fn shape_charge(st: &HostState, x: i32, y: i32, w: i32, h: i32, edge: i64) -> u64 {
+    let Some(r) = in_body(Rect::new(0, 0, st.body.0, st.body.1), Rect::new(x, y, w, h)) else { return 0 };
+    let (w, h) = (r.w as u64, r.h as u64);
+    w * h / APP_CHARGE_FILL_PX + h * w.min(2 * edge.max(0) as u64) * APP_CHARGE_EDGE_PX
+}
+
+/// Takes the charge for a shape of `frames` frames from the call's budget (`shape_charge`).
+fn pay_shape(caller: &mut Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, edge: i64, frames: u64) -> Result<(), wasmi::Error> {
+    let n = shape_charge(caller.data(), x, y, w, h, edge) * frames;
+    charge(caller, n)
+}
+
+/// The charge for a line `width` pixels wide: for each row of the body it crosses, APP_CHARGE_LINE_ROW and
+/// APP_CHARGE_EDGE_PX for each pixel of the row the canvas works out (the line's width along the row, and no
+/// more than the row has in the line's box).
+fn line_charge(st: &HostState, x0: f32, y0: f32, x1: f32, y1: f32, width: f32) -> u64 {
+    let body = Rect::new(0, 0, st.body.0, st.body.1);
+    let Some((x0, y0, x1, y1)) = line_in_reach(body, x0, y0, x1, y1) else { return 0 };
+    let b = rect_intersect(rect_from_points(x0, y0, x1, y1, width * 0.5 + 1.0), body);
+    if rect_is_empty(b) {
+        return 0;
     }
-    let Some(memory) = caller.get_export("memory").and_then(Extern::into_memory) else { return Vec::new() };
-    let data = memory.data(caller);
-    let start = ptr as usize;
-    let end = start.saturating_add(len as usize).min(data.len());
-    if start >= end {
-        return Vec::new();
+    let (dx, dy) = ((x1 - x0) as f64, (y1 - y0) as f64);
+    let along = if dy != 0.0 { ((width as f64 + 1.0) * (dx * dx + dy * dy).sqrt() / dy.abs()).ceil() + 4.0 } else { b.w as f64 };
+    b.h as u64 * (APP_CHARGE_LINE_ROW + (b.w as f64).min(along) as u64 * APP_CHARGE_EDGE_PX)
+}
+
+/// The app host's numbers for the charge of a text (`wasmhost::TextCharge`).
+const TEXT_CHARGE: TextCharge = TextCharge { byte_px: APP_CHARGE_TEXT, tall_px: APP_CHARGE_TALL_PX, square: APP_CHARGE_SQUARE, px_max: APP_TEXT_PX_MAX as u64 };
+
+/// The charge for a text of `bytes` bytes drawn `px` pixels high (a part of a pixel counts as one) in `face`: by
+/// its bytes and its height, and by the cube of the height more in a face that may be printed over
+/// (APP_CHARGE_BOLD).
+fn drawn_text_charge(bytes: usize, px: f32, face: FontFace) -> u64 {
+    let h = (px.ceil() as i64).clamp(1, APP_TEXT_PX_MAX as i64);
+    let n = TEXT_CHARGE.of(bytes, h, 0);
+    match face {
+        FontFace::Bold | FontFace::Title | FontFace::Caps => n + bytes as u64 * (h * h * h) as u64 / APP_CHARGE_BOLD,
+        _ => n,
     }
-    data[start..end].to_vec()
+}
+
+/// The charge for cutting a text of `len` bytes short to fit its room: the square of its bytes, counted to
+/// APP_CHARGE_SQUARE_BYTES (a text is cut to its first 251 bytes before the steps that measure it: font.rs, `fit`).
+fn cut_text_charge(len: i32) -> u64 {
+    let m = (len.max(0) as u64).min(APP_CHARGE_SQUARE_BYTES);
+    APP_CHARGE_SQUARE * m * m
+}
+
+/// The charge for a label, a caption, a value, a text or a hint of one of the kit's elements: a text
+/// APP_CHARGE_LABEL_PX high that is fitted to its room, on two lines where the element takes two (all its bytes
+/// are then in the square) and on one elsewhere.
+fn label_charge(bytes: usize, two_lines: bool) -> u64 {
+    TEXT_CHARGE.of(bytes, APP_CHARGE_LABEL_PX, if two_lines { u64::MAX } else { APP_CHARGE_SQUARE_BYTES })
+}
+
+/// The charge for an icon `side` pixels each way (1 to APP_ICON_PX_MAX): by the square of its side.
+fn icon_charge(side: i64) -> u64 {
+    let s = side.clamp(1, APP_ICON_PX_MAX as i64) as u64;
+    s * s * APP_CHARGE_ICON_PX
+}
+
+/// Takes the charge for the icon of a command from the call's budget: an icon as large as the smaller side of
+/// the command's rectangle, or the `part`th of it. (A text field's icon is charged by the field's height, where
+/// the import is: the kit draws it that tall.)
+fn pay_icon(caller: &mut Caller<'_, HostState>, x: i32, y: i32, w: i32, h: i32, part: i32) -> Result<(), wasmi::Error> {
+    let r = drawn(caller.data(), x, y, w, h);
+    charge(caller, icon_charge((r.w.min(r.h) / part) as i64))
+}
+
+/// The charge for `bytes` bytes copied as they are (the saved state, a request's bytes, an answer).
+fn copy_charge(bytes: usize) -> u64 {
+    bytes as u64 / APP_CHARGE_COPY_BYTES
+}
+
+/// A text of a call, read once its length is within the limit of one text and of the call's texts together and
+/// the call's budget has paid `cost` of its length for what the host does with it.
+fn call_text(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32, cost: impl FnOnce(usize) -> u64) -> Result<String, wasmi::Error> {
+    let n = len.max(0) as usize;
+    let st = caller.data_mut();
+    if n > APP_TEXT_MAX {
+        return Err(past(st, "the bytes of one text", APP_TEXT_MAX));
+    }
+    if st.text_bytes + n > APP_CALL_TEXT_MAX {
+        return Err(past(st, "the bytes of the texts of a call", APP_CALL_TEXT_MAX));
+    }
+    st.text_bytes += n;
+    charge(caller, cost(n))?;
+    Ok(String::from_utf8_lossy(&read_mem(caller, ptr, len)).into_owned())
+}
+
+/// What an icon's name longer than any icon's is taken as: a name no icon has (it is drawn as one is).
+const NO_ICON: &str = "?";
+
+/// An icon's name, read when it is no longer than a name can be. A longer one is not read.
+fn icon_name(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32) -> Result<String, wasmi::Error> {
+    if len.max(0) as usize > APP_ICON_NAME_MAX {
+        return Ok(NO_ICON.to_string());
+    }
+    charge(caller, len.max(0) as u64 * APP_CHARGE_BYTE)?;
+    Ok(String::from_utf8_lossy(&read_mem(caller, ptr, len)).into_owned())
+}
+
+/// Whether the call may record one more drawing command.
+fn room_for_command(st: &HostState) -> Result<(), wasmi::Error> {
+    if st.commands.len() >= APP_CALL_COMMANDS_MAX {
+        return Err(past(st, "the drawing commands of a call", APP_CALL_COMMANDS_MAX));
+    }
+    Ok(())
+}
+
+/// Counts `n` bytes of state about to be copied in this call.
+fn state_moved(st: &mut HostState, n: usize) -> Result<(), wasmi::Error> {
+    if st.state_bytes + n > APP_CALL_STATE_MAX {
+        return Err(past(st, "the bytes of state moved in a call", APP_CALL_STATE_MAX));
+    }
+    st.state_bytes += n;
+    Ok(())
+}
+
+/// `len` bytes of the module's memory from `ptr`, or as many as the memory has there. Every read of the
+/// module's memory is this one, and the bytes it copies are counted (`AppRuntime::bytes_read`).
+fn read_mem(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32) -> Vec<u8> {
+    let bytes = crate::wasmhost::read_mem(caller, ptr, len);
+    caller.data_mut().read_bytes += bytes.len();
+    bytes
 }
 
 fn write_mem(caller: &mut Caller<'_, HostState>, ptr: i32, cap: i32, bytes: &[u8]) -> i32 {
-    if ptr < 0 || cap <= 0 {
-        return 0;
-    }
-    let Some(memory) = caller.get_export("memory").and_then(Extern::into_memory) else { return 0 };
-    let data = memory.data_mut(caller);
-    let start = ptr as usize;
-    if start >= data.len() {
-        return 0;
-    }
-    let n = bytes.len().min(cap as usize).min(data.len() - start);
-    data[start..start + n].copy_from_slice(&bytes[..n]);
-    n as i32
+    crate::wasmhost::write_mem(caller, ptr, cap, bytes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn only_a_bottom_to_middle_two_finger_swipe_closes() {
         assert!(gesture_matches(900.0, 2300.0, 930.0, 1200.0, 1860, 2480));
         assert!(!gesture_matches(900.0, 1500.0, 930.0, 1200.0, 1860, 2480));
         assert!(!gesture_matches(900.0, 2300.0, 1700.0, 1200.0, 1860, 2480));
+    }
+
+    // A line's ends are held within DRAW_REACH of the body: a line inside that reach is kept as given, bit for
+    // bit; one that reaches farther is cut where it leaves the reach, on the line it is on; one with no part
+    // there, or with an end that is not a number, is no line.
+    #[test]
+    fn a_line_is_cut_where_it_leaves_the_reach_of_the_body() {
+        let body = Rect::new(0, 78, 1860, 2402);
+        let reach = crate::wasmhost::DRAW_REACH as f32;
+        assert_eq!(reach, 65_536.0);
+        let (far_x, far_y) = (1860.0 + reach, 2402.0 + reach);
+        for line in [(40.5, 200.25, 800.0, 260.0), (0.0, 0.0, 0.0, 0.0), (-reach, -reach, far_x, far_y), (far_x, 0.0, -reach, far_y), (-5000.0, 3000.0, 9000.0, -70.5)] {
+            assert_eq!(line_in_reach(body, line.0, line.1, line.2, line.3), Some(line), "{line:?} is kept as given");
+        }
+        // Level, upright and at a slant: each end outside the reach is moved to its edge, along the line.
+        assert_eq!(line_in_reach(body, -1e9, 500.0, 1e9, 500.0), Some((-reach, 500.0, far_x, 500.0)));
+        assert_eq!(line_in_reach(body, 700.0, 1e9, 700.0, -1e9), Some((700.0, far_y, 700.0, -reach)));
+        assert_eq!(line_in_reach(body, 100.0, 100.0, 100.0 + 2e6, 100.0 + 1e6), Some((100.0, 100.0, far_x, 100.0 + (far_x - 100.0) / 2.0)));
+        let (x0, y0, x1, y1) = line_in_reach(body, -3e6, -3e6, 3e6, 3e6).unwrap();
+        assert_eq!((x0, y0, x1, y1), (-reach, -reach, far_x, far_x), "a diagonal ends where it first leaves the reach, each way");
+        for v in [f32::MAX, f32::MIN, 1e30, -1e30] {
+            let cut = line_in_reach(body, v, 300.0, 900.0, 300.0).unwrap();
+            assert_eq!((cut.1, cut.2, cut.3), (300.0, 900.0, 300.0), "{v}");
+            assert_eq!(cut.0, if v > 0.0 { far_x } else { -reach }, "{v}");
+        }
+        // No part in the reach: beside it, and passing it by at a slant.
+        assert_eq!(line_in_reach(body, -1e9, 500.0, -reach - 1.0, 500.0), None);
+        assert_eq!(line_in_reach(body, 0.0, far_y + 1.0, 1860.0, far_y + 9.0), None);
+        assert_eq!(line_in_reach(body, -reach - 10.0, -reach + 5.0, -reach + 5.0, -reach - 10.0), None);
+        // (and one that crosses a corner of the reach is the part of it there)
+        assert_eq!(line_in_reach(body, -reach - 10.0, 0.0, 0.0, -reach - 10.0), Some((-reach, -10.0, -10.0, -reach)));
+        // An end that is not a number.
+        for v in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            for at in 0..4 {
+                let mut ends = [100.0, 100.0, 900.0, 800.0];
+                ends[at] = v;
+                assert_eq!(line_in_reach(body, ends[0], ends[1], ends[2], ends[3]), None, "{v} as number {at}");
+            }
+        }
+    }
+
+    /// A module with one page of memory, `data` from its address 0, the one import `grimoire.<import>` (as many
+    /// numbers in as `args` has, none out), and an `app_draw` that calls the import once with `args`: how a test
+    /// has an app draw one command with any numbers.
+    fn module_drawing(import: &str, args: &[i32], data: &[u8]) -> Vec<u8> {
+        let named = |name: &str, kind: &[u8]| [&[name.len() as u8][..], name.as_bytes(), kind].concat();
+        let section = |id: u8, content: Vec<u8>| [&[id, content.len() as u8][..], &content[..]].concat();
+        // (i32.const: the number as a signed LEB128)
+        let number = |mut v: i32| {
+            let mut out = vec![0x41];
+            loop {
+                let b = (v & 0x7f) as u8;
+                v >>= 7;
+                if (v == 0 && b & 0x40 == 0) || (v == -1 && b & 0x40 != 0) {
+                    out.push(b);
+                    return out;
+                }
+                out.push(b | 0x80);
+            }
+        };
+        let n = args.len();
+        // (the import's type and app_draw's; the import, function 0; app_draw, function 1; the memory; the two
+        // exports; app_draw's code: each number, the call, the end; the data)
+        let kinds = [&[2, 0x60, n as u8][..], &vec![0x7f; n][..], &[0, 0x60, 4, 0x7f, 0x7f, 0x7f, 0x7f, 0][..]].concat();
+        let imported = [&[1][..], &named(ABI, &[])[..], &named(import, &[0, 0])[..]].concat();
+        let exports = [&[2][..], &named("memory", &[2, 0])[..], &named("app_draw", &[0, 1])[..]].concat();
+        let numbers: Vec<u8> = args.iter().flat_map(|a| number(*a)).collect();
+        let code = [&[1, numbers.len() as u8 + 4, 0][..], &numbers[..], &[0x10, 0, 0x0b][..]].concat();
+        let placed = [&[1, 0, 0x41, 0, 0x0b, data.len() as u8][..], data].concat();
+        [b"\0asm\x01\0\0\0".to_vec(), section(1, kinds), section(2, imported), section(3, vec![1, 1]), section(5, vec![1, 0, 1]), section(7, exports), section(10, code), section(11, placed)].concat()
+    }
+
+    // The font makes no glyph past its greatest size, whoever draws (font.rs, GLYPH_SIDE_MAX), and the host
+    // holds an app's text and icons to sizes of its own far under it. Here the host's own sizes are set aside,
+    // so that a module's numbers reach the font as given: an icon in a square of 100,000 px and a letter
+    // 150,000 px high, the sizes between and the greatest numbers, through each command that draws an icon or
+    // a text. No glyph is made of any of them and stb is not asked for one; the pass ends well, with nothing
+    // drawn outside the body. With sizes a screen has, setting the host's own aside changes no pixel.
+    #[test]
+    fn with_the_hosts_own_sizes_aside_the_fonts_greatest_glyph_holds() {
+        let dir = scratch("glyphs");
+        ui_init(300.0);
+        assert_eq!(font_init(), 0);
+        let screen = Rect::new(0, 0, 1860, 2480);
+        let body = Rect::new(0, 78, 1860, 2402);
+        // (one pass of a module that draws one command, with the host's own sizes or with them aside: the canvas
+        // after it, and how many bitmaps the font asked stb for)
+        let pass = |import: &str, args: &[i32], data: &[u8], aside: bool| -> (Canvas, u32) {
+            let mut rt = runtime_of(host(&dir), &module_drawing(import, args, data));
+            let mut c = Canvas::default();
+            assert_eq!(canvas_init(&mut c, screen.w, screen.h), 0);
+            c.px.fill(200);
+            let asked = crate::font::font_bitmaps_asked();
+            OWN_SIZES_ASIDE.set(aside);
+            rt.draw(&mut c, body, 0);
+            OWN_SIZES_ASIDE.set(false);
+            assert_eq!(rt.error(), None, "{import} {args:?}");
+            assert!(c.px[..(body.y * c.stride) as usize].iter().all(|p| *p == 200), "{import} {args:?}: drawn above the body");
+            (c, crate::font::font_bitmaps_asked() - asked)
+        };
+        let inked = |c: &Canvas| c.px[(body.y * c.stride) as usize..].iter().filter(|p| **p != 255).count();
+        let most = i32::MAX;
+        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+            ui_set_theme(theme);
+            // An icon by itself, and a letter at a place: drawn by the host at its own greatest sizes, and not
+            // at all once those are aside.
+            for side in [6000, 12_000, 58_000, 90_000, 100_000, 120_000, 133_000, most] {
+                // (about the body's middle, where the host draws the icon of a larger rectangle)
+                let args = [0, 4, 930 - side / 2, 1200 - side / 2, side, side, 0];
+                assert!(inked(&pass("icon", &args, b"gear", false).0) > 100_000, "{theme:?}: the host draws the icon of a square of {side} px at its own greatest size");
+                let (c, asked) = pass("icon", &args, b"gear", true);
+                assert_eq!((inked(&c), asked), (0, 0), "{theme:?}: an icon in a square of {side} px");
+            }
+            for px_milli in [8_192_000, 20_000_000, 100_000_000, 150_000_000, 1_000_000_000, most] {
+                for face in 0..6 {
+                    let args = [0, 1000, 0, 1, px_milli, face, 0];
+                    assert!(inked(&pass("text_at", &args, b"W", false).0) > 10_000, "{theme:?}: the host draws a letter of {px_milli} thousandths at its own greatest height");
+                    let (c, asked) = pass("text_at", &args, b"W", true);
+                    // (a pixel face asks stb for a letter's design pixels, whatever the height: one small bitmap)
+                    assert!(inked(&c) == 0 && asked <= 1, "{theme:?}: a letter of {px_milli} thousandths in face {face}: {} pixels, {asked} asked", inked(&c));
+                    let args = [0, 0, 1860, 2402, 0, 1, px_milli, face, 1, 0];
+                    let (c, asked) = pass("text", &args, b"W", true);
+                    assert!(inked(&c) == 0 && asked <= 1, "{theme:?}: a text of {px_milli} thousandths in face {face}: {} pixels, {asked} asked", inked(&c));
+                }
+            }
+            // The kit's elements that draw an icon as large as they are, far larger than the body: each is the
+            // element with no icon, pixel for pixel, and no bitmap is asked for its icon.
+            for (import, with_icon, without) in [
+                ("fab", vec![-49_000, -49_000, 100_000, 100_000, 0, 4], None),
+                ("button", vec![-49_000, -49_000, 100_000, 100_000, 0, 0, 0, 4, 0], Some(vec![-49_000, -49_000, 100_000, 100_000, 0, 0, 0, 0, 0])),
+                ("text_field", vec![-200, -49_000, 2400, 100_000, 0, 4, 0, 0, 0, 0], Some(vec![-200, -49_000, 2400, 100_000, 0, 0, 0, 0, 0, 0])),
+            ] {
+                let (c, asked) = pass(import, &with_icon, b"gear", true);
+                assert_eq!(asked, 0, "{theme:?}: {import} {with_icon:?}");
+                if let Some(without) = without {
+                    assert!(c.px == pass(import, &without, b"gear", true).0.px, "{theme:?}: {import} {with_icon:?} is the element with no icon");
+                }
+            }
+            // Sizes a screen has: the same picture with the host's own sizes and with them aside.
+            for (import, args, data) in [
+                ("icon", vec![0, 4, 40, 40, 400, 400, 0], &b"gear"[..]),
+                ("text_at", vec![40, 900, 0, 5, 300_000, 1, 0], &b"12:34"[..]),
+                ("text", vec![40, 40, 1700, 200, 0, 5, 120_000, 0, 1, 0], &b"12:34"[..]),
+                ("button", vec![40, 40, 400, 400, 0, 0, 0, 4, 0], &b"gear"[..]),
+            ] {
+                let (held, aside) = (pass(import, &args, data, false).0, pass(import, &args, data, true).0);
+                assert!(inked(&held) > 1000 && held.px == aside.px, "{theme:?}: {import} {args:?}");
+            }
+        }
+        ui_set_theme(UiTheme::Classic);
     }
 
     // ---- HTTP ----
@@ -1462,7 +2287,13 @@ mod tests {
     /// The host's state for an app with `network:http` whose state folder is `dir/state`.
     fn host(dir: &str) -> HostState {
         HostState {
+            id: "test.app".to_string(),
+            storage: true,
+            body: (0, 0),
             commands: Vec::new(),
+            text_bytes: 0,
+            state_bytes: 0,
+            read_bytes: 0,
             state: Vec::new(),
             state_path: format!("{dir}/{STATE_FILE}"),
             settings: Vec::new(),
@@ -1472,7 +2303,7 @@ mod tests {
             texts: Vec::new(),
             toast: None,
             dirty: false,
-            limits: StoreLimitsBuilder::new().build(),
+            limits: crate::wasmhost::store_limits(MEMORY_MAX, APP_TABLE_MAX),
             redraw_at: None,
             screen_w: 0,
             screen_h: 0,
@@ -2319,7 +3150,7 @@ mod tests {
         let module = Module::new(&engine, &b"\0asm\x01\0\0\0"[..]).unwrap();
         let mut store = Store::new(&engine, st);
         let instance = Linker::new(&engine).instantiate_and_start(&mut store, &module).unwrap();
-        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None }
+        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None, used: 0, drawn: 0 }
     }
 
     /// Ticks the host until its request has ended, with no poll of the app's.
@@ -2689,14 +3520,14 @@ mod tests {
         config.consume_fuel(true);
         let engine = Engine::new(&config);
         let module = Module::new(&engine, wasm).unwrap();
-        st.limits = StoreLimitsBuilder::new().memory_size(MEMORY_MAX).build();
+        st.limits = crate::wasmhost::store_limits(MEMORY_MAX, APP_TABLE_MAX);
         let mut store = Store::new(&engine, st);
         store.limiter(|st| &mut st.limits);
-        store.set_fuel(FUEL_PER_CALL).unwrap();
+        store.set_fuel(APP_CALL_FUEL).unwrap();
         let mut linker = Linker::new(&engine);
         install_imports(&mut linker).unwrap();
         let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
-        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None }
+        AppRuntime { _engine: engine, store, instance, status: String::new(), texts: Vec::new(), error: None, used: 0, drawn: 0 }
     }
 
     /// The module's memory, to place a request's texts in and to read what a call wrote.
@@ -2781,6 +3612,102 @@ mod tests {
         let body: Write = rt.instance.get_typed_func(&rt.store, "call").unwrap();
         assert_eq!(body.call(&mut rt.store, (16, 100)).unwrap(), 0);
         assert!(memory_of(&mut rt).iter().all(|b| *b == 0));
+    }
+
+    /// What a call of `write` (a place, a room: the import's answer) writes into the module's memory, for the
+    /// rooms an app may give, against `held`, what the host has to write: the first bytes of it that the room and
+    /// the memory take, and nothing before the place or behind what was written. A place at or past the memory's
+    /// end or under nothing, and a room of nothing or under it, write nothing.
+    fn keeps_to_its_room(rt: &mut AppRuntime, write: &dyn Fn(&mut AppRuntime, i32, i32) -> i32, held: &[u8], what: &str) {
+        let (len, size) = (held.len(), memory_of(rt).len());
+        assert!(len >= 3, "{what}");
+        let rooms = [(16, len + 100, len), (16, len, len), (16, len - 1, len - 1), (16, 1, 1), (size - 3, 10, 3), (size - 1, len, 1), (size - 1, i32::MAX as usize, 1)];
+        for (at, room, n) in rooms {
+            let before = memory_of(rt).to_vec();
+            assert_eq!(write(rt, at as i32, room as i32), n as i32, "{what}: at {at}, room {room}");
+            let after = memory_of(rt);
+            assert!(after[at..at + n] == held[..n], "{what}: at {at}, room {room}");
+            assert!(after[..at] == before[..at] && after[at + n..] == before[at + n..], "{what}: at {at}, room {room}: a byte beside its room changed");
+            after[at..at + n].copy_from_slice(&before[at..at + n]);
+        }
+        let before = memory_of(rt).to_vec();
+        for (at, room) in [(16, 0), (16, -1), (16, i32::MIN), (-1, 10), (i32::MIN, 10), (size as i32, 10), (size as i32 + 1, i32::MAX), (i32::MAX, 10)] {
+            assert_eq!(write(rt, at, room), 0, "{what}: at {at}, room {room}");
+        }
+        assert!(*memory_of(rt) == before[..], "{what}: written with no room or no place");
+    }
+
+    // Each import that writes into the module's memory writes no more than the room the module gives and the
+    // memory holds (http_body and http_error: the test above): state_get, setting, time_text, date_text and
+    // wifi_ssid. wifi_ssid writes the connected network's name, which is 32 bytes at most: the Wi-Fi helper's
+    // report of a longer name is not read (wifi.rs), and no name is written for it.
+    #[test]
+    fn each_import_that_writes_keeps_to_the_room_given_and_the_memory() {
+        type Write = wasmi::TypedFunc<(i32, i32), i32>;
+        type Setting = wasmi::TypedFunc<(i32, i32, i32, i32), i32>;
+        let dir = scratch("writes");
+        // (a module of one page calling the import, its memory a byte no text has)
+        let calling = |st: HostState, import: &str, params: u8| {
+            let mut rt = runtime_of(st, &module_calling(import, params, 1));
+            memory_of(&mut rt).fill(0xa5);
+            rt
+        };
+
+        let state = b"the saved state of an app".to_vec();
+        let mut st = host(&dir);
+        st.state = state.clone();
+        let mut rt = calling(st, "state_get", 2);
+        let get: Write = rt.instance.get_typed_func(&rt.store, "call").unwrap();
+        keeps_to_its_room(&mut rt, &|rt: &mut AppRuntime, at, room| get.call(&mut rt.store, (at, room)).unwrap(), &state, "state_get");
+
+        let value = "the value of a setting";
+        let mut st = host(&dir);
+        st.settings = vec![("key".to_string(), value.to_string())];
+        let mut rt = calling(st, "setting", 4);
+        memory_of(&mut rt)[40_000..40_003].copy_from_slice(b"key");
+        let setting: Setting = rt.instance.get_typed_func(&rt.store, "call").unwrap();
+        keeps_to_its_room(&mut rt, &|rt: &mut AppRuntime, at, room| setting.call(&mut rt.store, (40_000, 3, at, room)).unwrap(), value.as_bytes(), "setting");
+
+        // (the clock's texts, worked out here as the host works them out, out of the last two seconds of a minute:
+        // the calls give the same texts)
+        while wall_time() % 60 >= 58 {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let mut time = String::new();
+        format_clock_short(wall_time(), false, &mut time, 64);
+        let tm = local_tm(wall_time());
+        let date = format!("{:04}-{:02}-{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+        for (import, held) in [("time_text", time.as_bytes()), ("date_text", date.as_bytes())] {
+            let mut rt = calling(host(&dir), import, 2);
+            let text: Write = rt.instance.get_typed_func(&rt.store, "call").unwrap();
+            keeps_to_its_room(&mut rt, &|rt: &mut AppRuntime, at, room| text.call(&mut rt.store, (at, room)).unwrap(), held, import);
+        }
+
+        // (the Wi-Fi state, as the helper's report of the network connected to sets it)
+        let script = format!("{dir}/wifi-helper.sh");
+        let connected_to = |name: &[u8]| {
+            let hex: String = name.iter().map(|b| format!("{b:02x}")).collect();
+            std::fs::write(&script, format!("printf 'wireless=1\\nenabled=1\\nconnected=1\\ncurrent={hex}\\n'\n")).unwrap();
+            wifi_init(Some(&script));
+            assert!(wifi_request(WifiAction::Current));
+            let end = Instant::now() + Duration::from_secs(20);
+            while wifi_busy() {
+                assert!(Instant::now() < end, "the Wi-Fi helper did not end");
+                wifi_tick();
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            wifi_current()
+        };
+        let longest: Vec<u8> = (0..APP_SSID_MAX).map(|k| b'a' + (k % 26) as u8).collect();
+        assert_eq!((APP_SSID_MAX, connected_to(&longest)), (32, Some(longest.clone())));
+        let mut rt = calling(host(&dir), "wifi_ssid", 2);
+        let ssid: Write = rt.instance.get_typed_func(&rt.store, "call").unwrap();
+        keeps_to_its_room(&mut rt, &|rt: &mut AppRuntime, at, room| ssid.call(&mut rt.store, (at, room)).unwrap(), &longest, "wifi_ssid");
+        let longer = [&longest[..], b"z"].concat();
+        assert_eq!(connected_to(&longer), None, "a report of a name of 33 bytes is not read");
+        assert_eq!(ssid.call(&mut rt.store, (16, 64)).unwrap(), 0);
+        assert!(memory_of(&mut rt).iter().all(|b| *b == 0xa5));
+        wifi_init(None);
     }
 
     // The http_start import answers from the capability, the request in flight and the request's
