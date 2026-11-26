@@ -2583,7 +2583,9 @@ The folder holds three more kinds of file, all disposable too:
 - `p<page ID>.full` and `p<page ID>.full.stamp`: a **kept drawing** of a page that is slow to draw, the
   whole page canvas run-length coded (runs of one byte as `(count - 1) | 0x80` then the byte, anything
   else as `count - 1` then that many bytes). Its stamp is the preview's stamp, then `|WxH|` (the page
-  size it was drawn at), the renderer's fingerprint in 16 hex digits and, since 2.1.0, the kept drawings'
+  size it was drawn at), the renderer's fingerprint in 16 hex digits (a sample page of ink with every tool,
+  and since 2.3.0 every paper after it, drawn and hashed: a change to how ink or a paper is drawn changes
+  it, so 2.3.0's darker papers retire every kept drawing once) and, since 2.1.0, the kept drawings'
   version (`|k2`), with `|L` after them for a page with floors. Anything that does not match exactly (another page file, size, renderer or layering) is
   never used: the page is drawn instead. The editor keeps one for a page that took a second or more to
   draw (as it opens, and at the idle save), and since 2.0.0-beta.2 the previews job keeps one for each
@@ -2621,8 +2623,9 @@ line is simply drawn again):
 offset  size  field
 0       4     "GPZ2"
 4       4     renderer version (bumped by hand when the PDF's own drawing changes: colour, compression)
-8       8     FNV-1a of the Grimoire version string, xor the ink renderer's fingerprint (a sample page drawn with
-              every tool, as kept drawings use: a change to the ink or paper renderer changes it by itself)
+8       8     FNV-1a of the Grimoire version string, xor the renderer's fingerprint (a sample page drawn with
+              every tool, then since 2.3.0 every paper, as kept drawings use: a change to the ink or paper renderer
+              changes it by itself)
 16      4     dpi, as the bits of the f32
 20      8     the page file's size
 28      8     the page file's modification time, seconds

@@ -1567,7 +1567,7 @@ FORMAT.md): a record that does not read or whose stamp is not the page's today i
 while its picture was missing or did not decode is never kept, so the cache can only make a PDF faster, never
 different (tests hold the streamed bytes equal to a render with the cache off, count the pages drawn, and make a
 page's picture only after a mirror drew the page without it). The stamp has the page file's identity, the
-notebook's page size and paper, the dpi, the version and the ink renderer's fingerprint; the record has the
+notebook's page size and paper, the dpi, the version and the renderer's fingerprint (its ink and its papers); the record has the
 picture file's channels, size and time, taken before any page on it is drawn; a picture job's end takes the
 notebook's records away (as it makes the page previews again). Links are not cached: the page is read for them
 only when the notebook has a link on it (the user's, or a document link), since they depend on `nav.ini` and

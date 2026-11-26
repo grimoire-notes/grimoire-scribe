@@ -123,6 +123,47 @@ fn drawings_kept_by_2_0_1_are_never_read_and_retired_once() {
     check!(std::path::Path::new(&format!("{}/.page-previews/p{pid}.full", dir_of(&nb))).exists());
 }
 
+// The kept drawing's tag rewritten with another renderer's fingerprint, as that renderer would have written it.
+fn kept_under(nb: &NotebookInfo, pid: u32, fp: u64) {
+    let stamp = format!("{}/.page-previews/p{pid}.full.stamp", dir_of(nb));
+    let tag = std::fs::read_to_string(&stamp).unwrap();
+    let fp = format!("{fp:016x}");
+    let mut parts: Vec<&str> = tag.split('|').collect();
+    check!(parts.len() == 4 && parts[2].len() == 16);
+    parts[2] = &fp;
+    std::fs::write(&stamp, parts.join("|")).unwrap();
+}
+
+fn every_paper_is_in_the_fingerprint() {
+    // A drawing is kept under the renderer's fingerprint, which since 2.3.0 hashes every paper after the ink: a
+    // build that draws any one paper differently has another, and its drawings are drawn again. (It hashed the ink
+    // page alone before, whose paper has no line on it: a paper drawn differently kept its old drawings, #314.)
+    let (fp, ink) = (page_render_fingerprint(), page_ink_fingerprint());
+    check!(fp != 0 && ink != 0 && fp != ink && page_render_fingerprint_with(ink, &paper_render) == fp);
+    for k in paper_every_drawing().into_iter().filter(|&k| k != PAPER_BLANK) {
+        let as_blank = move |c: &mut Canvas, kk: PaperKind, r: Rect, dpi: f32| paper_render(c, if kk == k { PAPER_BLANK } else { kk }, r, dpi);
+        check!(page_render_fingerprint_with(ink, &as_blank) != fp);
+    }
+    // A drawing kept under the fingerprint before 2.3.0 (the ink's alone) is not read; the same file under this
+    // build's is.
+    let mut nb = NotebookInfo::default();
+    check!(store_create("Before 2.3.0", "", PAPER_NARROW, &mut nb) == 0);
+    let (w, h) = (600, 800);
+    let p = page_with_ink(w, h);
+    check!(store_save_page(&nb, 0, &p) == 0);
+    let pid = nb.page_ids[0];
+    let mut drawn = Canvas::default();
+    check!(canvas_init(&mut drawn, w, h) == 0);
+    page_render(&mut drawn, &p, Rect { x: 0, y: 0, w, h }, 300.0);
+    check!(store_save_page_render(&nb, pid, &drawn, false));
+    kept_under(&nb, pid, ink);
+    let mut back = Canvas::default();
+    check!(canvas_init(&mut back, w, h) == 0);
+    check!(!store_page_render_kept(&nb, pid, w, h, false) && !store_load_page_render(&nb, pid, w, h, &mut back, false));
+    kept_under(&nb, pid, fp);
+    check!(store_page_render_kept(&nb, pid, w, h, false) && store_load_page_render(&nb, pid, w, h, &mut back, false) && back.px == drawn.px);
+}
+
 #[test]
 fn test_render_keep() {
     let root = format!("{}/render-keep-{}", tl_tmp(), std::process::id());
@@ -130,6 +171,7 @@ fn test_render_keep() {
     check!(store_init(&root) == 0);
     run!(kept_drawings_are_exact_and_only_current);
     run!(drawings_kept_by_2_0_1_are_never_read_and_retired_once);
+    run!(every_paper_is_in_the_fingerprint);
     let _ = std::fs::remove_dir_all(&root);
     done(); // (a failed check fails the test: it did not, without this)
 }

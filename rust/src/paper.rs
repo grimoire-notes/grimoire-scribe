@@ -847,6 +847,26 @@ pub fn paper_take_image_blank_count() -> i32 {
     G_IMAGE_BLANK.with(|g| g.replace(0))
 }
 
+/// Every drawing paper_render makes, for the renderer's fingerprint (page.rs page_render_fingerprint): each
+/// built-in kind, then two custom music layouts that between them have every part (an image paper is drawn
+/// from its picture, page_paper_render, and has no lines here).
+pub fn paper_every_drawing() -> Vec<PaperKind> {
+    let staves = MusicLayout { systems: 1, n: 6, part: [PART_TREBLE, PART_BASS, PART_ALTO, PART_TENOR, PART_PERC, PART_STAFF] };
+    let tabs = MusicLayout { systems: 1, n: 6, part: [PART_LYRICS, PART_TAB4, PART_TAB5, PART_TAB6, PART_TAB7, PART_TAB8] };
+    (0..PAPER_COUNT as u32).map(PaperKind).chain([music_encode(&staves), music_encode(&tabs)]).collect()
+}
+/// The page (w, h) paper k is drawn on for the fingerprint, at 300 dpi: room for every kind of line it has
+/// (a ruled page's header, rules and margin, Seyes's strong and faint lines, verticals and margin, every
+/// staff of a music page), at a sixteenth of a Scribe page; Cornell's, a sixth, has its summary line below
+/// its header and its cue line 55 mm in.
+pub fn paper_fingerprint_page(k: PaperKind) -> (i32, i32) {
+    if k == PAPER_CORNELL {
+        (760, 1000)
+    } else {
+        (480, 620)
+    }
+}
+
 /// Renders the background for `region` of a full page canvas (canvas size = page size).
 /// Must be a pure function of (kind, canvas w/h, dpi, pixel position) so any sub-region
 /// re-render matches a full render exactly. A kind this build does not know is blank paper, and so
@@ -1061,5 +1081,29 @@ mod tests {
         assert!((k - 302.85 / 300.0).abs() < 0.001, "k {k}");
         // the first strong line, 20 mm down: 236.2 px at 300, 238.5 at 302.9
         assert!(scaled > plain && (scaled - plain) <= 3, "{plain} -> {scaled}");
+    }
+
+    #[test]
+    fn the_renderers_fingerprint_draws_every_paper() {
+        assert_eq!(font_init(), 0); // (Cornell's labels, the clefs)
+        // Every fixed kind, then custom layouts that have every part between them.
+        let every = paper_every_drawing();
+        assert!((0..PAPER_COUNT as u32).all(|k| every.contains(&PaperKind(k))));
+        let mut parts = [false; PART_COUNT as usize];
+        for k in &every {
+            let mut m = MusicLayout::default();
+            if music_decode(*k, &mut m) {
+                m.part[..m.n as usize].iter().for_each(|p| parts[p.0 as usize] = true);
+            }
+        }
+        assert!(parts[1..].iter().all(|&p| p), "{parts:?}");
+        // On its fingerprint page every paper but Blank draws a line.
+        for k in every.into_iter().filter(|&k| k != PAPER_BLANK) {
+            let (w, h) = paper_fingerprint_page(k);
+            let mut c = Canvas::default();
+            assert_eq!(canvas_init(&mut c, w, h), 0);
+            paper_render(&mut c, k, Rect::new(0, 0, w, h), 300.0);
+            assert!(c.px.iter().any(|&g| g < 200), "{:x}", k.0);
+        }
     }
 }
