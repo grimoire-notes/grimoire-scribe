@@ -8479,7 +8479,8 @@ fn widget_runtime_tick(a: &mut App, now: u32) {
     }
     if let Some(r) = dirty {
         compose(a, r);
-        app_invalidate(a, r, RefreshMode::Ui);
+        // (nobody asked for it: counted and promoted as any Ui, and the platform hears so, display_unasked)
+        app_invalidate_unasked(a, r);
     }
 }
 
