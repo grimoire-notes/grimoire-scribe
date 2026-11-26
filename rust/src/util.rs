@@ -297,6 +297,17 @@ pub fn strlcpy_q(dst: &mut String, src: &str, cap: usize) -> usize {
     dst.len()
 }
 
+/// The most bytes of a message a screen shows that Grimoire did not write in full itself: why a package's module
+/// could not start or was stopped (a widget's frame, an app's toast), or why a package could not be installed,
+/// updated or listed (the package managers, the Package Store, Settings' updates). A longer one is cut between two
+/// characters (`message_shown`), as a toast is.
+pub const MESSAGE_SHOWN_MAX: usize = 256;
+
+/// `s` as a screen shows it: its first MESSAGE_SHOWN_MAX bytes at most, cut between two characters.
+pub fn message_shown(s: &str) -> &str {
+    cut_at_bytes(s, MESSAGE_SHOWN_MAX)
+}
+
 /// The longest prefix of s of at most max bytes that ends on a character boundary.
 pub fn cut_at_bytes(s: &str, max: usize) -> &str {
     if s.len() <= max {
@@ -1059,6 +1070,13 @@ impl<const N: usize> PartialEq<&str> for FixedStr<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_message_shown_is_at_most_256_bytes_cut_between_two_characters() {
+        assert_eq!(message_shown("short"), "short");
+        assert_eq!(message_shown(&"x".repeat(99_000)), "x".repeat(256));
+        assert_eq!(message_shown(&"\u{20ac}".repeat(100)), "\u{20ac}".repeat(85));
+    }
 
     #[test]
     fn rects() {

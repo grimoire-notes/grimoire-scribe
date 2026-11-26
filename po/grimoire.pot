@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Grimoire 2.1.0\n"
 "Report-Msgid-Bugs-To: https://github.com/ganten1998/grimoire-scribe/issues\n"
-"POT-Creation-Date: 2026-11-25 10:19-0600\n"
+"POT-Creation-Date: 2026-11-25 16:25-0600\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -971,6 +971,13 @@ msgstr ""
 #: rust/src/app.rs
 #, c-format
 msgid "Update channel: %s"
+msgstr ""
+
+#. TRANSLATORS: a toast: the app uses a call of Grimoire's that this version does not have (%s is the
+#. call's name, such as grimoire_kit.row).
+#: rust/src/apphost.rs
+#, c-format
+msgid "This app needs a newer Grimoire (%s)."
 msgstr ""
 
 #. TRANSLATORS: (also) a toast (one line of about 1000 px at 44 px in bold): the picture picked for Use as
@@ -6214,6 +6221,13 @@ msgstr ""
 
 #: rust/src/widgetpkgui.rs
 msgid "Remove"
+msgstr ""
+
+#. TRANSLATORS: in a widget's frame, in place of its body: the widget uses a call of Grimoire's that this
+#. version does not have (%s is the call's name, such as grimoire_kit.row).
+#: rust/src/widgetwasm.rs
+#, c-format
+msgid "This widget needs a newer Grimoire (%s)."
 msgstr ""
 
 #. TRANSLATORS: the studio's presets, each a whole look, on buttons.

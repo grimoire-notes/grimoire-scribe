@@ -134,3 +134,45 @@ pub fn in_body(body: Rect, r: Rect) -> Option<Rect> {
     let y1 = (r.y as i64 + r.h as i64).min(body.h as i64);
     (x1 > x0 && y1 > y0).then(|| Rect { x: x0 as i32, y: y0 as i32, w: (x1 - x0) as i32, h: (y1 - y0) as i32 })
 }
+
+/// An end of a line farther from the body than this, each way by itself, is first taken at this distance: the
+/// cut below is then worked out to a small part of a pixel, whatever numbers the module passed.
+const LINE_FAR: f64 = (1u64 << 30) as f64;
+
+/// A line's ends, relative to the body's top left, held within DRAW_REACH of the body: a line inside that reach
+/// is kept as given, and one that reaches farther is cut where it leaves the reach, on the line it is on, so
+/// what shows in the body is the same. None for a line with no part in that reach, or with an end that is not a
+/// number.
+pub fn line_in_reach(body: Rect, x0: f32, y0: f32, x1: f32, y1: f32) -> Option<(f32, f32, f32, f32)> {
+    if !(x0.is_finite() && y0.is_finite() && x1.is_finite() && y1.is_finite()) {
+        return None;
+    }
+    let reach = DRAW_REACH as f64;
+    let (far_x, far_y) = (body.w.max(0) as f64 + reach, body.h.max(0) as f64 + reach);
+    let within = |x: f32, y: f32| (-reach..=far_x).contains(&(x as f64)) && (-reach..=far_y).contains(&(y as f64));
+    if within(x0, y0) && within(x1, y1) {
+        return Some((x0, y0, x1, y1));
+    }
+    // (the part of the line between its ends that lies in the reach: from t0 to t1 of the way along it)
+    let near = |v: f32| (v as f64).clamp(-LINE_FAR, LINE_FAR);
+    let (ax, ay, bx, by) = (near(x0), near(y0), near(x1), near(y1));
+    let (dx, dy) = (bx - ax, by - ay);
+    let (mut t0, mut t1) = (0.0f64, 1.0f64);
+    for (step, room) in [(-dx, ax + reach), (dx, far_x - ax), (-dy, ay + reach), (dy, far_y - ay)] {
+        if step == 0.0 {
+            if room < 0.0 {
+                return None;
+            }
+        } else if step < 0.0 {
+            t0 = t0.max(room / step);
+        } else {
+            t1 = t1.min(room / step);
+        }
+    }
+    // (an end that is in the reach stays the number it is)
+    let at = |t: f64| if t <= 0.0 { (ax as f32, ay as f32) } else if t >= 1.0 { (bx as f32, by as f32) } else { ((ax + t * dx) as f32, (ay + t * dy) as f32) };
+    (t0 <= t1).then(|| {
+        let ((x0, y0), (x1, y1)) = (at(t0), at(t1));
+        (x0, y0, x1, y1)
+    })
+}

@@ -593,14 +593,30 @@ pub fn ui_row_gap() -> i32 {
 pub fn ui_row_space() -> i32 {
     ui_px(16.0)
 }
+/// The side of a row's icon.
+pub fn ui_row_icon() -> i32 {
+    ui_px(60.0)
+}
+/// The radius of a Settings card's corners (`ui_card`), in the theme's shape.
+pub fn ui_card_radius() -> i32 {
+    if gothic() {
+        ui_px(16.0)
+    } else {
+        ui_px(22.0)
+    }
+}
+/// The width of a card's outline.
+pub fn ui_line() -> i32 {
+    ui_px(3.0)
+}
 
 /// A Settings card: the one shape a row, a choice or a control sits in, from the main page to About.
 /// The chosen one is filled; the rest are outlined (a disabled one in gray), all at one radius.
 pub fn ui_card(c: &mut Canvas, r: Rect, st: ButtonStyle) {
     match st {
-        ButtonStyle::Selected => ui_frame(c, r, if gothic() { ui_px(16.0) } else { ui_px(22.0) }, 0, true, 0),
-        ButtonStyle::Disabled => ui_frame(c, r, if gothic() { ui_px(16.0) } else { ui_px(22.0) }, 170, false, ui_px(3.0)),
-        _ => ui_frame(c, r, if gothic() { ui_px(16.0) } else { ui_px(22.0) }, 0, false, ui_px(3.0)),
+        ButtonStyle::Selected => ui_frame(c, r, ui_card_radius(), 0, true, 0),
+        ButtonStyle::Disabled => ui_frame(c, r, ui_card_radius(), crate::globalui::GUI_GRAY_DISABLED, false, ui_line()),
+        _ => ui_frame(c, r, ui_card_radius(), 0, false, ui_line()),
     }
 }
 
@@ -680,11 +696,11 @@ fn ui_row_with(c: &mut Canvas, r: Rect, row: &Row, app_icon: Option<&AppIcon>) {
     let fg: u8 = if row.style == ButtonStyle::Selected {
         255
     } else if row.style == ButtonStyle::Disabled {
-        170
+        crate::globalui::GUI_GRAY_DISABLED
     } else {
         0
     };
-    let isz = ui_px(60.0);
+    let isz = ui_row_icon();
     let mut lx = r.x + ui_row_pad();
     if let Some(icon) = app_icon {
         icon.draw(c, Rect::new(lx, r.y + (r.h - isz) / 2, isz, isz), fg);
@@ -748,23 +764,29 @@ fn row_pages(n: usize, per: usize) -> i32 {
     }
 }
 
-/// The rows of a list in `area`, as many as fit, paged when they do not: the layout every Settings
-/// page and submenu shares. The caller keeps `page` (clamped here, and written back), draws each
-/// rect with `ui_row`, and adds the hits. Adding an item to a list never changes this or its page.
-pub fn ui_row_page(area: Rect, n: usize, page: i32, pref_h: i32, min_h: i32) -> RowPage {
+/// What `ui_row_page` fits in an area `h` px high for a list of `n` rows: the rows' height, the gap between
+/// them, the rows one page holds and the pages.
+pub fn ui_row_page_fit(h: i32, n: usize, pref_h: i32, min_h: i32) -> (i32, i32, usize, i32) {
     let nav_h = ui_px(110.0);
-    let (mut rh, mut gap, mut per) = row_fit(area.h, n, pref_h, min_h);
+    let (mut rh, mut gap, mut per) = row_fit(h, n, pref_h, min_h);
     let mut pages = row_pages(n, per);
-    let mut paged = pages > 1;
-    if paged {
+    if pages > 1 {
         // A paged list keeps a strip at the foot for its arrows, and fits the rows above it.
-        let (rh2, gap2, per2) = row_fit((area.h - nav_h).max(1), n, pref_h, min_h);
+        let (rh2, gap2, per2) = row_fit((h - nav_h).max(1), n, pref_h, min_h);
         rh = rh2;
         gap = gap2;
         per = per2;
         pages = row_pages(n, per);
-        paged = pages > 1;
     }
+    (rh, gap, per, pages)
+}
+
+/// The rows of a list in `area`, as many as fit, paged when they do not: the layout every Settings
+/// page and submenu shares. The caller keeps `page` (clamped here, and written back), draws each
+/// rect with `ui_row`, and adds the hits. Adding an item to a list never changes this or its page.
+pub fn ui_row_page(area: Rect, n: usize, page: i32, pref_h: i32, min_h: i32) -> RowPage {
+    let (rh, gap, per, pages) = ui_row_page_fit(area.h, n, pref_h, min_h);
+    let paged = pages > 1;
     let page = clampi(page, 0, pages - 1);
     let first = page as usize * per;
     let shown = n.saturating_sub(first).min(per);
@@ -773,14 +795,18 @@ pub fn ui_row_page(area: Rect, n: usize, page: i32, pref_h: i32, min_h: i32) -> 
         rows.push(Rect::new(area.x, area.y + i as i32 * (rh + gap), area.w, rh));
     }
     let (prev, next) = if paged {
-        let bw = ui_px(130.0);
-        let bh = ui_px(90.0);
+        let (bw, bh) = ui_row_pager_button();
         let y = area.y + area.h - bh;
         (Rect::new(area.x, y, bw, bh), Rect::new(area.x + area.w - bw, y, bw, bh))
     } else {
         (RECT_EMPTY, RECT_EMPTY)
     };
     RowPage { rows, first, page, pages, prev, next }
+}
+
+/// The width and height of each of a paged list's arrows (`ui_row_page`).
+pub fn ui_row_pager_button() -> (i32, i32) {
+    (ui_px(130.0), ui_px(90.0))
 }
 
 /// The arrows and the page count under a paged list (ui_row_page's prev and next). A tap on them

@@ -13,7 +13,7 @@
 //! until then, and when the worker refuses it or none can be had, a card or a page shows what it
 //! shows for a picture that is missing.
 
-use crate::globalui::{gui_button, gui_button_row, gui_chip, gui_gap, gui_header, gui_icon_button, gui_margin, gui_radius};
+use crate::globalui::{gui_button, gui_button_h, gui_button_row, gui_chip, gui_chip_h, gui_chip_w, gui_gap, gui_header, gui_icon_button, gui_margin, gui_radius};
 use crate::pkgpics::{picture_cached, picture_request, Ask, Cached, PicForm, PicSrc};
 use crate::prelude::*;
 use crate::sha256::sha256_of;
@@ -2623,11 +2623,11 @@ fn draw_list(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
         hits_add(&mut ui.hits, xr, H_QUERY_CLEAR, 0);
         top += qh + gap;
     }
-    let chips_h = ui_px(86.0);
+    let chips_h = gui_chip_h();
     let labels = [tr("All"), tr("Apps"), tr("Widgets"), tr("Installed")];
     let mut widths = Vec::with_capacity(labels.len());
     for label in &labels {
-        widths.push((font_measure(FontFace::Bold, ui_text_size(), label) + ui_px(78.0)).max(ui_px(170.0)));
+        widths.push(gui_chip_w(label));
     }
     let total: i32 = widths.iter().sum::<i32>() + gap * 3;
     let max_w = (area.w - ui_px(12.0)).max(ui_px(240.0));
@@ -2674,7 +2674,7 @@ fn draw_list(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
             tr("Nothing in the Store yet.").to_string()
         };
         font_draw_centered(c, FontFace::Bold, ui_title_size(), Rect::new(area.x, grid_top + ui_px(120.0), area.w, ui_px(90.0)), &msg, 0);
-        let hint = if ui.error.is_empty() { tr("Tap Refresh to check again.") } else { ui.error.as_str() };
+        let hint = if ui.error.is_empty() { tr("Tap Refresh to check again.") } else { message_shown(&ui.error) };
         ui_text(c, FontFace::Regular, ui_text_size(), ui_small_size(), Rect::new(area.x, grid_top + ui_px(230.0), area.w, ui_px(180.0)), hint, 2, true, 70);
         if !ui.error.is_empty() {
             let r = Rect::new(area.x + area.w / 2 - ui_px(170.0), grid_top + ui_px(430.0), ui_px(340.0), ui_px(100.0));
@@ -2705,7 +2705,7 @@ fn draw_list(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
         font_draw_centered(c, FontFace::Regular, ui_small_size(), Rect::new(area.x, bottom - PAGER_H - ui_px(76.0), area.w, ui_px(34.0)), &ui.dev_note, 110);
     }
     if !ui.status.is_empty() {
-        font_draw_centered(c, FontFace::Regular, ui_small_size(), Rect::new(area.x, bottom - PAGER_H - ui_px(38.0), area.w, ui_px(34.0)), &ui.status, 100);
+        font_draw_centered(c, FontFace::Regular, ui_small_size(), Rect::new(area.x, bottom - PAGER_H - ui_px(38.0), area.w, ui_px(34.0)), message_shown(&ui.status), 100);
     }
 }
 
@@ -2832,7 +2832,7 @@ fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     if !installed_license(&p).is_empty() || !p.license.is_empty() {
         actions.push((tr("License").to_string(), IconKind::Paper, H_LICENSE, ButtonStyle::Plain));
     }
-    let action_h = ui_px(96.0);
+    let action_h = gui_button_h();
     let action_gap = ui_px(12.0);
     let action_w = if wide { area.w * 43 / 100 } else { area.w };
     let mut widths: Vec<i32> = actions
@@ -2929,7 +2929,7 @@ fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let meta_y = y + desc_h + ui_px(8.0);
     draw_meta(c, Rect::new(info.x, meta_y, info.w, (below - meta_y).clamp(0, meta_h)), &p);
     if !ui.status.is_empty() {
-        font_draw_left(c, FontFace::Regular, ui_small_size(), Rect::new(info.x, ay - status_h, info.w, ui_px(44.0)), &ui.status, 90);
+        font_draw_left(c, FontFace::Regular, ui_small_size(), Rect::new(info.x, ay - status_h, info.w, ui_px(44.0)), message_shown(&ui.status), 90);
     }
     let mut row_y = ay;
     for row in &action_rows {
@@ -3276,7 +3276,7 @@ fn draw_error(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     let area = page.content;
     let title = if ui.index.packages.is_empty() { tr("Couldn't open the Store") } else { tr("Something went wrong") };
     font_draw_centered(c, FontFace::Bold, ui_title_size(), Rect::new(area.x, area.y + ui_px(80.0), area.w, ui_px(90.0)), title, 0);
-    ui_text(c, FontFace::Regular, ui_text_size(), ui_small_size(), Rect::new(area.x, area.y + ui_px(200.0), area.w, ui_px(220.0)), &ui.error, 4, true, 80);
+    ui_text(c, FontFace::Regular, ui_text_size(), ui_small_size(), Rect::new(area.x, area.y + ui_px(200.0), area.w, ui_px(220.0)), message_shown(&ui.error), 4, true, 80);
     let r = Rect::new(area.x + area.w / 2 - ui_px(180.0), area.y + ui_px(480.0), ui_px(360.0), ui_px(100.0));
     gui_button(c, r, IconKind::Update, if ui.index.packages.is_empty() { tr("Try again") } else { tr("Back to the Store") }, ButtonStyle::Primary);
     hits_add(&mut ui.hits, r, H_RETRY, 0);
@@ -3287,7 +3287,7 @@ fn draw_busy(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     draw_header_hits(ui, &page);
     let area = page.content;
     ui_icon(c, IconKind::Hourglass, Rect::new(area.x + (area.w - ui_px(180.0)) / 2, area.y + ui_px(160.0), ui_px(180.0), ui_px(180.0)), 80);
-    ui_text(c, FontFace::Bold, ui_title_size(), ui_text_size(), Rect::new(area.x, area.y + ui_px(400.0), area.w, ui_px(90.0)), &ui.status, 2, true, 0);
+    ui_text(c, FontFace::Bold, ui_title_size(), ui_text_size(), Rect::new(area.x, area.y + ui_px(400.0), area.w, ui_px(90.0)), message_shown(&ui.status), 2, true, 0);
 }
 
 pub fn store_draw(a: &mut App) {

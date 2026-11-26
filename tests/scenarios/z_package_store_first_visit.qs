@@ -22,7 +22,7 @@ waitfor library.store.list.icons is 4
 wait 200
 expect library.store.view is list
 expect library.store.packages is 4
-expect display.presents is fast 842 252 240 200, ui 0 0 1860 2480, ui 0 0 1860 2480, ui 107 379 57 87, ui 701 379 57 87, ui 1295 379 57 87, ui 701 775 57 87
+expect display.presents is fast 842 252 240 200, ui 0 0 1860 2480, ui 0 0 1860 2480, ui 107 381 57 87, ui 701 381 57 87, ui 1295 381 57 87, ui 701 777 57 87
 shot 00-four-icons
 waitbg
 expect display.presents not -1
@@ -31,7 +31,7 @@ waitfor library.store.shot.loaded is 1
 wait 200
 expect library.store.view is detail
 expect library.store.icon.loaded is 1
-expect display.presents is fast 645 338 570 372, ui 0 0 1860 2480, ui 559 1310 724 843
+expect display.presents is fast 645 340 570 372, ui 0 0 1860 2480, ui 559 1310 724 843
 shot 01-a-page
 waitbg
 tap library store.back
@@ -41,7 +41,7 @@ tap library store.package.com.example.p03
 waitfor library.store.shot.coming is 0
 wait 200
 expect library.store.shot.loaded is 0
-expect display.presents is fast 645 734 570 372, ui 0 0 1860 2480, ui 724 1784 408 36
+expect display.presents is fast 645 736 570 372, ui 0 0 1860 2480, ui 724 1784 408 36
 shot 02-no-screenshot
 tap library store.close
 wait 300

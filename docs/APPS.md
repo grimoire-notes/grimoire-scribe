@@ -105,8 +105,8 @@ manifest that breaks one is refused when it is read, before anything is asked or
 - `id` is lowercase letters, digits, dots and hyphens, at most 128, with no leading or trailing dot
   and no `..`, and does not end in `.previous`: an update keeps the replaced version's folder as
   `<id>.previous`, so that name is no package's.
-- `name`, `author` and `description` are at most 1,023 bytes each, what the index of installed apps
-  keeps of each.
+- `name`, `version`, `author` and `description` are at most 1,023 bytes each, what the index of
+  installed apps keeps of each.
 - `artifact.path` is a safe relative path of at most 240 bytes: no leading `/`, no backslash, no
   empty, `.` or `..` component, and neither `package.yaml` nor anything under `state/`, whatever the
   case of their letters (`Package.yaml` and `STATE/x` are refused too: a storage that ignores case
@@ -114,6 +114,9 @@ manifest that breaks one is refused when it is read, before anything is asked or
   in a dot, a space or `.sdr`, and the first is not the name of one of the storage's system folders
   (`system`, `extensions` and the like): the module is read through the walk Grimoire reads the
   Kindle's storage with, which takes no such name.
+
+The package page and the Package Store say why a package was refused or could not be fetched: each
+error they show is at most 256 bytes, cut between characters, as an app's toast is.
 
 `spec.icon` may name one of Grimoire's built-in icons, or a `.ico` bundled beside `package.yaml`.
 A bundled icon is a second package file: the installer fetches it from the manifest's folder, checks
@@ -226,6 +229,12 @@ All strings are UTF-8 in the module's linear memory; a `ptr, len` pair names one
 sizes are screen pixels in the app body. Each call of the module runs with a fixed instruction
 budget, from which the host's work for the imports it calls is paid as well, and is held to the
 [limits](#limits) below.
+
+A module may also import the package kit, `grimoire_kit` ([KIT.md](KIT.md)), which a widget draws with too: the
+theme's standard sizes, text by role, and Grimoire's own elements at the theme's sizes. Its commands are drawn
+with the module's own, in the order it calls them, and count toward the limits below. A kit element given an id
+is a hit region; the regions of the last drawing pass are what the headless runner taps by name. A call of
+`grimoire_kit` this Grimoire does not have keeps the app from opening (KIT.md, Levels).
 
 ### Drawing and Grimoire's UI
 
@@ -391,8 +400,9 @@ The host calls a module's `app_draw` (a drawing pass), `app_pointer`, `app_key`,
 | a call's budget | 30,000,000, counted in instructions: the module's own, and the host's work for its imports ([below](#what-a-calls-budget-pays-for)) |
 | the module's memories | 1, of at most 48 MiB (768 pages) |
 | the module's tables | 1, of at most 65,536 entries |
-| drawing commands in one call (the eighteen calls from `fill_rect` to `clip_clear`, all kinds together; `text_width` and `text_height` draw nothing and are not counted) | 4,096 |
-| bytes of one text (a `text`'s, a `text_at`'s, what `text_width` measures, and each label, caption, value, text and hint of `button`, `chip`, `row`, `select`, `app_tile` and `text_field`) | 1,024 |
+| drawing commands in one call (the eighteen calls from `fill_rect` to `clip_clear` and the kit's drawing calls, all kinds together; `text_width` and `text_height` draw nothing and are not counted) | 4,096 |
+| hit regions in one call (the kit's elements given an id, and its `hit`) | 512 |
+| bytes of one text (a `text`'s, a `text_at`'s, what `text_width` measures, each label, caption, value, text and hint of `button`, `chip`, `row`, `select`, `app_tile` and `text_field`, and each text the kit reads) | 1,024 |
 | bytes of all those texts of one call | 65,536 (64 KiB) |
 | bytes of the status line | 256 |
 | bytes `state_get` and `state_set` move in one call, all their uses together | 4,194,304 (4 MiB) |
@@ -472,12 +482,14 @@ charge is for the one that takes more work. One charge follows the font: whether
 than its room, and so pays for being cut short, is measured in the font it is drawn in.
 
 The charges were set by measuring, in a release build on a desktop machine, what each import's work
-costs beside a module's own instructions. There, the longest drawing a budget pays for takes about
-four times as long as the same budget spent on instructions alone: the labels of twenty rows, each
-broken into a line for every letter, in the Gothic theme. How long a label takes also follows the
-font the reader has chosen in Classic, for the same charge: a button's label of 1,023 bytes takes
-about four times as long in Atkinson Hyperlegible Next or Literata as in Terminess. A loop of any
-one import is over in a third of the time the budget's instructions alone take. They have not been
+costs beside a module's own instructions. There, the longest drawing measured that a budget pays for
+takes about two and a half times as long as the same budget spent on instructions alone (2.7): one
+label of 512 one-letter words that Grimoire's label rule balances on two lines, a `row`'s of the
+app's own or a FIT text, a row or a checkbox of the package kit, in Literata. How long a label takes
+also follows the font the reader has chosen in Classic, for the same charge: that label takes about
+three and a half times as long in Literata as in Terminess (1.7 times the budget's time in Gothic,
+0.8 in Terminess). A loop of any one of the imports above is over in a third of the time the
+budget's instructions alone take; the package kit's calls are measured in KIT.md. They have not been
 measured on a Kindle.
 
 Some sums, for a sense of scale:
@@ -524,6 +536,9 @@ the Library. Removing the package while it runs does the same before deleting it
   drawing passes and the screen's refreshes.
 - `rust/tests/test_app_host.rs` holds the same rules as unit tests of the host, and compares a
   drawing pass of one of every command with the kit's own drawing, pixel for pixel.
+- `tests/fixtures/kit/` holds an app (and widgets) drawn with the package kit, written by `rust/tests/kitfix`
+  (`make kit-fixtures`); `tests/scenarios/z_kit_app.qs` opens it in both themes and taps its controls by name, and
+  `rust/tests/test_kit.rs` holds the kit's rules ([KIT.md](KIT.md), Testing).
 
 A scenario can copy a fixture into a fresh data root:
 

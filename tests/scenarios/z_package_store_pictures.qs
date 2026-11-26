@@ -28,7 +28,7 @@ expect display.presents is ui 104 29 116 20
 expect library.store.list.icons is 0
 waitfor library.store.list.icons is 1
 wait 200
-expect display.presents is ui 404 379 57 87
+expect display.presents is ui 404 381 57 87
 shot 01-catalog-icon
 waitbg
 tap library store.package.com.example.fixture
