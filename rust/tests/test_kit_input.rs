@@ -1239,3 +1239,287 @@ fn an_apps_input_pass_waits_while_the_last_fast_refresh_shows() {
     app_done(a, id);
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// The refresh each tick of an app sends, if any: the part of the screen and the mode (the clock set to `t` first).
+#[cfg(feature = "sim")]
+fn asked_tick(a: &mut App, t: u32) -> Option<(Rect, RefreshMode)> {
+    sim_clock_set(Some(t));
+    a.dirty = RECT_EMPTY;
+    grimoire::apphost::apphost_tick(a, t);
+    (!rect_is_empty(a.dirty)).then_some((a.dirty, a.dirty_mode))
+}
+
+/// An App with the app `id` of `module` open (no status bar), launched at `t` by the app's clock.
+#[cfg(feature = "sim")]
+fn asked_open(id: &str, module: &[u8], t: u32) -> App {
+    app_package_install(&app_manifest(id, "Asked", &[], false, module), module, None, "", SCREEN.0, SCREEN.1).unwrap();
+    let mut a = App { w: SCREEN.0, h: SCREEN.1, dpi: 300.0, input_drained: true, ..Default::default() };
+    assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+    grimoire::library::library_init(&mut a);
+    sim_clock_set(Some(t));
+    assert!(grimoire::apphost::apphost_launch(&mut a, id));
+    a
+}
+
+/// The square of `changing_square` in an app without the status bar: 200 px a side about 200, 200 of the body.
+const ASKED_SQUARE: Rect = Rect { x: 100, y: 100, w: 200, h: 200 };
+
+/// A pass an app asks for (`request_redraw`) refreshes only the part of the screen it changed, nothing when it changed
+/// nothing. After a rest (nothing owed a clean, and no requested pass that refreshed something and no fast refresh
+/// within the pause: 150 ms with the pen away, editor.rs SETTLE_LEFT_MS; 1.5 s with it near, SETTLE_NEAR_MS) as the UI
+/// is, at full depth, owing nothing; back to back fast, and what those covered is owed one Clean refresh the pause
+/// after the last, so passes back to back are cleaned once, after the last.
+#[cfg(feature = "sim")]
+#[test]
+fn a_pass_an_app_asks_for_is_refreshed_at_full_depth_after_a_rest_and_fast_back_to_back_then_cleaned_once() {
+    let root = fresh_root("asked");
+    let (ui, fast, clean) = (Some((ASKED_SQUARE, RefreshMode::Ui)), Some((ASKED_SQUARE, RefreshMode::Fast)), Some((ASKED_SQUARE, RefreshMode::Clean)));
+    // A square of 160 and 96 by turns, a pass asked 100 ms after each of the first three: four passes in all.
+    let id = "test.ki.asked";
+    let mut a = asked_open(id, &changing_square(Host::App, 200, 100, Some(4)).bytes(), 10_000);
+    assert_eq!(asked_tick(&mut a, 10_099), None, "no pass before its time");
+    assert_eq!(asked_tick(&mut a, 10_100), ui, "the first after the launch: a rest, so the square at full depth");
+    assert_eq!(asked_tick(&mut a, 10_200), fast, "100 ms after a pass asked for: back to back, fast");
+    assert_eq!(asked_tick(&mut a, 10_300), fast);
+    assert!(a.app_view.status().starts_with("p004 "), "{}", a.app_view.status());
+    assert_eq!(asked_tick(&mut a, 10_350), None, "no clean 150 ms after the first fast pass: the next one refreshed fast and stamped it again");
+    assert_eq!(asked_tick(&mut a, 10_449), None, "no clean before the pause has passed since the last pass");
+    assert_eq!(asked_tick(&mut a, 10_450), clean, "one clean of all the fast passes covered");
+    assert_eq!(asked_tick(&mut a, 11_450), None, "and nothing more: the app asked for no other pass");
+    app_done(a, id);
+    // A pass a second: each after a rest with the pen away, at full depth, nothing to clean. With the pen near the
+    // pause is 1.5 s, so a pass a second is back to back: fast, and the clean waits until the passes are the pause
+    // apart; once the pen has left, the clean comes 150 ms after the last pass, and the next pass is after a rest.
+    let id = "test.ki.asked.second";
+    let mut a = asked_open(id, &changing_square(Host::App, 200, 1000, None).bytes(), 10_000);
+    assert_eq!(asked_tick(&mut a, 11_000), ui);
+    assert_eq!(asked_tick(&mut a, 11_500), None, "no clean: nothing was refreshed fast");
+    assert_eq!(asked_tick(&mut a, 12_000), ui);
+    grimoire::status::status_pen(&InEvent { type_: InType::PenHover, x: 900.0, y: 1200.0, ..Default::default() });
+    assert_eq!(asked_tick(&mut a, 13_000), fast, "the pen near: a second after the last pass is within the pause");
+    assert_eq!(asked_tick(&mut a, 14_000), fast);
+    assert_eq!(asked_tick(&mut a, 14_999), None, "no clean with the pen near: the next pass comes first");
+    assert_eq!(asked_tick(&mut a, 15_000), fast);
+    grimoire::status::status_pen(&InEvent { type_: InType::PenLeave, ..Default::default() });
+    assert_eq!(asked_tick(&mut a, 15_149), None);
+    assert_eq!(asked_tick(&mut a, 15_150), clean, "the pen gone: the clean 150 ms after the last pass");
+    assert_eq!(asked_tick(&mut a, 16_000), ui, "and the next pass is after a rest again");
+    assert!(a.app_view.status().starts_with("p007 "), "{}", a.app_view.status());
+    app_done(a, id);
+    // A square that stays as it was, a pass asked 100 ms after each: each pass is drawn, and nothing is refreshed.
+    let id = "test.ki.asked.same";
+    let mut a = asked_open(id, &input_square(Host::App, 200, 128, Some(100)).bytes(), 10_000);
+    assert_eq!(asked_tick(&mut a, 10_100), None, "a pass that changed nothing refreshes nothing");
+    assert_eq!(asked_tick(&mut a, 10_200), None);
+    assert_eq!(asked_tick(&mut a, 10_500), None, "and owes no clean");
+    assert!(a.app_view.status().starts_with("p004 "), "{}", a.app_view.status());
+    sim_clock_set(None);
+    app_done(a, id);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// The rest before a pass an app asks for, and the pause before its clean, are durations on the u32 clock: the same
+/// across its wrap at 2^32 ms, a rest, a pass back to back and a clean each across it.
+#[cfg(feature = "sim")]
+#[test]
+fn the_rest_before_a_pass_an_app_asks_for_and_its_clean_hold_across_the_clocks_wrap() {
+    let root = fresh_root("askedwrap");
+    let (ui, fast, clean) = (Some((ASKED_SQUARE, RefreshMode::Ui)), Some((ASKED_SQUARE, RefreshMode::Fast)), Some((ASKED_SQUARE, RefreshMode::Clean)));
+    // a pass a second, its second one past the wrap: still a second after the first, a rest
+    let id = "test.ki.askedwrap.second";
+    let mut a = asked_open(id, &changing_square(Host::App, 200, 1000, None).bytes(), u32::MAX - 1500);
+    assert_eq!(asked_tick(&mut a, u32::MAX - 500), ui);
+    assert_eq!(asked_tick(&mut a, 499), ui, "1,000 ms later across the wrap: after a rest");
+    app_done(a, id);
+    // passes 100 ms apart across the wrap: back to back, and the clean 150 ms after the last
+    let id = "test.ki.askedwrap.run";
+    let mut a = asked_open(id, &changing_square(Host::App, 200, 100, Some(4)).bytes(), u32::MAX - 150);
+    assert_eq!(asked_tick(&mut a, u32::MAX - 50), ui);
+    assert_eq!(asked_tick(&mut a, 49), fast, "100 ms later across the wrap: back to back");
+    assert_eq!(asked_tick(&mut a, 149), fast);
+    assert_eq!(asked_tick(&mut a, 298), None);
+    assert_eq!(asked_tick(&mut a, 299), clean);
+    app_done(a, id);
+    // passes 100 ms apart, the last before the wrap: the clean's pause crosses it
+    let id = "test.ki.askedwrap.clean";
+    let mut a = asked_open(id, &changing_square(Host::App, 200, 100, Some(4)).bytes(), u32::MAX - 350);
+    assert_eq!(asked_tick(&mut a, u32::MAX - 250), ui);
+    assert_eq!(asked_tick(&mut a, u32::MAX - 150), fast);
+    assert_eq!(asked_tick(&mut a, u32::MAX - 50), fast);
+    assert_eq!(asked_tick(&mut a, 98), None, "149 ms after the last pass, across the wrap: no clean yet");
+    assert_eq!(asked_tick(&mut a, 99), clean, "150 ms after it, across the wrap: the clean");
+    sim_clock_set(None);
+    app_done(a, id);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A pass an app asks for while what fast refreshes covered still waits for its clean is refreshed fast, however long
+/// since the last: here a held contact's paced pass refreshed fast, and the request comes 300 ms later with the finger
+/// still down. Once the clean has gone out, the next request after a rest is at full depth again.
+#[cfg(feature = "sim")]
+#[test]
+fn a_pass_an_app_asks_for_while_fast_refreshes_wait_for_their_clean_is_fast() {
+    let root = fresh_root("askedheld");
+    let id = "test.ki.askedheld";
+    // (a pass a second; its square follows the touch)
+    let mut a = asked_open(id, &changing_square(Host::App, 200, 1000, None).bytes(), 10_000);
+    let touch = |a: &mut App, type_: InType, t: u32| {
+        sim_clock_set(Some(t));
+        assert!(grimoire::apphost::apphost_event(a, &InEvent { type_, x: 900.0, y: 1200.0, t_ms: t, ..Default::default() }));
+    };
+    let held = Rect::new(800, 1100, 200, 200);
+    assert_eq!(asked_tick(&mut a, 11_000), Some((ASKED_SQUARE, RefreshMode::Ui)));
+    touch(&mut a, InType::TouchDown, 11_100);
+    assert_eq!(asked_tick(&mut a, 11_100), None, "no pass while the contact may be a tap");
+    assert_eq!(asked_tick(&mut a, 11_100 + HOLD_MS), Some((Rect::new(100, 100, 900, 1200), RefreshMode::Fast)), "the press's pass: the square moved, fast");
+    assert_eq!(asked_tick(&mut a, 12_000), Some((held, RefreshMode::Fast)), "the request with the press's fast refresh owed its clean: fast");
+    touch(&mut a, InType::TouchUp, 12_100);
+    assert_eq!(asked_tick(&mut a, 12_100), Some((held, RefreshMode::Ui)), "the lift's pass, as the UI");
+    assert_eq!(asked_tick(&mut a, 12_249), None);
+    assert_eq!(asked_tick(&mut a, 12_250), Some((Rect::new(100, 100, 900, 1200), RefreshMode::Clean)), "the clean of both fast refreshes");
+    assert_eq!(asked_tick(&mut a, 13_000), Some((held, RefreshMode::Ui)), "the next request after a rest: full depth");
+    sim_clock_set(None);
+    app_done(a, id);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// The rest before a pass an app asks for counts from its last fast refresh too, an input pass's among them: with the
+/// pen near (a pause of 1.5 s), a request 400 ms after a press's fast refresh is back to back, though its clean has
+/// gone out and the app's last request was 2 s before.
+#[cfg(feature = "sim")]
+#[test]
+fn a_pass_an_app_asks_for_within_the_pause_of_an_input_passs_fast_refresh_is_fast() {
+    let root = fresh_root("askedinput");
+    let id = "test.ki.askedinput";
+    // (a pass every 2 s; its square follows the touch)
+    let mut a = asked_open(id, &changing_square(Host::App, 200, 2000, None).bytes(), 10_000);
+    let touch = |a: &mut App, type_: InType, t: u32| {
+        sim_clock_set(Some(t));
+        assert!(grimoire::apphost::apphost_event(a, &InEvent { type_, x: 900.0, y: 1200.0, t_ms: t, ..Default::default() }));
+    };
+    let held = Rect::new(800, 1100, 200, 200);
+    assert_eq!(asked_tick(&mut a, 12_000), Some((ASKED_SQUARE, RefreshMode::Ui)));
+    touch(&mut a, InType::TouchDown, 13_000);
+    assert_eq!(asked_tick(&mut a, 13_000), None);
+    assert_eq!(asked_tick(&mut a, 13_000 + HOLD_MS), Some((Rect::new(100, 100, 900, 1200), RefreshMode::Fast)), "the press's pass, fast");
+    touch(&mut a, InType::TouchUp, 13_700);
+    assert_eq!(asked_tick(&mut a, 13_700), Some((held, RefreshMode::Ui)));
+    assert_eq!(asked_tick(&mut a, 13_850), Some((Rect::new(100, 100, 900, 1200), RefreshMode::Clean)), "its clean, the pen away");
+    grimoire::status::status_pen(&InEvent { type_: InType::PenHover, x: 300.0, y: 300.0, ..Default::default() });
+    assert_eq!(asked_tick(&mut a, 14_000), Some((held, RefreshMode::Fast)), "400 ms after the fast refresh, the pen near: fast");
+    grimoire::status::status_pen(&InEvent { type_: InType::PenLeave, ..Default::default() });
+    assert_eq!(asked_tick(&mut a, 14_150), Some((held, RefreshMode::Clean)), "cleaned once the pen has left");
+    sim_clock_set(None);
+    app_done(a, id);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Ticks every `step` ms from `base + from` to `base + to` (on the wrapping clock), and the refreshes they sent, each
+/// at its time after `base`; each refresh's rect is checked to be `rect`.
+#[cfg(feature = "sim")]
+fn asked_run(a: &mut App, base: u32, from: u32, to: u32, step: u32, rect: Rect) -> Vec<(u32, RefreshMode)> {
+    let mut out = Vec::new();
+    let mut k = from;
+    while k <= to {
+        if let Some((r, m)) = asked_tick(a, base.wrapping_add(k)) {
+            assert_eq!(r, rect, "the refresh at +{k}");
+            out.push((k, m));
+        }
+        k += step;
+    }
+    out
+}
+
+/// A pass an app asks for that changes nothing neither refreshes nor counts toward "back to back": an app whose passes
+/// come every 100 ms and change its square on every other one changes it every 200 ms, more than the pause, so each
+/// change is after a rest, at full depth, and nothing is ever cleaned (the review's probe r1).
+#[cfg(feature = "sim")]
+#[test]
+fn a_pass_an_app_asks_for_that_changes_nothing_does_not_count_toward_back_to_back() {
+    let root = fresh_root("askedother");
+    let id = "test.ki.askedother";
+    let module = square(Host::App, 200, gray_of(seq(&[load(value(V_PASSES)), i(2), vec![DIV_U]])), Some((100, Some(12))));
+    let mut a = asked_open(id, &module.bytes(), 10_000);
+    let got = asked_run(&mut a, 10_000, 10, 2_500, 10, ASKED_SQUARE);
+    let ui = RefreshMode::Ui;
+    assert_eq!(got, vec![(100, ui), (300, ui), (500, ui), (700, ui), (900, ui), (1_100, ui)], "one full-depth refresh a change, no fast one, no clean");
+    assert!(a.app_view.status().starts_with("p012 "), "{}", a.app_view.status());
+    sim_clock_set(None);
+    app_done(a, id);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// An animation (a pass every 100 ms) with one frame in the middle that changes nothing: that frame, back to back,
+/// holds the owed clean back, so the animation is cleaned exactly once, the pause after its last frame.
+#[cfg(feature = "sim")]
+#[test]
+fn an_animation_with_a_frame_that_changes_nothing_is_cleaned_once_after_it_stops() {
+    let root = fresh_root("askedheldframe");
+    let id = "test.ki.askedheldframe";
+    // (its fifth pass draws the fourth's gray again: the count less one from the fifth on)
+    let count = seq(&[load(value(V_PASSES)), load(value(V_PASSES)), i(5), vec![GE_U], vec![SUB]]);
+    let mut a = asked_open(id, &square(Host::App, 200, gray_of(count), Some((100, Some(9)))).bytes(), 10_000);
+    let got = asked_run(&mut a, 10_000, 10, 2_000, 10, ASKED_SQUARE);
+    let (ui, fast, clean) = (RefreshMode::Ui, RefreshMode::Fast, RefreshMode::Clean);
+    assert_eq!(
+        got,
+        vec![(100, ui), (200, fast), (300, fast), (500, fast), (600, fast), (700, fast), (800, fast), (950, clean)],
+        "the frame at +400 changed nothing, and no clean came at +450"
+    );
+    assert!(a.app_view.status().starts_with("p009 "), "{}", a.app_view.status());
+    sim_clock_set(None);
+    app_done(a, id);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// An app that asks for a pass every 100 ms and changes its square once a second (a poll): with the pen away each
+/// change is after a rest, one full-depth refresh and no clean. With the pen near (a pause of 1.5 s) each change is
+/// back to back, fast, and the polls back to back hold the clean back; once the pen has left, the clean comes 150 ms
+/// after the last poll back to back, and each change is at full depth again (the review's probe r2).
+#[cfg(feature = "sim")]
+#[test]
+fn an_app_that_polls_every_100_ms_and_changes_once_a_second_gets_one_full_depth_refresh_a_change() {
+    let root = fresh_root("askedpoll");
+    let id = "test.ki.askedpoll";
+    let module = square(Host::App, 200, gray_of(seq(&[load(value(V_PASSES)), i(10), vec![DIV_U]])), Some((100, None)));
+    let mut a = asked_open(id, &module.bytes(), 10_000);
+    let (ui, fast, clean) = (RefreshMode::Ui, RefreshMode::Fast, RefreshMode::Clean);
+    let away = asked_run(&mut a, 10_000, 10, 3_500, 10, ASKED_SQUARE);
+    assert_eq!(away, vec![(900, ui), (1_900, ui), (2_900, ui)], "the pen away");
+    grimoire::status::status_pen(&InEvent { type_: InType::PenHover, x: 900.0, y: 1200.0, ..Default::default() });
+    let near = asked_run(&mut a, 10_000, 3_510, 7_000, 10, ASKED_SQUARE);
+    grimoire::status::status_pen(&InEvent { type_: InType::PenLeave, ..Default::default() });
+    assert_eq!(near, vec![(3_900, fast), (4_900, fast), (5_900, fast), (6_900, fast)], "the pen near");
+    let gone = asked_run(&mut a, 10_000, 7_010, 9_000, 10, ASKED_SQUARE);
+    assert_eq!(gone, vec![(7_150, clean), (7_900, ui), (8_900, ui)], "the pen gone");
+    sim_clock_set(None);
+    app_done(a, id);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A pass an app asks for between a lift and the clean it owes is fast, though the last fast refresh was more than the
+/// pause before it: something is owed a clean (the review's probe r9). The clean then comes the pause after it.
+#[cfg(feature = "sim")]
+#[test]
+fn a_pass_an_app_asks_for_between_a_lift_and_its_clean_is_fast() {
+    let root = fresh_root("askedlift");
+    let id = "test.ki.askedlift";
+    let mut a = asked_open(id, &changing_square(Host::App, 200, 1000, None).bytes(), 10_000);
+    let touch = |a: &mut App, type_: InType, t: u32| {
+        sim_clock_set(Some(t));
+        assert!(grimoire::apphost::apphost_event(a, &InEvent { type_, x: 900.0, y: 1200.0, t_ms: t, ..Default::default() }));
+    };
+    let held = Rect::new(800, 1100, 200, 200);
+    assert_eq!(asked_tick(&mut a, 11_000), Some((ASKED_SQUARE, RefreshMode::Ui)));
+    touch(&mut a, InType::TouchDown, 11_010);
+    let pressed = asked_run(&mut a, 10_000, 1_010, 1_890, 10, Rect::new(100, 100, 900, 1200));
+    assert_eq!(pressed, vec![(1_010 + HOLD_MS, RefreshMode::Fast)], "the press's pass, fast");
+    touch(&mut a, InType::TouchUp, 11_900);
+    assert_eq!(asked_tick(&mut a, 11_900), Some((held, RefreshMode::Ui)), "the lift's pass, as the UI");
+    assert_eq!(asked_tick(&mut a, 12_000), Some((held, RefreshMode::Fast)), "390 ms after the press's fast refresh, 100 ms into the lift's pause: fast");
+    let after = asked_run(&mut a, 10_000, 2_010, 2_500, 10, Rect::new(100, 100, 900, 1200));
+    assert_eq!(after, vec![(2_150, RefreshMode::Clean)], "one clean, the pause after the request's fast refresh");
+    sim_clock_set(None);
+    app_done(a, id);
+    let _ = std::fs::remove_dir_all(root);
+}

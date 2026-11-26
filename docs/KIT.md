@@ -277,11 +277,17 @@ types into it with this.
 - A fast refresh shows grays as black and white, and a refresh drives only the pixels that change: so once the
   contact has lifted, all that its fast refreshes covered gets one full-depth refresh (a clean of that part alone),
   whatever the lift's pass changed, after a pause: 150 ms after the lift with the pen away, 1.5 s with it near (in a
-  frame, the notebook's cleaning of fast refreshes sends it, and draws the frame's part again for it).
+  frame, the notebook's cleaning of fast refreshes sends it, and draws the frame's part again for it). In an app a
+  pass it asks for (`request_redraw`) is back to back when it comes within the pause of the app's last such pass that
+  refreshed something, or of its last fast refresh; one that changes nothing refreshes nothing and does not count.
+  Not back to back, with nothing owed a clean, it is refreshed as Grimoire's screens are, at full depth; otherwise it
+  is refreshed fast, and what it covered is cleaned the same way, the pause after the last fast pass or the last pass
+  back to back that changed nothing (an animation is cleaned once, after it stops). A widget's is refreshed as
+  Grimoire's screens are, its frame at full depth.
 - A `kit_event` that returns 0 owes no pass. A call of a host's own export (`app_pointer`, `app_key`,
   `widget_tap`) says nothing of the picture, so it owes one.
 - Only the part of the screen the pass changed is refreshed, none when it changed nothing; a widget's pass refreshes
-  its body at most. Every pass of an app's is refreshed so, the status bar's minute too.
+  its body at most. Every pass of an app's is refreshed so, one it asks for and the status bar's minute too.
 - A pass that draws the whole body, for whatever reason (a redraw request, Grimoire drawing the notebook again),
   answers what input owed, and a redraw request whose time has come. A widget's pass of part of its body (Grimoire
   drawing a region that holds part of the frame) answers neither: the pass input owes follows, whole. A redraw request
@@ -403,5 +409,7 @@ refreshes of a tap, a long press, a drag, a flood and a drag that leaves the bod
 `_half` and `_wrap` copies the same with the app's clock past 2^31 ms and across its wrap at 2^32;
 `z_kit_input_overlap.qs`, `z_kit_input_minute.qs`, `z_kit_input_clean_app.qs` and `z_kit_input_clean_widget.qs`
 hold that the panel shows what the screen does after a frame's pass drawn in part, a status bar's minute and the
-fast refreshes of a press or a drag; `z_kit_input_cancel.qs` a frame's cancelled contact; `z_kit_keys.qs` and
-`z_kit_keys_off.qs` the keys of an open app; `z_kit_settings.qs` a widget's SETTINGS.
+fast refreshes of a press or a drag, and `z_kit_redraw_app.qs`, `z_kit_redraw_run.qs` and `z_kit_redraw_widget.qs`
+after the passes an app asks for a second apart and back to back, and those a widget asks for;
+`z_kit_input_cancel.qs` a frame's cancelled contact; `z_kit_keys.qs` and `z_kit_keys_off.qs` the keys of an open
+app; `z_kit_settings.qs` a widget's SETTINGS.
