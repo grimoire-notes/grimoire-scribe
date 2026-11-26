@@ -730,6 +730,34 @@ mod tests {
     }
 
     #[test]
+    fn a_frame_shows_at_most_256_bytes_of_each_text() {
+        assert_eq!(MESSAGE_SHOWN_MAX, 256);
+        let mut f = WidgetFrame::new(&TEST_WIDGET);
+        // A reason of 256 bytes is shown whole; one byte more, and the first 256 are shown.
+        for (n, shown) in [(255, 255), (256, 256), (257, 256), (100_000, 256)] {
+            f.runtime_error = Some("a".repeat(n));
+            assert_eq!(f.error(), Some("a".repeat(shown).as_str()), "a reason of {n} bytes");
+            assert_eq!(f.says().unwrap().0, "a".repeat(shown), "a reason of {n} bytes");
+        }
+        // Of characters of three bytes, 256 bytes end inside one: the text is cut before it, at 255.
+        f.runtime_error = Some("\u{20ac}".repeat(1000));
+        assert_eq!(f.error(), Some("\u{20ac}".repeat(85).as_str()));
+        // Whose widget it is, the same way: a version of 200,000 bytes, and a name and an author of 1,023 bytes each
+        // (the most a manifest's name and author have).
+        let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+        let reason = "The widget's artifact could not be read.".to_string();
+        let versioned: &'static WidgetDef = Box::leak(Box::new(WidgetDef { name: "Test", version: leak(format!("1.0.0-{}", "a".repeat(200_000))), author: "Its Author", ..TEST_WIDGET }));
+        let mut f = WidgetFrame::new(versioned);
+        f.runtime_error = Some(reason.clone());
+        assert_eq!(f.says(), Some((reason.clone(), format!("Test v1.0.0-{}", "a".repeat(256 - 12)))));
+        let name = leak("\u{20ac}".repeat(341));
+        let named: &'static WidgetDef = Box::leak(Box::new(WidgetDef { name, version: "1.0.0", author: name, ..TEST_WIDGET }));
+        let mut f = WidgetFrame::new(named);
+        f.runtime_error = Some(reason.clone());
+        assert_eq!(f.says(), Some((reason, "\u{20ac}".repeat(85))));
+    }
+
+    #[test]
     fn minimized_rect_is_a_square_and_restore_keeps_the_size() {
         ui_init(300.0);
         let mut f = WidgetFrame::new(&TEST_WIDGET);
