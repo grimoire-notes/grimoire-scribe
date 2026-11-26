@@ -2,7 +2,8 @@
 # settings: status_mode=1
 # env: GRIMOIRE_SIM_DEVICE_NAME=Slate GRIMOIRE_CHECK_FIT=1
 # A platform whose device has a name of its own (sys_device_name): Settings > System > About shows
-# that name as its title, where the host and the simulator show "This computer" (z_about.qs).
+# that name as its title, where the host and the simulator show "This computer"
+# (z_device_name_0_about.qs).
 wait 300
 tap library settings
 wait 300

@@ -17,9 +17,6 @@
 wait 200
 expect screen is library
 expect library.sheet is none
-# Settings > System > About names the simulator This computer (z_device_name_3_about: a platform's
-# own name).
-expect library.device.name is This computer
 expect library.ui_at.120.95 is about
 expect library.ui_at.400.95 is about
 tap 120 95
