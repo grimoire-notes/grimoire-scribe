@@ -519,12 +519,14 @@ pub struct EditorState {
     zoom: f32,
     ox: f32,
     oy: f32,
-    /// the resting zoom: the page's width across the screen, or sideways with landscape_fit the whole page
+    /// the resting zoom: the page's width across the screen, or sideways with landscape_fit the whole page;
+    /// 100% for a page a little smaller than the screen (page_near_view)
     zoom_default: f32,
     zoom_min: f32,
     /// pinched in at most this far: four times the page's width across the screen, however it rests
     zoom_max: f32,
-    /// the offset the resting view has across (the whole page sideways is centred: negative)
+    /// the offset the resting view has across (the whole page sideways is centred: negative; so is a page a
+    /// little smaller than the screen, page_near_view)
     rest_ox: f32,
     /// screen size the view was set up for
     view_w: i32,
@@ -1934,14 +1936,37 @@ fn view_clamp(a: &mut App) {
     }
     s.ox = if vw >= s.pgw as f32 { -(vw - s.pgw as f32) / 2.0 } else { clampf(s.ox, 0.0, s.pgw as f32 - vw) };
     s.oy = if vh >= s.pgh as f32 { -(vh - s.pgh as f32) / 2.0 } else { clampf(s.oy, 0.0, s.pgh as f32 - vh) };
-    // Snap to exactly 100% / no offset in portrait so the fast identity path is used.
-    if (s.zoom - 1.0).abs() < 0.01 && s.pgw == aw && s.pgh == ah {
-        s.zoom = 1.0;
-        s.ox = 0.0;
-        s.oy = 0.0;
+    // Snap to exactly 100% so the 1:1 paths draw it: a page of the view's size at no offset (the identity), one a
+    // little smaller centred on whole pixels (view_at_100).
+    if (s.zoom - 1.0).abs() < 0.01 {
+        if let Some((ox, oy)) = view_at_100(aw, ah, s.pgw, s.pgh) {
+            s.zoom = 1.0;
+            s.ox = ox;
+            s.oy = oy;
+        }
     }
     s.oy -= top as f32 / s.zoom;
     touch_context(a);
+}
+
+/// Whether a page of pgw x pgh is a little smaller than an aw x ah view: no larger on either axis, within 4% of it
+/// on both, and not its size (a notebook made on a screen a little smaller than this one). Such a page rests at
+/// 100%, centred (view_rest): it fits whole there, and a fit of a few percent would only resample every stroke,
+/// softer and a few percent larger than it was written. A page a little larger is fitted as any other: at 100%
+/// part of it would be off the screen.
+fn page_near_view(aw: i32, ah: i32, pgw: i32, pgh: i32) -> bool {
+    pgw <= aw && pgh <= ah && (pgw, pgh) != (aw, ah) && pgw * 25 >= aw * 24 && pgh * 25 >= ah * 24
+}
+
+/// Where a page sits at exactly 100% when that is where it rests (a page of the view's size, or one a little
+/// smaller, page_near_view): its offsets, centred on whole pixels so that blit_canvas copies it 1:1 ((0, 0) for a
+/// page of the view's size). None for any other page.
+fn view_at_100(aw: i32, ah: i32, pgw: i32, pgh: i32) -> Option<(f32, f32)> {
+    if (pgw, pgh) == (aw, ah) || page_near_view(aw, ah, pgw, pgh) {
+        Some(((-((aw - pgw) / 2)) as f32, (-((ah - pgh) / 2)) as f32))
+    } else {
+        None
+    }
 }
 
 /// What touchgest needs of the editor to tell a pan from a swipe, and to let a pinch zoom: whether the
@@ -1982,16 +2007,22 @@ fn touch_context(a: &App) {
 /// (100% upright for a page of this screen's size, the whole page for a notebook from another Scribe,
 /// theirs are 3:4 too); sideways with `fit` (settings.landscape_fit) the whole page shows instead,
 /// centred, and two fingers swipe anywhere. The least is the whole page either way, and the most four
-/// times the width's fit (the same expression and order it always was, so it is bit-identical).
+/// times the width's fit (the same expression and order it always was, so it is bit-identical). A page
+/// a little smaller than the screen (page_near_view) rests at 100% instead, centred, on any screen's
+/// shape and either way of `fit`; the whole page shows there, so 100% is its least too.
 fn view_rest(aw: i32, ah: i32, pgw: i32, pgh: i32, fit: bool) -> (f32, f32, f32) {
     let zoom_min = (aw as f32 / pgw as f32).min(ah as f32 / pgh as f32);
     let zoom = if fit && aw > ah { zoom_min } else { aw as f32 / pgw as f32 };
     let zoom_max = (aw as f32 / pgw as f32) * 4.0;
+    if page_near_view(aw, ah, pgw, pgh) {
+        return (1.0, 1.0, zoom_max);
+    }
     (zoom, zoom_min, zoom_max)
 }
 
 // The page at rest (view_rest): the width across upright, sideways the width too (pan with two fingers;
-// pinching out shows the whole page) or, with landscape_fit, the whole page.
+// pinching out shows the whole page) or, with landscape_fit, the whole page; a page a little smaller than
+// the screen at 100%, centred.
 fn view_reset(a: &mut App) {
     let top = status_reserved(a);
     let (aw, ah) = (a.w, a.h - top);
@@ -2057,7 +2088,8 @@ fn page_to_screen(a: &App, p: Rect) -> Rect {
 
 fn zoomed(a: &App) -> bool {
     let s = ed_ref(a);
-    // (The whole page sideways rests centred across, at a negative offset: rest_ox, 0 everywhere else.)
+    // (The whole page sideways rests centred across, at a negative offset: rest_ox, 0 everywhere else but a page a
+    // little smaller than the screen, centred both ways: its offset down is negative too, never scrolled.)
     (s.zoom - s.zoom_default).abs() > 0.01 || s.ox != s.rest_ox || s.oy + status_reserved(a) as f32 / s.zoom > 0.5
 }
 
@@ -2227,6 +2259,31 @@ fn blit_canvas(screen: &mut Canvas, pc: &Canvas, zoom: f32, ox: f32, oy: f32, r:
             }
             return;
         }
+        // A rect that reaches past the page's edge at 100% (a page a little smaller than the screen, at rest:
+        // page_near_view): the desk outside the page, the page's own pixels inside, each row copied. (The
+        // bilinear path below would clamp to the edge, and draw the page's first column and row once more
+        // into the desk, a pixel to the left and above.)
+        if ox.abs() < 1e7 && oy.abs() < 1e7 {
+            let on = rect_intersect(r, Rect::new(-(ox as i32), -(oy as i32), pc.w, pc.h));
+            for row in 0..r.h {
+                let y = r.y + row;
+                let dst_off = y as usize * screen.stride as usize + r.x as usize;
+                let dst = &mut screen.px[dst_off..dst_off + w];
+                if rect_is_empty(on) || y < on.y || y >= on.y + on.h {
+                    dst.fill(205);
+                } else {
+                    let (l, n) = ((on.x - r.x) as usize, on.w as usize);
+                    let src_off = (y + oy as i32) as usize * pc.stride as usize + (on.x + ox as i32) as usize;
+                    dst[..l].fill(205);
+                    dst[l..l + n].copy_from_slice(&pc.px[src_off..src_off + n]);
+                    dst[l + n..].fill(205);
+                }
+                if (row & 63) == 63 {
+                    work_pump();
+                }
+            }
+            return;
+        }
     }
     let mut sc = BLIT_SCRATCH.with(|cell| {
         let mut guard = cell.borrow_mut();
@@ -2343,8 +2400,10 @@ fn peek_view(aw: i32, ah: i32, pgw: i32, pgh: i32, fit: bool) -> (f32, f32, f32)
     // (a view that holds the whole page on an axis is centred on it; else it starts at the top or the left)
     let ox = if vw >= pgw as f32 { -(vw - pgw as f32) / 2.0 } else { clampf(0.0, 0.0, pgw as f32 - vw) };
     let oy = if vh >= pgh as f32 { -(vh - pgh as f32) / 2.0 } else { clampf(0.0, 0.0, pgh as f32 - vh) };
-    if (z - 1.0).abs() < 0.01 && pgw == aw && pgh == ah {
-        return (1.0, 0.0, 0.0);
+    if (z - 1.0).abs() < 0.01 {
+        if let Some((ox, oy)) = view_at_100(aw, ah, pgw, pgh) {
+            return (1.0, ox, oy);
+        }
     }
     (z, ox, oy)
 }
@@ -15044,6 +15103,19 @@ mod tests {
     #[test]
     fn blit_canvas_matches_reference_and_fast_blit_aligns() {
         fn ref_blit(screen: &mut Canvas, pc: &Canvas, zoom: f32, ox: f32, oy: f32, r: Rect) {
+            // At exactly 100% on whole pixels each screen pixel is the page's own pixel, or the desk off the
+            // page (a page a little smaller than the screen rests so: page_near_view).
+            if zoom == 1.0 && ox == ox.trunc() && oy == oy.trunc() {
+                for y in r.y..r.y + r.h {
+                    for x in r.x..r.x + r.w {
+                        let (px, py) = (x + ox as i32, y + oy as i32);
+                        let on = (0..pc.w).contains(&px) && (0..pc.h).contains(&py);
+                        screen.px[y as usize * screen.stride as usize + x as usize] =
+                            if on { pc.px[py as usize * pc.stride as usize + px as usize] } else { 205 };
+                    }
+                }
+                return;
+            }
             let mut ix = vec![0i32; r.w as usize];
             let mut wx = vec![0u8; r.w as usize];
             for i in 0..r.w {
@@ -15110,6 +15182,10 @@ mod tests {
             }
             if zoom == 1.0 && ox == 0.0 && oy == 0.0 {
                 assert_eq!(fast.px, pc.px);
+            }
+            // At 100% on whole pixels the fast preview and the grays' blit draw the same pixels, the desk too.
+            if zoom == 1.0 {
+                assert_eq!(fast.px, got.px, "fast and bilinear differ at zoom={zoom} ox={ox} oy={oy}");
             }
         }
     }
@@ -15555,8 +15631,10 @@ mod tests {
     #[test]
     fn a_peeked_page_rests_where_the_open_page_would() {
         // The view the bar shows a page at is the one view_reset would give it as the open page, on every
-        // screen and page shape, with the whole page sideways on and off.
+        // screen and page shape, with the whole page sideways on and off; a page a little smaller than the
+        // screen (page_near_view) at 100%, centred on whole pixels, an odd number of pixels to spare or not.
         for (aw, ah, pw, ph) in [(1860, 2480, 1860, 2480), (2480, 1860, 1860, 2480), (1986, 2648, 1986, 2648), (2648, 1986, 1986, 2648), (1860, 2480, 1986, 2648), (2480, 1860, 1986, 2648), (1986, 2648, 1860, 2480),
+            (1920, 2560, 1860, 2480), (2560, 1920, 1860, 2480), (1920, 2560, 1861, 2479), (1986, 2648, 1920, 2560), (2560, 1920, 2480, 1860), (1860, 2480, 1920, 2560),
         ] {
             for fit in [false, true] {
                 let mut a = app(aw, ah, pw, ph);
@@ -15594,6 +15672,182 @@ mod tests {
         let top = at(32, 24) * (255 - w) + at(33, 24) * w;
         let bot = at(32, 25) * (255 - w) + at(33, 25) * w;
         assert_eq!(a.screen.px[24 * 64 + 32] as u32, (top * (255 - w) + bot * w + 32512) / 65025);
+    }
+
+    #[test]
+    fn a_page_a_little_smaller_than_the_screen_is_near_it() {
+        // No larger on either axis, within 4% on both, and not the screen's own size.
+        assert!(page_near_view(1920, 2560, 1860, 2480)); // 3.1% and 3.1%
+        assert!(page_near_view(1986, 2648, 1920, 2560)); // 3.3% and 3.3%
+        assert!(page_near_view(1920, 2560, 1920, 2480)); // the screen's width, 3.1% shorter
+        assert!(page_near_view(2560, 1920, 2480, 1860)); // a sideways page on a sideways screen
+        // 96% is near, a pixel less on either axis is not
+        assert!(page_near_view(1000, 2000, 960, 1920));
+        assert!(!page_near_view(1000, 2000, 959, 1920));
+        assert!(!page_near_view(1000, 2000, 960, 1919));
+        // The screen's own size (the identity), a page larger on either axis, one further off, an upright page on
+        // a sideways screen
+        assert!(!page_near_view(1920, 2560, 1920, 2560));
+        assert!(!page_near_view(1860, 2480, 1920, 2560));
+        assert!(!page_near_view(1920, 2560, 1930, 2500));
+        assert!(!page_near_view(1986, 2648, 1860, 2480)); // 6.3%: a notebook from the other Scribe size
+        assert!(!page_near_view(1920, 2560, 1404, 1872));
+        assert!(!page_near_view(2560, 1920, 1860, 2480));
+    }
+
+    #[test]
+    fn a_page_a_little_smaller_than_the_screen_rests_at_100_percent_centred() {
+        // An 1860x2480 page on a 1920x2560 screen: 100%, not fitted at 1920/1860, with 30 px of desk at the
+        // sides and 40 at the top and bottom, whatever landscape_fit says. The least zoom is 100% (the whole
+        // page shows there), the most four times the width's fit, as for any page.
+        for fit in [false, true] {
+            let (z, zmin, zmax) = view_rest(1920, 2560, 1860, 2480, fit);
+            assert_eq!((z, zmin, zmax.to_bits()), (1.0, 1.0, ((1920.0f32 / 1860.0) * 4.0).to_bits()));
+            let mut a = app(1920, 2560, 1860, 2480);
+            a.settings.landscape_fit = fit;
+            view_reset(&mut a);
+            let s = ed_ref(&a);
+            assert_eq!((s.zoom, s.zoom_default, s.zoom_min, s.ox, s.oy, s.rest_ox), (1.0, 1.0, 1.0, -30.0, -40.0, -30.0));
+            assert!(!view_identity(&a) && !zoomed(&a));
+        }
+        let mut a = app(1920, 2560, 1860, 2480);
+        view_reset(&mut a);
+        // Screen and page are a whole-pixel shift apart: the page's own coordinates, nothing scaled.
+        let (mut x, mut y) = (0.0, 0.0);
+        to_page(ed_ref(&a), 30.0, 40.0, &mut x, &mut y);
+        assert_eq!((x, y), (0.0, 0.0));
+        to_page(ed_ref(&a), 100.5, 200.25, &mut x, &mut y);
+        assert_eq!((x, y), (70.5, 160.25));
+        assert_eq!(page_to_screen(&a, Rect::new(10, 10, 5, 5)), Rect::new(38, 48, 10, 10));
+        // Pinched in and panned: zoomed, the view inside the page.
+        let s = ed(&mut a);
+        s.zoom = 1.5;
+        s.ox = 500.0;
+        s.oy = 700.0;
+        view_clamp(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.zoom, s.ox, s.oy), (1.5, 500.0, 700.0));
+        assert!(zoomed(&a));
+        // Pinched out past 100%: held there, centred, at rest again.
+        ed(&mut a).zoom = 0.5;
+        view_clamp(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.zoom, s.ox, s.oy), (1.0, -30.0, -40.0));
+        assert!(!zoomed(&a));
+        // Nearly 100% snaps to it, centred on whole pixels, wherever the pinch left the offsets.
+        let s = ed(&mut a);
+        s.zoom = 1.006;
+        s.ox = 3.0;
+        s.oy = 9.5;
+        view_clamp(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.zoom, s.ox, s.oy), (1.0, -30.0, -40.0));
+        assert!(!zoomed(&a));
+        // Nothing zooms past four times the width's fit.
+        ed(&mut a).zoom = 100.0;
+        view_clamp(&mut a);
+        assert_eq!(ed_ref(&a).zoom, (1920.0f32 / 1860.0) * 4.0);
+        // Fit page (view_reset) from there: at rest.
+        view_reset(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.zoom, s.ox, s.oy), (1.0, -30.0, -40.0));
+        // An odd number of pixels to spare: centred on whole pixels all the same.
+        let mut a = app(1920, 2560, 1861, 2479);
+        view_reset(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.zoom, s.ox, s.oy, s.rest_ox), (1.0, -29.0, -40.0, -29.0));
+        // A sideways page on a sideways screen a little larger: the same.
+        let mut a = app(2560, 1920, 2480, 1860);
+        view_reset(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.zoom, s.ox, s.oy), (1.0, -40.0, -30.0));
+    }
+
+    #[test]
+    fn pages_of_the_screens_size_or_further_off_rest_as_before() {
+        // The rule view_rest always had, bit for bit: the width across (sideways with fit, the whole page), the
+        // least the whole page, the most four times the width's fit.
+        let before = |aw: i32, ah: i32, pw: i32, ph: i32, fit: bool| {
+            let zmin = (aw as f32 / pw as f32).min(ah as f32 / ph as f32);
+            (if fit && aw > ah { zmin } else { aw as f32 / pw as f32 }, zmin, (aw as f32 / pw as f32) * 4.0)
+        };
+        for (aw, ah, pw, ph) in [
+            (1920, 2560, 1920, 2560), // the screen's size
+            (2560, 1920, 1860, 2480), // an upright page sideways
+            (1920, 2560, 1404, 1872), // much smaller
+            (1920, 2560, 1920, 2400), // the screen's width, 6.25% shorter
+            (1860, 2480, 1920, 2560), // a little larger
+            (1986, 2648, 1860, 2480), // the two Scribe sizes, both ways
+            (1860, 2480, 1986, 2648),
+            (1000, 2000, 959, 1920), // just past 4%
+        ] {
+            for fit in [false, true] {
+                let (z, zmin, zmax) = view_rest(aw, ah, pw, ph, fit);
+                let (bz, bzmin, bzmax) = before(aw, ah, pw, ph, fit);
+                assert_eq!((z.to_bits(), zmin.to_bits(), zmax.to_bits()), (bz.to_bits(), bzmin.to_bits(), bzmax.to_bits()), "{aw}x{ah} page {pw}x{ph} fit {fit}");
+            }
+        }
+        // A 1920x2560 page on a screen of its size: the identity, and nearly 100% snaps to it.
+        let mut a = app(1920, 2560, 1920, 2560);
+        view_reset(&mut a);
+        assert!(view_identity(&a) && !zoomed(&a));
+        ed(&mut a).zoom = 1.005;
+        view_clamp(&mut a);
+        assert!(view_identity(&a));
+        // A much smaller page fills the screen's width from its top; 100% is below its least zoom.
+        let mut a = app(1920, 2560, 1404, 1872);
+        view_reset(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.zoom, s.ox, s.oy), (1920.0 / 1404.0, 0.0, 0.0));
+        ed(&mut a).zoom = 1.005;
+        view_clamp(&mut a);
+        assert_eq!(ed_ref(&a).zoom, ed_ref(&a).zoom_min);
+        assert!(!zoomed(&a));
+        // The screen's width, further off in height: 100% as before, centred down by half the difference.
+        let mut a = app(1920, 2560, 1920, 2400);
+        view_reset(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.zoom, s.ox, s.oy), (1.0, 0.0, -80.0));
+        // A page a little larger: fitted, its whole width across.
+        let mut a = app(1860, 2480, 1920, 2560);
+        view_reset(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.zoom, s.ox, s.oy), (1860.0 / 1920.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn a_page_a_little_smaller_than_the_screen_blits_one_to_one() {
+        // A 96x77 page on a 100x80 screen rests at 100%, 2 px of desk to the left and right, 1 above and 2 below:
+        // each screen pixel is the page's own pixel or the desk, in the grays' blit and the fast preview's alike,
+        // over the whole screen and in rects that cross the page's edges or lie off it.
+        let mut a = app(100, 80, 96, 77);
+        let s = ed(&mut a);
+        assert_eq!(canvas_init(&mut s.page_canvas, 96, 77), 0);
+        for (i, p) in s.page_canvas.px.iter_mut().enumerate() {
+            *p = (i * 37 % 251) as u8;
+        }
+        view_reset(&mut a);
+        assert_eq!((ed_ref(&a).zoom, ed_ref(&a).ox, ed_ref(&a).oy), (1.0, -2.0, -1.0));
+        let pc = ed_ref(&a).page_canvas.clone();
+        let want = |x: i32, y: i32| -> u8 {
+            let (px, py) = (x - 2, y - 1);
+            if (0..96).contains(&px) && (0..77).contains(&py) { pc.px[py as usize * pc.stride as usize + px as usize] } else { 205 }
+        };
+        for r in [Rect::new(0, 0, 100, 80), Rect::new(0, 0, 10, 10), Rect::new(90, 70, 10, 10), Rect::new(40, 30, 10, 10), Rect::new(98, 0, 2, 80), Rect::new(0, 78, 100, 2)] {
+            for fast in [false, true] {
+                a.screen.px.fill(0);
+                ed(&mut a).fast_blit = fast;
+                blit_view(&mut a, r);
+                for y in 0..80 {
+                    for x in 0..100 {
+                        let got = a.screen.px[y as usize * a.screen.stride as usize + x as usize];
+                        let inside = x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+                        assert_eq!(got, if inside { want(x, y) } else { 0 }, "{r:?} fast {fast} at {x},{y}");
+                    }
+                }
+            }
+        }
+        ed(&mut a).fast_blit = false;
     }
 
     // A drag of the panel's grip moves the panel itself where the finger takes it, drawn in black and

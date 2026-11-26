@@ -74,8 +74,12 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   size. The view maps page to screen (zoom + pan): `view_reset` fits the page's width to the
   screen's (`zoom_default` = screen width / page width, 1.00 upright for a notebook made on this
   screen, 1.07 for an 1860x2480 notebook on a 1986x2648 screen), `zoom_min` shows the whole page,
-  and a pinch zooms up to 4x the fit. The sleep screen fits the page to the screen the same way
-  (`canvas_blit_fit`). `App.screen` is what the panel shows: the viewed page plus overlays
+  and a pinch zooms up to 4x the fit. A page a little smaller than the screen (`page_near_view`: no
+  larger on either axis, within 4% on both, not its size, such as an 1860x2480 page on a 1920x2560
+  screen) rests at 100% instead, centred on whole pixels with the desk around it, which is its
+  `zoom_min` too: a fit of a few percent would resample every stroke and the live ink, softer and a
+  few percent larger than written, and at 100% `blit_canvas` copies the page 1:1. The sleep screen
+  fits the page to the screen (`canvas_blit_fit`), whatever its size. `App.screen` is what the panel shows: the viewed page plus overlays
   (floating panel, modals). Overlays are re-drawn on top of the page whenever a region is
   recomposed.
 - Screens never call display directly. They call `app_invalidate(app, rect, mode)` and the
