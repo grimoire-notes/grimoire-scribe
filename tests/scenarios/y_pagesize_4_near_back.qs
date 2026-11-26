@@ -13,7 +13,7 @@ expect size is 1860x2480
 expect settings.pen.valid is 1
 expect settings.pen.panel is 1860x2480
 expect library.items is 3
-# The notebook made on the 1920x2560 screen (the newest, after the School folder), with the pen
+# The notebook made on the 1920x2560 screen, with the pen
 pentap library card.3
 wait 500
 shot 02-fitted
