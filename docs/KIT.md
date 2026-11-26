@@ -24,7 +24,9 @@ this Grimoire does not have is not started: a widget's frame says `This widget n
 (grimoire_kit.<call>).` in place of its body, and an app does not open and a toast says `This app needs a newer
 Grimoire (grimoire_kit.<call>).` The refusal names a call only when the name has a call's shape, 1 to 64 bytes of
 `a` to `z`, `0` to `9` and `_` (every call of every level has one); for any other name it says `grimoire_kit` alone.
-A package's `min_grimoire_version` stays the install gate.
+A module that imports a call of this level with another signature, or as something other than a function, is not
+started either: the frame or the toast gives the interpreter's message (`The widget could not start: ...`). A
+package's `min_grimoire_version` stays the install gate.
 
 ## Units
 
