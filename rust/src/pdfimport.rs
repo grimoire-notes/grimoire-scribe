@@ -4346,9 +4346,9 @@ mod tests {
         data(st.join("grimoire"));
         assert_eq!(own_folder_shown("trash"), "grimoire/trash");
         assert_eq!(own_folder_shown("import"), "grimoire/import");
-        data(st.join("Document/Grimoire"));
-        assert_eq!(own_folder_shown("trash"), "Document/Grimoire/trash");
-        assert_eq!(own_folder_shown("PDFs"), "Document/Grimoire/PDFs");
+        data(st.join("Books/Grimoire"));
+        assert_eq!(own_folder_shown("trash"), "Books/Grimoire/trash");
+        assert_eq!(own_folder_shown("PDFs"), "Books/Grimoire/PDFs");
         data(out.join("Notes"));
         assert_eq!(own_folder_shown("fonts"), "grimoire/fonts");
         std::env::remove_var("GRIMOIRE_STORAGE");
