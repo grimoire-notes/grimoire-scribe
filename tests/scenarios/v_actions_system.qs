@@ -18,6 +18,17 @@ key 30 0
 expect settings.sleep_minutes is 15
 key 31 0
 expect settings.updates is 1
+# The toast names the channel settings.ini now holds (1 stable, 2 preview, 0 automatic).
+expect toast is Canal de actualizaciones: Estable
+key 31 0
+expect settings.updates is 2
+expect toast is Canal de actualizaciones: Beta
+key 31 0
+expect settings.updates is 0
+expect toast is Canal de actualizaciones: Automático
+key 31 0
+expect settings.updates is 1
+expect toast is Canal de actualizaciones: Estable
 # Gestures also remains assignable to a key while shortcuts are enabled.
 key 22 0
 expect settings.gestures is 0

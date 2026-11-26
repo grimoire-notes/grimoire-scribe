@@ -3926,8 +3926,10 @@ pub fn app_global_action(a: &mut App, action: i32, src: ActionSrc) -> bool {
         }
         SHORTCUT_UPDATE_CHANNEL => {
             a.settings.updates = (a.settings.updates + 1) % 3;
+            // In the order settings.ini keeps them (store.rs `updates`: 1 stable, 2 preview), which
+            // Settings > Updates reads too (library.rs `upd_preview`).
             // TRANSLATORS: update channels, used in a toast with Update channel: %s; 1700 px at 44 px.
-            const CHANNELS: [&str; 3] = [n_("Automatic"), n_("Preview"), n_("Stable")];
+            const CHANNELS: [&str; 3] = [n_("Automatic"), n_("Stable"), n_("Preview")];
             // TRANSLATORS: selected update channel, %s is its name; toast, 1700 px at 44 px bold.
             msg = cformat!(tr("Update channel: %s"), tr(CHANNELS[a.settings.updates as usize]));
         }
