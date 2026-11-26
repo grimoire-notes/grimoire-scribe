@@ -772,8 +772,8 @@ pub fn widget_package_validate(p: &WidgetPackage, canvas_w: i32, canvas_h: i32) 
     if p.name.trim().is_empty() {
         return Err("`name` is missing".into());
     }
-    // (the index keeps these three of a package: no longer than its reader takes of a string)
-    for (field, text) in [("name", &p.name), ("author", &p.author), ("description", &p.description)] {
+    // (the index keeps these four of a package: no longer than its reader takes of a string)
+    for (field, text) in [("name", &p.name), ("version", &p.version), ("author", &p.author), ("description", &p.description)] {
         if text.len() > WIDGET_PKG_TEXT_MAX {
             return Err(format!("`{field}` is longer than {WIDGET_PKG_TEXT_MAX} bytes"));
         }
@@ -962,8 +962,8 @@ pub fn widget_package_index_save(items: &[WidgetInstall]) -> i32 {
 }
 
 /// The bytes the index's reader keeps of one string of an entry (`json_string` keeps one less than the room it
-/// is given). The manifest check holds a package's name, author and description to it, so what an install
-/// writes into the index is what is read back.
+/// is given). The manifest check holds a package's name, version, author and description to it, so what an
+/// install writes into the index is what is read back.
 pub const WIDGET_PKG_TEXT_MAX: usize = 1023;
 
 fn json_get_str(text: &[u8], toks: &[JsonTok], obj: i32, key: &str) -> String {
@@ -2064,7 +2064,7 @@ spec:
     }
 
     #[test]
-    fn a_name_an_author_and_a_description_are_no_longer_than_the_index_keeps() {
+    fn a_name_a_version_an_author_and_a_description_are_no_longer_than_the_index_keeps() {
         ui_init(300.0);
         assert_eq!(WIDGET_PKG_TEXT_MAX, 1023);
         let good = manifest("com.example.test");
@@ -2074,25 +2074,34 @@ spec:
             s.push_str(&"x".repeat(n - s.len()));
             s
         };
+        // (a version, `n` bytes of it: three numbers and a prerelease of letters)
+        let version = |n: usize| format!("1.0.0-{}", "x".repeat(n - 6));
         assert_eq!(long(1023).len(), 1023);
-        for (line, field) in [("name: Test Widget", "name"), ("author: Jane", "author"), ("description: A test.", "description")] {
-            let at = widget_package_parse(&good.replace(line, &format!("{field}: {}", long(1023)))).unwrap();
+        assert_eq!(version(1023).len(), 1023);
+        for (line, field) in [("name: Test Widget", "name"), ("version: 1.2.0", "version"), ("author: Jane", "author"), ("description: A test.", "description")] {
+            let text = |n: usize| if field == "version" { version(n) } else { long(n) };
+            let at = widget_package_parse(&good.replace(line, &format!("{field}: {}", text(1023)))).unwrap();
             assert_eq!(widget_package_validate(&at, 1860, 2480), Ok(()), "{field} of 1,023 bytes");
-            let past = widget_package_parse(&good.replace(line, &format!("{field}: {}", long(1024)))).unwrap();
+            let past = widget_package_parse(&good.replace(line, &format!("{field}: {}", text(1024)))).unwrap();
             assert_eq!(widget_package_validate(&past, 1860, 2480), Err(format!("`{field}` is longer than 1023 bytes")), "{field} of 1,024 bytes");
-            let far = widget_package_parse(&good.replace(line, &format!("{field}: {}", long(200_000)))).unwrap();
+            let far = widget_package_parse(&good.replace(line, &format!("{field}: {}", text(200_000)))).unwrap();
             assert_eq!(widget_package_validate(&far, 1860, 2480), Err(format!("`{field}` is longer than 1023 bytes")), "{field} of 200,000 bytes");
         }
-        // What an install writes into the index is what is read back: the three at their longest, whole.
+        // What an install writes into the index is what is read back: the four at their longest, whole.
         let root = std::env::temp_dir().join(format!("grimoire-widgetpkg-texts-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         assert_eq!(store_init(root.to_str().unwrap()), 0);
-        let m = good.replace("name: Test Widget", &format!("name: {}", long(1023))).replace("author: Jane", &format!("author: {}", long(1023))).replace("description: A test.", &format!("description: {}", long(1023)));
+        let m = good
+            .replace("name: Test Widget", &format!("name: {}", long(1023)))
+            .replace("version: 1.2.0", &format!("version: {}", version(1023)))
+            .replace("author: Jane", &format!("author: {}", long(1023)))
+            .replace("description: A test.", &format!("description: {}", long(1023)));
         widget_package_install(&m, b"test", "", 1860, 2480).unwrap();
         let read = widget_package_index_load();
         assert_eq!(read.len(), 1);
         assert_eq!((read[0].name.as_str(), read[0].author.as_str(), read[0].description.as_str()), (long(1023).as_str(), long(1023).as_str(), long(1023).as_str()));
+        assert_eq!(read[0].version, version(1023));
         // (and a manifest with a longer one leaves the index as it was)
         let e = widget_package_install(&m.replace("id: com.example.test", "id: com.example.other").replace(&format!("description: {}", long(1023)), &format!("description: {}", long(255_000))), b"test", "", 1860, 2480).unwrap_err();
         assert_eq!(e, "`description` is longer than 1023 bytes");

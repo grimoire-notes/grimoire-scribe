@@ -1661,8 +1661,8 @@ An omitted `platforms` means every supported device; an explicit empty list is r
 platform is `GRIMOIRE_WIDGET_PLATFORM` when set, otherwise the Kindle model in
 `/proc/device-tree/model`. The known values are `all`, `kindle-scribe-2022` and
 `kindle-scribe-2024`. The artifact is at most 32 MiB; at most 64 packages are installed. A manifest
-is at most 256 KiB, and its `name`, `author` and `description` at most 1,023 bytes each: what the
-reader of `packages/index.json` keeps of a string.
+is at most 256 KiB, and its `name`, `version`, `author` and `description` at most 1,023 bytes each:
+what the reader of `packages/index.json` keeps of a string.
 
 `packages/index.json` lists what is installed, and is written atomically after the package's files
 are complete:

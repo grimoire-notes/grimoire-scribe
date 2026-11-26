@@ -146,8 +146,8 @@ pub fn app_package_validate(p: &WidgetPackage, _canvas_w: i32, _canvas_h: i32) -
     if p.name.trim().is_empty() {
         return Err("`name` is missing".into());
     }
-    // (the index keeps these three of a package: no longer than its reader takes of a string)
-    for (field, text) in [("name", &p.name), ("author", &p.author), ("description", &p.description)] {
+    // (the index keeps these four of a package: no longer than its reader takes of a string)
+    for (field, text) in [("name", &p.name), ("version", &p.version), ("author", &p.author), ("description", &p.description)] {
         if text.len() > WIDGET_PKG_TEXT_MAX {
             return Err(format!("`{field}` is longer than {WIDGET_PKG_TEXT_MAX} bytes"));
         }
@@ -783,7 +783,7 @@ settings:
     // A name, an author and a description are no longer than the index keeps of each (WIDGET_PKG_TEXT_MAX, as
     // for a widget): what an install writes into the index is what is read back.
     #[test]
-    fn an_apps_name_author_and_description_are_no_longer_than_the_index_keeps() {
+    fn an_apps_name_version_author_and_description_are_no_longer_than_the_index_keeps() {
         assert_eq!(WIDGET_PKG_TEXT_MAX, 1023);
         let artifact = b"fixture app bytes";
         let good = manifest_for(artifact);
@@ -793,21 +793,31 @@ settings:
             s.push_str(&"x".repeat(n - s.len()));
             s
         };
+        // (a version, `n` bytes of it: three numbers and a prerelease of letters)
+        let version = |n: usize| format!("1.0.0-{}", "x".repeat(n - 6));
         assert_eq!(long(1023).len(), 1023);
-        for (line, field) in [("name: Test App", "name"), ("author: Tester", "author"), ("description: An app", "description")] {
-            let at = widget_package_parse(&good.replace(line, &format!("{field}: {}", long(1023)))).unwrap();
+        assert_eq!(version(1023).len(), 1023);
+        for (line, field) in [("name: Test App", "name"), ("version: 1.0.0", "version"), ("author: Tester", "author"), ("description: An app", "description")] {
+            let text = |n: usize| if field == "version" { version(n) } else { long(n) };
+            let at = widget_package_parse(&good.replace(line, &format!("{field}: {}", text(1023)))).unwrap();
             assert_eq!(app_package_validate(&at, 1860, 2480), Ok(()), "{field} of 1,023 bytes");
-            let past = widget_package_parse(&good.replace(line, &format!("{field}: {}", long(1024)))).unwrap();
+            let past = widget_package_parse(&good.replace(line, &format!("{field}: {}", text(1024)))).unwrap();
             assert_eq!(app_package_validate(&past, 1860, 2480), Err(format!("`{field}` is longer than 1023 bytes")), "{field} of 1,024 bytes");
-            let far = widget_package_parse(&good.replace(line, &format!("{field}: {}", long(200_000)))).unwrap();
+            let far = widget_package_parse(&good.replace(line, &format!("{field}: {}", text(200_000)))).unwrap();
             assert_eq!(app_package_validate(&far, 1860, 2480), Err(format!("`{field}` is longer than 1023 bytes")), "{field} of 200,000 bytes");
         }
+        // What an install writes into the index is what is read back: the four at their longest, whole.
         let root = fresh_root("texts");
-        let m = good.replace("name: Test App", &format!("name: {}", long(1023))).replace("author: Tester", &format!("author: {}", long(1023))).replace("description: An app", &format!("description: {}", long(1023)));
+        let m = good
+            .replace("name: Test App", &format!("name: {}", long(1023)))
+            .replace("version: 1.0.0", &format!("version: {}", version(1023)))
+            .replace("author: Tester", &format!("author: {}", long(1023)))
+            .replace("description: An app", &format!("description: {}", long(1023)));
         app_package_install(&m, artifact, None, "", 1860, 2480).unwrap();
         let read = app_package_index_load();
         assert_eq!(read.len(), 1);
         assert_eq!((read[0].name.as_str(), read[0].author.as_str(), read[0].description.as_str()), (long(1023).as_str(), long(1023).as_str(), long(1023).as_str()));
+        assert_eq!(read[0].version, version(1023));
         // (and a manifest with a longer one is not installed, and leaves the index as it was)
         let e = app_package_install(&m.replace("id: test.app", "id: test.other").replace(&format!("description: {}", long(1023)), &format!("description: {}", long(255_000))), artifact, None, "", 1860, 2480).unwrap_err();
         assert_eq!(e, "`description` is longer than 1023 bytes");

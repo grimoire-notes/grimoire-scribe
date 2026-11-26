@@ -111,10 +111,10 @@ spec:
 
 | field | |
 |---|---|
-| `name` | required; the row and the frame's title. At most 1,023 bytes, as `author` and `description` are: what the index of installed packages keeps of each |
+| `name` | required; the row and the frame's title. At most 1,023 bytes, as `version`, `author` and `description` are: what the index of installed packages keeps of each |
 | `id` | required; the package's permanent identity. Lowercase letters, digits, dots and hyphens only, at most 128, no leading or trailing dot and no `..`, and not ending in `.previous` (an update keeps the replaced version's folder as `<id>.previous`, so that name is no package's). The install, update and remove paths all use it, and so does the saved layout (`widgets.ini` reads an id by this same rule, whatever its length up to 128), so never change it between versions |
 | `type` | must be `widget` |
-| `version` | required; `MAJOR.MINOR.PATCH`, with an optional prerelease suffix. The updater orders `-beta.N` and `-rc.N`; another suffix is accepted but is not ordered as newer. No leading zeroes in a number. An update is installed only when this sorts above the installed version, so bump it for every published change |
+| `version` | required; `MAJOR.MINOR.PATCH`, with an optional prerelease suffix. The updater orders `-beta.N` and `-rc.N`; another suffix is accepted but is not ordered as newer. No leading zeroes in a number. At most 1,023 bytes. An update is installed only when this sorts above the installed version, so bump it for every published change |
 | `author` | optional; shown in the detail page and the widget's frame metadata. At most 1,023 bytes |
 | `description` | optional; shown in the list, the detail page and the frame. At most 1,023 bytes |
 | `license` | optional; the SPDX name or a short name. When its text is found, the install page asks the reader to agree before installing |

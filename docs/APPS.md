@@ -105,8 +105,8 @@ manifest that breaks one is refused when it is read, before anything is asked or
 - `id` is lowercase letters, digits, dots and hyphens, at most 128, with no leading or trailing dot
   and no `..`, and does not end in `.previous`: an update keeps the replaced version's folder as
   `<id>.previous`, so that name is no package's.
-- `name`, `author` and `description` are at most 1,023 bytes each, what the index of installed apps
-  keeps of each.
+- `name`, `version`, `author` and `description` are at most 1,023 bytes each, what the index of
+  installed apps keeps of each.
 - `artifact.path` is a safe relative path of at most 240 bytes: no leading `/`, no backslash, no
   empty, `.` or `..` component, and neither `package.yaml` nor anything under `state/`, whatever the
   case of their letters (`Package.yaml` and `STATE/x` are refused too: a storage that ignores case
