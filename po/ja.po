@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Grimoire 2.1.0-beta.1\n"
 "Report-Msgid-Bugs-To: https://github.com/ganten1998/grimoire-scribe/issues\n"
-"POT-Creation-Date: 2026-11-24 10:35-0500\n"
+"POT-Creation-Date: 2026-11-26 15:32-0600\n"
 "PO-Revision-Date: 2026-11-10 00:00+0000\n"
 "Last-Translator: nebuff\n"
 "Language-Team: Japanese\n"
@@ -961,21 +961,28 @@ msgstr "次の睡眠: %s"
 msgid "Automatic"
 msgstr "自動"
 
+#: rust/src/app.rs rust/src/library.rs
+msgid "Stable"
+msgstr "安定版"
+
 #. TRANSLATORS: Settings > Updates, the branch the switch is on: Preview gets betas and releases,
 #. Stable only releases.
 #: rust/src/app.rs rust/src/library.rs
 msgid "Preview"
 msgstr "プレビュー"
 
-#: rust/src/app.rs rust/src/library.rs
-msgid "Stable"
-msgstr "安定版"
-
 #. TRANSLATORS: selected update channel, %s is its name; toast, 1700 px at 44 px bold.
 #: rust/src/app.rs
 #, c-format
 msgid "Update channel: %s"
 msgstr "アップデートチャンネル: %s"
+
+#. TRANSLATORS: a toast: the app uses a call of Grimoire's that this version does not have (%s is the
+#. call's name, such as grimoire_kit.row).
+#: rust/src/apphost.rs
+#, fuzzy, c-format
+msgid "This app needs a newer Grimoire (%s)."
+msgstr "これは、新しい Grimoire の形状を置き換えます。"
 
 #. TRANSLATORS: (also) a toast (one line of about 1000 px at 44 px in bold): the picture picked for Use as
 #. template, Use as photo or a sheet's From a file... is bigger than Grimoire takes as a template or a photo,
@@ -1326,7 +1333,7 @@ msgid "Waiting"
 msgstr "待機中"
 
 #. TRANSLATORS: a row of the Import place: this file became a notebook.
-#: rust/src/browser.rs
+#: rust/src/browser.rs rust/src/packagestore.rs
 msgid "Imported"
 msgstr "インポート済み"
 
@@ -1360,7 +1367,7 @@ msgstr "移動"
 msgid "Delete (moves it to %s)"
 msgstr "削除（%sに移動）"
 
-#: rust/src/browser.rs rust/src/library.rs
+#: rust/src/browser.rs rust/src/library.rs rust/src/packagestore.rs
 msgid "Keep it"
 msgstr "残す"
 
@@ -1887,9 +1894,7 @@ msgid "Calligraphy"
 msgstr "カリグラフィー"
 
 #. TRANSLATORS: the widget popup's title, beside the toolbar's Widgets button.
-#. TRANSLATORS: Settings' Packages category row: the widget package manager.
-#: rust/src/editor.rs rust/src/packagestore.rs rust/src/settingsmenu.rs
-#: rust/src/widgetpkgui.rs
+#: rust/src/editor.rs rust/src/packagestore.rs rust/src/widgetpkgui.rs
 msgid "Widgets"
 msgstr "ウィジェット"
 
@@ -3659,9 +3664,7 @@ msgstr "システムアップデート"
 
 #: rust/src/library.rs
 msgid "System updates use KPM, which isn't installed."
-msgstr ""
-"システムアップデートにはKPMが必要ですが、インスト"
-"ールされていません。"
+msgstr "システムアップデートにはKPMが必要ですが、インストールされていません。"
 
 #: rust/src/library.rs
 msgid "Checking for system updates..."
@@ -3689,9 +3692,7 @@ msgstr "Grimoire %s は最新です。"
 
 #: rust/src/library.rs
 msgid "Couldn't check for system updates. Is Wi-Fi on?"
-msgstr ""
-"システムアップデートを確認できませんでした。Wi-Fi"
-"はオンですか?"
+msgstr "システムアップデートを確認できませんでした。Wi-Fiはオンですか?"
 
 #. TRANSLATORS: starts the share server again.
 #: rust/src/library.rs rust/src/share.rs
@@ -4150,15 +4151,20 @@ msgid "Checking %d font..."
 msgid_plural "Checking %d fonts..."
 msgstr[0] "%d個のフォントを確認しています..."
 
-#. TRANSLATORS: Settings' Packages category row: the full-screen app package manager.
-#: rust/src/library.rs rust/src/packagestore.rs rust/src/settingsmenu.rs
-#: rust/src/widgetpkgui.rs
+#: rust/src/library.rs rust/src/packagestore.rs rust/src/widgetpkgui.rs
 msgid "Apps"
 msgstr "アプリ"
 
 #: rust/src/library.rs
 msgid "About"
 msgstr "情報"
+
+#. TRANSLATORS: the All apps page's button that opens the app package manager (as the widget
+#. popup's Manage widgets... opens the widget one).
+#: rust/src/library.rs
+#, fuzzy
+msgid "Manage apps..."
+msgstr "ウィジェットを管理..."
 
 #: rust/src/library.rs
 msgid "Import over Wi-Fi"
@@ -4561,16 +4567,15 @@ msgid ""
 "%d Kindle notebooks are in the cloud only. Open them once in the Kindle app "
 "first."
 msgstr ""
-"Kindleのノート%d冊はクラウドにのみあります。先にKindleアプリで一度開いて"
-"ください。"
+"Kindleのノート%d冊はクラウドにのみあります。先にKindleアプリで一度開いてくだ"
+"さい。"
 
 #. TRANSLATORS: a toast after Import Kindle notebooks: the folders are there but hold no notebook
 #. file. The Kindle keeps a notebook in Amazon's cloud until it is opened on the device.
 #: rust/src/library.rs
 msgid "No Kindle notebooks on disk. Open them once in the Kindle app first."
 msgstr ""
-"ディスクにKindleのノートがありません。先にKindleアプ"
-"リで一度開いてください。"
+"ディスクにKindleのノートがありません。先にKindleアプリで一度開いてください。"
 
 #: rust/src/library.rs
 msgid "No new Kindle notebooks found."
@@ -4923,9 +4928,7 @@ msgstr "ノートから"
 #. the screen's width): first while picking the notebook, then over its pages.
 #: rust/src/notebookpicker.rs
 msgid "Tap the page to use as this page's template."
-msgstr ""
-"このページのテンプレートにするページをタップして"
-"ください。"
+msgstr "このページのテンプレートにするページをタップしてください。"
 
 #: rust/src/notebookpicker.rs
 msgid "Pick the notebook whose page it takes."
@@ -4954,8 +4957,8 @@ msgstr "ここにはノートはありません。"
 #: rust/src/packagestore.rs
 msgid "No saved catalog. Connect to the Internet, then tap Refresh."
 msgstr ""
-"保存されたカタログがありません。インターネットに"
-"接続して「更新」をタップしてください。"
+"保存されたカタログがありません。インターネットに接続して「更新」をタップして"
+"ください。"
 
 #: rust/src/packagestore.rs
 msgid "Showing the saved catalog."
@@ -4978,6 +4981,16 @@ msgid "Downloading update..."
 msgstr "アップデートをダウンロード中..."
 
 #: rust/src/packagestore.rs
+#, fuzzy
+msgid "Imported from packages/import"
+msgstr "読み込んだページ"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Couldn't import"
+msgstr "やり直せませんでした。"
+
+#: rust/src/packagestore.rs
 msgid "Installed"
 msgstr "インストール済み"
 
@@ -4990,10 +5003,19 @@ msgid "Reading package.yaml..."
 msgstr "package.yaml を読み込み中..."
 
 #: rust/src/packagestore.rs
-msgid "The manifest names no artifact that can be downloaded."
+#, fuzzy
+msgid "Enter a GitHub repository or a .yaml address."
 msgstr ""
-"マニフェストにダウンロードできるファイルがありま"
-"せん。"
+"GitHubリポジトリを user/repo の形式で入力するか、.yaml で終わるhttpsアドレス"
+"を入力してください。"
+
+#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
+msgid "Looking up the repository..."
+msgstr "リポジトリを検索中..."
+
+#: rust/src/packagestore.rs
+msgid "The manifest names no artifact that can be downloaded."
+msgstr "マニフェストにダウンロードできるファイルがありません。"
 
 #: rust/src/packagestore.rs rust/src/widgetpkgui.rs
 msgid "Downloading the package..."
@@ -5012,6 +5034,10 @@ msgid "That package is no longer in the Store."
 msgstr "そのパッケージはストアにありません。"
 
 #: rust/src/packagestore.rs
+msgid "The Store does not know this package kind."
+msgstr ""
+
+#: rust/src/packagestore.rs
 #, c-format
 msgid "Updated %s to %s."
 msgstr "%s を %s にアップデートしました。"
@@ -5026,13 +5052,55 @@ msgstr "マニフェストがストアの登録内容と一致しません。"
 
 #: rust/src/packagestore.rs
 msgid "The manifest's version does not match its Store listing."
+msgstr "マニフェストのバージョンがストアの登録内容と一致しません。"
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid ""
+"The update changes the license from %s to %s. Open the package in the Store "
+"and accept it there."
 msgstr ""
-"マニフェストのバージョンがストアの登録内容と一致"
-"しません。"
 
 #: rust/src/packagestore.rs
 msgid "Updated"
 msgstr "アップデート済み"
+
+#: rust/src/packagestore.rs
+msgid "That repository has no package.yaml."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Connect to the Internet to read the license's text."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "The package names no license text the Store could read."
+msgstr "そのパッケージはストアにありません。"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "The repository has no license text the Store could read."
+msgstr "コピーにはリンクがありません。保存できませんでした。"
+
+#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
+msgid "Reading the license..."
+msgstr "ライセンスを読み込み中..."
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Uninstalled"
+msgstr "インストール済み"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Search packages"
+msgstr "再検索"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "GitHub repository"
+msgstr "リポジトリ"
 
 #: rust/src/packagestore.rs
 msgid "App"
@@ -5045,6 +5113,21 @@ msgstr "ウィジェット"
 #: rust/src/packagestore.rs
 msgid "Featured"
 msgstr "おすすめ"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Search:"
+msgstr "検索"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "No packages are installed."
+msgstr "すべてのパッケージは最新です。"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "No packages match your search."
+msgstr "一致するページ名はありません。"
 
 #: rust/src/packagestore.rs
 msgid "Nothing in the Store yet."
@@ -5103,8 +5186,32 @@ msgid "Package"
 msgstr "パッケージ"
 
 #: rust/src/packagestore.rs
-msgid "Repository QR"
+#, fuzzy
+msgid "Update to"
+msgstr "アップデート"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Uninstall"
+msgstr "インストール"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Repository URL"
 msgstr "リポジトリのQRコード"
+
+#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
+msgid "License"
+msgstr "ライセンス"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Show less"
+msgstr "ペンを表示"
+
+#: rust/src/packagestore.rs
+msgid "Read more"
+msgstr ""
 
 #: rust/src/packagestore.rs
 msgid "Trust this package?"
@@ -5123,16 +5230,95 @@ msgid ""
 "malfunction caused by installing or running it."
 msgstr ""
 "このパッケージの作者を必ず信頼してください。Grimoireは%sのコードをレビュー、"
-"審査、検証しておらず、インストールや実行による損害、データ損失、不具合に"
-"ついて責任を負いません。"
+"審査、検証しておらず、インストールや実行による損害、データ損失、不具合につい"
+"て責任を負いません。"
 
-#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
-msgid "I trust this author, continue"
+#: rust/src/packagestore.rs
+#, c-format
+msgid ""
+"This update changes the license from %s to %s. Read it before you accept."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "I trust the author, continue"
 msgstr "この作者を信頼して続行"
 
 #: rust/src/packagestore.rs
 msgid "Back to the package"
 msgstr "パッケージに戻る"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Accept the license"
+msgstr "ライセンスを読み込み中..."
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid ""
+"The update changes the license from %s to %s. Read it and accept it to "
+"update %s."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid "Read the license and accept it to install %s."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "I accept the license"
+msgstr "ライセンスを読み込み中..."
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Don't install"
+msgstr "インストール"
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid "This update changes the license from %s to %s."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid "The license %s is installed under."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid "The license %s is published under."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Uninstall this package?"
+msgstr "このパッケージを信頼しますか?"
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid ""
+"Uninstall %s? Its widget or app is closed and its files are deleted. Your "
+"layout is kept."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Install from GitHub"
+msgstr "リポジトリからインストール..."
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid ""
+"Type a GitHub repository as user/repo, or an https address ending in .yaml, "
+"on the keyboard below."
+msgstr ""
+"GitHubリポジトリを user/repo の形式で入力するか、.yaml で終わるhttpsアドレス"
+"を入力してください。"
+
+#: rust/src/packagestore.rs
+msgid "Tap Done to download it. Nothing is written until you trust the author."
+msgstr ""
 
 #: rust/src/packagestore.rs rust/src/widgetpkgui.rs
 msgid "Repository"
@@ -5739,10 +5925,6 @@ msgid "Shortcuts: keys and controller buttons"
 msgstr "ショートカット: キーとコントローラーのボタン"
 
 #: rust/src/settingsmenu.rs
-msgid "Packages"
-msgstr "パッケージ"
-
-#: rust/src/settingsmenu.rs
 msgid "KOReader"
 msgstr "KOReader"
 
@@ -6060,20 +6242,8 @@ msgid "%s %d"
 msgstr "%1$s%2$d日"
 
 #: rust/src/widgetpkgui.rs
-msgid "Looking up the repository..."
-msgstr "リポジトリを検索中..."
-
-#: rust/src/widgetpkgui.rs
-msgid "Reading the license..."
-msgstr "ライセンスを読み込み中..."
-
-#: rust/src/widgetpkgui.rs
 msgid "Settings reset to defaults."
 msgstr "設定を初期値に戻しました。"
-
-#: rust/src/widgetpkgui.rs
-msgid "License"
-msgstr "ライセンス"
 
 #: rust/src/widgetpkgui.rs
 msgid "Installing"
@@ -6140,9 +6310,11 @@ msgstr ""
 
 #: rust/src/widgetpkgui.rs
 msgid "Tap Done on the keyboard to install."
-msgstr ""
-"キーボードの「完了」をタップしてインストールしま"
-"す。"
+msgstr "キーボードの「完了」をタップしてインストールします。"
+
+#: rust/src/widgetpkgui.rs
+msgid "I trust this author, continue"
+msgstr "この作者を信頼して続行"
 
 #: rust/src/widgetpkgui.rs
 msgid "No license text was found in the repository."
@@ -6163,6 +6335,13 @@ msgstr "すべて初期設定に戻す"
 #: rust/src/widgetpkgui.rs
 msgid "Remove"
 msgstr "削除"
+
+#. TRANSLATORS: in a widget's frame, in place of its body: the widget uses a call of Grimoire's that this
+#. version does not have (%s is the call's name, such as grimoire_kit.row).
+#: rust/src/widgetwasm.rs
+#, fuzzy, c-format
+msgid "This widget needs a newer Grimoire (%s)."
+msgstr "これは、新しい Grimoire の形状を置き換えます。"
 
 #. TRANSLATORS: the studio's presets, each a whole look, on buttons.
 #: web/studio.js
@@ -6571,6 +6750,9 @@ msgctxt "studio"
 msgid "Copied"
 msgstr "コピーされました"
 
+#~ msgid "Packages"
+#~ msgstr "パッケージ"
+
 #~ msgctxt "what's new"
 #~ msgid "Dismiss"
 #~ msgstr "閉じる"
@@ -6774,9 +6956,6 @@ msgstr "コピーされました"
 #~ msgid "Deleted %d page (kept in %s)"
 #~ msgid_plural "Deleted %d pages (kept in %s)"
 #~ msgstr[0] "削除された %d ページ (%s に保持)"
-
-#~ msgid "The copy has no links: they could not be saved."
-#~ msgstr "コピーにはリンクがありません。保存できませんでした。"
 
 #, c-format
 #~ msgid "This page is a copy of page %d."

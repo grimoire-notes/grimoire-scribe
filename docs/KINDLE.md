@@ -633,7 +633,7 @@ file name, title, key or hash ever appears in it: ids, page numbers, counts, siz
   are still drawn by the UI.
 - `bg: PDF import of <id> (pid N)` once per slice; `bg: PDF import pid N done`.
 
-## Kindle notebooks (2.2, #196)
+## Kindle notebooks (2.3, #196)
 
 Grimoire imports notebooks made in the Kindle's own notebook app. Over USB (or MTP), each notebook is a folder
 in `/mnt/us/.notebooks/` named by an id and holding a file called `nbk`: copy that whole folder into
@@ -1419,6 +1419,9 @@ Calibrate pen and touch (the owner's order of 2026-11-04), and its bottom row KO
 Gestures, Updates and Done. Shortcuts holds Enable shortcuts, each keyboard's or controller's own shortcuts,
 Buttons... and Reload shortcuts.ini; Pair holds Bluetooth controller and Pair a controller...
 (docs/SHORTCUTS.md). Until 2.0.0-beta.2 both were one Controller sheet behind the bottom row's button.
+With Enable shortcuts on, a paired keyboard types into whichever of Grimoire's keyboards is open (a name, Find, a
+page number, a password, a search): its letters, digits, punctuation and Space as the keys do (the US layout, with
+Shift), Backspace deletes, Enter is Done and Esc is Cancel; with none open its keys do what they did.
 
 
 ## Wi-Fi in Grimoire and KOReader

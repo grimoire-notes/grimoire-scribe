@@ -87,6 +87,7 @@ pub mod compact; // compact.h's surface (bodies in bgwork_compact.rs)
 pub mod export;
 pub mod childcaps; // oom_score_adj and RLIMIT_AS for every background child (2.1, lane L9)
 pub mod pdfcache; // the notebook PDF's page streams (2.1, lane L9)
+pub mod zpieces; // stb's zlib compressor with the same bytes out, in pieces of a fixed size (issue 79)
 pub mod history;
 pub mod lasso; // lasso select, copy, cut, paste, move (the pure part)
 pub mod lasso_live; // the lasso's live selection preview (the pure part)
@@ -138,6 +139,8 @@ pub mod quick; // the global quick settings panel (2.3)
 pub mod ui;
 pub mod upload; // Send a PDF from the Share page: the request's rules, the name shown, the temporary file (2.2, #175)
 pub mod widgets; // the editor's widget windows and widgets.ini (2.2, issue #200)
+pub mod wasmhost; // what the widget host and the app host share: the rules of a call, written once (Rust only)
+pub mod kithost; // the package kit both hosts link: `grimoire_kit`, the theme's sizes and elements (2.3, #267)
 pub mod widgetwasm; // the generic WebAssembly widget host (2.2, issue #200)
 pub mod widgetpkg; // widget packages: manifests, platforms, installs and the packages index (2.2, #200)
 pub mod widgetpkgui; // the Packages page: installed widgets and apps, install from a repository (2.2, #200)

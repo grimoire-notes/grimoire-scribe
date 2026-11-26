@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Grimoire 2.1.0\n"
 "Report-Msgid-Bugs-To: https://github.com/ganten1998/grimoire-scribe/issues\n"
-"POT-Creation-Date: 2026-11-24 10:35-0500\n"
+"POT-Creation-Date: 2026-11-26 15:32-0600\n"
 "PO-Revision-Date: 2026-11-16 00:00+0000\n"
 "Last-Translator: draft\n"
 "Language-Team: Polish\n"
@@ -967,21 +967,28 @@ msgstr "Uśpij po: %s"
 msgid "Automatic"
 msgstr "Automatycznie"
 
+#: rust/src/app.rs rust/src/library.rs
+msgid "Stable"
+msgstr "Stabilna"
+
 #. TRANSLATORS: Settings > Updates, the branch the switch is on: Preview gets betas and releases,
 #. Stable only releases.
 #: rust/src/app.rs rust/src/library.rs
 msgid "Preview"
 msgstr "Podglądowa"
 
-#: rust/src/app.rs rust/src/library.rs
-msgid "Stable"
-msgstr "Stabilna"
-
 #. TRANSLATORS: selected update channel, %s is its name; toast, 1700 px at 44 px bold.
 #: rust/src/app.rs
 #, c-format
 msgid "Update channel: %s"
 msgstr "Kanał aktualizacji: %s"
+
+#. TRANSLATORS: a toast: the app uses a call of Grimoire's that this version does not have (%s is the
+#. call's name, such as grimoire_kit.row).
+#: rust/src/apphost.rs
+#, fuzzy, c-format
+msgid "This app needs a newer Grimoire (%s)."
+msgstr "To zastępuje kształt z nowszej wersji Grimoire."
 
 #. TRANSLATORS: (also) a toast (one line of about 1000 px at 44 px in bold): the picture picked for Use as
 #. template, Use as photo or a sheet's From a file... is bigger than Grimoire takes as a template or a photo,
@@ -1332,7 +1339,7 @@ msgid "Waiting"
 msgstr "Oczekuje"
 
 #. TRANSLATORS: a row of the Import place: this file became a notebook.
-#: rust/src/browser.rs
+#: rust/src/browser.rs rust/src/packagestore.rs
 msgid "Imported"
 msgstr "Zaimportowano"
 
@@ -1366,7 +1373,7 @@ msgstr "Przejdź do"
 msgid "Delete (moves it to %s)"
 msgstr "Usuń (przeniesie do %s)"
 
-#: rust/src/browser.rs rust/src/library.rs
+#: rust/src/browser.rs rust/src/library.rs rust/src/packagestore.rs
 msgid "Keep it"
 msgstr "Zostaw"
 
@@ -1895,9 +1902,7 @@ msgid "Calligraphy"
 msgstr "Kaligrafia"
 
 #. TRANSLATORS: the widget popup's title, beside the toolbar's Widgets button.
-#. TRANSLATORS: Settings' Packages category row: the widget package manager.
-#: rust/src/editor.rs rust/src/packagestore.rs rust/src/settingsmenu.rs
-#: rust/src/widgetpkgui.rs
+#: rust/src/editor.rs rust/src/packagestore.rs rust/src/widgetpkgui.rs
 msgid "Widgets"
 msgstr "Widżety"
 
@@ -4163,15 +4168,20 @@ msgstr[0] "Sprawdzanie %d czcionki..."
 msgstr[1] "Sprawdzanie %d czcionek..."
 msgstr[2] "Sprawdzanie %d czcionek..."
 
-#. TRANSLATORS: Settings' Packages category row: the full-screen app package manager.
-#: rust/src/library.rs rust/src/packagestore.rs rust/src/settingsmenu.rs
-#: rust/src/widgetpkgui.rs
+#: rust/src/library.rs rust/src/packagestore.rs rust/src/widgetpkgui.rs
 msgid "Apps"
 msgstr "Aplikacje"
 
 #: rust/src/library.rs
 msgid "About"
 msgstr "Informacje"
+
+#. TRANSLATORS: the All apps page's button that opens the app package manager (as the widget
+#. popup's Manage widgets... opens the widget one).
+#: rust/src/library.rs
+#, fuzzy
+msgid "Manage apps..."
+msgstr "Zarządzaj widżetami..."
 
 #: rust/src/library.rs
 msgid "Import over Wi-Fi"
@@ -4577,8 +4587,7 @@ msgstr ""
 #: rust/src/library.rs
 msgid "No Kindle notebooks on disk. Open them once in the Kindle app first."
 msgstr ""
-"Brak notatników Kindle na dysku. Najpierw otwórz je raz w aplikacji Ki"
-"ndle."
+"Brak notatników Kindle na dysku. Najpierw otwórz je raz w aplikacji Kindle."
 
 #: rust/src/library.rs
 msgid "No new Kindle notebooks found."
@@ -4964,9 +4973,7 @@ msgstr "Brak notatników."
 
 #: rust/src/packagestore.rs
 msgid "No saved catalog. Connect to the Internet, then tap Refresh."
-msgstr ""
-"Brak zapisanego katalogu. Połącz się z Internetem i dotknij Odśwież"
-"."
+msgstr "Brak zapisanego katalogu. Połącz się z Internetem i dotknij Odśwież."
 
 #: rust/src/packagestore.rs
 msgid "Showing the saved catalog."
@@ -4989,6 +4996,16 @@ msgid "Downloading update..."
 msgstr "Pobieranie aktualizacji..."
 
 #: rust/src/packagestore.rs
+#, fuzzy
+msgid "Imported from packages/import"
+msgstr "Zaimportowana strona"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Couldn't import"
+msgstr "Nie można ponowić."
+
+#: rust/src/packagestore.rs
 msgid "Installed"
 msgstr "Zainstalowano"
 
@@ -4999,6 +5016,17 @@ msgstr "Zainstaluj"
 #: rust/src/packagestore.rs rust/src/widgetpkgui.rs
 msgid "Reading package.yaml..."
 msgstr "Wczytywanie package.yaml..."
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Enter a GitHub repository or a .yaml address."
+msgstr ""
+"Podaj repozytorium GitHub jako user/repo lub adres https kończący się "
+"na .yaml."
+
+#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
+msgid "Looking up the repository..."
+msgstr "Wyszukiwanie repozytorium..."
 
 #: rust/src/packagestore.rs
 msgid "The manifest names no artifact that can be downloaded."
@@ -5021,6 +5049,10 @@ msgid "That package is no longer in the Store."
 msgstr "Tego pakietu nie ma już w Sklepie."
 
 #: rust/src/packagestore.rs
+msgid "The Store does not know this package kind."
+msgstr ""
+
+#: rust/src/packagestore.rs
 #, c-format
 msgid "Updated %s to %s."
 msgstr "Zaktualizowano %s do %s."
@@ -5038,8 +5070,51 @@ msgid "The manifest's version does not match its Store listing."
 msgstr "Wersja w manifeście nie zgadza się z opisem w Sklepie."
 
 #: rust/src/packagestore.rs
+#, c-format
+msgid ""
+"The update changes the license from %s to %s. Open the package in the Store "
+"and accept it there."
+msgstr ""
+
+#: rust/src/packagestore.rs
 msgid "Updated"
 msgstr "Zaktualizowano"
+
+#: rust/src/packagestore.rs
+msgid "That repository has no package.yaml."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Connect to the Internet to read the license's text."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "The package names no license text the Store could read."
+msgstr "Tego pakietu nie ma już w Sklepie."
+
+#: rust/src/packagestore.rs
+msgid "The repository has no license text the Store could read."
+msgstr ""
+
+#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
+msgid "Reading the license..."
+msgstr "Wczytywanie licencji..."
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Uninstalled"
+msgstr "Zainstalowano"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Search packages"
+msgstr "Szukaj ponownie"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "GitHub repository"
+msgstr "Repozytorium"
 
 #: rust/src/packagestore.rs
 msgid "App"
@@ -5052,6 +5127,21 @@ msgstr "Widżet"
 #: rust/src/packagestore.rs
 msgid "Featured"
 msgstr "Polecane"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Search:"
+msgstr "Szukaj"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "No packages are installed."
+msgstr "Wszystkie pakiety są aktualne."
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "No packages match your search."
+msgstr "Brak pasujących nazw stron."
 
 #: rust/src/packagestore.rs
 msgid "Nothing in the Store yet."
@@ -5110,8 +5200,32 @@ msgid "Package"
 msgstr "Pakiet"
 
 #: rust/src/packagestore.rs
-msgid "Repository QR"
+#, fuzzy
+msgid "Update to"
+msgstr "Aktualizuj"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Uninstall"
+msgstr "Zainstaluj"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Repository URL"
 msgstr "Kod QR repozytorium"
+
+#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
+msgid "License"
+msgstr "Licencja"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Show less"
+msgstr "Pokaż rysik"
+
+#: rust/src/packagestore.rs
+msgid "Read more"
+msgstr ""
 
 #: rust/src/packagestore.rs
 msgid "Trust this package?"
@@ -5129,17 +5243,96 @@ msgid ""
 "verify %s code and is not responsible for any damage, data loss, or "
 "malfunction caused by installing or running it."
 msgstr ""
-"MUSISZ zaufać autorowi tego pakietu. Grimoire nie sprawdza ani nie weryfikuje "
-"kodu %s i nie odpowiada za żadne szkody, utratę danych ani awarie "
+"MUSISZ zaufać autorowi tego pakietu. Grimoire nie sprawdza ani nie "
+"weryfikuje kodu %s i nie odpowiada za żadne szkody, utratę danych ani awarie "
 "spowodowane jego instalacją lub uruchamianiem."
 
-#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
-msgid "I trust this author, continue"
+#: rust/src/packagestore.rs
+#, c-format
+msgid ""
+"This update changes the license from %s to %s. Read it before you accept."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "I trust the author, continue"
 msgstr "Ufam temu autorowi, kontynuuj"
 
 #: rust/src/packagestore.rs
 msgid "Back to the package"
 msgstr "Powrót do pakietu"
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Accept the license"
+msgstr "Wczytywanie licencji..."
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid ""
+"The update changes the license from %s to %s. Read it and accept it to "
+"update %s."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid "Read the license and accept it to install %s."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "I accept the license"
+msgstr "Wczytywanie licencji..."
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Don't install"
+msgstr "Zainstaluj"
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid "This update changes the license from %s to %s."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid "The license %s is installed under."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid "The license %s is published under."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Uninstall this package?"
+msgstr "Zaufać temu pakietowi?"
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid ""
+"Uninstall %s? Its widget or app is closed and its files are deleted. Your "
+"layout is kept."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid "Install from GitHub"
+msgstr "Zainstaluj z repozytorium..."
+
+#: rust/src/packagestore.rs
+#, fuzzy
+msgid ""
+"Type a GitHub repository as user/repo, or an https address ending in .yaml, "
+"on the keyboard below."
+msgstr ""
+"Podaj repozytorium GitHub jako user/repo lub adres https kończący się "
+"na .yaml."
+
+#: rust/src/packagestore.rs
+msgid "Tap Done to download it. Nothing is written until you trust the author."
+msgstr ""
 
 #: rust/src/packagestore.rs rust/src/widgetpkgui.rs
 msgid "Repository"
@@ -5755,10 +5948,6 @@ msgid "Shortcuts: keys and controller buttons"
 msgstr "Skróty: klawisze i przyciski kontrolera"
 
 #: rust/src/settingsmenu.rs
-msgid "Packages"
-msgstr "Pakiety"
-
-#: rust/src/settingsmenu.rs
 msgid "KOReader"
 msgstr "KOReader"
 
@@ -6080,20 +6269,8 @@ msgid "%s %d"
 msgstr "%2$d %1$s"
 
 #: rust/src/widgetpkgui.rs
-msgid "Looking up the repository..."
-msgstr "Wyszukiwanie repozytorium..."
-
-#: rust/src/widgetpkgui.rs
-msgid "Reading the license..."
-msgstr "Wczytywanie licencji..."
-
-#: rust/src/widgetpkgui.rs
 msgid "Settings reset to defaults."
 msgstr "Przywrócono domyślne ustawienia."
-
-#: rust/src/widgetpkgui.rs
-msgid "License"
-msgstr "Licencja"
 
 #: rust/src/widgetpkgui.rs
 msgid "Installing"
@@ -6155,12 +6332,16 @@ msgstr "Usuń..."
 msgid ""
 "Enter a GitHub repository as user/repo, or an https address ending in .yaml."
 msgstr ""
-"Podaj repozytorium GitHub jako user/repo lub adres https kończący się na "
-".yaml."
+"Podaj repozytorium GitHub jako user/repo lub adres https kończący się "
+"na .yaml."
 
 #: rust/src/widgetpkgui.rs
 msgid "Tap Done on the keyboard to install."
 msgstr "Dotknij Gotowe na klawiaturze, aby zainstalować."
+
+#: rust/src/widgetpkgui.rs
+msgid "I trust this author, continue"
+msgstr "Ufam temu autorowi, kontynuuj"
 
 #: rust/src/widgetpkgui.rs
 msgid "No license text was found in the repository."
@@ -6181,6 +6362,13 @@ msgstr "Przywróć wszystkie domyślne"
 #: rust/src/widgetpkgui.rs
 msgid "Remove"
 msgstr "Usuń"
+
+#. TRANSLATORS: in a widget's frame, in place of its body: the widget uses a call of Grimoire's that this
+#. version does not have (%s is the call's name, such as grimoire_kit.row).
+#: rust/src/widgetwasm.rs
+#, fuzzy, c-format
+msgid "This widget needs a newer Grimoire (%s)."
+msgstr "To zastępuje kształt z nowszej wersji Grimoire."
 
 #. TRANSLATORS: the studio's presets, each a whole look, on buttons.
 #: web/studio.js
@@ -6592,6 +6780,9 @@ msgstr "Zaznaczono: naciśnij Cmd/Ctrl+C"
 msgctxt "studio"
 msgid "Copied"
 msgstr "Skopiowano"
+
+#~ msgid "Packages"
+#~ msgstr "Pakiety"
 
 #~ msgctxt "what's new"
 #~ msgid "Dismiss"

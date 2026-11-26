@@ -40,12 +40,12 @@ pub enum BgKind {
     /// the sandboxed worker (userfonts.rs, 2.1.0-beta.2). It ends 0, 3 (some files wait), 4 (no worker) or 5 (one font checked, more to do: the next job is queued
     /// with the path "next", behind exports and a PDF's slices).
     FontCheck = 8,
-    /// id: none, path: "<dev>.<ino>.<size>.<mtime>:<StoragePath>", a file as Files' Covers view listed it; its preview
+    /// id: none, path: "<dev>.<ino>.<size>.<mtime>.<mtime_nsec>:<StoragePath>", a file as Files' Covers view listed it; its preview
     /// made by the sandboxed worker into grimoire/.cache/files, or its "no preview" mark (bgwork_previews.rs, 2.2).
     /// One file a job, held to a few seconds, never one the user waits on by name: it runs behind exports, the PDF
     /// mirror, imports and font checks (`rank`); dropped at exit. Ends 0 or 1.
     FilePreviews = 9,
-    /// id: the folder it goes into ("templates", "photos" or "fonts"), path: "<dev>.<ino>.<size>.<mtime>:<StoragePath>",
+    /// id: the folder it goes into ("templates", "photos" or "fonts"), path: "<dev>.<ino>.<size>.<mtime>.<mtime_nsec>:<StoragePath>",
     /// the source as listed; a copy of a file into one of Grimoire's folders for the user's files, under the free
     /// space floor, to a temporary name and then a rename that replaces nothing (bgwork_copy.rs, 2.2). Ends 0, 1
     /// (not copied), or not copied for a cause the screen has a sentence for, bgwork_copy.rs's CopyFail: 2 (bigger

@@ -74,9 +74,9 @@ key 47 1
 expect editor.caret is bol|
 expect editor.find.1 is Árbol
 expect editor.strokes is 1
-# The go-to-page key closes Find; the page's Name this page (N in this root's shortcuts) takes the same
-# clipboard, and the same keys
-key 34 0
+# Esc closes Find (G, the go-to-page key in this root's shortcuts, types on its keyboard: #266); the page's Name
+# this page (N there) takes the same clipboard, and the same keys
+key 1 0
 wait 300
 expect editor.find is 0
 key 49 0

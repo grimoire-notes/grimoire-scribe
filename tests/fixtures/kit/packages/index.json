@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "packages": [
+    {"id":"test.kit.widget","name":"Kit widget","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/widgets/test.kit.widget/module.bin","sha":"cb03546625be83d9eaf8a0c6a4d665769dc438cb57fb46d9a9ab4962a3dcbf4a","installed_at":1,"source_url":""},
+    {"id":"test.kit.plain","name":"Kit plain","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/widgets/test.kit.plain/module.bin","sha":"cb03546625be83d9eaf8a0c6a4d665769dc438cb57fb46d9a9ab4962a3dcbf4a","installed_at":1,"source_url":""},
+    {"id":"test.kit.later","name":"Kit later","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/widgets/test.kit.later/module.bin","sha":"020710cf5943ce077b4b855f7c989956270e366356493909bbeea56d68909079","installed_at":1,"source_url":""}
+  ]
+}

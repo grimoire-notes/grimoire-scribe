@@ -24,7 +24,7 @@ image papers, for example, and never calls them "Newer paper".
 root/settings.ini                       the device's settings (below)
 root/settings.ini.unread                a settings.ini that was there but could not be read, kept aside; never read (2.2.0; settings.ini)
 root/folders.ini                        "# Grimoire folders", then one folder name per line
-root/folder-looks.ini                   a folder's icon and picture, a block a folder (2.2, issue #230; Folder icons and pictures)
+root/folder-looks.ini                   a folder's icon and picture, a block a folder (2.3, issue #230; Folder icons and pictures)
 root/sleep.pgm                          the pinned sleep screen (P5 PGM, full page)
 root/notebooks/<id>/notebook.ini        one notebook (below)
 root/notebooks/<id>/p<page id>.qpg      one page (below)
@@ -1603,8 +1603,9 @@ com.grimoire.calculator=1416,270,340,560,0,1,0
 
 ## Widget packages (2.2, issue #200)
 
-Settings → Packages → Widgets installs a widget from a GitHub repository (`user/repo`) or an
-HTTPS `.yaml` address; the Widgets popup's **Manage widgets...** row opens the same page.
+The Widgets popup's **Manage widgets...** row opens the widget package manager, which installs a
+widget from a GitHub repository (`user/repo`) or an HTTPS `.yaml` address; the Package Store
+installs one from its catalog or from the same addresses.
 [WIDGETS.md](WIDGETS.md) is the developer's guide to the manifest, the artifact and publishing.
 The manifest is `package.yaml`; unknown keys are ignored. An install is refused before anything is
 written if the manifest is invalid, the platform does not match, or the artifact does not match its
@@ -1660,8 +1661,8 @@ An omitted `platforms` means every supported device; an explicit empty list is r
 platform is `GRIMOIRE_WIDGET_PLATFORM` when set, otherwise the Kindle model in
 `/proc/device-tree/model`. The known values are `all`, `kindle-scribe-2022` and
 `kindle-scribe-2024`. The artifact is at most 32 MiB; at most 64 packages are installed. A manifest
-is at most 256 KiB, and its `name`, `author` and `description` at most 1,023 bytes each: what the
-reader of `packages/index.json` keeps of a string.
+is at most 256 KiB, and its `name`, `version`, `author` and `description` at most 1,023 bytes each:
+what the reader of `packages/index.json` keeps of a string.
 
 `packages/index.json` lists what is installed, and is written atomically after the package's files
 are complete:
@@ -1743,10 +1744,12 @@ widget stops with an error instead of freezing the device.
 
 ## App packages (2.3)
 
-Settings → Packages → Apps installs a full-screen app from a GitHub repository (`user/repo`) or a
-HTTPS `.yaml` address. Apps use the same package manager as widgets, with their own folder and
-index: `packages/apps/<id>/` and `packages/apps-index.json`. A manifest is `type: app` and has the
-same fields as a widget manifest, except that `spec.size` is ignored (an app owns the screen) and
+The Package Store installs a full-screen app from its catalog, or from a GitHub repository
+(`user/repo`) or a HTTPS `.yaml` address; the All apps page's **Manage apps...** opens the app package
+manager, which installs from the same addresses. Apps use the same package manager as widgets, with their
+own folder and index: `packages/apps/<id>/` and `packages/apps-index.json`. A manifest is `type: app` and has the
+same fields as a widget manifest, with the same rules for `id`, for the lengths of `name`, `author`
+and `description` and for `artifact.path`, except that `spec.size` is ignored (an app owns the screen) and
 `spec.status_bar` chooses whether Grimoire's shared status bar starts over the app. `spec.icon` may
 name a built-in icon or a bundled `.ico`; a `.ico` needs `spec.icon_sha256` and `spec.icon_size`, and
 the installer fetches and verifies that second file before the app is put in place. The app
@@ -1815,7 +1818,9 @@ owner's to copy back or delete. Older versions ignore it.
 | `files_sort` | Files' order: `newest` (the newest first) or `size` (the largest first); absent, or `name`, by name (the default, not written). Folders come first in each. Read exactly as written: any other value (another case, a later version's) sorts by name and is written back as it was until the order is changed. Written after `files_card`. Since 2.2, as `files_card` |
 | `files_show` | what Files lists: `all` (every file, the ones Grimoire cannot use greyed, links as "link, not followed"); absent, or `usable`, the PDFs, pictures, fonts and folders (the default, not written). Any other value: as for `files_sort`. Written after `files_sort`. Since 2.2, as `files_card` |
 | `files_view` | how Files lists: `covers`, a grid of previews (Files' previews, below); absent, or `list`, rows (the default, not written). Any other value: as for `files_sort`. Written after `files_show`. Since 2.2, as `files_card` |
-| `home` | the home folder, where the main menu opens at each start (2.2, issue #160): `notebooks/<folder>`, a Library folder by its path (`notebooks/School/2026`), or `files/<path>`, a folder of the Kindle's storage by its path from the storage root (`files/documents/Planners`); absent, empty or `notebooks`, the Library's top (the default, not written). Read strictly: UTF-8, under 608 bytes, no control character, no absolute path, no empty, `.` or `..` part, never the storage root; a Library folder is looked up by name in the Library's list, a storage folder reached only by Files' walk (no link followed, no refused place, not the trash). A value that is not one of these, or names a folder that is gone or refused, is not used: the Library's top with the toast "Home folder not found.", and the line is taken out at once (unlike `files_sort`'s, it is not written back; a folder that could not be read for another reason keeps it). Written after `files_view`. Since 2.2, as `files_card` |
+| `home_filter` | the Library's home filter chip (2.3, issue #209): `1` Notebooks, `2` Folders; absent, or `0`, All (the default, not written). Clamped to 0..2; any other value is used as the nearest and written back as it was. Written after `files_view`. Since 2.3; older versions keep the line as one they do not know |
+| `home_sort` | the Library's home sort (2.3, issue #209): `1` Name Z-A, `2` Newest first, `3` Oldest first; absent, or `0`, Name A-Z (the default, not written). Clamped to 0..3, and a value this build does not have is written back as it was, as `home_filter`'s is. Written after `home_filter`. Since 2.3; older versions keep the line as one they do not know |
+| `home` | the home folder, where the main menu opens at each start (2.2, issue #160): `notebooks/<folder>`, a Library folder by its path (`notebooks/School/2026`), or `files/<path>`, a folder of the Kindle's storage by its path from the storage root (`files/documents/Planners`); absent, empty or `notebooks`, the Library's top (the default, not written). Read strictly: UTF-8, under 608 bytes, no control character, no absolute path, no empty, `.` or `..` part, never the storage root; a Library folder is looked up by name in the Library's list, a storage folder reached only by Files' walk (no link followed, no refused place, not the trash). A value that is not one of these, or names a folder that is gone or refused, is not used: the Library's top with the toast "Home folder not found.", and the line is taken out at once (unlike `files_sort`'s, it is not written back; a folder that could not be read for another reason keeps it). Written after `home_sort`. Since 2.2, as `files_card` |
 | `pdf_gamma` | darker lines in imported PDFs (2.2, issue #173; Settings > System's Darker lines in imported PDFs row): `1.5` (Medium) or `2.0` (Strong), the gamma a PDF queued from then on draws its gray pages at (Imports: PDFs); absent, or `1.0`, Off (the default, not written). Read exactly as written: any other value is Off and is written back as it was until the setting changes. Written after `home`. Since 2.2; older versions keep the line as one they do not know |
 | `recent_apps` | the Library's app row and the Apps page, most recently used first (2.3): `files`, `share` and `settings`, comma-separated. Opening an app from its tile or another of its entrances moves it to the front; the file is saved only when that order changes. A name this build does not have, or a repeat, is left out, and an app the line does not name follows in the default order (`files,share,settings`). Written after `pdf_gamma`. Since 2.3; older versions keep the line as one they do not know |
 | `status_mode` | Retired status-strip preference. New saves write 1 (corner). Legacy 0 becomes the small enabled top-left corner, 2 becomes an off corner. There is no reserved strip or mode selector. `status-mode` is a compatibility alias for the corner toggle. |
@@ -2163,7 +2168,7 @@ version: each reads the `pages` order it finds.
 ## Folder icons and pictures: `root/folder-looks.ini`
 
 A folder's card in the Library can show an icon of its own instead of the plain folder, and a picture from
-`root/photos/` in its place (2.2, issue #230: a folder's menu, Icon & picture...). A folder with neither has
+`root/photos/` in its place (2.3, issue #230: a folder's menu, Icon & picture...). A folder with neither has
 no block:
 
 ```

@@ -1,0 +1,17 @@
+name: Kit widget
+id: test.kit.widget
+type: widget
+version: 1.0.0
+author: Grimoire tests
+description: A module of the package kit's tests.
+platforms: [all]
+artifact:
+  path: module.bin
+  sha256: cb03546625be83d9eaf8a0c6a4d665769dc438cb57fb46d9a9ab4962a3dcbf4a
+  size: 1285
+capabilities: [editor:overlay, storage:widget-local]
+spec:
+  runtime: wasm
+  size:
+    mode: fixed
+    default: [900, 1100]

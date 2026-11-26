@@ -3,7 +3,7 @@
 
 use crate::prelude::*;
 use crate::appicon::AppIcon;
-use crate::globalui::{gui_app_tile, gui_button, gui_chip, gui_fab, gui_gap, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_select, gui_status_bar, gui_status_h, gui_top_button_h, GuiPopupItem};
+use crate::globalui::{gui_app_tile, gui_button, gui_chip, gui_chip_h, gui_fab, gui_gap, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_row_h, gui_row_min_h, gui_select, gui_select_h, gui_status_bar, gui_status_h, gui_top_button_h, GuiPopupItem};
 use crate::settingsmenu;
 use crate::ui::{ui_row, ui_row_page, ui_row_pager, Row as UiRow};
 use crate::browser::{BrowseMode, Browser, BrowserResult, FilesPrefs, PickSpec};
@@ -71,9 +71,9 @@ enum Modal {
     Sort = 303,
     /// The Package Store (Rust only): the GitHub catalog of apps and widgets, over the Library.
     Store = 304,
-    /// A folder's icon and picture (2.2, issue #230, Rust only; a number of its own as the others past the C's)
+    /// A folder's icon and picture (2.3, issue #230, Rust only; a number of its own as the others past the C's)
     FolderLook = 310,
-    /// The pictures a folder's card can show (2.2, issue #230): a grid of grimoire/photos/
+    /// The pictures a folder's card can show (2.3, issue #230): a grid of grimoire/photos/
     FolderPicture = 311,
 }
 
@@ -250,7 +250,7 @@ const H_FILES_HIDE: i32 = 198;
 // A folder's menu's home row (2.2, issue #160): Set as home, or on the folder that is home, Reset home to Notebooks
 // (arg: 1 for the reset). Numbered apart from the ids above, which other work adds after.
 const H_FMORE_HOME: i32 = 210;
-// A folder's icon and picture (2.2, issue #230): its menu's row, the icon grid's tiles (arg: its index in
+// A folder's icon and picture (2.3, issue #230): its menu's row, the icon grid's tiles (arg: its index in
 // FOLDER_ICONS), the picture sheet's photos (arg: an index of look_photos) and pages, and its buttons.
 const H_FMORE_LOOK: i32 = 291;
 const H_LOOK_ICON: i32 = 292;
@@ -261,17 +261,13 @@ const H_LOOK_FROM_FILE: i32 = 296;
 const H_LOOK_BACK: i32 = 297;
 const H_LOOK_PAGE: i32 = 298;
 const H_LOOK_DONE: i32 = 299;
-// The folder icon sheet's page arrows (2.2, issue #230; arg: -1 for the page before, 1 for the one after).
+// The folder icon sheet's page arrows (2.3, issue #230; arg: -1 for the page before, 1 for the one after).
 const H_LOOK_ICON_PAGE: i32 = 300;
 // Settings > System's Darker lines in imported PDFs row (2.2, issue #173), its list's choices (arg: the level, 0 Off,
 // 1 Medium, 2 Strong: pdfwork::Gamma's index) and its Back. (Numbered in 250 to 259, apart from other work's ids.)
 const H_SET_DARKER: i32 = 250;
 const H_DARKER_PICK: i32 = 251;
 const H_DARKER_BACK: i32 = 252;
-// Settings > Packages > Widgets (2.2, issue #200): the widget package manager (widgetpkgui.rs).
-const H_SET_PACKAGES: i32 = 260;
-// Settings > Packages > Apps: the same manager for the app package kind.
-const H_SET_APP_PACKAGES: i32 = 261;
 // Settings > General's Import Kindle notebooks (2.3, issue #196): copies the Kindle's own notebooks from
 // .notebooks/ into import/ and queues them (bgwork_template.rs).
 const H_SET_KINDLE: i32 = 283;
@@ -287,6 +283,9 @@ const H_ADD_ACTION: i32 = 276;
 const H_APPS: i32 = 277;
 const H_APP: i32 = 278;
 const H_APPS_CLOSE: i32 = 279;
+// The All apps page's Manage apps...: the app package manager, as the Widgets popup's Manage widgets...
+// opens the widget one.
+const H_APPS_MANAGE: i32 = 280;
 // The All apps page's own pager when installed apps need more than one screen.
 const H_APPS_PREV: i32 = 281;
 const H_APPS_NEXT: i32 = 282;
@@ -391,7 +390,7 @@ pub struct LibraryState {
     reopen_settings: bool,
     books: Vec<NotebookInfo>,
     folders: Vec<String>,
-    /// Every folder's look (folder-looks.ini, 2.2, issue #230), read as the Library reloads; the card of a folder
+    /// Every folder's look (folder-looks.ini, 2.3, issue #230), read as the Library reloads; the card of a folder
     /// with a picture shows it from look_photos
     looks: Vec<(String, FolderLook)>,
     /// The folder whose icon and picture are being picked (H_FMORE_LOOK), its icon's name and picture's file name as
@@ -623,7 +622,7 @@ fn app_tile_w() -> i32 {
     ui_px(240.0)
 }
 fn filters_h() -> i32 {
-    ui_px(88.0)
+    gui_chip_h()
 }
 fn grid_top() -> i32 {
     top_h() + 3 * gui_gap() + apps_h() + filters_h()
@@ -704,7 +703,7 @@ fn fab_rect(aw: i32, ah: i32) -> Rect {
 fn sort_rect(aw: i32) -> Rect {
     let sort_w = ui_px(400.0).min(aw / 3);
     let fy = top_h() + 2 * gui_gap() + apps_h();
-    Rect::new(aw - margin() - sort_w, fy, sort_w, filters_h())
+    Rect::new(aw - margin() - sort_w, fy, sort_w, gui_select_h())
 }
 
 /// The `...` of the card at `target` on `page`: the popup menus hang from the control that opened them.
@@ -1017,7 +1016,7 @@ fn thumb_for(s: &mut LibraryState, dpi: f32, nb: usize) -> Option<&Canvas> {
 
 // ---- drawing ----
 
-/// The icons a folder's card can be given (2.2, issue #230), by the name folder-looks.ini keeps. The first is the
+/// The icons a folder's card can be given (2.3, issue #230), by the name folder-looks.ini keeps. The first is the
 /// plain folder icon, which no line names. Two pages of six by four, each page a group of ordinary uses.
 const FOLDER_ICON_COLS: i32 = 6;
 const FOLDER_ICON_ROWS: i32 = 4;
@@ -1688,7 +1687,7 @@ fn draw_files_card(c: &mut Canvas, s: &mut LibraryState, r: Rect, idx: usize) {
     hits_add(&mut s.hits, mr, H_CARD_MORE, idx as i32);
 }
 
-// The folder icon sheet (2.2, issue #230): a grid of FOLDER_ICONS, the folder's picture line, and the way to its
+// The folder icon sheet (2.3, issue #230): a grid of FOLDER_ICONS, the folder's picture line, and the way to its
 // pictures. A tile picked saves the icon at once in place of any picture; Done closes.
 fn draw_folder_look(a: &mut App) {
     let (aw, ah) = (a.w, a.h);
@@ -1773,7 +1772,7 @@ fn draw_folder_look(a: &mut App) {
     hits_add(&mut s.hits, done, H_LOOK_DONE, 0);
 }
 
-// The folder picture sheet (2.2, issue #230): the pictures in grimoire/photos/, their previews, a page at a time; a
+// The folder picture sheet (2.3, issue #230): the pictures in grimoire/photos/, their previews, a page at a time; a
 // tap gives the folder that picture at once. From a file... copies one in, as the Photos sheet's does.
 const FOLDER_PHOTO_COLS: i32 = 4;
 const FOLDER_PHOTO_ROWS: i32 = 2;
@@ -4090,7 +4089,7 @@ fn draw_updates(a: &mut App) {
     if !status.is_empty() {
         let sr = Rect::new(in_.x, y, in_.w, status_h);
         let text_w = if retry { (sr.w - ui_px(220.0)).max(0) } else { sr.w };
-        ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), Rect::new(sr.x, sr.y, text_w, sr.h), &status, 2, false, if store.update_error.is_empty() { 100 } else { 0 });
+        ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), Rect::new(sr.x, sr.y, text_w, sr.h), message_shown(&status), 2, false, if store.update_error.is_empty() { 100 } else { 0 });
         if retry {
             let rb = Rect::new(sr.x + sr.w - ui_px(190.0), sr.y + (sr.h - ui_px(62.0)) / 2, ui_px(190.0), ui_px(62.0));
             gui_button(c, rb, IconKind::Update, tr("Retry"), ButtonStyle::Plain);
@@ -5942,6 +5941,12 @@ pub(crate) fn settings_page(
     SettingsPage { content, back: back_r, close: close_r, footer: footer_r }
 }
 
+/// The index of the Settings category that holds a row, found by the row and not by a number: the
+/// categories' places change when one is added or taken out.
+fn settings_cat_of(id: settingsmenu::SettingId) -> i32 {
+    settingsmenu::CATEGORIES.iter().position(|c| c.items.iter().any(|it| it.id == id)).unwrap_or(0) as i32
+}
+
 /// Maps a settings row to the hit id its action already handles: adding a row in settingsmenu.rs
 /// is one line here (and its handler in act if it is new) and the page layout picks it up.
 fn setting_hit(id: settingsmenu::SettingId) -> i32 {
@@ -5970,8 +5975,6 @@ fn setting_hit(id: settingsmenu::SettingId) -> i32 {
         Updates => H_UPDATES,
         AboutDevice => H_SET_DEVICE,
         DarkerLines => H_SET_DARKER,
-        WidgetPackages => H_SET_PACKAGES,
-        AppPackages => H_SET_APP_PACKAGES,
     }
 }
 
@@ -6056,7 +6059,7 @@ fn draw_settings(a: &mut App) {
         .filter(|it| it.show.visible(classic, services))
         .collect();
     let list_area = Rect::new(content_x, list_top, content_w, content_bottom - list_top - ui_px(20.0));
-    let list = ui_row_page(list_area, shown.len(), s.settings_rows_page, ui_px(118.0), ui_px(90.0));
+    let list = ui_row_page(list_area, shown.len(), s.settings_rows_page, gui_row_h(), gui_row_min_h());
     s.settings_rows_page = list.page;
     let mut label_buf = String::new();
     let mut lang_buf = String::new();
@@ -6686,7 +6689,7 @@ fn home_app(a: &mut App, app: i32) {
             // The About page of Settings' System category, directly; its Back returns there.
             let s = lib(a);
             s.modal = Modal::None;
-            s.settings_cat = 6;
+            s.settings_cat = settings_cat_of(settingsmenu::SettingId::AboutDevice);
             s.settings_cat_shown = -1;
             s.settings_rows_page = 0;
             s.device_links_page = 0;
@@ -6733,6 +6736,11 @@ fn draw_apps(a: &mut App) {
     let about = Rect::new(whats.x + whats.w + gap, by, bw, bh);
     ui_button(c, about, IconKind::Castle, tr("About"), ButtonStyle::Plain);
     hits_add(&mut s.hits, about, H_APP, 7);
+    let manage = Rect::new(about.x + about.w + gap, by, bw, bh);
+    // TRANSLATORS: the All apps page's button that opens the app package manager (as the widget
+    // popup's Manage widgets... opens the widget one).
+    ui_button(c, manage, IconKind::Gear, tr("Manage apps..."), ButtonStyle::Plain);
+    hits_add(&mut s.hits, manage, H_APPS_MANAGE, 0);
     if pages > 1 {
         let side = ui_px(110.0);
         let prev = Rect::new(aw - m - 2 * side - gap, by, side, bh);
@@ -7586,7 +7594,7 @@ pub(crate) fn redraw_filling(a: &mut App) {
     }
     before.px.extend_from_slice(&a.screen.px);
     draw_front(a);
-    let changed = canvas_changed_rect(&before, &a.screen);
+    let changed = canvas_changed_rect(&before, &a.screen, Rect { x: 0, y: 0, w: a.screen.w, h: a.screen.h });
     if !rect_is_empty(changed) {
         app_invalidate_filling(a, changed);
     }
@@ -8373,16 +8381,22 @@ fn act(a: &mut App, h: &Hit) {
             open_modal(a, Modal::Settings);
         }
         H_FILTER => {
-            lib(a).filter = clampi(h.arg, 0, 2);
+            let filter = clampi(h.arg, 0, 2);
+            lib(a).filter = filter;
             lib(a).page = 0;
+            a.settings.home_filter = filter;
+            settings_save(&a.settings);
             refresh_view(a);
             redraw(a, RefreshMode::Ui);
         }
         H_SORT => open_modal(a, Modal::Sort),
         H_SORT_PICK => {
-            lib(a).sort = clampi(h.arg, 0, 3);
+            let sort = clampi(h.arg, 0, 3);
+            lib(a).sort = sort;
             lib(a).page = 0;
             lib(a).modal = Modal::None;
+            a.settings.home_sort = sort;
+            settings_save(&a.settings);
             refresh_view(a);
             redraw(a, RefreshMode::Ui);
         }
@@ -8406,6 +8420,11 @@ fn act(a: &mut App, h: &Hit) {
             open_modal(a, Modal::Apps);
         }
         H_APPS_CLOSE => close_modal(a),
+        H_APPS_MANAGE => {
+            // The package manager is over the All apps page, as the widget one is over the notebook: its
+            // Back and its X come back to this page (packages_closed).
+            crate::widgetpkgui::packages_ui_open(a, crate::widgetpkgui::PkgKind::App);
+        }
         H_APPS_PREV => {
             lib(a).apps_page = (lib(a).apps_page - 1).max(0);
             redraw(a, RefreshMode::Ui);
@@ -8856,8 +8875,6 @@ fn act(a: &mut App, h: &Hit) {
             settings_save(&a.settings);
             redraw(a, RefreshMode::Full);
         }
-        H_SET_PACKAGES => crate::widgetpkgui::packages_ui_open(a, crate::widgetpkgui::PkgKind::Widget),
-        H_SET_APP_PACKAGES => crate::widgetpkgui::packages_ui_open(a, crate::widgetpkgui::PkgKind::App),
         H_SET_DISPLAY => {
             let mut dm = std::mem::take(&mut lib(a).dm);
             dispmenu_open(&mut dm, a);
@@ -9188,7 +9205,7 @@ fn act(a: &mut App, h: &Hit) {
             redraw(a, RefreshMode::Ui);
             app_toast_dismiss(a);
         }
-        // The folder's icon and picture (2.2, issue #230): the icon grid, and the pictures of grimoire/photos/
+        // The folder's icon and picture (2.3, issue #230): the icon grid, and the pictures of grimoire/photos/
         H_FMORE_LOOK => {
             if let Some(it) = it.filter(|it| it.is_folder) {
                 folder_look_open(a, it.folder.as_str());
@@ -10088,7 +10105,7 @@ pub fn library_back(a: &mut App) -> bool {
             lib(a).modal = Modal::DeviceInfo;
             redraw(a, RefreshMode::Ui);
         }
-        // The folder look's two sheets (2.2, issue #230): one step back, then the Library.
+        // The folder look's two sheets (2.3, issue #230): one step back, then the Library.
         Modal::FolderPicture => tap(a, H_LOOK_BACK),
         Modal::FolderLook => tap(a, H_LOOK_DONE),
         Modal::Language | Modal::Koreader | Modal::Shortcuts | Modal::PairMenu | Modal::Updates | Modal::Wifi
@@ -10219,8 +10236,12 @@ pub fn library_map_point(a: &App, spec: &str) -> Option<(f32, f32)> {
 // ---- the screen interface (app.h, DECLARE_SCREEN) ----
 
 pub fn library_init(a: &mut App) {
+    // The home view the last run left (settings.ini home_filter, home_sort, 2.3)
+    let (filter, sort) = (clampi(a.settings.home_filter, 0, 2), clampi(a.settings.home_sort, 0, 3));
     a.lib = Some(Box::default());
     let s = lib(a);
+    s.filter = filter;
+    s.sort = sort;
     s.target = -1;
     s.learn_row = -1;
     s.buttons_group = -1;
@@ -10371,7 +10392,9 @@ pub fn library_event(a: &mut App, ev: &InEvent) {
 }
 
 fn library_event_in(a: &mut App, ev: &InEvent) {
-    if a.app_view.open {
+    // (the input a hardware key brings to an open keyboard of the Library's, app_type_text, is that keyboard's, never a
+    // touch of an open app's)
+    if a.app_view.open && !(a.kb_inject.is_some() && library_keyboard_area(a).is_some()) {
         crate::apphost::apphost_event(a, ev);
         return;
     }
@@ -10919,7 +10942,7 @@ fn card_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
             csnprintf!(out, cap, "none");
             return 0;
         }
-        // (2.2, issue #230: its picture's preview when the folder has one and it is drawn, else its icon)
+        // (2.3, issue #230: its picture's preview when the folder has one and it is drawn, else its icon)
         let look = s.looks.iter().find(|(f, _)| f == it.folder.as_str()).map(|(_, l)| l.clone()).unwrap_or_default();
         let mut picture = false;
         if !look.picture.is_empty() {
@@ -11104,6 +11127,11 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
     }
     if key == "app.error" {
         csnprintf!(out, cap, "%s", a.app_view.error());
+        return 0;
+    }
+    // (the hit regions of the open app's last drawing pass: `tap library app.hit.N` taps region N)
+    if key == "app.hits" {
+        csnprintf!(out, cap, "%d", a.app_view.hit_count() as i32);
         return 0;
     }
     if key == "app.status-bar" {
@@ -11390,7 +11418,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_BACK => "back", H_ABOUT => "about", H_ABOUT_CLOSE => "about.close",
                 H_CARD => "card.", H_CARD_MORE => "card-menu.",
                 H_ADD => "add", H_ADD_ACTION => "add.", H_APPS => "apps", H_APPS_CLOSE => "apps.close",
-                H_APPS_PREV => "apps.prev", H_APPS_NEXT => "apps.next",
+                H_APPS_PREV => "apps.prev", H_APPS_NEXT => "apps.next", H_APPS_MANAGE => "apps.manage",
                 H_APP => "app.", H_FILTER => "filter.", H_SORT => "sort", H_SORT_PICK => "sort.",
                 H_SEARCH => "search",
                 H_PREV => "prev", H_NEXT => "next",
@@ -11421,14 +11449,13 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_SET_KINDLE => "kindle-notebooks",
                 H_SET_PINCH => "pinch", H_SET_MIRROR => "mirror",
                 H_SET_DEVICE => "about-device", H_DEVICE_BACK => "about-device.back",
-                H_SET_PACKAGES => "settings.packages", H_SET_APP_PACKAGES => "settings.apps",
                 _ => "",
             });
             if hit.id == H_LANG_PICK {
                 name.push_str(i18n_language_code(hit.arg).unwrap_or("auto"));
             }
             if matches!(hit.id, H_SIDE_PICK | H_ERASER_PICK | H_DARKER_PICK) { name.push_str(&hit.arg.to_string()); }
-            // A folder look's tiles by name (2.2, issue #230): the icon's, or the picture's file name.
+            // A folder look's tiles by name (2.3, issue #230): the icon's, or the picture's file name.
             if hit.id == H_LOOK_ICON {
                 name.push_str(FOLDER_ICONS.get(hit.arg as usize).map_or("", |def| def.name));
             }
@@ -11674,7 +11701,7 @@ mod tests {
         assert!(seen.len() > 50);
     }
 
-    // The folder icons a card can be given (2.2, issue #230) are named for folder-looks.ini: lowercase, one
+    // The folder icons a card can be given (2.3, issue #230) are named for folder-looks.ini: lowercase, one
     // meaning each, and the plain folder icon for an unknown name.
     #[test]
     fn folder_icons_are_named_and_unique() {
@@ -11697,7 +11724,7 @@ mod tests {
     }
 
     // A folder's menu's Icon & picture... picks one of FOLDER_ICONS for its card and opens its pictures' sheet
-    // (2.2, issue #230): what is picked is saved in folder-looks.ini and read back, Done closes, and the plain
+    // (2.3, issue #230): what is picked is saved in folder-looks.ini and read back, Done closes, and the plain
     // folder icon is no line in the file.
     #[test]
     fn a_folders_icon_and_picture_are_picked_from_its_menu() {
@@ -11896,6 +11923,38 @@ mod tests {
         s.gestures_group = 0;
         s.gestures_file_readable = true;
         a
+    }
+
+    // A keyboard of the Library's open while an app is open takes the keys that type, as every keyboard of
+    // Grimoire's does (#268): the character goes into its text, and neither the key nor the input it brings reaches
+    // the app (as a key, or as a touch where the keyboard is). No screen opens a keyboard over an app in this
+    // version; this holds the order of app_event_screens and library_event_in for one that will.
+    #[test]
+    fn a_keyboard_open_over_an_app_takes_the_keys_that_type() {
+        let mut a = pen_record_app();
+        a.scr = ScreenId::Library;
+        lib(&mut a).modal = Modal::None;
+        open_kb(&mut a, KbPurpose::NewName, "Name", b"ab");
+        assert!(library_keyboard_area(&a).is_some(), "the keyboard is open, and drawn");
+        // (an app on the screen: it has no module here, so nothing of it runs)
+        a.app_view.open = true;
+        let key = |a: &mut App, code: i32| {
+            for type_ in [InType::Key, InType::KeyUp] {
+                app_event(a, &InEvent { type_, value: code, t_ms: now_ms(), ..Default::default() });
+            }
+        };
+        key(&mut a, 46); // c
+        key(&mut a, 57); // Space
+        assert_eq!(lib(&mut a).kb.text.as_str(), "abc ", "the keys typed into the keyboard");
+        assert!(a.app_view.open && lib(&mut a).kb.open);
+        // its Cancel (Esc) closes the keyboard, and the app stays: the next key is the app's, and types nothing
+        key(&mut a, 1);
+        assert!(!lib(&mut a).kb.open && a.app_view.open);
+        key(&mut a, 46);
+        assert_eq!(lib(&mut a).kb.text.as_str(), "abc ", "nothing more typed with no keyboard open");
+        a.app_view.open = false;
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
     }
 
     fn record_side(a: &mut App, t_ms: u32, down: bool) {
@@ -13794,7 +13853,7 @@ mod tests {
         library_init(&mut a);
         crate::pdfimport::set_darker(crate::pdfwork::Gamma::Off);
         lib(&mut a).modal = Modal::Settings;
-        lib(&mut a).settings_cat = 6;
+        lib(&mut a).settings_cat = settings_cat_of(settingsmenu::SettingId::DarkerLines);
         hits_clear(&mut lib(&mut a).hits);
         draw_settings(&mut a);
         assert!(a.lib.as_ref().unwrap().hits.h.iter().any(|h| h.id == H_SET_DARKER), "the System row");
@@ -13847,7 +13906,7 @@ mod tests {
         assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
         library_init(&mut a);
         lib(&mut a).modal = Modal::Settings;
-        lib(&mut a).settings_cat = 6;
+        lib(&mut a).settings_cat = settings_cat_of(settingsmenu::SettingId::AboutDevice);
         hits_clear(&mut lib(&mut a).hits);
         draw_settings(&mut a);
         assert!(
@@ -14380,6 +14439,10 @@ fn turn(a: &mut App, next: bool) {
 /// The Library's open on-screen keyboard (a name being typed), None for none: where a hardware key's
 /// input goes (app_type_text).
 pub fn library_keyboard_area(a: &App) -> Option<Rect> {
+    if a.store.open {
+        // (the Package Store's search and repository keyboards: the Store takes every contact while it is up)
+        return (a.store.kb.open && !rect_is_empty(a.store.kb.area)).then_some(a.store.kb.area);
+    }
     if a.pkg.open && a.pkg.kb.open && !rect_is_empty(a.pkg.kb.area) {
         return Some(a.pkg.kb.area);
     }
@@ -14400,8 +14463,12 @@ pub fn library_settings_back(a:&mut App) {close_modal(a);}
 /// The Packages page draws itself whole (widgetpkgui.rs); its callers redraw through here so it
 /// replaces Settings while it is open and Settings comes back when it closes.
 pub(crate) fn packages_redraw(a:&mut App) {redraw(a,RefreshMode::Ui);}
-/// The Packages page's X: the whole of Settings closes, as every Settings submenu's X does.
-pub(crate) fn packages_closed(a:&mut App) {close_settings(a,RefreshMode::Ui);}
+/// The Packages page's X: the whole of Settings closes, as every Settings submenu's X does. Opened from
+/// the All apps page (Manage apps...), the page comes back to it, as its Back does.
+pub(crate) fn packages_closed(a:&mut App) {
+    if lib(a).modal==Modal::Apps {redraw(a,RefreshMode::Ui);return;}
+    close_settings(a,RefreshMode::Ui);
+}
 /// The Package Store draws itself whole, over the Library: its own redraw and close.
 pub(crate) fn store_redraw(a:&mut App) {redraw(a,RefreshMode::Ui);}
 pub(crate) fn store_closed(a:&mut App) {

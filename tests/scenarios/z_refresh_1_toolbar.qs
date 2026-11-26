@@ -16,7 +16,7 @@ wait 100
 tap 1564 2254
 wait 200
 expect screen is editor
-expect editor.panel_rect is 1704 220 128 1842
+expect editor.panel_rect is 1704 220 128 1734
 # (the launch repaints the whole screen 1.2 s and 3.5 s after it starts: past both before counting)
 wait 3700
 expect display.presents not -1
@@ -44,12 +44,12 @@ expect display.stale.800.300.400.1800 not 0
 expect display.presents not -1
 touch up 1737 700
 wait 300
-expect editor.panel_rect is 1704 638 128 1842
+expect editor.panel_rect is 1704 660 128 1734
 # one grayscale refresh of the whole trail, where it began, went round and ended: no flash
-expect display.presents is ui 867 220 965 2260
+expect display.presents is ui 867 220 965 2174
 expect display.stale.800.300.400.1800 is 0
 expect display.stale.0.300.1860.2100 is 0
-expect editor.wear is 51
+expect editor.wear is 48
 expect editor.layers is ok
 # A drag the pen's coming near cancels: grayscale at once, and its wear counted as any drag's.
 pen leave
@@ -65,41 +65,48 @@ finger 1 move 1100 900
 frame 100
 pen hover 300 300
 wait 300
-expect editor.panel_rect is 1067 638 128 1842
+expect editor.panel_rect is 1067 746 128 1734
 expect display.presents has ui
 expect display.presents not has clean
-expect editor.wear is 102
+expect editor.wear is 96
 expect display.stale.1000.700.800.1900 is 0
 finger 1 up 1100 900
 frame
 pen leave
 wait 400
 expect display.presents not has clean
-expect editor.wear is 102
+expect editor.wear is 96
 expect display.stale.0.300.1860.2100 is 0
 expect editor.layers is ok
-# Three drags more, back and forth: the fifth tips the wear past a quarter of the screen, and the pause
+# Four drags more, back and forth: the last tips the wear past a quarter of the screen, and the pause
 # after it cleans the way they all went at once.
-touch down 1100 700
+touch down 1100 808
 wait 100
-touch move 1500 700
+touch move 1500 808
 wait 100
-touch up 1500 700
+touch up 1500 808
 wait 300
-expect editor.wear is 153
-touch down 1500 700
+expect editor.wear is 144
+touch down 1500 808
 wait 100
-touch move 1100 700
+touch move 1100 808
 wait 100
-touch up 1100 700
+touch up 1100 808
 wait 300
-expect editor.wear is 204
+expect editor.wear is 192
 expect display.presents not has clean
-touch down 1100 700
+touch down 1100 808
 wait 100
-touch move 1500 700
+touch move 1500 808
 wait 100
-touch up 1500 700
+touch up 1500 808
+wait 300
+expect editor.wear is 240
+touch down 1500 808
+wait 100
+touch move 1100 808
+wait 100
+touch up 1100 808
 wait 600
 expect display.presents has clean
 expect editor.wear is 0

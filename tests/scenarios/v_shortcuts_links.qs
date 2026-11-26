@@ -93,11 +93,14 @@ expect editor.modal is pages
 expect editor.keyboard is Page name
 expect editor.text is
 shot 03-name-the-page
-# (nothing acts through the keyboard)
+# (nothing acts through the keyboard: L, add-link on the page, types an l on it, #266, and Backspace takes it)
 key 38 0
 wait 60
 expect editor.link_mode is 0
 expect editor.keyboard is Page name
+expect editor.text is l
+key 14 0
+expect editor.text is
 tap 175 2205
 tap 1455 2205
 tap 221 2045

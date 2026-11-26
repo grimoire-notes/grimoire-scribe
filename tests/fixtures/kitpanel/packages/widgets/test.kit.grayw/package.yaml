@@ -1,0 +1,17 @@
+name: Gray widget
+id: test.kit.grayw
+type: widget
+version: 1.0.0
+author: Grimoire tests
+description: A module of the package kit's tests.
+platforms: [all]
+artifact:
+  path: module.bin
+  sha256: ed1c0bbfe7c6b890afab4469e0ab828a83c80c9714f27d25bf1d400017ca17b6
+  size: 1865
+capabilities: [editor:overlay, storage:widget-local]
+spec:
+  runtime: wasm
+  size:
+    mode: fixed
+    default: [900, 1100]

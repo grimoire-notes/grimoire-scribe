@@ -40,7 +40,9 @@ token, no private-repository support and no zip or tarball distribution.
 
 ## The address
 
-Settings → Packages → Widgets accepts two forms:
+The widget package manager's **Install from repository...** (the manager is opened by **Manage
+widgets...** at the foot of a notebook's Widgets popup) and the Package Store's repository button
+accept two forms:
 
 | address | what is fetched |
 |---|---|
@@ -109,10 +111,10 @@ spec:
 
 | field | |
 |---|---|
-| `name` | required; the row and the frame's title. At most 1,023 bytes, as `author` and `description` are: what the index of installed packages keeps of each |
+| `name` | required; the row and the frame's title. At most 1,023 bytes, as `version`, `author` and `description` are: what the index of installed packages keeps of each |
 | `id` | required; the package's permanent identity. Lowercase letters, digits, dots and hyphens only, at most 128, no leading or trailing dot and no `..`, and not ending in `.previous` (an update keeps the replaced version's folder as `<id>.previous`, so that name is no package's). The install, update and remove paths all use it, and so does the saved layout (`widgets.ini` reads an id by this same rule, whatever its length up to 128), so never change it between versions |
 | `type` | must be `widget` |
-| `version` | required; `MAJOR.MINOR.PATCH`, with an optional prerelease suffix. The updater orders `-beta.N` and `-rc.N`; another suffix is accepted but is not ordered as newer. No leading zeroes in a number. An update is installed only when this sorts above the installed version, so bump it for every published change |
+| `version` | required; `MAJOR.MINOR.PATCH`, with an optional prerelease suffix. The updater orders `-beta.N` and `-rc.N`; another suffix is accepted but is not ordered as newer. No leading zeroes in a number. At most 1,023 bytes. An update is installed only when this sorts above the installed version, so bump it for every published change |
 | `author` | optional; shown in the detail page and the widget's frame metadata. At most 1,023 bytes |
 | `description` | optional; shown in the list, the detail page and the frame. At most 1,023 bytes |
 | `license` | optional; the SPDX name or a short name. When its text is found, the install page asks the reader to agree before installing |
@@ -137,7 +139,8 @@ spec:
 Unknown top-level keys are ignored, so a newer manifest can carry fields an older Grimoire does not
 know; unknown keys inside `spec` are ignored too. Values of the known fields are checked where
 they affect the install: a missing name, a bad id, version, path, digest or size, an unknown
-platform, capability or runtime is refused. An unknown icon falls back to the widget grid.
+platform, capability or runtime is refused. The package page says why: each error it shows is at
+most 256 bytes, cut between characters. An unknown icon falls back to the widget grid.
 
 Limits: the manifest may be at most 256 KiB, the artifact at most 32 MiB, at most 64 packages may
 be installed, and at most 8 widget frames may be open at once. A `wasm` artifact is one file; a
@@ -166,7 +169,7 @@ A module has the capabilities its manifest declares, and no other:
 
 | capability | what it gives the module |
 |---|---|
-| `editor:overlay` | drawing in its frame over the notebook: `rect`, `text`, `button` and `hit`, and asking for a drawing pass with `request_redraw`. A manifest must declare it (below) |
+| `editor:overlay` | drawing in its frame over the notebook: `rect`, `text`, `button` and `hit`, the drawing calls and hit regions of the package kit ([KIT.md](KIT.md)), and asking for a drawing pass with `request_redraw`. A manifest must declare it (below) |
 | `storage:widget-local` | its own saved state: `state_get`, `state_set` and the file `state/runtime.bin`. Without it `state_get` returns `0`, `state_set` does nothing, and no state file is read or written for the package |
 
 A module may import every function of the ABI whatever it declares; a call it has no capability
@@ -263,13 +266,19 @@ settings:
 
 The package above is ordinary widget code in its own repository, not part of Grimoire. An open
 frame reads its settings again after the Settings page saves them; a package decides what a change
-means. A new frame reads the saved values on its first draw.
+means, and one that exports the kit's `kit_event` is told of each (a SETTINGS event,
+[KIT.md](KIT.md#events)). A new frame reads the saved values on its first draw.
 
 ## The WASM ABI
 
 The artifact is one WebAssembly module. It exports `memory`, `widget_draw(width, height,
 scale_milli)` and `widget_tap(hit_id)`, and may import these functions from the module named
-`grimoire`:
+`grimoire`, and the package kit's from `grimoire_kit` ([KIT.md](KIT.md)): the theme's standard sizes, text by
+role, and Grimoire's own elements at the theme's sizes, which an app draws with too. A kit element given an id is a
+hit region, and a tap on it calls `widget_tap` with that id. The kit's calls are drawn with the module's own, in
+the order it calls them, and count toward the limits below. A module may also export the kit's
+`kit_event(kind, id, a, b, c) -> i32`, to be told of taps, long presses and drags in its body and of a change of
+its settings ([KIT.md](KIT.md#events)).
 
 ```text
 rect(x, y, w, h, style)
@@ -302,15 +311,22 @@ body, is a tap on no region.
 | `button` | a button with its own label; it is also a hit region with `id` |
 | `hit` | a hit region with `id`, without drawing anything |
 | `status` | the text the editor's `editor.widget.N.status` probe reads, for tests and debugging |
-| `request_redraw` | asks for `widget_draw` again after `after_ms` (100 to 86,400,000; a value outside is taken as the nearer end); a clock calls it once per draw, and a package that never calls it is only drawn when something else repaints. When the time has come the frame is drawn again and its rectangle is refreshed once. A minimized frame draws no body, so its request waits until the frame is restored, and a request waits while a finger or the pen is down or a menu or sheet is open. A redraw also waits while the pen is writing or near the screen, and comes once when the pen has left |
+| `request_redraw` | asks for `widget_draw` again after `after_ms` (100 to 86,400,000; a value outside is taken as the nearer end); a clock calls it once per draw, and a package that never calls it is only drawn when something else repaints. One request stands at a time, the soonest asked for, whichever call asked (a draw, a tap, an event): a later call does not put an earlier one off. When the time has come the frame is drawn again and its rectangle is refreshed once, and a pass drawn then for another reason answers it. A minimized frame draws no body, so its request waits until the frame is restored, and a request waits while a finger or the pen is down or a menu or sheet is open. A redraw also waits while the pen is writing or near the screen, and comes once when the pen has left |
 | `setting` | copies one saved setting's value into `out_ptr` and returns its byte length, or `0`; `out_cap` caps the copy |
 | `state_get` | copies the saved state into `ptr` and returns its byte length, or `0`; `cap` caps the copy. `state_get` and `state_set` need `storage:widget-local` |
 | `state_set` | replaces the saved state with the bytes at `ptr`; the first 64 KiB are kept |
 | `now` | Unix time in seconds, when a widget needs a clock |
 
 `widget_tap` is called with the `id` of the hit region under the tap, or `-1` for a tap elsewhere
-in the body. It should update the package's state; the next `widget_draw` shows the result (what
-a tap itself draws is not shown: a pass holds the commands of its own `widget_draw` only). A
+in the body: at the lift of a contact that stayed within 5 mm of where it came down, held or not. It
+should update the package's state; the next `widget_draw` shows the result (what a tap itself draws
+is not shown: a pass holds the commands of its own `widget_draw` only). That pass is drawn once
+after the tap, and only the part of the body it changed is refreshed (nothing, when the picture is the
+same). A module that exports the kit's `kit_event` is told of a tap by a TAP event instead of
+`widget_tap`, and of long presses and drags too, whose passes are drawn at most every 120 ms while
+the contact is down, refreshed fast, and what they refreshed gets one full-depth refresh after the
+lift ([KIT.md](KIT.md#events)). A widget gets no keys: they stay the notebook's
+shortcuts. A
 module may call `state_set` during a tap or a draw; the host writes the state file after the call,
 at `packages/widgets/<id>/state/runtime.bin`. For a timer or a sticky note, that is the whole
 persistence model.
@@ -318,22 +334,23 @@ persistence model.
 Each call runs with a fixed instruction budget, from which the host's work for the imports it
 calls is paid as well ([Limits](#limits)), and a module has one linear memory, which may grow to at
 most 32 MiB. A module that loops past the budget is stopped and its frame shows the error instead of
-freezing Grimoire. Imports outside the `grimoire` module fail to link, and the module has no
+freezing Grimoire. Imports outside the `grimoire` and `grimoire_kit` modules fail to link, a call of
+`grimoire_kit` this Grimoire does not have keeps the module from starting (KIT.md, Levels), and the module has no
 filesystem, network or process access.
 
 ### Limits
 
-The host calls a module's `widget_draw` (a drawing pass) and its `widget_tap`. Each call is held to
-the limits below, and the counts start again with every call:
+The host calls a module's `widget_draw` (a drawing pass), its `widget_tap` and its `kit_event`. Each
+call is held to the limits below, and the counts start again with every call:
 
 | limit | |
 |---|---|
 | a call's budget | 20,000,000, counted in instructions: the module's own, and the host's work for its imports ([below](#what-a-calls-budget-pays-for)) |
 | the module's memories | 1, of at most 32 MiB (512 pages) |
 | the module's tables | 1, of at most 65,536 entries |
-| drawing commands in one pass (`rect`, `text` and `button` together) | 512 |
-| hit regions in one pass (`button` and `hit` together) | 512 |
-| bytes of one text (a `text`'s, or a `button`'s label) | 1,024 |
+| drawing commands in one pass (`rect`, `text`, `button` and the kit's drawing calls together) | 512 |
+| hit regions in one pass (`button`, `hit` and the kit's together) | 512 |
+| bytes of one text (a `text`'s, a `button`'s label, and each text the kit reads) | 1,024 |
 | bytes of all the texts of one pass | 16,384 (16 KiB) |
 | bytes of the status line | 256 |
 | bytes `state_get` and `state_set` move in one call, all their uses together | 1,048,576 (1 MiB) |
@@ -373,14 +390,20 @@ and one by size where the work grows with what the import is given.
 | `text` | and, for each byte, 32 for each pixel of its height (1 to 512) up to 64 pixels; above 64 pixels, half the square of the height for each byte, since a tall letter costs by its area; and 16 times the square of its bytes, counted to 256 bytes (a line that does not fit is cut short, and a label is broken in two, by steps that each measure the text again) |
 | `status`, `setting`, `state_get`, `state_set` | and 4 for each byte read from the module's memory or written to it |
 
+The package kit's calls ([KIT.md](KIT.md)) are paid from the same budget, as KIT.md's "What a call's
+budget pays for" says.
+
 A call whose budget cannot pay a charge ends exactly as a call that ran out of instructions: its frame
 shows the same error, and nothing of the pass is drawn. A call of an import the package has no
 capability for pays the fixed charge and returns.
 
 The charges were set by measuring, in a release build on a desktop machine, what each import's work
-costs beside a module's own instructions. There, the longest drawing a budget pays for takes about
-three times as long as the same budget spent on instructions alone. They have not been measured on a
-Kindle.
+costs beside a module's own instructions. There, the longest drawing measured that a budget pays for
+takes about four times as long as the same budget spent on instructions alone (4.1): one label of 512
+one-letter words that Grimoire's label rule balances on two lines, a FIT text, a row or a checkbox of
+the package kit, in Literata; about two and a half times in Gothic, and about once in Terminess. The
+widget's own `button` with such a label, or with one word of 1,023 letters, takes about once at most.
+They have not been measured on a Kindle.
 
 Some sums, for a sense of scale:
 
@@ -418,7 +441,8 @@ Each time a frame opens, before the module is loaded, its file is checked again:
 A file that fails a check is not loaded: the frame says "The widget's artifact could not be read."
 in place of its body, and Grimoire's log says which check it was. (A frame whose module failed says
 the reason first, in as many lines as its body holds, and under it, where lines are left, the
-package's name, version and author; a body with room for one line shows the start of the reason.) The file is read and hashed once
+package's name, version and author; a body with room for one line shows the start of the reason. Each
+text a widget's frame shows there is at most 256 bytes, cut between characters.) The file is read and hashed once
 for each load, which is once for a frame that opens; drawing does not read it again.
 
 `tests/fixtures/widgetcalc/` holds a compiled calculator package used by the scenarios;
@@ -487,6 +511,9 @@ have them. The fixtures and scenarios under `tests/` are the working examples:
   then checks the open frame and a newly opened one.
 - `tests/scenarios/z_widget_packages.qs` drives install, update, license and remove through the
   package manager.
+- `tests/fixtures/kit/` holds widgets (and an app) drawn with the package kit, written by `rust/tests/kitfix`
+  (`make kit-fixtures`); `tests/scenarios/z_kit_widget.qs` opens them in both themes and taps their kit
+  elements by name, and `rust/tests/test_kit.rs` holds the kit's rules ([KIT.md](KIT.md), Testing).
 - `tests/fixtures/widgethost/` holds six small packages for the host's own rules. Their modules are
   written byte by byte by `rust/tests/widgetfix` (`make widget-fixtures` writes the folder, and
   `rust/tests/test_widget_fixtures.rs` checks it is what the writer makes), so each can pass the
@@ -558,8 +585,9 @@ does.
 1. Put `package.yaml` and the artifact at the repository root and push them to a public
    repository. GitHub's default branch is used for `user/repo`; a direct raw URL works on any
    branch.
-2. Check the install from a clean data root: Settings → Packages → Widgets → **Install from
-   repository...**, enter `user/repo`, read the trust page and the license, and install.
+2. Check the install from a clean data root: in a notebook, the Widgets popup's **Manage
+   widgets...** → **Install from repository...**, enter `user/repo`, read the trust page and the
+   license, and install.
 3. Open the widget from the catalog, move and resize it, close it and reopen it. If it has a
    license, check **View license**. On a GitHub package, check **View QR code**.
 4. Publish a new version by changing the artifact and `version`, re-running the packaging script,

@@ -124,6 +124,8 @@ pub struct WidgetFrame {
     pub layout: WidgetLayout,
     pub runtime: Option<WidgetRuntime>,
     pub runtime_error: Option<String>,
+    /// the body's contact recognised (the kit's events) and the drawing pass input owes (kithost.rs)
+    pub input: crate::kithost::KitInput,
 }
 
 /// Where a contact came down in a frame. The editor routes input by these.
@@ -164,28 +166,33 @@ impl WidgetFrame {
             },
             runtime: None,
             runtime_error: None,
+            input: Default::default(),
         }
     }
 
-    /// Loads the package's WASM instance on the first draw, or keeps the error for the body.
+    /// Loads the package's WASM instance on the first draw (or the first touch of its body), or keeps the error for
+    /// the body. The module is given the frame's body from its start on.
     pub fn ensure_runtime(&mut self) {
         if self.runtime.is_some() || self.runtime_error.is_some() {
             return;
         }
-        match WidgetRuntime::new(self.def.id) {
+        let body = self.body_rect();
+        match WidgetRuntime::new(self.def.id, (body.w, body.h)) {
             Ok(r) => self.runtime = Some(r),
             Err(e) => self.runtime_error = Some(e),
         }
     }
 
-    /// The last runtime error, if its package or module could not start.
+    /// The last runtime error, if its package or module could not start or was stopped: the first
+    /// MESSAGE_SHOWN_MAX bytes of it at most, cut between two characters, wherever it came from.
     pub fn error(&self) -> Option<&str> {
-        self.runtime_error.as_deref().or_else(|| self.runtime.as_ref().and_then(WidgetRuntime::error))
+        self.runtime_error.as_deref().or_else(|| self.runtime.as_ref().and_then(WidgetRuntime::error)).map(message_shown)
     }
 
     /// What a frame whose module failed says in place of its body, in the order it is drawn: the reason (the
     /// frame's error), then whose widget it is (the package's name, its version and its author). None while the
-    /// module runs. The reason is first so that a body with room for little shows it.
+    /// module runs. The reason is first so that a body with room for little shows it. Each is MESSAGE_SHOWN_MAX
+    /// bytes at most.
     pub fn says(&self) -> Option<(String, String)> {
         let reason = self.error()?.to_string();
         let mut whose = self.def.name.to_string();
@@ -195,7 +202,7 @@ impl WidgetFrame {
         if !self.def.author.is_empty() {
             whose.push_str(&format!(" · {}", self.def.author));
         }
-        Some((reason, whose))
+        Some((reason, message_shown(&whose).to_string()))
     }
 
     /// The frame as drawn and hit: a minimized widget is a small square at its corner.
@@ -319,11 +326,16 @@ impl WidgetHost {
         self.frames.iter().position(|f| f.def.id == id)
     }
 
-    /// Lets an open frame of this package read the settings that were just saved.
+    /// Lets an open frame of this package read the settings that were just saved, and tells its module so (a
+    /// SETTINGS event), which owes a drawing pass when it says its picture changed.
     pub fn reload_settings(&mut self, id: &str) {
         if let Some(i) = self.index_of(id) {
-            if let Some(rt) = self.frames[i].runtime.as_mut() {
+            let f = &mut self.frames[i];
+            if let Some(rt) = f.runtime.as_mut() {
                 rt.reload_settings(id);
+                if rt.event(&crate::kithost::KitEvent::new(crate::kithost::EV_SETTINGS, 0, 0, 0, 0)) == Some(true) {
+                    f.input.owe();
+                }
             }
         }
     }
@@ -725,6 +737,34 @@ mod tests {
         let mut f = WidgetFrame::new(&TEST_WIDGET);
         f.runtime_error = Some("The widget package is not installed.".to_string());
         assert_eq!(f.says(), Some(("The widget package is not installed.".to_string(), "Test".to_string())));
+    }
+
+    #[test]
+    fn a_frame_shows_at_most_256_bytes_of_each_text() {
+        assert_eq!(MESSAGE_SHOWN_MAX, 256);
+        let mut f = WidgetFrame::new(&TEST_WIDGET);
+        // A reason of 256 bytes is shown whole; one byte more, and the first 256 are shown.
+        for (n, shown) in [(255, 255), (256, 256), (257, 256), (100_000, 256)] {
+            f.runtime_error = Some("a".repeat(n));
+            assert_eq!(f.error(), Some("a".repeat(shown).as_str()), "a reason of {n} bytes");
+            assert_eq!(f.says().unwrap().0, "a".repeat(shown), "a reason of {n} bytes");
+        }
+        // Of characters of three bytes, 256 bytes end inside one: the text is cut before it, at 255.
+        f.runtime_error = Some("\u{20ac}".repeat(1000));
+        assert_eq!(f.error(), Some("\u{20ac}".repeat(85).as_str()));
+        // Whose widget it is, the same way: a version of 200,000 bytes, and a name and an author of 1,023 bytes each
+        // (the most a manifest's name and author have).
+        let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+        let reason = "The widget's artifact could not be read.".to_string();
+        let versioned: &'static WidgetDef = Box::leak(Box::new(WidgetDef { name: "Test", version: leak(format!("1.0.0-{}", "a".repeat(200_000))), author: "Its Author", ..TEST_WIDGET }));
+        let mut f = WidgetFrame::new(versioned);
+        f.runtime_error = Some(reason.clone());
+        assert_eq!(f.says(), Some((reason.clone(), format!("Test v1.0.0-{}", "a".repeat(256 - 12)))));
+        let name = leak("\u{20ac}".repeat(341));
+        let named: &'static WidgetDef = Box::leak(Box::new(WidgetDef { name, version: "1.0.0", author: name, ..TEST_WIDGET }));
+        let mut f = WidgetFrame::new(named);
+        f.runtime_error = Some(reason.clone());
+        assert_eq!(f.says(), Some((reason, "\u{20ac}".repeat(85))));
     }
 
     #[test]

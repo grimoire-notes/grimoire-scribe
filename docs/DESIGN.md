@@ -311,7 +311,11 @@ draws them. White ink and the precise eraser make them.
   Cyrillic, arrows, the Latin Extended-A letters Atkinson lacks) comes from Terminess at the asked size,
   a bold face's from Terminess Bold (`FaceMap.fallback`), then from DotGothic16, so Japanese is drawn
   as in every theme; kerning stays inside a face (the families keep their GPOS pairs, which stb reads).
-  The glyph cache keys a glyph by its file, so a change of font loses nothing cached. The files are
+  The glyph cache keys a glyph by its file, so a change of font loses nothing cached. A glyph's bitmap
+  has a greatest size, whoever draws it and at whatever size: 4,096 px each way and 4 MiB in all, what
+  the cache holds (font.rs, `GLYPH_SIDE_MAX`, `CACHE_BYTES_MAX`). Its size is worked out before anything
+  is made; a larger glyph has no bitmap, keeps its advance in a line and leaves its place empty, and an
+  icon of that size is not drawn. A screen's text and icons are far under it. The files are
   static Regular and Bold instances of Google Fonts' variable fonts, cut to Latin, Latin-1, Latin
   Extended-A and General Punctuation (238 KB for the six: `assets/README.md`).
 - Settings > Font (library.rs, `Modal::Font`, 2.1; a page of the new Settings menu since #115): in Classic
@@ -365,7 +369,8 @@ draws them. White ink and the precise eraser make them.
   symbols page, where no label changes case (`shift_shows_on_keys`), and a letter typed with caps on refreshes
   only what any letter does. `keyboard_open` starts every keyboard with shift off, so caps
   on ends when the keyboard closes (Find's Done with no page to go to keeps its keyboard open, and the state
-  with it). A paired keyboard never reaches this state: its keys type nowhere but on the count pad.
+  with it). A paired keyboard's keys neither follow this state nor change it: each types its own character, its
+  own Shift giving the capital (`type_char`).
 - The caret, the selection and the clipboard (2.1.0-beta.2, issue #36). The text has a caret,
   `Keyboard.caret`, a byte offset at a character's first byte (or the end), and a selection's other end,
   `Keyboard.anchor` (the caret's own with nothing selected); `keyboard_open` puts both after the text, so
@@ -407,8 +412,14 @@ draws them. White ink and the precise eraser make them.
   pad (`keyboard_key_input`; `app_text_key` in app.rs, before any shortcut is looked up; a keyboard is read at
   all only while Settings > Shortcuts is on, as for every key):
   they reach the keyboard as Esc does, through `app_type_text`, whose touch-down on the text box now carries
-  the input too, so it is taken as a contact on no key and moves no caret. Letters typed on a paired keyboard
-  still type nothing in a field.
+  the input too, so it is taken as a contact on no key and moves no caret. Since #266 the same way, with
+  neither Ctrl, Alt nor Meta held, Esc is Cancel, Backspace delete, Enter Done, and a character key types its
+  character (`keyboard_hw_char`: the US layout with Shift, the keypad's digits and signs; `KbInput::Char`) at the
+  caret in place of a selection as the key with that character does, never past the 95 bytes the text holds and
+  never a control character; Go to page's number pad and the count pad take a digit alone. Each is drawn and
+  refreshed as a key's typing is, without a key of its own (the text line alone). The keys that type come
+  before the sheet under the keyboard too (`library_modal_key`: the Package Store's, the All apps page's), and
+  `library_keyboard_area` answers the Package Store's keyboard. With no keyboard up every key does what it did.
 - On the Library, the sheet a keyboard was opened from stays drawn under it, the Wi-Fi page included:
   `LibraryState.kb_parent` names that sheet, and `draw_modal` draws it before `keyboard_draw` puts the keys
   over its lower half. The keys take every contact; the page below is not a tap target while they are up.
@@ -801,8 +812,8 @@ announcements: goingToScreenSaver draws the sleep screen, outOfScreenSaver is th
   LICENSE or musl's COPYRIGHT, or one of those notices. A vendored directory with no license file,
   a font without its OFL text, or a missing notice fails package-check, and so does a change to
   FBINK_SRC until its notice is added. package-check also holds the size guard (the owner's
-  decision D23, raised for 2.1.0-beta.2 and again for 2.2): the Kindle binary under 13 MB (13,000,000 bytes) and the
-  zip under 7 MB.
+  decision D23, raised for 2.1.0-beta.2, for 2.2, and on main after 2.2 for the Kindle binary): the Kindle binary
+  under 14 MB (14,000,000 bytes) and the zip under 7 MB.
 
 ## Tests
 
@@ -1547,7 +1558,10 @@ code made from it, and nothing else.
 Closing a changed notebook used to draw every page again (minutes for a 400-page planner, holding the one
 background queue) and built the whole PDF in one buffer before writing it. Now `export_notebook_pdf_to` writes the
 PDF to any `Sink` (a Buf, a file, a count, a connection) as its objects are made: a scratch buffer holds one page's
-objects, a page's image goes to the sink straight, the xref's offsets are kept (8 bytes an object). Each page's
+objects, a page's image goes to the sink straight, the xref's offsets are kept (8 bytes an object). The stream is
+made by `zpieces.rs`: the bytes of stb's `stbi_zlib_compress`, gathered in pieces of 256 KiB that are never
+grown, where stb's one doubling block ended at 24 MiB for a colour page of 13.9 MB that hardly compresses (and
+was held twice wherever the allocator moved it to grow it: issue 79). Each page's
 Flate stream is cached in `grimoire/.cache/pdf/<id>/` under a stamp (`pdfcache.rs`; the record's layout is in
 FORMAT.md): a record that does not read or whose stamp is not the page's today is drawn again, and a page drawn
 while its picture was missing or did not decode is never kept, so the cache can only make a PDF faster, never
@@ -3086,7 +3100,7 @@ may cost is held to a few seconds a file, behind every other job.
   of a file is decoded, sniffed or measured in the app or in the writer; with no worker to be had, nothing is
   previewed.
 - **The job, `BgKind::FilePreviews = 9`**: one file a job, its path the file as listed
-  (`<dev>.<ino>.<size>.<mtime>:<StoragePath>`, as the copy job's), never two of the same file, dropped at exit
+  (`<dev>.<ino>.<size>.<mtime>.<mtime_nsec>:<StoragePath>`, as the copy job's), never two of the same file, dropped at exit
   (`bg_detach_rest`: they were for the screen). The child opens the file again through `fsview`'s walk in place
   mode (no link, one device, never the notebooks; Grimoire's PDF copies and trash are read, as Files lists them),
   checks it is the file listed, makes none under the storage's free floor, and has ONE worker run make a 300 x 400
@@ -3709,6 +3723,43 @@ cache and checked (`pkgpics.rs`, `appicon.rs`, `packagestore.rs`).
   (`small_pictures_are_made_in_the_real_sandbox`), which only CI's Linux job runs; docs/TESTING.md has the
   Scribe's check.
 
+## The package kit (2.3, issue #267)
+
+Widgets and apps are WebAssembly modules of installed packages, run by the wasmi interpreter inside Grimoire's own
+process: `widgetwasm.rs` hosts a widget's frame over the notebook, `apphost.rs` a full-screen app, and
+`wasmhost.rs` holds the rules of a call they share (a store's limits, how a call past a limit ends, how a module's
+memory is read and written, how numbers are held near the body, how the host's work is charged to the call's
+instruction budget). Each host has its own import module, `grimoire`, whose calls differ between the two.
+
+Both link a second import module, `grimoire_kit` (`kithost.rs`; [KIT.md](KIT.md) is its reference), whose calls
+are written once and mean the same in either: the theme's standard sizes, text by role, and the elements Grimoire's
+own screens draw, which take the theme's standard size when a call gives them none. The sizes are functions of
+`globalui.rs` and `ui.rs` that the screens they come from read (Settings' rows, the Package Store's action buttons
+and chips, the home's chips and Sort; a field's height, which no screen draws yet, is the kit's own), so a
+package's row given no height is Settings' row pixel for pixel. A host gives the kit
+its body, its limits and its records through the `KitHost` trait; a kit command is one of the host's drawing
+commands, drawn in the order the module called it. The work of each call is a function that no host's type is part
+of, so one copy of it serves both hosts, and each host's linker holds a thin call of it.
+
+Every call of the kit keeps the rules of the host it runs in: the fixed charge first; a length compared with its
+limit before the module's memory is read; the host's work paid from the call's budget, by the app host's charges in
+both hosts; drawing held to the body (`on_screen`, the body's clip); a command and a hit region counted against
+the host's limits; and, in a widget, drawing only for a package that declares `editor:overlay`. A package's text
+is drawn with no report to the translation fit check, and its icons at most 1,024 px each way. A module that
+imports a call of the kit this Grimoire does not have is not started, and its frame or a toast names the call when
+the name has a call's shape. The text a widget's frame shows in place of its body is at most 256 bytes.
+
+Input (issue #272): a module may export `kit_event(kind, id, a, b, c) -> i32`, which both hosts call for what
+happens in the body. One recogniser, `KitPointer`, makes a contact a TAP, a PRESS at `HOLD_MS` or a drag (its
+samples gathered, the newest 256, for DRAG_MOVE and `event_points`), and a palm or a gesture cancels it; an app's
+keys and a change of a package's settings are events too. Input calls the module at once (and the hosts' own
+`app_pointer`, `app_key` and `widget_tap` as before); the drawing pass it owes (`KitInput`) is drawn by the host's
+tick once for all the input since the last: none while a contact may still be a tap, one every 120 ms while it is
+down, and only the part of the screen the pass changed (`kit_keep`, `canvas_changed_rect`) is refreshed, what fast
+refreshes covered while it was down cleaned once after the lift. While an app is
+open the keys are its own, before the shortcuts; only `back` and `home` act, and leave it (`app.rs`,
+`APP_LEAVE_ACTIONS`). On the Kindle keys are read only while Settings > Shortcuts is on.
+
 ## Shared building blocks (2.1, lane L0)
 
 The 2.1 plan builds a few pieces once, for every later lane to reuse (no second one grows beside them).
@@ -3716,7 +3767,7 @@ Lane L0 adds them with nothing visible: each keeps what the Scribe showed before
 
 - **One hold, `ui::HOLD_MS` (600 ms).** Every touch hold that offers a control's choices reads it: the link
   hold and Select's paste hold in the editor, the Library's row hold, the Pages view's card hold (its drag
-  hold is `HOLD_MS / 2`) and the Links bar's. Not the pen dwell for shapes (a setting), the pen button's
+  hold is `HOLD_MS / 2`), the Links bar's, and a package's PRESS (`kithost.rs` `KitPointer`). Not the pen dwell for shapes (a setting), the pen button's
   1200 ms, the power key's 4 s or the keyboard's repeat. rust/tests/test_ui.rs `every_hold_reads_hold_ms`
   fails on a hold of its own number.
 - **One popout's place, `popout.rs` `popout_place(w, h, anchor, screen, avoid)`.** A card beside what was

@@ -1,0 +1,15 @@
+name: Gray tick app
+id: test.kit.graytick
+type: app
+version: 1.0.0
+author: Grimoire tests
+description: A module of the package kit's tests.
+platforms: [all]
+artifact:
+  path: app.wasm
+  sha256: b8d4c262a8b8dff1bac5af9c53277630011d479d5560547f78d169620d04fbe7
+  size: 1961
+capabilities: []
+spec:
+  runtime: wasm
+  status_bar: true

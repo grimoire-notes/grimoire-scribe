@@ -60,7 +60,7 @@ expect settings.font_bold is Gone-Bold.ttf
 # Another setting saved: the lines stay
 tap library settings
 wait 50
-tap library settings.cat.6
+tap library settings.cat.5
 wait 100
 tap library mirror
 wait 50

@@ -231,6 +231,25 @@ const CACHE_SLOTS: usize = 1024;
 /// The bitmaps the cache holds at most, all together: past it, it is flushed whole, as when its slots
 /// run out. (A screen of text is a few hundred KB; a custom font's large glyphs are what could grow it.)
 const CACHE_BYTES_MAX: usize = 4 << 20;
+/// A glyph's bitmap has a greatest size: this many pixels each way, and no more bytes (one a pixel) than the
+/// cache holds, CACHE_BYTES_MAX: a square of 2,048 px, or 4,096 by 1,024. It holds for every glyph of an
+/// embedded face, whoever draws it and at whatever size: the size is worked out first (`outline_bitmap_ok`,
+/// `make_pixel_glyph`), and no bitmap is made of a larger glyph. Its place in a text stays empty and keeps its
+/// advance, so a line is laid out as it is measured; an icon is not drawn. What the screen shows is far under
+/// it: a letter reaches it at a text height of about 3,000 px, an icon in a square of about 2,000. (A font of
+/// the owner's own has its sizes from fontcheck.rs: FONT_PX_MAX, `rasterize`.)
+const GLYPH_SIDE_MAX: i64 = 4096;
+/// An edge of a glyph's box, in pixels from the glyph's origin, lies no farther out than this, or the glyph is
+/// not made: far past GLYPH_SIDE_MAX, and a number of pixels that an f32 and stb's own whole numbers both hold
+/// exactly.
+const GLYPH_EDGE_MAX: f32 = (1u32 << 30) as f32;
+
+/// Whether a glyph may have a bitmap of `w` by `h` pixels (GLYPH_SIDE_MAX): neither side over the greatest
+/// or under nothing, and their product, worked out in 64 bits, no more than CACHE_BYTES_MAX. (A side of
+/// nothing is a glyph with no ink, which has no bitmap.)
+fn glyph_size_ok(w: i64, h: i64) -> bool {
+    (0..=GLYPH_SIDE_MAX).contains(&w) && (0..=GLYPH_SIDE_MAX).contains(&h) && w.saturating_mul(h) <= CACHE_BYTES_MAX as i64
+}
 
 /// How a custom font maps onto Classic's faces: its scale, and whether its bold is a face of its own (its
 /// weight axis, or a Bold file paired with it) or the regular overprinted.
@@ -276,6 +295,9 @@ struct State {
     own_sets: usize,
     /// the one buffer custom faces' outlines are read into (256 KB, there from the first custom glyph on)
     own_out: Option<Outliner>,
+    /// the largest an icon is drawn, each way, in pixels (font_with_icon_side_max; i32::MAX: as large as
+    /// its rectangle)
+    icon_side_max: i32,
 }
 
 impl State {
@@ -297,6 +319,7 @@ impl State {
             own_drawn: 0,
             own_sets: 0,
             own_out: None,
+            icon_side_max: i32::MAX,
         }
     }
 }
@@ -360,22 +383,68 @@ fn codepoint_box(fi: &stbtt_fontinfo, cp: u32) -> Option<(i32, i32, i32, i32)> {
     }
 }
 
+/// Whether the bitmap stb makes of cp's outline at this scale is one a glyph may have (`glyph_size_ok`). Its
+/// sides are worked out here as stb works them out (stbtt_GetGlyphBitmapBoxSubpixel: the glyph's box in font
+/// units, scaled, and out to whole pixels), before anything is made and in floating point, where a box of any
+/// size is a number. A scale under nothing, or one that is not a number, is of no glyph. A glyph with no outline
+/// has no bitmap, and passes.
+fn outline_bitmap_ok(fi: &stbtt_fontinfo, sx: f32, sy: f32, cp: u32) -> bool {
+    // (no comparison holds for a NaN)
+    if !(sx >= 0.0 && sy >= 0.0) {
+        return false;
+    }
+    let Some((x0, y0, x1, y1)) = codepoint_box(fi, cp) else { return true };
+    // (a scale of nothing one way is the other way's, as stb takes it)
+    let (sx, sy) = (if sx == 0.0 { sy } else { sx }, if sy == 0.0 { sx } else { sy });
+    let (ix0, iy0) = ((x0 as f32 * sx).floor(), (-(y1 as f32) * sy).floor());
+    let (ix1, iy1) = ((x1 as f32 * sx).ceil(), (-(y0 as f32) * sy).ceil());
+    // (an edge that is not a number, or lies farther out than a glyph's may, fails here)
+    if ![ix0, iy0, ix1, iy1].iter().all(|e| e.abs() <= GLYPH_EDGE_MAX) {
+        return false;
+    }
+    glyph_size_ok(ix1 as i64 - ix0 as i64, iy1 as i64 - iy0 as i64)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: how many bitmaps stb has been asked for.
+    static BITMAPS_ASKED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Tests: how many bitmaps stb has been asked for so far, on this thread (a glyph past the greatest size is not
+/// asked for).
+#[cfg(test)]
+pub(crate) fn font_bitmaps_asked() -> u32 {
+    BITMAPS_ASKED.with(|n| n.get())
+}
+
 /// stbtt_GetCodepointBitmap: the 8-bit coverage (empty where stb returns NULL: a glyph with no
 /// ink), and its width, height and offsets. The bitmap stb allocated is copied and freed here, so
-/// no raw pointer outlives this call.
+/// no raw pointer outlives this call. A glyph whose bitmap would be past the greatest size
+/// (GLYPH_SIDE_MAX) is not made: the answer is that of a glyph with no ink, and stb is not asked.
 fn codepoint_bitmap(fi: &stbtt_fontinfo, sx: f32, sy: f32, cp: u32) -> (Vec<u8>, i32, i32, i32, i32) {
+    if !outline_bitmap_ok(fi, sx, sy, cp) {
+        return (Vec::new(), 0, 0, 0, 0);
+    }
+    #[cfg(test)]
+    BITMAPS_ASKED.with(|n| n.set(n.get() + 1));
     let (mut w, mut h, mut xo, mut yo) = (0, 0, 0, 0);
     // SAFETY: fi was filled by stbtt_InitFont; the four outputs are our locals.
     let p = unsafe { stbtt_GetCodepointBitmap(fi, sx, sy, cp as i32, &mut w, &mut h, &mut xo, &mut yo) };
     let mut bmp = Vec::new();
     if !p.is_null() {
-        if w > 0 && h > 0 {
+        // (the size stb says is the one asked about above: read as its bytes only when it is one a glyph has)
+        let sized = w > 0 && h > 0 && glyph_size_ok(w as i64, h as i64);
+        if sized {
             // SAFETY: on success stb returns w * h bytes (it returns NULL when either is 0).
             bmp.extend_from_slice(unsafe { std::slice::from_raw_parts(p, w as usize * h as usize) });
         }
         // SAFETY: p came from stbtt_GetCodepointBitmap (malloc), is not used again, and no
         // userdata was given to the allocator.
         unsafe { stbtt_FreeBitmap(p, std::ptr::null_mut()) };
+        if !sized {
+            return (Vec::new(), 0, 0, 0, 0);
+        }
     }
     (bmp, w, h, xo, yo)
 }
@@ -702,19 +771,21 @@ fn pixel_drop(ttf: usize, cp: u32) -> i32 {
 }
 
 /// A pixel face's glyph at k screen pixels per design pixel: hard-edged k x k blocks. Returns the
-/// bitmap (empty for none) and the glyph's w, h, xoff, yoff.
+/// bitmap (empty for none) and the glyph's w, h, xoff, yoff. A glyph with no ink, and one whose blocks
+/// would make a bitmap past the greatest size (GLYPH_SIDE_MAX: its sides are worked out in 64 bits, k being
+/// as large as the size asked for makes it), has no bitmap and no size.
 fn make_pixel_glyph(st: &State, ttf: usize, k: i32, cp: u32) -> (Vec<u8>, i32, i32, i32, i32) {
     let s = 1.0 / K_UNIT[ttf] as f32;
     let (small, w, h, xo, yo) = codepoint_bitmap(&st.font[ttf], s, s, cp);
-    let gw = w * k;
-    let gh = h * k;
-    let mut bmp = Vec::new();
-    if !small.is_empty() && w > 0 && h > 0 {
-        bmp = vec![0u8; gw as usize * gh as usize];
-        for y in 0..gh {
-            for x in 0..gw {
-                bmp[(y * gw + x) as usize] = if small[((y / k) * w + x / k) as usize] >= 128 { 255 } else { 0 };
-            }
+    let (wide, high) = (w as i64 * k as i64, h as i64 * k as i64);
+    if small.is_empty() || w <= 0 || h <= 0 || k <= 0 || !glyph_size_ok(wide, high) {
+        return (Vec::new(), 0, 0, 0, 0);
+    }
+    let (gw, gh) = (wide as i32, high as i32);
+    let mut bmp = vec![0u8; gw as usize * gh as usize];
+    for y in 0..gh {
+        for x in 0..gw {
+            bmp[(y * gw + x) as usize] = if small[((y / k) * w + x / k) as usize] >= 128 { 255 } else { 0 };
         }
     }
     (bmp, gw, gh, xo * k, (yo + pixel_drop(ttf, cp)) * k)
@@ -722,7 +793,9 @@ fn make_pixel_glyph(st: &State, ttf: usize, k: i32, cp: u32) -> (Vec<u8>, i32, i
 
 /// The cache slot of the glyph, made on first use.
 fn glyph_get(st: &mut State, ttf: usize, px: f32, cp: u32) -> usize {
-    let size4 = if k_unit(ttf) != 0 { -pixel_k(st, ttf, px) } else { (px * 4.0).round_ties_even() as i32 };
+    // (an outline face's size in quarter pixels, never under nothing: a negative number here is a pixel face's,
+    // below, and a text drawn at a size under nothing has no glyphs to show)
+    let size4 = if k_unit(ttf) != 0 { -pixel_k(st, ttf, px) } else { (px.max(0.0) * 4.0).round_ties_even() as i32 };
     let hsh = cp.wrapping_mul(2654435761) ^ (size4 as u32).wrapping_mul(40503) ^ (ttf as u32).wrapping_mul(977);
     for probe in 0..16u32 {
         let slot = (hsh.wrapping_add(probe) % CACHE_SLOTS as u32) as usize;
@@ -1127,9 +1200,21 @@ fn missing_box(st: &State, px: f32) -> (f32, Rect, i32) {
     (adv, Rect { x: inset, y: -h, w: (adv.round_ties_even() as i32 - 2 * inset).max(1), h }, t)
 }
 
+/// One character of a text as `layout` measures it: what it adds to the pen, so that a part of the text can be
+/// measured again by adding the same numbers in the same order (`Word`), without laying it out again.
+#[derive(Clone, Copy, Debug)]
+enum Step {
+    /// a character that takes no room: the kerning goes on from the character before it
+    Unseen,
+    /// the box drawn for a character no face has: its advance; nothing is kerned against it
+    Boxed(f32),
+    /// a glyph: the kerning added before it when it follows a character of its face, and its advance
+    Glyph(Option<f32>, f32),
+}
+
 /// Lays out (and with a canvas, draws) the text from s[from] up to s[end] (None: its terminator).
 /// Measuring (no canvas) reads the advances straight from the font: no glyph is rendered or cached
-/// for it.
+/// for it. With `steps`, each character's end and what it adds to the pen are kept there.
 #[allow(clippy::too_many_arguments)]
 fn layout(
     st: &mut State,
@@ -1142,6 +1227,7 @@ fn layout(
     from: usize,
     end: Option<usize>,
     gray: u8,
+    mut steps: Option<&mut Vec<(usize, Step)>>,
 ) -> i32 {
     if !st.ready {
         return 0;
@@ -1169,7 +1255,12 @@ fn layout(
         // as it is drawn.
         if !has {
             match missing_as(cp) {
-                Missing::Nothing => continue,
+                Missing::Nothing => {
+                    if let Some(v) = steps.as_deref_mut() {
+                        v.push((i, Step::Unseen));
+                    }
+                    continue;
+                }
                 Missing::Space => {
                     cp = 0x20;
                     (ttf, gpx, _) = pick_face(st, m, px, fpx, cp);
@@ -1181,6 +1272,9 @@ fn layout(
                         canvas_rect_outline(cv, r, t, gray);
                     }
                     pen += adv;
+                    if let Some(v) = steps.as_deref_mut() {
+                        v.push((i, Step::Boxed(adv)));
+                    }
                     prev = 0;
                     prev_ttf = -1;
                     continue;
@@ -1188,8 +1282,11 @@ fn layout(
             }
         }
         // (kerning is stb's, inside one embedded face; a custom font has none)
+        let mut kern = None;
         if prev != 0 && prev_ttf == ttf as i32 && ttf < TTF_COUNT {
-            pen += units_to_px(st, ttf, gpx, kern_advance(&st.font[ttf], prev, cp));
+            let k = units_to_px(st, ttf, gpx, kern_advance(&st.font[ttf], prev, cp));
+            pen += k;
+            kern = Some(k);
         }
         let advance;
         if let Some(cv) = c.as_deref_mut() {
@@ -1214,7 +1311,11 @@ fn layout(
         } else {
             advance = face_advance(st, ttf, cp);
         }
-        pen += units_to_px(st, ttf, gpx, advance) + bold as f32;
+        let step = units_to_px(st, ttf, gpx, advance) + bold as f32;
+        pen += step;
+        if let Some(v) = steps.as_deref_mut() {
+            v.push((i, Step::Glyph(kern, step)));
+        }
         prev = cp;
         prev_ttf = ttf as i32;
     }
@@ -1223,7 +1324,7 @@ fn layout(
 
 /// The width of s[from..end] (end: None, its terminator) at px, drawing nothing.
 fn measure_n(f: FontFace, px: f32, s: &[u8], from: usize, end: Option<usize>) -> i32 {
-    with(|st| layout(st, None, f, px, 0, 0, s, from, end, 0))
+    with(|st| layout(st, None, f, px, 0, 0, s, from, end, 0, None))
 }
 
 fn measure(f: FontFace, px: f32, s: &[u8]) -> i32 {
@@ -1232,7 +1333,7 @@ fn measure(f: FontFace, px: f32, s: &[u8]) -> i32 {
 
 #[allow(clippy::too_many_arguments)]
 fn draw(c: &mut Canvas, f: FontFace, px: f32, x: i32, baseline_y: i32, s: &[u8], from: usize, end: Option<usize>, gray: u8) -> i32 {
-    with(|st| layout(st, Some(c), f, px, x, baseline_y, s, from, end, gray))
+    with(|st| layout(st, Some(c), f, px, x, baseline_y, s, from, end, gray, None))
 }
 
 /// Draws UTF-8 text with its baseline at y. Returns advance width in px.
@@ -1348,6 +1449,15 @@ pub fn font_set_overflow_hook(hook: Option<FontOverflowHook>) {
     with(|st| st.overflow = hook);
 }
 
+/// f run with no overflow hook, and the hook as it was again after it: for text that is not Grimoire's own (a
+/// package's, kithost.rs), which no translation's fit check has anything to say about.
+pub fn font_without_overflow_hook<R>(f: impl FnOnce() -> R) -> R {
+    let was = with(|st| st.overflow.take());
+    let r = f();
+    with(|st| st.overflow = was);
+    r
+}
+
 /// Tells the overflow hook, if there is one, outside the state's borrow: the hook may measure.
 fn overflow(utf8: &str, need: i32, have: i32) {
     if let Some(hook) = with(|st| st.overflow) {
@@ -1437,16 +1547,6 @@ fn skip_spaces(t: &[u8], mut s: usize) -> usize {
     s
 }
 
-fn next_char(t: &[u8], mut s: usize) -> usize {
-    if at(t, s) != 0 {
-        s += 1;
-    }
-    while (at(t, s) & 0xC0) == 0x80 {
-        s += 1;
-    }
-    s
-}
-
 /// True for a character Japanese breaks lines between: kana, kanji, CJK punctuation and fullwidth
 /// forms. (Latin words, including accented ones, must stay whole.) about.rs breaks a version's notes
 /// there too.
@@ -1454,13 +1554,111 @@ pub(crate) fn cjk(cp: u32) -> bool {
     (0x2E80..=0x9FFF).contains(&cp) || (0xF900..=0xFAFF).contains(&cp) || (0xFE30..=0xFE4F).contains(&cp) || (0xFF00..=0xFFEF).contains(&cp)
 }
 
-fn has_cjk(t: &[u8], mut s: usize, e: usize) -> bool {
+/// Where the last CJK character of t[s..e] starts, if it has one: a part of it from a character at or before
+/// there has a CJK character, a part from after it has none.
+fn last_cjk(t: &[u8], mut s: usize, e: usize) -> Option<usize> {
+    let mut last = None;
     while s < e {
+        let at = s;
         if cjk(utf8_next(t, &mut s)) {
-            return true;
+            last = Some(at);
         }
     }
-    false
+    last
+}
+
+/// A word wider than its line, laid out once: each of its characters' steps (`Step`), from which where each of its
+/// lines ends and how wide the rest of it is from a line are summed as `layout` sums them, the same numbers in the
+/// same order, so the widths are the ones measuring the text again gives.
+struct Word {
+    steps: Vec<(usize, Step)>,
+    /// every kerning and advance in it is 0 or more: a part of the word is never narrower than a part of that part
+    rising: bool,
+}
+
+impl Word {
+    /// t[s..e], a word of at least one character.
+    fn new(f: FontFace, px: f32, t: &[u8], s: usize, e: usize) -> Word {
+        let mut steps = Vec::new();
+        with(|st| layout(st, None, f, px, 0, 0, t, s, Some(e), 0, Some(&mut steps)));
+        if steps.is_empty() {
+            // (no font is ready: everything measures 0)
+            let mut i = s;
+            while i < e {
+                utf8_next(t, &mut i);
+                steps.push((i, Step::Glyph(None, 0.0)));
+            }
+        }
+        let rising = steps.iter().all(|&(_, step)| match step {
+            Step::Unseen => true,
+            Step::Boxed(a) => a >= 0.0,
+            Step::Glyph(k, a) => k.unwrap_or(0.0) >= 0.0 && a >= 0.0,
+        });
+        Word { steps, rising }
+    }
+
+    /// The pen after a character's step, as `layout` moves it; `first` while no character that takes room has come
+    /// yet in the part measured (the first is kerned against nothing).
+    fn on(pen: f32, first: &mut bool, step: Step) -> f32 {
+        match step {
+            Step::Unseen => pen,
+            Step::Boxed(a) => {
+                *first = false;
+                pen + a
+            }
+            Step::Glyph(k, a) => {
+                let pen = match k {
+                    Some(k) if !*first => pen + k,
+                    _ => pen,
+                };
+                *first = false;
+                pen + a
+            }
+        }
+    }
+
+    /// The width of the word from its character `k` to its end.
+    fn width(&self, k: usize) -> i32 {
+        let (mut pen, mut first) = (0.0f32, true);
+        for &(_, step) in &self.steps[k..] {
+            pen = Self::on(pen, &mut first, step);
+        }
+        pen.round_ties_even() as i32
+    }
+
+    /// Whether the word from its character `k` to its end is wider than `w`. In a rising word the sum stops at the
+    /// first character that takes it past `w`, since nothing after can bring it back.
+    fn wider(&self, k: usize, w: i32) -> bool {
+        if !self.rising {
+            return self.width(k) > w;
+        }
+        let (mut pen, mut first) = (0.0f32, true);
+        for &(_, step) in &self.steps[k..] {
+            pen = Self::on(pen, &mut first, step);
+            if pen.round_ties_even() as i32 > w {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Where a line of the word from its character `k` ends: after as many characters as fit `w`, one at least (the
+    /// character after the last on it).
+    fn line_end(&self, k: usize, w: i32) -> usize {
+        let mut first = true;
+        let mut pen = Self::on(0.0, &mut first, self.steps[k].1);
+        let mut j = k + 1;
+        while j < self.steps.len() {
+            let mut then = first;
+            let next = Self::on(pen, &mut then, self.steps[j].1);
+            if next.round_ties_even() as i32 > w {
+                break;
+            }
+            (pen, first) = (next, then);
+            j += 1;
+        }
+        j
+    }
 }
 
 /// As many whole words on each line as fit w; a word wider than w on its own is broken between its
@@ -1473,41 +1671,65 @@ fn wrap_greedy(f: FontFace, px: f32, t: &[u8], w: i32, out: &mut [Span], max: us
     let mut s = skip_spaces(t, 0);
     while at(t, s) != 0 {
         let mut fits: Option<usize> = None; // the end of the longest run of words that fits
+        let mut first_w = 0; // the width of the line's first word, when it alone does not fit
         let mut e = s;
         while at(t, skip_spaces(t, e)) != 0 {
             let mut we = skip_spaces(t, e);
             while at(t, we) != 0 && at(t, we) != b' ' {
                 we += 1;
             }
-            if measure_n(f, px, t, s, Some(we)) > w {
+            let lw = measure_n(f, px, t, s, Some(we));
+            if lw > w {
+                first_w = lw;
                 break;
             }
             fits = Some(we);
             e = we;
         }
-        let fits = match fits {
-            Some(x) => x,
-            None => {
-                let mut we = s;
-                while at(t, we) != 0 && at(t, we) != b' ' {
-                    we += 1;
-                }
-                let ww = measure_n(f, px, t, s, Some(we));
-                if ww > *broken && !has_cjk(t, s, we) {
+        if let Some(fits) = fits {
+            if n < max {
+                out[n] = Span { s, e: fits };
+            }
+            n += 1;
+            s = skip_spaces(t, fits);
+            continue;
+        }
+        // A word wider than the line on its own is laid out once (`Word`) and broken between its characters into
+        // lines of as many as fit, one at least, until the rest of it fits a line, where the words after it go on.
+        // *broken takes the width of the word, or of the rest of it from one of its lines, without a CJK character.
+        let mut we = s;
+        while at(t, we) != 0 && at(t, we) != b' ' {
+            we += 1;
+        }
+        let word = Word::new(f, px, t, s, we);
+        let cjk_at = last_cjk(t, s, we);
+        let (mut k, mut ls, mut rest_w) = (0, s, Some(first_w));
+        // (in a rising word the rest from a later line is never wider: the first rest without CJK is the widest)
+        let mut reported = false;
+        loop {
+            if !cjk_at.is_some_and(|c| c >= ls) && !(word.rising && reported) {
+                let ww = rest_w.unwrap_or_else(|| word.width(k));
+                if ww > *broken {
                     *broken = ww;
                 }
-                let mut fits = next_char(t, s);
-                while at(t, fits) != 0 && at(t, fits) != b' ' && measure_n(f, px, t, s, Some(next_char(t, fits))) <= w {
-                    fits = next_char(t, fits);
-                }
-                fits
+                reported = true;
             }
-        };
-        if n < max {
-            out[n] = Span { s, e: fits };
+            let j = word.line_end(k, w);
+            let le = word.steps[j - 1].0;
+            if n < max {
+                out[n] = Span { s: ls, e: le };
+            }
+            n += 1;
+            if j == word.steps.len() {
+                s = skip_spaces(t, le);
+                break;
+            }
+            (k, ls, rest_w) = (j, le, None);
+            if !word.wider(k, w) {
+                s = ls;
+                break;
+            }
         }
-        n += 1;
-        s = skip_spaces(t, fits);
     }
     n
 }
@@ -1700,11 +1922,31 @@ pub fn font_fit_px(f: FontFace, px: f32, min_px: f32, utf8: &str, maxw: i32) -> 
     lo
 }
 
+/// f run with no icon drawn larger than `side` pixels each way, and the size as it was again after it. An icon
+/// whose rectangle is larger is drawn at that size in the middle of the rectangle (font_draw_icon). For a
+/// caller that draws rectangles of someone else's choosing and shows an icon in each, whatever its size:
+/// outside such a run, the icon of a rectangle so large that its glyph would be past the greatest size
+/// (GLYPH_SIDE_MAX) is not drawn.
+pub fn font_with_icon_side_max<R>(side: i32, f: impl FnOnce() -> R) -> R {
+    let was = with(|st| std::mem::replace(&mut st.icon_side_max, side.max(1)));
+    let r = f();
+    with(|st| st.icon_side_max = was);
+    r
+}
+
 /// Draws one glyph (e.g. a Nerd Font icon code point) scaled so its ink box fits r, centered.
 pub fn font_draw_icon(c: &mut Canvas, f: FontFace, cp: u32, r: Rect, gray: u8) {
     if !with(|st| st.ready) || rect_is_empty(r) {
         return;
     }
+    // (no larger than the caller's largest, in the middle of r: font_with_icon_side_max)
+    let side = with(|st| st.icon_side_max);
+    let r = if r.w > side || r.h > side {
+        let (w, h) = (r.w.min(side), r.h.min(side));
+        Rect { x: r.x + (r.w - w) / 2, y: r.y + (r.h - h) / 2, w, h }
+    } else {
+        r
+    };
     // Icons are Terminess Nerd Font glyphs in every theme.
     let ttf = if f == FontFace::Bold || f == FontFace::FixedBold { TTF_TERM_BOLD } else { TTF_TERM };
     with(|st| {
@@ -1742,6 +1984,427 @@ mod tests {
     }
     fn hear(text: &str, need: i32, have: i32) {
         SEEN.with(|s| s.borrow_mut().push((text.to_string(), need, have)));
+    }
+
+    // font_with_icon_side_max: within it an icon in a rectangle larger than the size is the icon of a square
+    // of that size in the rectangle's middle, pixel for pixel; one in a smaller rectangle is as ever; and after
+    // it an icon is as large as its rectangle again.
+    #[test]
+    fn an_icon_is_no_larger_than_the_callers_largest() {
+        up();
+        let cp = 0xF0493; // md-cog
+        let icon = |r: Rect, side: Option<i32>| {
+            let mut c = Canvas::default();
+            assert_eq!(canvas_init(&mut c, 900, 900), 0);
+            match side {
+                Some(side) => font_with_icon_side_max(side, || font_draw_icon(&mut c, FontFace::Regular, cp, r, 0)),
+                None => font_draw_icon(&mut c, FontFace::Regular, cp, r, 0),
+            }
+            c.px
+        };
+        let large = Rect { x: 50, y: 100, w: 800, h: 700 };
+        let middle = Rect { x: 50 + (800 - 200) / 2, y: 100 + (700 - 200) / 2, w: 200, h: 200 };
+        let small = Rect { x: 300, y: 300, w: 120, h: 90 };
+        assert!(icon(large, Some(200)) == icon(middle, None));
+        assert!(icon(large, Some(200)) != icon(large, None));
+        assert!(icon(small, Some(200)) == icon(small, None), "a smaller icon is drawn as ever");
+        assert!(icon(Rect { x: 0, y: 0, w: 2_000_000, h: 2_000_000 }, Some(200)) == icon(Rect { x: 999_900, y: 999_900, w: 200, h: 200 }, None));
+        // (one way larger: the size is each way's)
+        assert!(icon(Rect { x: 50, y: 100, w: 800, h: 90 }, Some(200)) == icon(Rect { x: 350, y: 100, w: 200, h: 90 }, None));
+        // The size is the one before again after the run, also when runs are inside one another.
+        let nested = font_with_icon_side_max(300, || {
+            let inner = font_with_icon_side_max(200, || icon(large, None));
+            (inner, icon(large, None))
+        });
+        assert!(nested.0 == icon(middle, None));
+        assert!(nested.1 == icon(Rect { x: 50 + 250, y: 100 + 200, w: 300, h: 300 }, None));
+        assert!(icon(large, None) != nested.1, "after the run an icon is as large as its rectangle");
+    }
+
+    // An outline face at a size under nothing has no glyphs to show: the text draws nothing, in every face of
+    // Classic, at every such size a caller reaches that works a label's size out from its rectangle's height
+    // (globalui.rs's chip and select, ui.rs's button: a rectangle a few pixels high, or one whose height is far
+    // under nothing).
+    #[test]
+    fn an_outline_face_at_a_size_under_nothing_draws_nothing() {
+        up();
+        let mut c = Canvas::default();
+        assert_eq!(canvas_init(&mut c, 600, 200), 0);
+        for f in [FontFace::Regular, FontFace::Bold, FontFace::Title, FontFace::Caps, FontFace::Fixed, FontFace::FixedBold] {
+            for px in [-0.25, -0.46, -1.0, -30.0, -60_000.0, -80_000.0, 0.0] {
+                font_draw(&mut c, f, px, 20, 120, "Label 12:34", 0);
+                font_draw_centered(&mut c, f, px, Rect { x: 0, y: 0, w: 600, h: 200 }, "Label 12:34", 0);
+                assert!(c.px.iter().all(|p| *p == 255), "{f:?} at {px}");
+            }
+            font_draw(&mut c, f, 30.0, 20, 120, "Label 12:34", 0);
+            assert!(c.px.iter().any(|p| *p != 255), "{f:?} at 30 px draws");
+            c.px.fill(255);
+        }
+    }
+
+    // ---- a glyph's bitmap has a greatest size (GLYPH_SIDE_MAX, CACHE_BYTES_MAX) ----
+
+    /// The glyphs the cache holds: each one's code point, size key, sides and bytes.
+    fn cached() -> Vec<(u32, i32, i32, i32, usize)> {
+        with(|st| st.cache.iter().filter(|g| g.used).map(|g| (g.cp, g.size4, g.w, g.h, g.bmp.len())).collect())
+    }
+
+    /// What holds of the cache whatever was drawn: a glyph's bytes are the product of its sides, every glyph is
+    /// of a size a glyph may have, and all of them together are no more than the cache's bytes and one glyph's.
+    fn the_cache_is_within_its_sizes(what: &str) {
+        let glyphs = cached();
+        for (cp, size4, w, h, len) in &glyphs {
+            assert_eq!(*len as i64, *w as i64 * *h as i64, "{what}: U+{cp:04X} at {size4}");
+            assert!(glyph_size_ok(*w as i64, *h as i64), "{what}: U+{cp:04X} at {size4} is {w} by {h}");
+        }
+        let all: usize = glyphs.iter().map(|g| g.4).sum();
+        assert_eq!(all, with(|st| st.cache_bytes), "{what}");
+        assert!(all <= 2 * CACHE_BYTES_MAX, "{what}: {all} bytes of glyphs");
+    }
+
+    /// How many bitmaps stb has been asked for so far (a glyph past the greatest size is not asked for).
+    fn asked() -> u32 {
+        font_bitmaps_asked()
+    }
+
+    /// How many pixels of the canvas are not paper, and how many of those lie outside `keep`.
+    fn ink(c: &Canvas, keep: Rect) -> (usize, usize) {
+        let (mut all, mut outside) = (0, 0);
+        for y in 0..c.h {
+            for x in 0..c.w {
+                if c.px[(y * c.stride + x) as usize] != 255 {
+                    all += 1;
+                    outside += usize::from(!rect_contains(keep, x, y));
+                }
+            }
+        }
+        (all, outside)
+    }
+
+    // The rule itself, by its numbers: a side is at most 4,096 px, and the product of the two sides, worked out
+    // in 64 bits, at most 4 MiB. At the size, one past it and far past it; squares, one long side, the greatest
+    // numbers, and sides of nothing or under it.
+    #[test]
+    fn a_glyphs_bitmap_has_a_greatest_size() {
+        assert_eq!((GLYPH_SIDE_MAX, CACHE_BYTES_MAX), (4096, 4_194_304));
+        let (most, least) = (i64::MAX, i64::MIN);
+        let made: [(i64, i64); 14] =
+            [(1, 1), (64, 64), (1024, 1024), (2047, 2049), (2048, 2048), (4096, 1024), (1024, 4096), (4096, 1), (1, 4096), (3000, 1398), (0, 0), (0, 4096), (4096, 0), (0, 1)];
+        let not_made: [(i64, i64); 34] = [
+            // squares
+            (2049, 2049),
+            (2896, 2896),
+            (4096, 4096),
+            (4097, 4097),
+            (133_000, 133_000),
+            (2_000_000_000, 2_000_000_000),
+            // one pixel past, either way
+            (2049, 2048),
+            (2048, 2049),
+            (4096, 1025),
+            (1025, 4096),
+            (3000, 1399),
+            // one long side
+            (4097, 1),
+            (1, 4097),
+            (4097, 1024),
+            (133_000, 1),
+            (1, 133_000),
+            (133_000, 1024),
+            (1024, 133_000),
+            (0, 4097),
+            (4097, 0),
+            // sides far past the greatest, whose product is told in 64 bits
+            (46_341, 46_341),
+            (65_536, 65_536),
+            (65_536, 65_537),
+            (100_000, 90_000),
+            (1 << 31, 2),
+            (1 << 32, 1 << 32),
+            // the greatest numbers
+            (i32::MAX as i64, i32::MAX as i64),
+            (most, most),
+            (most, 1),
+            (1, most),
+            // a side under nothing
+            (-1, 10),
+            (10, -1),
+            (-65_536, -65_536),
+            (least, least),
+        ];
+        for (w, h) in made {
+            assert!(glyph_size_ok(w, h), "{w} by {h} is a size a glyph may have");
+        }
+        for (w, h) in not_made {
+            assert!(!glyph_size_ok(w, h), "{w} by {h} is no size a glyph has");
+        }
+    }
+
+    // An outline face's glyph is made up to the greatest size and no larger. For letters and an icon of several
+    // embedded files: the tallest text, to the quarter pixel, at which the glyph is made is of a size a glyph may
+    // have and fills it (a side, or the bytes); a quarter pixel taller, and at any height past that, no bitmap is
+    // made and the answer is that of a glyph with no ink. So is it for a scale that is nothing, under nothing or
+    // not a number.
+    #[test]
+    fn an_outline_glyph_is_made_up_to_the_greatest_size_and_no_larger() {
+        up();
+        // (the bitmap of cp in the file at a text height, as glyph_get makes it, and whether stb was asked for it)
+        let at = |ttf: usize, px: f32, cp: u32| {
+            let before = asked();
+            let made = with(|st| {
+                let scale = scale_for_pixel_height(&st.font[ttf], px);
+                codepoint_bitmap(&st.font[ttf], scale, scale, cp)
+            });
+            (made, asked() != before)
+        };
+        // (the answer for a glyph that is not made: no bitmap, no size, no place, and stb was not asked)
+        let none = |(made, asked): ((Vec<u8>, i32, i32, i32, i32), bool)| made.0.is_empty() && (made.1, made.2, made.3, made.4) == (0, 0, 0, 0) && !asked;
+        let glyphs =
+            [(TTF_TERM, 'W' as u32), (TTF_TERM, 'l' as u32), (TTF_TERM, '-' as u32), (TTF_TERM, '|' as u32), (TTF_TERM, 0xF0493), (TTF_TERM_BOLD, 'W' as u32), (TTF_ATKINSON, 'W' as u32), (TTF_LITERATA_BOLD, 'm' as u32), (TTF_JP, 0x6F22)];
+        let (mut by_side, mut by_bytes) = (0, 0);
+        for (ttf, cp) in glyphs {
+            let what = format!("file {ttf}, U+{cp:04X}");
+            // (quarter pixels: made at 100 px, not at 12,000 px, and a taller glyph is no smaller either way)
+            let (mut lo, mut hi) = (4 * 100, 4 * 12_000);
+            assert!(!at(ttf, lo as f32 / 4.0, cp).0 .0.is_empty(), "{what}");
+            assert!(none(at(ttf, hi as f32 / 4.0, cp)), "{what}");
+            while hi - lo > 1 {
+                let mid = (lo + hi) / 2;
+                let tried = at(ttf, mid as f32 / 4.0, cp);
+                if tried.0 .0.is_empty() {
+                    assert!(none(tried), "{what} at {} px", mid as f32 / 4.0);
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+            let ((bmp, w, h, _, _), _) = at(ttf, lo as f32 / 4.0, cp);
+            assert_eq!(bmp.len(), w as usize * h as usize, "{what}");
+            assert!(w <= 4096 && h <= 4096 && w * h <= 4_194_304, "{what}: {w} by {h} at {} px", lo as f32 / 4.0);
+            // (the greatest: its longer side is the greatest side to a few pixels, or its bytes the most to 1%)
+            let (side, bytes) = (w.max(h) >= 4090, w * h > 4_150_000);
+            assert!(side || bytes, "{what}: {w} by {h} at {} px", lo as f32 / 4.0);
+            by_side += i32::from(side);
+            by_bytes += i32::from(bytes);
+            assert!(none(at(ttf, hi as f32 / 4.0, cp)), "{what}: a quarter pixel taller");
+            for px in [hi as f32 / 4.0 + 1.0, hi as f32 / 2.0, 150_000.0, 2_147_483.0, 1e9, 1e20, f32::MAX, f32::INFINITY, f32::NAN] {
+                assert!(none(at(ttf, px, cp)), "{what} at {px} px");
+            }
+        }
+        assert!(by_side >= 1 && by_bytes >= 1, "both halves of the rule were met: {by_side} by a side, {by_bytes} by the bytes");
+        // (a scale of nothing has no bitmap, as ever; one under nothing, past any size or not a number is not asked
+        // about)
+        for scale in [0.0, -0.0, -0.001, -1.0, -1e9, f32::MIN, f32::MAX, 1e9, f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+            let before = asked();
+            let made = with(|st| codepoint_bitmap(&st.font[TTF_TERM], scale, scale, 'W' as u32));
+            assert!(none((made, scale != 0.0 && asked() != before)), "a scale of {scale}");
+        }
+        // (a glyph with no outline has no bitmap at any size)
+        for px in [20.0, 150_000.0, f32::MAX] {
+            assert!(at(TTF_TERM, px, ' ' as u32).0 == (Vec::new(), 0, 0, 0, 0), "a space at {px} px");
+        }
+    }
+
+    // An icon in a rectangle of any size: its glyph is made up to the greatest size and no larger, nothing is
+    // drawn outside the rectangle or outside the canvas's clip, and the cache holds no more than its bytes.
+    // Squares at the size, past it and far past it, rectangles with one long side, and the greatest numbers.
+    #[test]
+    fn an_icon_is_drawn_up_to_the_greatest_glyph_and_not_past_it() {
+        up();
+        let cp = 0xF0493; // md-cog
+        let (cx, cy) = (1200, 1200);
+        let clip = Rect { x: 60, y: 90, w: 2280, h: 2250 };
+        let mut c = Canvas::default();
+        assert_eq!(canvas_init(&mut c, 2400, 2400), 0);
+        // (an icon in a rectangle of w by h about the canvas's middle: the ink it left)
+        let mut icon = |w: i32, h: i32| -> usize {
+            c.px.fill(255);
+            canvas_set_clip(&mut c, clip);
+            let r = Rect { x: cx - w / 2, y: cy - h / 2, w, h };
+            with(cache_flush);
+            let before = asked();
+            font_draw_icon(&mut c, FontFace::Regular, cp, r, 0);
+            // (a glyph that is made was asked of stb once; one that is not, never)
+            let made = cached().into_iter().any(|g| g.0 == cp && g.4 != 0);
+            assert_eq!(asked() - before, u32::from(made), "an icon in {w} by {h}");
+            // (stb rounds the bitmap out to whole pixels: a pixel over at most, as icons_fit_their_box has it; a
+            // rectangle far larger than the canvas holds all of the clip)
+            let keep = if w > 1_000_000 || h > 1_000_000 { clip } else { rect_intersect(rect_inflate(r, 1), clip) };
+            let (all, outside) = ink(&c, keep);
+            assert_eq!(outside, 0, "an icon in {w} by {h}: ink outside its rectangle or the clip");
+            the_cache_is_within_its_sizes(&format!("an icon in {w} by {h}"));
+            all
+        };
+        // Squares: drawn up to a side, to the pixel, and not past it.
+        for side in [24, 96, 1023, 1024, 1025, 1280, 1281, 2000] {
+            assert_ne!(icon(side, side), 0, "an icon in a square of {side} px is drawn");
+        }
+        let (mut lo, mut hi) = (2000, 6000);
+        assert_eq!(icon(hi, hi), 0);
+        while hi - lo > 1 {
+            let mid = (lo + hi) / 2;
+            if icon(mid, mid) == 0 {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        assert_ne!(icon(lo, lo), 0);
+        let (_, _, w, h, len) = cached().into_iter().find(|g| g.0 == cp).unwrap();
+        assert_eq!(len, w as usize * h as usize);
+        assert!(w.max(h) >= 4090 || w * h > 4_150_000, "the largest icon made, in a square of {lo} px, is {w} by {h}: the greatest glyph");
+        for side in [hi, hi + 1, 4096, 4097, 8192, 12_000, 30_000, 58_000, 66_000, 90_000, 100_000, 120_000, 133_000, 2_000_000_000, i32::MAX] {
+            assert_eq!(icon(side, side), 0, "an icon in a square of {side} px is not drawn");
+        }
+        // One long side: the icon is as large as the shorter side lets it be, in the rectangle's middle.
+        for (w, h) in [(133_000, 1024), (1024, 133_000), (2_000_000_000, 1280), (1280, i32::MAX), (i32::MAX, 96)] {
+            assert_ne!(icon(w, h), 0, "an icon in {w} by {h} is drawn");
+        }
+        for (w, h) in [(133_000, 1), (1, 133_000), (i32::MAX, 1), (1, i32::MAX)] {
+            icon(w, h);
+        }
+        for (w, h) in [(100_000, 90_000), (90_000, 100_000), (65_536, 65_537), (65_537, 65_536), (133_000, 5000), (5000, 133_000), (i32::MAX, 100_000), (46_341, 46_341)] {
+            assert_eq!(icon(w, h), 0, "an icon in {w} by {h} is not drawn");
+        }
+    }
+
+    /// A text height at which a pixel face draws k screen pixels to a design pixel.
+    fn px_of(f: FontFace, k: i32) -> f32 {
+        let (ttf, scale) = with(|st| (face_of(st, f).ttf, face_of(st, f).scale));
+        let (a, d, _) = with(|st| vmetrics(&st.font[ttf]));
+        let px = k as f32 * ((a - d) as f32 / k_unit(ttf) as f32) / scale;
+        assert_eq!(with(|st| pixel_k(st, ttf, px * scale)), k, "{f:?} at {px} px");
+        px
+    }
+
+    /// The glyph of `cp` the cache holds for a size key (an outline face's: quarter pixels of the text's height;
+    /// a pixel face's: minus its k): its sides and its bytes.
+    fn glyph_of(cp: u32, size4: i32) -> Option<(i32, i32, usize)> {
+        cached().into_iter().find(|g| g.0 == cp && g.1 == size4).map(|g| (g.2, g.3, g.4))
+    }
+
+    // A text at any height, in an outline face (Classic) and in a pixel face (Gothic): its letters' glyphs are
+    // made up to the greatest size and no larger; a letter that is not made leaves its place empty and keeps its
+    // advance, so the line is as wide drawn as measured; nothing is drawn outside the canvas's clip; and the
+    // cache holds no more than its bytes.
+    #[test]
+    fn a_text_is_drawn_up_to_the_greatest_glyph_and_keeps_its_layout_past_it() {
+        up();
+        let clip = Rect { x: 0, y: 30, w: 1100, h: 800 };
+        let mut c = Canvas::default();
+        assert_eq!(canvas_init(&mut c, 1200, 900), 0);
+        // (a text drawn from the canvas's left edge on a baseline near its foot: its ink, and its width)
+        let mut drawn = |f: FontFace, px: f32, text: &str| -> (usize, i32) {
+            c.px.fill(255);
+            canvas_set_clip(&mut c, clip);
+            let before = asked();
+            let width = font_draw(&mut c, f, px, 0, 780, text, 0);
+            // (stb is asked for each glyph that is made, and for a pixel face's design pixels: never for more
+            // than the text has letters)
+            assert!(asked() - before <= text.len() as u32, "{f:?} at {px} px");
+            let (all, outside) = ink(&c, clip);
+            assert_eq!(outside, 0, "{f:?} at {px} px: ink outside the clip");
+            assert_eq!(width, font_measure(f, px, text), "{f:?} at {px} px: {text:?} is as wide drawn as measured");
+            the_cache_is_within_its_sizes(&format!("{f:?} at {px} px"));
+            (all, width)
+        };
+        let far = [8192.0, 150_000.0, 1_000_000.0, 2_147_483.0];
+
+        // An outline face. (Terminess, at its own scale, draws a W about half as wide as the text is high.)
+        font_set_family(0);
+        for f in [FontFace::Regular, FontFace::Bold, FontFace::Fixed, FontFace::FixedBold] {
+            assert_eq!(with(|st| (k_unit(face_of(st, f).ttf), face_of(st, f).scale)), (0, 1.0), "{f:?} is an outline face");
+            for px in [12.0, 44.0, 512.0, 768.0, 2000.0] {
+                assert_ne!(drawn(f, px, "W"), (0, 0), "{f:?} at {px} px");
+                assert!(drawn(f, px, "Wide").0 > 0, "{f:?} at {px} px");
+            }
+            // (quarter pixels: the W is made at 2,000 px and not at 8,000 px)
+            let (mut lo, mut hi) = (4 * 2000, 4 * 8000);
+            let made = |px4: i32| glyph_of('W' as u32, px4).is_some_and(|g| g.2 != 0);
+            let before = asked();
+            assert_eq!((drawn(f, 8000.0, "W").0, asked() - before), (0, 0), "{f:?}");
+            assert!(made(lo) && !made(hi), "{f:?}");
+            while hi - lo > 1 {
+                let mid = (lo + hi) / 2;
+                with(cache_flush);
+                drawn(f, mid as f32 / 4.0, "W");
+                if made(mid) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            with(cache_flush);
+            let (_, width) = drawn(f, lo as f32 / 4.0, "W");
+            let (w, h, len) = glyph_of('W' as u32, lo).unwrap();
+            assert!(len != 0 && (w.max(h) >= 4090 || w * h > 4_150_000), "{f:?}: the tallest W made, at {} px, is {w} by {h}: the greatest glyph", lo as f32 / 4.0);
+            // A quarter pixel taller the W is not made: nothing of it is drawn, and it is as wide as it was to a pixel.
+            with(cache_flush);
+            let before = asked();
+            let (ink_past, width_past) = drawn(f, hi as f32 / 4.0, "W");
+            assert_eq!((glyph_of('W' as u32, hi), asked() - before), (Some((0, 0, 0)), 0), "{f:?}");
+            assert_eq!(ink_past, 0, "{f:?} at {} px", hi as f32 / 4.0);
+            assert!((width_past - width).abs() <= 1 && width > 1000, "{f:?}: {width} px wide, then {width_past}");
+            for px in far {
+                let before = asked();
+                assert_eq!(drawn(f, px, "W").0, 0, "{f:?} at {px} px");
+                let (ink_far, width_far) = drawn(f, px, "Tenletters");
+                assert_eq!((ink_far, asked() - before), (0, 0), "{f:?} at {px} px");
+                assert!(width_far as f32 > px, "{f:?} at {px} px: ten letters are {width_far} px wide");
+            }
+        }
+
+        // A pixel face: a glyph is its design pixels as blocks of k screen pixels, so its sides are whole
+        // multiples of k. The largest k at which a letter is made keeps both halves of the rule, and one more
+        // breaks one.
+        ui_set_theme(UiTheme::Gothic);
+        for (f, letter) in [(FontFace::Regular, 'W'), (FontFace::Bold, 'W'), (FontFace::Caps, 'l'), (FontFace::Title, 'G')] {
+            let ttf = with(|st| face_of(st, f).ttf);
+            assert_ne!(k_unit(ttf), 0, "{f:?} is a pixel face in Gothic");
+            let text = letter.to_string();
+            let cp = letter as u32;
+            // (the letter's design pixels: its glyph at one screen pixel each)
+            with(cache_flush);
+            assert!(drawn(f, px_of(f, 1), &text).1 > 0);
+            let (dw, dh, _) = glyph_of(cp, -1).unwrap();
+            assert!(dw >= 1 && dh >= 1);
+            let fits = |k: i64| dw as i64 * k <= 4096 && dh as i64 * k <= 4096 && dw as i64 * k * dh as i64 * k <= 4_194_304;
+            let most = (1..5000).take_while(|k| fits(*k)).last().unwrap() as i32;
+            for k in [1, 2, 7, most - 1, most] {
+                with(cache_flush);
+                let (ink_at, width) = drawn(f, px_of(f, k), &text);
+                assert_eq!(glyph_of(cp, -k), Some((dw * k, dh * k, (dw * k * dh * k) as usize)), "{f:?} at k {k}");
+                assert!(ink_at > 0 && width > 0, "{f:?} at k {k}");
+            }
+            for k in [most + 1, most + 2, 2 * most, 4097, 65_536, 100_000] {
+                with(cache_flush);
+                let (ink_at, width) = drawn(f, px_of(f, k), &text);
+                assert_eq!(glyph_of(cp, -k), Some((0, 0, 0)), "{f:?} at k {k}");
+                assert_eq!(ink_at, 0, "{f:?} at k {k}");
+                assert!(width >= k, "{f:?} at k {k}: the letter keeps its advance, {width} px");
+            }
+            for px in far {
+                assert_eq!(drawn(f, px, &text).0, 0, "{f:?} at {px} px");
+                let (ink_far, width_far) = drawn(f, px, "Tenletters");
+                assert_eq!(ink_far, 0, "{f:?} at {px} px");
+                assert!(width_far as f32 > px, "{f:?} at {px} px: ten letters are {width_far} px wide");
+            }
+        }
+        // A text that is fitted to a rectangle at such a height draws nothing, in either theme.
+        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+            ui_set_theme(theme);
+            for px in far {
+                c.px.fill(255);
+                canvas_set_clip(&mut c, clip);
+                let r = Rect { x: 100, y: 100, w: 900, h: 600 };
+                font_draw_centered(&mut c, FontFace::Bold, px, r, "Wide words", 0);
+                font_draw_left(&mut c, FontFace::Regular, px, r, "Wide words", 0);
+                font_draw_wrapped(&mut c, FontFace::Title, px, r, "Wide words in two lines", 3, 0, true, 0);
+                assert_eq!(ink(&c, clip), (0, 0), "{theme:?} at {px} px");
+                the_cache_is_within_its_sizes(&format!("{theme:?} at {px} px, fitted"));
+            }
+        }
+        ui_set_theme(UiTheme::Classic);
     }
 
     #[test]
@@ -1854,6 +2517,121 @@ mod tests {
         // text that fits is one line; nothing but spaces is none
         assert_eq!(font_wrap_lines(FontFace::Regular, 34.0, text, 10000, Some(&mut widest)), 1);
         assert_eq!(font_wrap_lines(FontFace::Regular, 34.0, "   ", 10000, None), 0);
+    }
+
+    fn next_char(t: &[u8], mut s: usize) -> usize {
+        if at(t, s) != 0 {
+            s += 1;
+        }
+        while (at(t, s) & 0xC0) == 0x80 {
+            s += 1;
+        }
+        s
+    }
+
+    /// The lines of wrap_greedy as measuring each line from its start gives them: a word wider than the line
+    /// measured again from each of its lines, and the characters of each line measured one more at a time.
+    fn wrap_greedy_measuring_each_line(f: FontFace, px: f32, t: &[u8], w: i32, out: &mut [Span], max: usize, broken: &mut i32) -> usize {
+        let has_cjk = |mut s: usize, e: usize| {
+            while s < e {
+                if cjk(utf8_next(t, &mut s)) {
+                    return true;
+                }
+            }
+            false
+        };
+        let mut n = 0;
+        *broken = 0;
+        let mut s = skip_spaces(t, 0);
+        while at(t, s) != 0 {
+            let mut fits: Option<usize> = None;
+            let mut e = s;
+            while at(t, skip_spaces(t, e)) != 0 {
+                let mut we = skip_spaces(t, e);
+                while at(t, we) != 0 && at(t, we) != b' ' {
+                    we += 1;
+                }
+                if measure_n(f, px, t, s, Some(we)) > w {
+                    break;
+                }
+                fits = Some(we);
+                e = we;
+            }
+            let fits = match fits {
+                Some(x) => x,
+                None => {
+                    let mut we = s;
+                    while at(t, we) != 0 && at(t, we) != b' ' {
+                        we += 1;
+                    }
+                    let ww = measure_n(f, px, t, s, Some(we));
+                    if ww > *broken && !has_cjk(s, we) {
+                        *broken = ww;
+                    }
+                    let mut fits = next_char(t, s);
+                    while at(t, fits) != 0 && at(t, fits) != b' ' && measure_n(f, px, t, s, Some(next_char(t, fits))) <= w {
+                        fits = next_char(t, fits);
+                    }
+                    fits
+                }
+            };
+            if n < max {
+                out[n] = Span { s, e: fits };
+            }
+            n += 1;
+            s = skip_spaces(t, fits);
+        }
+        n
+    }
+
+    // A word wider than its line is laid out once and its lines summed from that: the lines, their count and the
+    // width the overflow report hears are the ones measuring each line again gives, in every face and size, both
+    // themes and each family, for words of kerned pairs, CJK, marks, controls, boxes and spaces of every kind.
+    #[test]
+    fn a_long_word_is_broken_where_measuring_each_line_again_breaks_it() {
+        up();
+        let words = [
+            "i".repeat(300),
+            "W".repeat(120),
+            "AVAVAWAYATAVTo".repeat(12),
+            format!("\u{6f22}\u{5b57}{}", "abcdefghij".repeat(12)),
+            format!("{}\u{3072}\u{3089}", "abcdefghij".repeat(12)),
+            "e\u{301}\u{200b}\u{200d}x\u{202e}".repeat(30),
+            // (two private-use characters, at the areas' bounds, and a symbol no face has)
+            format!("a{}b{}\t\u{3000}\u{a0}c\u{1d11e}", char::from_u32(0x10FFFD).unwrap(), char::from_u32(0xE000).unwrap()).repeat(20),
+            "\u{1f600}\u{fffd}\u{0}z".repeat(25),
+            "\u{3072}\u{3089}\u{304c}\u{306a}\u{30ab}\u{30bf}".repeat(20),
+        ];
+        let texts: Vec<String> = words
+            .iter()
+            .flat_map(|wd| [wd.clone(), format!("a {wd} b c"), format!("one two {wd}  {wd} three"), format!(" {wd} ")])
+            .chain(["Wide, no margin".to_string(), "x".to_string(), String::new()])
+            .collect();
+        let looks = [(UiTheme::Gothic, 0), (UiTheme::Classic, 0), (UiTheme::Classic, 1), (UiTheme::Classic, 2), (UiTheme::Classic, 3)];
+        let faces = [(FontFace::Regular, 34.0), (FontFace::Bold, 44.0), (FontFace::Title, 70.0), (FontFace::Fixed, 34.0), (FontFace::Caps, 30.0)];
+        let mut cases = 0;
+        for (theme, family) in looks {
+            ui_set_theme(theme);
+            font_set_family(family);
+            for (f, px) in faces {
+                for text in &texts {
+                    let t = cstr(text).as_bytes();
+                    for w in [-3, 0, 1, 5, 17, 40, 77, 150, 301, 1000] {
+                        let (mut a, mut b) = ([Span::default(); WRAP_MAX], [Span::default(); WRAP_MAX]);
+                        let (mut ba, mut bb) = (-1, -1);
+                        let na = wrap_greedy(f, px, t, w, &mut a, WRAP_MAX, &mut ba);
+                        let nb = wrap_greedy_measuring_each_line(f, px, t, w, &mut b, WRAP_MAX, &mut bb);
+                        assert_eq!((na, ba), (nb, bb), "{theme:?} {family} {f:?} {px} w {w}: {text:?}");
+                        let kept = na.min(WRAP_MAX);
+                        assert!(a[..kept].iter().zip(&b[..kept]).all(|(x, y)| (x.s, x.e) == (y.s, y.e)), "{theme:?} {family} {f:?} w {w}: {text:?}");
+                        cases += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(cases, 5 * 5 * 39 * 10);
+        font_set_family(0);
+        ui_set_theme(UiTheme::Classic);
     }
 
     #[test]

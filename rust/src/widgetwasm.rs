@@ -11,8 +11,11 @@
 //! `widget_draw` draws through the `grimoire` imports below. Coordinates are screen pixels inside
 //! the frame's body; `scale_milli` is the UI scale times 1000, so a package can keep 300 dpi sizes.
 //! `widget_tap` receives the id of the hit region under the tap, or -1 for a tap elsewhere in the
-//! body. A package keeps its state through `state_get` / `state_set`, which the host saves under
-//! `packages/widgets/<id>/state/runtime.bin`.
+//! body. A module may export the package kit's `kit_event(kind, id, a, b, c) -> i32` instead
+//! (kithost.rs): the body's contact recognised as a tap (a TAP, and no `widget_tap`), a press or a
+//! drag, and a change of its settings. The editor draws the pass either owes once for all the input
+//! since the last (editor.rs, widget_input_tick). A package keeps its state through `state_get` /
+//! `state_set`, which the host saves under `packages/widgets/<id>/state/runtime.bin`.
 //!
 //! The body is all a module draws on and is tapped in: every command is drawn with the canvas
 //! clipped to the body, whatever coordinates and sizes it carries, and a hit region is the part of
@@ -41,10 +44,16 @@
 //! which asks for a drawing pass), and `storage:widget-local` the saved state (`state_get`,
 //! `state_set`, the state file). Without the capability the call is still there to link against, and
 //! does nothing. `status`, `setting` and `now` need none.
+//!
+//! A module may also import the package kit, `grimoire_kit` (kithost.rs, docs/KIT.md), which the app host
+//! links too: its drawing calls and hit regions are recorded with this host's own commands, in the order the
+//! module called them, held to this host's limits, and need `editor:overlay` as its own do.
 
+use crate::kithost::{kit_link, kit_missing_import, kit_render, KitCmd, KitEvent, KitHost, KIT_EVENT};
 use crate::prelude::*;
+use crate::wasmhost::{charge, in_body as hit_in_body, on_screen, Redraw, TextCharge};
 use crate::widgetpkg::{WIDGET_CAP_OVERLAY, WIDGET_CAP_STORAGE};
-use wasmi::{Caller, Config, Engine, Extern, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, TrapCode};
+use wasmi::{Caller, Config, Engine, Linker, Module, Store, StoreLimits};
 
 const ABI: &str = "grimoire";
 const STATE_FILE: &str = "state/runtime.bin";
@@ -61,13 +70,10 @@ const STATE_FILE: &str = "state/runtime.bin";
 /// A module has one linear memory, and it may not grow past this.
 const MEMORY_MAX: usize = 32 * 1024 * 1024;
 /// A module has at most one table, of at most this many entries (the function references its indirect
-/// calls go through), and a store holds one instance of one module. A module that declares a second
-/// memory or table, or one larger than its limit, is not started; `memory.grow` and `table.grow` past
-/// a limit fail as WebAssembly defines it (they return -1), and the module runs on.
+/// calls go through), and a store holds one instance of one module (`wasmhost::store_limits`). A module
+/// that declares a second memory or table, or one larger than its limit, is not started; `memory.grow`
+/// and `table.grow` past a limit fail as WebAssembly defines it (they return -1), and the module runs on.
 pub const WIDGET_TABLE_MAX: usize = 65_536;
-const MEMORIES_MAX: usize = 1;
-const TABLES_MAX: usize = 1;
-const INSTANCES_MAX: usize = 1;
 /// A call's instruction budget: the module's own instructions and the host's work for its imports
 /// (the charges below) are paid from it. A call that needs more is stopped.
 pub const WIDGET_CALL_FUEL: u64 = 20_000_000;
@@ -76,11 +82,11 @@ pub const WIDGET_STATE_MAX: usize = 64 * 1024;
 /// The bytes `state_get` and `state_set` may move in one call, all their uses together: the whole
 /// state read and written several times over.
 pub const WIDGET_CALL_STATE_MAX: usize = 16 * WIDGET_STATE_MAX;
-/// The drawing commands (`rect`, `text`, `button`) of one pass.
+/// The drawing commands (`rect`, `text`, `button`, and the kit's) of one pass.
 pub const WIDGET_PASS_COMMANDS_MAX: usize = 512;
-/// The hit regions (`button`, `hit`) of one pass.
+/// The hit regions (`button`, `hit`, and the kit's) of one pass.
 pub const WIDGET_PASS_HITS_MAX: usize = 512;
-/// The bytes of one text: a `text`'s, or a `button`'s label.
+/// The bytes of one text: a `text`'s, a `button`'s label, and each text the kit reads.
 pub const WIDGET_TEXT_MAX: usize = 1024;
 /// The bytes of all the texts of one pass together.
 pub const WIDGET_PASS_TEXT_MAX: usize = 16 * 1024;
@@ -95,8 +101,9 @@ pub const WIDGET_TEXT_PX_MAX: i32 = 512;
 // ---- the charges: what the host's work for an import takes from the call's budget (docs/WIDGETS.md, Limits) ----
 //
 // The budget counts the module's instructions. The host's work for an import is no instruction of the
-// module's, so each import takes a charge for it from the same budget (`charge`): a fixed one for every
-// call, and one by size where the work grows with what the import is given. The numbers are in
+// module's, so each import takes a charge for it from the same budget (`wasmhost::charge`, which the app
+// host takes its own with): a fixed one for every call, and one by size where the work grows with what the
+// import is given. The numbers are in
 // instructions: about what the work costs beside a module's own, as measured in a release build on a
 // desktop machine, where the longest drawing a budget pays for takes about three times as long as the
 // same budget spent on instructions alone (not measured on a Kindle). When the budget cannot pay, the
@@ -124,10 +131,8 @@ pub const WIDGET_CHARGE_SQUARE_BYTES: u64 = 256;
 /// `status`, `setting`, `state_get`, `state_set`: each byte read from the module's memory or written to it.
 pub const WIDGET_CHARGE_BYTE: u64 = 4;
 
-/// How far outside the body, in pixels, an edge of a command's rectangle is still kept as given. A
-/// farther edge is moved in to this distance: what shows in the body is the same, and the sums the
-/// drawing makes with the rectangle stay small.
-const DRAW_REACH: i64 = 1 << 16;
+// (A command's rectangle is held near the body by `wasmhost::on_screen`, and a hit region is cut to it by
+// `wasmhost::in_body`: the two hosts share them.)
 
 /// A drawing command recorded by the module and rendered by the host. Coordinates are body-local.
 #[derive(Clone, Debug)]
@@ -135,6 +140,8 @@ enum DrawCmd {
     Rect { x: i32, y: i32, w: i32, h: i32, style: i32 },
     Text { x: i32, y: i32, w: i32, h: i32, text: String, px: i32, center: bool },
     Button { x: i32, y: i32, w: i32, h: i32, text: String, style: i32 },
+    /// one of the package kit's (kithost.rs)
+    Kit(KitCmd),
 }
 
 struct HostState {
@@ -161,8 +168,45 @@ struct HostState {
     status: String,
     dirty: bool,
     limits: StoreLimits,
-    /// when the module asked to be drawn again, by the app's clock (`now_ms`); None when it did not
-    redraw_at: Option<u32>,
+    /// the module's request to be drawn again (when it asked, by the app's clock, and how long after); None while no
+    /// request stands. One request stands at a time, the soonest asked for, whichever call asked, until the editor's
+    /// tick takes it (`redraw_taken`)
+    redraw_at: Option<Redraw>,
+    /// the points of the DRAG_MOVE `kit_event` is being told of (`event_points`); none in another call
+    points: Vec<(i32, i32)>,
+}
+
+/// What the package kit's calls (kithost.rs) are given by this host: its body, its capability to draw, its
+/// limits and its records.
+impl KitHost for HostState {
+    fn kit_body(&self) -> (i32, i32) {
+        self.body
+    }
+    fn kit_may_draw(&self) -> bool {
+        self.overlay
+    }
+    fn kit_room(&self) -> Result<(), wasmi::Error> {
+        room_for_command(self)
+    }
+    fn kit_hit_room(&self) -> Result<(), wasmi::Error> {
+        room_for_hit(self)
+    }
+    fn kit_text(&mut self, n: usize) -> Result<(), wasmi::Error> {
+        pass_text_room(self, n)
+    }
+    fn kit_push(&mut self, cmd: Option<KitCmd>, hit: Option<(i32, Rect)>) {
+        self.commands.extend(cmd.map(DrawCmd::Kit));
+        self.hits.extend(hit);
+    }
+    fn kit_read(&mut self, n: usize) {
+        self.read_bytes += n;
+    }
+    fn kit_status_bar_h(&self) -> i32 {
+        crate::globalui::gui_status_h()
+    }
+    fn kit_points(&self) -> &[(i32, i32)] {
+        &self.points
+    }
 }
 
 /// One open package's WebAssembly instance, its last draw and its saved state.
@@ -187,8 +231,10 @@ impl std::fmt::Debug for WidgetRuntime {
 impl WidgetRuntime {
     /// Compiles and instantiates the installed package's artifact, once its file has been checked again
     /// (`widget_package_artifact`: a plain file inside the package's folder, with the SHA-256 recorded at
-    /// the install). A frame loads its module once, when it first draws.
-    pub fn new(id: &str) -> Result<Self, String> {
+    /// the install), for a frame whose body is `body` (width, height): every call, its start section first, has
+    /// that body until a drawing pass is given another. A frame loads its module once, when it first draws or is
+    /// first touched.
+    pub fn new(id: &str, body: (i32, i32)) -> Result<Self, String> {
         let (m, bytes) = crate::widgetpkg::widget_package_artifact(id)?;
         if m.spec.runtime != "wasm" {
             return Err("This package is not a WebAssembly widget.".into());
@@ -197,6 +243,11 @@ impl WidgetRuntime {
         config.consume_fuel(true);
         let engine = Engine::new(&config);
         let module = Module::new(&engine, &bytes[..]).map_err(|e| format!("The widget's WebAssembly is invalid: {e}"))?;
+        if let Some(call) = kit_missing_import(&module) {
+            // TRANSLATORS: in a widget's frame, in place of its body: the widget uses a call of Grimoire's that this
+            // version does not have (%s is the call's name, such as grimoire_kit.row).
+            return Err(cformat!(tr("This widget needs a newer Grimoire (%s)."), &call));
+        }
         let state_path = format!("{}/{STATE_FILE}", crate::widgetpkg::widget_package_dir(id));
         let overlay = m.capabilities.iter().any(|c| c == WIDGET_CAP_OVERLAY);
         let storage = m.capabilities.iter().any(|c| c == WIDGET_CAP_STORAGE);
@@ -210,7 +261,7 @@ impl WidgetRuntime {
             id: id.to_string(),
             overlay,
             storage,
-            body: (0, 0),
+            body: (body.0.max(0), body.1.max(0)),
             commands: Vec::new(),
             hits: Vec::new(),
             text_bytes: 0,
@@ -221,14 +272,9 @@ impl WidgetRuntime {
             settings,
             status: String::new(),
             dirty: false,
-            limits: StoreLimitsBuilder::new()
-                .memory_size(MEMORY_MAX)
-                .memories(MEMORIES_MAX)
-                .tables(TABLES_MAX)
-                .table_elements(WIDGET_TABLE_MAX)
-                .instances(INSTANCES_MAX)
-                .build(),
+            limits: crate::wasmhost::store_limits(MEMORY_MAX, WIDGET_TABLE_MAX),
             redraw_at: None,
+            points: Vec::new(),
         });
         store.limiter(|st| &mut st.limits);
         // The start section runs here, before a frame can draw: give it the same budget as a call.
@@ -292,8 +338,10 @@ impl WidgetRuntime {
             charge(&mut caller, WIDGET_CHARGE_CALL)?;
             // (a pass is drawing: a package that may not draw is not drawn again for the asking)
             if caller.data().overlay {
-                let after_ms = after_ms.clamp(WIDGET_REDRAW_MIN_MS, WIDGET_REDRAW_MAX_MS) as u32;
-                caller.data_mut().redraw_at = Some(now_ms().wrapping_add(after_ms));
+                let after = after_ms.clamp(WIDGET_REDRAW_MIN_MS, WIDGET_REDRAW_MAX_MS) as u32;
+                let st = caller.data_mut();
+                // (one request stands, the soonest asked for: a later call does not put an earlier one off)
+                st.redraw_at = Some(Redraw::asked(st.redraw_at, now_ms(), after));
             }
             Ok(())
         }).map_err(|e| e.to_string())?;
@@ -339,6 +387,7 @@ impl WidgetRuntime {
             charge(&mut caller, WIDGET_CHARGE_CALL)?;
             Ok(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64))
         }).map_err(|e| e.to_string())?;
+        kit_link(&mut linker)?;
         let instance = linker.instantiate_and_start(&mut store, &module).map_err(|e| format!("The widget could not start: {e}"))?;
         if instance.get_memory(&store, "memory").is_none() {
             return Err("The widget has no memory export.".into());
@@ -356,6 +405,12 @@ impl WidgetRuntime {
             Err(e) => { self.stopped(format!("The widget has no widget_draw export: {e}")); return; }
         };
         self.store.data_mut().status.clear();
+        // (a redraw request whose time has come is answered by this pass, whatever brought it, when it draws the whole
+        // body: a request that waited while the frame was minimized or the pen was near is the pass that draws the
+        // frame again; a pass of part of the body, the canvas clipped to less of it, leaves it to the editor's tick)
+        if rect_contains_rect(c.clip, body) && self.redraw_due(now_ms()) {
+            self.store.data_mut().redraw_at = None;
+        }
         self.begin_call();
         self.store.data_mut().body = (body.w, body.h);
         let scale = ui_px(1000.0);
@@ -374,7 +429,8 @@ impl WidgetRuntime {
         // Nothing below draws outside the body: the canvas is clipped to it (and to what the caller
         // already clipped to) until the commands are drawn.
         let clip = c.clip;
-        canvas_set_clip(c, rect_intersect(clip, body));
+        let in_body = rect_intersect(clip, body);
+        canvas_set_clip(c, in_body);
         canvas_fill(c, body, 255);
         for cmd in commands {
             match cmd {
@@ -396,37 +452,77 @@ impl WidgetRuntime {
                     ui_button(c, r, IconKind::None, &text, style);
                     self.texts.push(text);
                 }
+                DrawCmd::Kit(k) => kit_render(c, body, in_body, k, &mut self.texts),
             }
         }
         c.clip = clip;
     }
 
-    /// Sends a tap in body-local coordinates. Returns whether the module was called.
-    pub fn tap(&mut self, x: i32, y: i32) {
+    /// Sends a tap in body-local coordinates to `widget_tap`: the hit region under it, -1 for none. Returns whether
+    /// the module was called (a call says nothing of the picture, so it owes a drawing pass).
+    pub fn tap(&mut self, x: i32, y: i32) -> bool {
         if self.error.is_some() {
-            return;
+            return false;
         }
-        let id = self.hits.iter().find(|(_, r)| rect_contains(*r, x, y)).map_or(-1, |(id, _)| *id);
+        let id = self.hit_at(x, y);
         let tap = match self.instance.get_typed_func::<(i32,), ()>(&self.store, "widget_tap") {
             Ok(f) => f,
-            Err(_) => return,
+            Err(_) => return false,
         };
         self.begin_call();
         let called = tap.call(&mut self.store, (id,));
         self.end_call();
         if called.is_err() {
             self.stopped("The widget stopped while handling a tap.".into());
-            return;
+            return true;
         }
         self.save();
+        true
+    }
+
+    /// Whether the module exports `kit_event`: it is told of input by the kit's events (a tap is a TAP there, not a
+    /// call of `widget_tap`).
+    pub fn has_events(&self) -> bool {
+        self.instance.get_typed_func::<(i32, i32, i32, i32, i32), i32>(&self.store, KIT_EVENT).is_ok()
+    }
+
+    /// Calls `kit_event`, when the module has one, with the event's numbers; a DRAG_MOVE's points are what
+    /// `event_points` copies during the call. None for a module without it; else whether its picture changed
+    /// (what it returned was not 0). A call that stopped the module changed it: the frame shows why.
+    pub fn event(&mut self, ev: &KitEvent) -> Option<bool> {
+        if self.error.is_some() {
+            return None;
+        }
+        let f = self.instance.get_typed_func::<(i32, i32, i32, i32, i32), i32>(&self.store, KIT_EVENT).ok()?;
+        self.begin_call();
+        self.store.data_mut().points = ev.points.clone();
+        let called = f.call(&mut self.store, (ev.kind, ev.id, ev.a, ev.b, ev.c));
+        self.store.data_mut().points = Vec::new();
+        self.end_call();
+        match called {
+            Ok(v) => {
+                self.save();
+                Some(v != 0)
+            }
+            Err(_) => {
+                self.stopped("The widget stopped while handling an event.".into());
+                Some(true)
+            }
+        }
+    }
+
+    /// The hit region of the last drawing pass under a place of the body (the first drawn that holds it), -1 for
+    /// none.
+    pub fn hit_at(&self, x: i32, y: i32) -> i32 {
+        self.hits.iter().find(|(_, r)| rect_contains(*r, x, y)).map_or(-1, |(id, _)| *id)
     }
 
     /// Starts a call of the module: its instruction budget, and a pass with nothing recorded and
     /// nothing counted yet. What an earlier call left recorded (a tap that drew) is dropped: a pass
-    /// holds its own commands only, so its limits are the most the host ever keeps.
+    /// holds its own commands only, so its limits are the most the host ever keeps. A redraw request
+    /// stands across calls.
     fn begin_call(&mut self) {
         let st = self.store.data_mut();
-        st.redraw_at = None;
         st.commands.clear();
         st.hits.clear();
         st.text_bytes = 0;
@@ -492,10 +588,10 @@ impl WidgetRuntime {
         self.hits.len()
     }
 
-    /// Whether the module asked for a drawing pass that is due at `now`, by the app's clock (`now_ms`,
-    /// which wraps: the longest delay is far under half its range).
+    /// Whether the module asked for a drawing pass that is due at `now`, by the app's clock (`now_ms`: the
+    /// time since it asked, counted across the clock's wrap, wasmhost.rs Redraw).
     pub fn redraw_due(&self, now: u32) -> bool {
-        self.error.is_none() && self.store.data().redraw_at.is_some_and(|at| now.wrapping_sub(at) as i32 >= 0)
+        self.error.is_none() && self.store.data().redraw_at.is_some_and(|r| r.due(now))
     }
 
     /// `redraw_due`, and the request is taken: the editor's tick asks this once for a frame it then
@@ -525,58 +621,24 @@ impl WidgetRuntime {
     }
 }
 
-/// A command's rectangle on the screen. A module passes any numbers: the edges are summed in 64
-/// bits and held within DRAW_REACH of the body, so no later sum overflows. A width or height that
-/// is not positive stays so (an empty rectangle draws nothing).
-fn on_screen(body: Rect, x: i32, y: i32, w: i32, h: i32) -> Rect {
-    fn edge(origin: i32, len: i32, at: i64) -> i32 {
-        (origin as i64 + at).clamp(origin as i64 - DRAW_REACH, origin as i64 + len.max(0) as i64 + DRAW_REACH) as i32
-    }
-    let (x0, x1) = (edge(body.x, body.w, x as i64), edge(body.x, body.w, x as i64 + w as i64));
-    let (y0, y1) = (edge(body.y, body.h, y as i64), edge(body.y, body.h, y as i64 + h as i64));
-    Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
-}
-
-/// The part of a hit region (body-local) that is inside the body, or None when no part is.
-fn hit_in_body(body: Rect, r: Rect) -> Option<Rect> {
-    let x0 = (r.x as i64).max(0);
-    let y0 = (r.y as i64).max(0);
-    let x1 = (r.x as i64 + r.w as i64).min(body.w as i64);
-    let y1 = (r.y as i64 + r.h as i64).min(body.h as i64);
-    (x1 > x0 && y1 > y0).then(|| Rect { x: x0 as i32, y: y0 as i32, w: (x1 - x0) as i32, h: (y1 - y0) as i32 })
-}
-
 /// Ends a call that went past a limit the way a call that used up its instructions ends: with the
 /// trap `draw` and `tap` report as the widget having stopped. The log says which limit it was.
 fn past(st: &HostState, limit: &str, max: usize) -> wasmi::Error {
     qlog!("widget %s: stopped, a call went past a limit: %s (%d)", &st.id, limit, max as i32);
-    wasmi::Error::from(TrapCode::OutOfFuel)
-}
-
-/// Takes `n` from the call's instruction budget for work the host does for the call. When the budget cannot
-/// pay, the call ends exactly as a call that used up its instructions ends: nothing is left of the budget,
-/// and the trap is the interpreter's own for that.
-fn charge(caller: &mut Caller<'_, HostState>, n: u64) -> Result<(), wasmi::Error> {
-    let left = caller.get_fuel().unwrap_or(0);
-    if n > left {
-        let _ = caller.set_fuel(0);
-        return Err(wasmi::Error::from(TrapCode::OutOfFuel));
-    }
-    let _ = caller.set_fuel(left - n);
-    Ok(())
+    crate::wasmhost::out_of_fuel()
 }
 
 /// The pixels of a command's rectangle (body-local) that lie inside the body the call draws on.
 fn area_in_body(st: &HostState, x: i32, y: i32, w: i32, h: i32) -> u64 {
-    let body = Rect { x: 0, y: 0, w: st.body.0, h: st.body.1 };
-    hit_in_body(body, Rect { x, y, w, h }).map_or(0, |r| r.w as u64 * r.h as u64)
+    crate::wasmhost::area_in_body(st.body, x, y, w, h)
 }
+
+/// The widget host's numbers for the charge of a text (`wasmhost::TextCharge`).
+const TEXT_CHARGE: TextCharge = TextCharge { byte_px: WIDGET_CHARGE_TEXT, tall_px: WIDGET_CHARGE_TALL_PX, square: WIDGET_CHARGE_SQUARE, px_max: WIDGET_TEXT_PX_MAX as u64 };
 
 /// The charge for drawing a text of `bytes` bytes `px` high, its bytes counted to `square_max` in the square.
 fn text_charge(bytes: usize, px: i32, square_max: u64) -> u64 {
-    let (n, h) = (bytes as u64, px.clamp(1, WIDGET_TEXT_PX_MAX) as u64);
-    let m = n.min(square_max);
-    n * h * h.max(WIDGET_CHARGE_TALL_PX) * WIDGET_CHARGE_TEXT / WIDGET_CHARGE_TALL_PX + WIDGET_CHARGE_SQUARE * m * m
+    TEXT_CHARGE.of(bytes, px as i64, square_max)
 }
 
 fn room_for_command(st: &HostState) -> Result<(), wasmi::Error> {
@@ -593,11 +655,8 @@ fn room_for_hit(st: &HostState) -> Result<(), wasmi::Error> {
     Ok(())
 }
 
-/// A command's text, read once its length is within the limits of one text and of the pass and the call's
-/// budget has paid for drawing it `px` high (`text_charge`).
-fn pass_text(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32, px: i32, square_max: u64) -> Result<String, wasmi::Error> {
-    let n = len.max(0) as usize;
-    let st = caller.data_mut();
+/// Counts a text of `n` bytes about to be read in the pass, within the limits of one text and of the pass's texts.
+fn pass_text_room(st: &mut HostState, n: usize) -> Result<(), wasmi::Error> {
     if n > WIDGET_TEXT_MAX {
         return Err(past(st, "the bytes of one text", WIDGET_TEXT_MAX));
     }
@@ -605,6 +664,14 @@ fn pass_text(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32, px: i32, sq
         return Err(past(st, "the bytes of the texts of a pass", WIDGET_PASS_TEXT_MAX));
     }
     st.text_bytes += n;
+    Ok(())
+}
+
+/// A command's text, read once its length is within the limits of one text and of the pass and the call's
+/// budget has paid for drawing it `px` high (`text_charge`).
+fn pass_text(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32, px: i32, square_max: u64) -> Result<String, wasmi::Error> {
+    let n = len.max(0) as usize;
+    pass_text_room(caller.data_mut(), n)?;
     charge(caller, text_charge(n, px, square_max))?;
     Ok(String::from_utf8_lossy(&read_mem(caller, ptr, len)).into_owned())
 }
@@ -621,30 +688,11 @@ fn state_moved(st: &mut HostState, n: usize) -> Result<(), wasmi::Error> {
 /// `len` bytes of the module's memory from `ptr`, or as many as the memory has there. Every read of the
 /// module's memory is this one, and the bytes it copies are counted (`WidgetRuntime::bytes_read`).
 fn read_mem(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32) -> Vec<u8> {
-    if ptr < 0 || len <= 0 {
-        return Vec::new();
-    }
-    let Some(memory) = caller.get_export("memory").and_then(Extern::into_memory) else { return Vec::new() };
-    let data = memory.data(&*caller);
-    let start = ptr as usize;
-    let end = start.saturating_add(len as usize).min(data.len());
-    if start >= end { return Vec::new() }
-    let bytes = data[start..end].to_vec();
+    let bytes = crate::wasmhost::read_mem(caller, ptr, len);
     caller.data_mut().read_bytes += bytes.len();
     bytes
 }
 
 fn write_mem(caller: &mut Caller<'_, HostState>, ptr: i32, cap: i32, bytes: &[u8]) -> i32 {
-    if ptr < 0 || cap <= 0 {
-        return 0;
-    }
-    let Some(memory) = caller.get_export("memory").and_then(Extern::into_memory) else { return 0 };
-    let data = memory.data_mut(caller);
-    let start = ptr as usize;
-    if start >= data.len() {
-        return 0;
-    }
-    let n = bytes.len().min(cap as usize).min(data.len() - start);
-    data[start..start + n].copy_from_slice(&bytes[..n]);
-    n as i32
+    crate::wasmhost::write_mem(caller, ptr, cap, bytes)
 }

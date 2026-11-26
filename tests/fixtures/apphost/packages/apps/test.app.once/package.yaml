@@ -1,0 +1,15 @@
+name: Once
+id: test.app.once
+type: app
+version: 1.0.0
+author: Grimoire tests
+description: A module of the app host's tests.
+platforms: [all]
+artifact:
+  path: app.wasm
+  sha256: 3dfefc8dce9c9b714cb459a5b28b1626a31d44e60cf257c4b924a906e1b085c0
+  size: 1412
+capabilities: []
+spec:
+  runtime: wasm
+  status_bar: false

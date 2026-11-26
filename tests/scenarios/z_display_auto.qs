@@ -12,7 +12,7 @@ tap 510 460
 tap 1564 2254
 wait 300
 expect screen is editor
-pentap panel display
+action display
 wait 300
 expect editor.modal is display
 expect light.auto is 0

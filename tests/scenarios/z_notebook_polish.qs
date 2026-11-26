@@ -67,7 +67,7 @@ expect editor.page is 3
 expect editor.modal is none
 expect editor.screen_composed is 1
 # The Display sheet covers the page's top edge, even with the pen near; the page comes back after it.
-pentap panel display
+action display
 expect editor.modal is display
 wait 100
 shot 05-display-over-page

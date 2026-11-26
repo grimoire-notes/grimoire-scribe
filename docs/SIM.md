@@ -79,7 +79,9 @@ checks a single click's wait for a second one so). `waitbg` keeps a real deadlin
 opt-in for exact toast and refresh checks; other scenarios keep the real monotonic clock. `clock
 SECONDS` still sets only the displayed wall time. With it, `GRIMOIRE_SIM_UPTIME_MS=N` starts app
 time at N ms in place of the host's time since it started, as on a machine up that long
-(tests/scenarios/v_shortcuts_awake_boot.qs sends the first key one second after a boot).
+(tests/scenarios/v_shortcuts_awake_boot.qs sends the first key one second after a boot). N is
+anywhere from 0 to 4294967295, the range of app time, which wraps to 0 after it, as the Kindle's does
+after 49.7 days awake (tests/scenarios/z_kit_input_app_wrap.qs crosses the wrap mid-scenario).
 
 Four more:
 
@@ -123,6 +125,7 @@ GRIMOIRE_ROOT=/tmp/q GRIMOIRE_SCRIPT=tests/scenarios/a_notebook.qs GRIMOIRE_SHOT
 | `hid attach pad\|key\|held[:VVVV:PPPP] NAME`, `hid detach NAME` | a controller (held: one another app holds), or a keyboard or page turner, connects or goes, as input_evdev.c reports it; announced while shortcuts are on. `:VVVV:PPPP` gives its vendor and product numbers in hex (EVIOCGID's, `pad:2dc8:6006`; 0 and 0 without), which with its name make its shortcuts profile's slug (docs/SHORTCUTS.md, Device profiles). A controller has sixteen buttons from BTN_A, as Linux's generic driver gives one, so one named `Pro Controller` is a Switch-mode one (the Buttons sheet names its buttons B, A, ZL...) |
 | `hid keys NAME`, `hid keys` | the `key`, `keyup` and `axis` lines from here on come from that attached device (its name and numbers ride on each event, so its own shortcuts apply while they are on), until `hid keys` alone or its detach; before any, they come from the script's own keyboard, no device, which uses the default shortcuts (2.0.0-beta.2). NAME not attached fails the line |
 | `pentap X Y`, `tap X Y` | pen tap / finger tap |
+| `action NAME` | fires the action the Buttons and Gestures sheets call NAME (its file name, docs/SHORTCUTS.md), as a key press bound to it would, anchored at the screen's centre. The queue ahead of the line is handled first (a stroke queued ahead makes Undo). NAME not an action fails the line like a failed check: `expect failed (line N): no action NAME` (exit 3). Ends the batch |
 | `pentap panel NAME`, `tap panel NAME` | the same at the centre of the editor panel's button NAME (the panel's names, below), where the panel draws it now. A stroke queued ahead of the line is handled first (the line ends the batch before it looks), and a stale panel is settled as a human tap settles it. NAME not a button now, or no notebook open, fails the line like a failed check: `expect failed (line N): no panel button NAME` (exit 3). Ends the batch, like `tap` |
 | `touch down/move/up X Y` | raw finger events. A `touch move` or `touch up` is stamped with the script's own clock: its contact's `touch down` time plus the `wait`s read since (never later than now; a `waitfor`, `waitbg` or `hold` reads the clock again: their time is the machine's), as the Kindle's kernel stamps a sample when the finger moved, not when the app got to it. So `touch down`, `wait 700`, `touch up` is a 700 ms press however long the machine took besides, and `touch down`, `waitfor ...`, `wait 300`, `touch up` a press as long as the `waitfor` and the `wait` took by the clock (the 300 ms, or more on a busy machine) |
 | `drag pen\|touch X0 Y0 X1 Y1 STEPS` | a slow drag (100 ms per step) |
@@ -174,7 +177,7 @@ v_storage_full.qs leaves with a page that cannot be saved.
 The editor panel's buttons, by the names `tap panel` and `editor.panel_at.X.Y` use: `grip`, `collapse` and
 `expand` (the collapsed panel is one `expand` button), `tool-picker` (the tool button, or the grid when its pen
 is pinned), `tool:NAME` (a pinned pen, NAME as `editor.tool` has it), `eraser`, `undo`, `redo`, `clear`,
-`previous`, `pages` (the page chip), `next`, `links` (the Links button), `widgets`, `paper`, `display`, `pen-feel` and `library`. The
+`previous`, `pages` (the page chip), `next`, `links` (the Links button), `widgets`, `paper`, `pen-feel` and `library`. (The Display sheet has had no toolbar button since 2.3: `action display` opens it.) The
 Widgets popup's rows are `widgets.ID` (`widgets.com.example.timer`), and an open frame's parts are
 `widget.ID.title`, `.close`, `.min` (or `.minimize`), `.resize` and `.body`. A frame can also be
 named by its index in the open list, which is how a scenario reaches the controls a package draws:
@@ -182,21 +185,28 @@ named by its index in the open list, which is how a scenario reaches the control
 `widget.0.hit.N` stays a valid name only while that region exists. A package's own status text is
 read with `editor.widget.0.status`. A frame's due redraw (`request_redraw`) waits while the pen is near, as the
 status bar's minute refresh does in a notebook: a script follows a `pentap` with `pen leave` to let it come
-(tests/scenarios/z_widget_pen.qs). The Packages page is Settings → Packages
-→ Widgets: `settings.cat.5` picks the Packages category and `settings.packages` opens the Widgets
-page. Its controls are `packages.close` (the X, which closes Settings), `packages.back` (to
-Settings), `packages.row.ID` (or its index, `packages.row.0`), `packages.update-all`,
+(tests/scenarios/z_widget_pen.qs). The Packages page opens from the widget popup's Manage widgets…
+(`widgets.manage`), and for apps from the All apps page's Manage apps... (`apps.manage`, over that
+page, to which its Back and its X come back); packages are installed from the Package Store now. Its
+controls are `packages.close` (the X, which closes Settings), `packages.back` (to Settings),
+`packages.row.ID` (or its index, `packages.row.0`), `packages.update-all`,
 `packages.install`, `packages.remove`, `packages.remove-yes`, `packages.update`, `packages.trust`,
 `packages.license-yes`, `packages.license-view`, `packages.license-prev`, `packages.license-next` and
 `packages.qr`; a settings row is `packages.setting.KEY` (or `packages.setting.N`); the repository
 address is typed on the regular keyboard (its Done installs, as Done answers every other keyboard).
 The Package Store is the home app row's fourth built-in app, `library app.store`. Its controls are
-`store.close`, `store.back`, `store.refresh`, `store.filter.N` (0 all, 1 apps, 2 widgets),
+`store.close`, `store.back`, `store.refresh`, `store.filter.N` (0 all, 1 apps, 2 widgets, 3 installed),
 `store.package.ID`, `store.prev`, `store.next`, `store.shot.prev`, `store.shot.next`,
-`store.install`, `store.trust`, `store.qr` and `store.retry`. Its state is read with
-`library.store.view` (`list`, `detail`, `trust`, `busy`, `error` or `qr`), `.open`, `.filter`,
-`.packages`, `.visible` (ids in catalog order), `.selected`, `.featured`, `.screenshots`, `.shot`,
-`.shot.loaded`, `.shot.coming`, `.icon.loaded`, `.list.icons`, `.status`, `.error` and `.page`. `GRIMOIRE_PACKAGE_STORE_URL`
+`store.install`, `store.trust`, `store.accept`, `store.qr` and `store.retry`, the package page's
+`store.license` (read the license), `store.desc.more` (Read more / Show less) and
+`store.license.prev`/`store.license.next`/`store.desc.prev`/`store.desc.next` (their pages). Its
+state is read with `library.store.view` (`list`, `detail`, `trust`, `agree` (accepting the
+license before an install or a license-changing update), `license`, `busy`, `error` or `qr`),
+`.open`, `.filter`, `.packages`, `.visible` (ids in catalog order), `.selected`, `.featured`,
+`.screenshots`, `.shot`, `.shot.loaded`, `.shot.coming`, `.icon.loaded`, `.list.icons`,
+`.status`, `.error`, `.page`, `.license` (the license text read so far), `.license.note` (what
+is said while there is none, or why), `.license.page`, `.desc.more`, `.desc.page` and `.dev.note` (what importing
+`packages/import/` said). `GRIMOIRE_PACKAGE_STORE_URL`
 points the Store at another catalog; `GRIMOIRE_PACKAGE_STORE_OFFLINE=1` reads only the saved
 catalog and its cached images (tests/scenarios/z_package_store.qs).
 The Store's icons and screenshots, and an installed app's bundled icon, are decoded by the
@@ -215,7 +225,9 @@ A visit with a network runs without one: tests/store-curl/curl stands in for cur
 scenario's `# env:` line puts its folder first in `PATH` and names a catalog at
 `https://store.test/index.json`; it answers from the folder `package-store-served` of the
 scenario's data root, which tests/store_many_packages.py fills, 0.3 s a download
-(tests/scenarios/z_package_store_first_visit.qs: a download's end refreshes nothing by itself).
+(tests/scenarios/z_package_store_first_visit.qs: a download's end refreshes nothing by itself). The
+`?v=<time>` query a catalog, manifest, artifact or license fetch adds, so that no cache's copy is
+read, is not part of the path it answers from.
 The same generator makes a saved catalog of any number of packages
 (z_package_store_page_first.qs).
 A disabled button
@@ -287,7 +299,7 @@ Settings 1535 95. Its five buttons widen together for a longer word, up to 220 p
 (the same sideways), so a language with wider top-bar words moves them (docs/TRANSLATING.md).
 Hosted by KOReader they move left, as Back to KOReader takes the room it needs. Settings is one
 page (the new Settings menu, #115): its categories are at x 329, y 286 + 136 n (n from 0: General,
-Display, Sleep & Clock, Pen, Controls, Packages, System), the open category's rows at x 1233, y 371 + 134 n,
+Display, Sleep & Clock, Pen, Controls, System), the open category's rows at x 1233, y 371 + 134 n,
 and its X at 1735 95; a submenu's Back is at 125 95 and its X at 1735 95. Tap Settings' rows, the
 Display, Sleep settings and Clock settings pages' rows (`display.NAME`) and the choice lists' rows
 by name (`library.ui_at.X.Y` lists the names), never by place. Pen feel's tabs are one strip, its
@@ -681,7 +693,7 @@ shows what the app holds.
 | `library.gestures.learning` | action being recorded, or `0` |
 | `library.record` | `0`, `wait`, `pattern touch.N.KIND`, `shape K` (sample count), `checking` or `ready` |
 | `library.record.line` | record card's progress/refusal line, empty without a card |
-| `library.ui_at.X.Y` | semantic name of the Library hit at screen pixel X,Y, empty for none; see recording workflow. The top bar has five buttons (`exit`, `settings`, `share`, `new-folder`, `new`; beta.2's Graph button was taken out again, the owner's ruling of 2026-11-03). A notebook's menu has `more.open`, `more.rename`, `more.move`, `more.pdf`, `more.graph` (Leave out of the Graph, or Show in the Graph) and `more.delete`; a folder's `fmore.rename`, `fmore.move`, `fmore.graph` and `fmore.remove` (Cancel is `done` in both); Move to `move.top`, `move.to.PATH` (a folder by its path, `move.to.School/Math`), `move.new`, `move.prev` and `move.next`. Settings is one page (the new Settings menu, #115): its categories down the left are `settings.cat.N` (0 General, 1 Display, 2 Sleep & Clock, 3 Pen, 4 Controls, 5 Packages, 6 System; the page keeps the one picked until Grimoire starts again, so a script taps the category before a row of it: `tap library settings.cat.4`, then `tap library gestures`), and its X is `done`. General's rows are `language`, `updates` and `wifi`; Display's `display`, `theme` (Style), `dark`, `font` (Classic only), `rotate` and `pinch`; Sleep & Clock's `sleep-clock` (Sleep settings) and `clock-settings`; Pen's `pen-feel`, `pen-button`, `eraser-mode` and `calibrate`; Controls' `shortcuts`, `pair-menu` and `gestures`; Packages' `packages` (Widgets); System's `ko`, `mirror`, `about-device` and `darker-lines` (Darker lines in imported PDFs, 2.2) (tap them by name, never by place). A submenu's Back is `settings.back` (to the page it was opened from) and its X `settings.close` (the whole of Settings closes); a Gestures or Buttons group's Back is `done` (to the list of groups). The Language list has `language.auto` and `language.CODE` (`language.en`, `language.es`, `language.ja`), the pen button's list `pen-button.N` and the eraser's `eraser-mode.N` (N as settings.ini numbers `side_button` and `eraser_mode`), Darker lines' `darker-lines.N` (0 Off, 1 Medium, 2 Strong), each with its Back (`language.back`, `pen-button.back`, `eraser-mode.back`, `darker-lines.back`); About's Back is `about-device.back`. The Display, Sleep settings and Clock settings pages are the Display sheet's (`display.NAME`: `display.back`, `display.done` for its X, `display.brightness`, `display.auto`, `display.warmth`, `display.fit`, `display.newpage`; `display.sleep`, `display.pin`, `display.sleep_after`; `display.time12`, `display.size`, `display.corner`). The Font sheet has `font.terminess`, `font.atkinson`, `font.noto-sans` and `font.literata` (its rows), `font.cancel` (its Back), `font.done` (its X) and `font.add` (Add a font..., 2.2: the font pick over the sheet; no name while it waits for a copy, nor over a notebook's page, where the sheet has no such row); the Shortcuts sheet has `shortcuts.enable`, `shortcuts.device`, `shortcuts.own`, `buttons` and `shortcuts.reload`, the Pair sheet `bluetooth` and `pair`, the Wi-Fi sheet `wifi.radio` (Turn on, Turn off or Retry), `wifi.tab.saved` (the Saved networks button; tapped again it returns to Nearby), `wifi.scan` (Rescan), `wifi.other` (Other..., a hidden network), `wifi.other.open` and `wifi.other.wpa` (its security, after the name), `wifi.other.cancel`, `wifi.net.N` (the Nth saved network row in the list, from 1; drag the list to scroll; the connected row disconnects when tapped), `wifi.delete.N` (that row's trash button), `wifi.near.N` (the Nth scan result row, from 1; its connected row disconnects too) and `done` (a greyed-out row has no name) |
+| `library.ui_at.X.Y` | semantic name of the Library hit at screen pixel X,Y, empty for none; see recording workflow. The top bar has five buttons (`exit`, `settings`, `share`, `new-folder`, `new`; beta.2's Graph button was taken out again, the owner's ruling of 2026-11-03). A notebook's menu has `more.open`, `more.rename`, `more.move`, `more.pdf`, `more.graph` (Leave out of the Graph, or Show in the Graph) and `more.delete`; a folder's `fmore.rename`, `fmore.move`, `fmore.graph` and `fmore.remove` (Cancel is `done` in both); Move to `move.top`, `move.to.PATH` (a folder by its path, `move.to.School/Math`), `move.new`, `move.prev` and `move.next`. Settings is one page (the new Settings menu, #115): its categories down the left are `settings.cat.N` (0 General, 1 Display, 2 Sleep & Clock, 3 Pen, 4 Controls, 5 System; the page keeps the one picked until Grimoire starts again, so a script taps the category before a row of it: `tap library settings.cat.4`, then `tap library gestures`), and its X is `done`. General's rows are `language`, `updates` and `wifi`; Display's `display`, `theme` (Style), `dark`, `font` (Classic only), `rotate` and `pinch`; Sleep & Clock's `sleep-clock` (Sleep settings) and `clock-settings`; Pen's `pen-feel`, `pen-button`, `eraser-mode` and `calibrate`; Controls' `shortcuts`, `pair-menu` and `gestures`; System's `ko`, `mirror`, `about-device` and `darker-lines` (Darker lines in imported PDFs, 2.2) (tap them by name, never by place). A submenu's Back is `settings.back` (to the page it was opened from) and its X `settings.close` (the whole of Settings closes); a Gestures or Buttons group's Back is `done` (to the list of groups). The Language list has `language.auto` and `language.CODE` (`language.en`, `language.es`, `language.ja`), the pen button's list `pen-button.N` and the eraser's `eraser-mode.N` (N as settings.ini numbers `side_button` and `eraser_mode`), Darker lines' `darker-lines.N` (0 Off, 1 Medium, 2 Strong), each with its Back (`language.back`, `pen-button.back`, `eraser-mode.back`, `darker-lines.back`); About's Back is `about-device.back`. The Display, Sleep settings and Clock settings pages are the Display sheet's (`display.NAME`: `display.back`, `display.done` for its X, `display.brightness`, `display.auto`, `display.warmth`, `display.fit`, `display.newpage`; `display.sleep`, `display.pin`, `display.sleep_after`; `display.time12`, `display.size`, `display.corner`). The Font sheet has `font.terminess`, `font.atkinson`, `font.noto-sans` and `font.literata` (its rows), `font.cancel` (its Back), `font.done` (its X) and `font.add` (Add a font..., 2.2: the font pick over the sheet; no name while it waits for a copy, nor over a notebook's page, where the sheet has no such row); the Shortcuts sheet has `shortcuts.enable`, `shortcuts.device`, `shortcuts.own`, `buttons` and `shortcuts.reload`, the Pair sheet `bluetooth` and `pair`, the Wi-Fi sheet `wifi.radio` (Turn on, Turn off or Retry), `wifi.tab.saved` (the Saved networks button; tapped again it returns to Nearby), `wifi.scan` (Rescan), `wifi.other` (Other..., a hidden network), `wifi.other.open` and `wifi.other.wpa` (its security, after the name), `wifi.other.cancel`, `wifi.net.N` (the Nth saved network row in the list, from 1; drag the list to scroll; the connected row disconnects when tapped), `wifi.delete.N` (that row's trash button), `wifi.near.N` (the Nth scan result row, from 1; its connected row disconnects too) and `done` (a greyed-out row has no name) |
 | `library.map`, `library.map.KEY` | the Graph opened from the Library (2.0.0-beta.2: two fingers down over it, or the `index-map` key): `graph` while it shows, else `0`, and every `editor.map.KEY` (below) of it. `library.map.no_notebook` is `1` for it (no notebook open), `library.map.tabs` the tabs drawn (`graph` alone here; `graph list pages` for the editor's). `library.map.picker` is `1` while its notebooks' browser (past the caps) is up, `library.map.keep` `1` while a notebook it opened is in front (Back there comes back to it). `tap library map.NAME` taps its controls (`map.back`, `map.open`, `map.view`), `tap library elsewhere.NAME` its browser's (`elsewhere.folder.PATH`, `elsewhere.book.ID`, `elsewhere.back`), and `tap map-node ID:PID` its nodes |
 | `library.graph.omitted` | the Library's notebooks the Graph of all notebooks leaves out (by their own Leave out of the Graph or a folder's), by id, sorted, space-separated (2.0.0-beta.2) |
 | `library.about.view` | What's new while it is open (else empty): `card` (the card hanging from the bat), `list` (Read all's list of every version's notes) or `note` (a version's notes on the sheet) (2.1.0) |

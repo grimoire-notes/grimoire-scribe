@@ -88,7 +88,7 @@ fn listed(root: &str, g: &str, p: &str) -> FsStat {
 
 /// The job's path for a file as listed: what Files' Covers view queues.
 fn arg(s: &FsStat, p: &str) -> String {
-    format!("{}.{}.{}.{}:{}", s.dev, s.ino, s.size, s.mtime, p)
+    format!("{}.{}.{}.{}.{}:{}", s.dev, s.ino, s.size, s.mtime, s.mtime_nsec, p)
 }
 
 /// The cache's entries (not its sweep's stamp), by name.

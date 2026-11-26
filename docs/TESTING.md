@@ -3670,6 +3670,27 @@ They check the headless runner's panel; on the Kindle, check what the screen sho
     notebook it came from, its lines as thick and its gaps as wide (before 2.2 they kept their width in mm and came
     out a little thicker and wider). Undo.
 
+## 2.2.0
+
+The first release of 2.2, from `release/2.2.0`: cut from `main` at `75ec0993` on 2026-11-23, with the work merged
+into it since (#240, #244, #246, #81, #258, #256, #269, #270), everything in CHANGELOG's 2.2.0 section. Automated:
+the full gate on the release commit with the pinned toolchain. On 2026-11-25 the owner chose to release it ("let's
+fix ourselves and ship"); the published Calculator widget, whose manifest declared no capabilities and which 2.2
+refuses at install, was fixed the same day in the Package Store's own repository (Calculator 1.2.1), not in
+Grimoire. The crate-age rule (two weeks at the tag) was waived for this release by the owner on 2026-11-25:
+wasmi, wasmi_collections, wasmi_core and wasmi_ir 2.0.3 (2026-11-24) are younger: 2.0.0 to 2.0.2 were yanked that
+day and the deny check refused them. All four are two weeks old on 2026-12-08. Builds of `release/2.2.0`
+ran on the owner's Scribe (firmware 5.20.1.0.2) before the bump, each installed after a backup with the notebooks
+unchanged and KOReader left alone: `b6d78f46` (build `76611b5d45cb`) and `024f5388` (build `c5a8692967d6`, the
+release's code before this commit), both on 2026-11-25; the widget fetcher's and the app host's curl options were
+accepted by that Scribe's curl (8.15.0) the same day. This release's bundle (build `4d611cc2edf9`, from `b3f9cc22`,
+its binary byte for byte the one the gate tested) was installed on the owner's Scribe on 2026-11-25, after a
+backup, with the notebooks unchanged and KOReader left alone. The owner was asked to look at What's new on the
+first start, the notebooks and settings after the update, a template preview, a PDF import and Files' Covers view,
+a font of their own being checked, KOReader's Open this book in Grimoire after the plugin's update, and a widget
+from the Package Store. The owner's verdict, 2026-11-25: "this is good." The device checks listed in #100 were not
+reported one by one.
+
 ## 2.3, packages' pictures decoded by the worker (issue #236): device checks
 
 Not run on a Scribe. The picture worker's new command (`T`, a small gray picture of an `.ico` or a picture) has
@@ -3686,7 +3707,7 @@ decoded by stb_image, as every other picture the worker decodes is (`bgimage.rs`
 `D` does not: what that job and a Scribe have to show is the reader itself and the fit. What only the
 Scribe can tell (read grimoire.log over SSH; it names no file):
 
-1. **An app's icon**: install an app that bundles an `.ico` (Settings > Packages > Apps, or the Package Store).
+1. **An app's icon**: install an app that bundles an `.ico` (from the Package Store).
    Home: the app's tile shows its built-in icon for a moment and then its own, with a refresh of the tile's icon
    alone (no flash of the screen). The log says `package pictures: app-icon made in T ms`: send T. Close Grimoire
    and start it again: the icon is there at the first draw, and the log has no new `package pictures` line.

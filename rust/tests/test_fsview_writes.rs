@@ -705,7 +705,7 @@ fn the_copy_job() {
     symlink(format!("{root}/documents/font.ttf"), format!("{root}/documents/link.ttf")).unwrap();
     let st = open(&root, &g);
     let f = stat_of(&st, "documents/font.ttf");
-    let arg = |s: &FsStat, p: &str| format!("{}.{}.{}.{}:{}", s.dev, s.ino, s.size, s.mtime, p);
+    let arg = |s: &FsStat, p: &str| format!("{}.{}.{}.{}.{}:{}", s.dev, s.ino, s.size, s.mtime, s.mtime_nsec, p);
     let fonts = format!("{g}/fonts");
     check!(bg_copy_file("fonts", &arg(&stat_of(&st, "documents"), "documents")) == -1);
     check!(bg_copy_file("fonts", &arg(&f, "documents/link.ttf")) == -1);

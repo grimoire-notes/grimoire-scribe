@@ -6,9 +6,9 @@
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: Grimoire 2.1.0\n"
+"Project-Id-Version: Grimoire 2.2.0\n"
 "Report-Msgid-Bugs-To: https://github.com/ganten1998/grimoire-scribe/issues\n"
-"POT-Creation-Date: 2026-11-24 10:35-0500\n"
+"POT-Creation-Date: 2026-11-26 13:25-0600\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -957,20 +957,27 @@ msgstr ""
 msgid "Automatic"
 msgstr ""
 
+#: rust/src/app.rs rust/src/library.rs
+msgid "Stable"
+msgstr ""
+
 #. TRANSLATORS: Settings > Updates, the branch the switch is on: Preview gets betas and releases,
 #. Stable only releases.
 #: rust/src/app.rs rust/src/library.rs
 msgid "Preview"
 msgstr ""
 
-#: rust/src/app.rs rust/src/library.rs
-msgid "Stable"
-msgstr ""
-
 #. TRANSLATORS: selected update channel, %s is its name; toast, 1700 px at 44 px bold.
 #: rust/src/app.rs
 #, c-format
 msgid "Update channel: %s"
+msgstr ""
+
+#. TRANSLATORS: a toast: the app uses a call of Grimoire's that this version does not have (%s is the
+#. call's name, such as grimoire_kit.row).
+#: rust/src/apphost.rs
+#, c-format
+msgid "This app needs a newer Grimoire (%s)."
 msgstr ""
 
 #. TRANSLATORS: (also) a toast (one line of about 1000 px at 44 px in bold): the picture picked for Use as
@@ -1293,7 +1300,7 @@ msgid "Waiting"
 msgstr ""
 
 #. TRANSLATORS: a row of the Import place: this file became a notebook.
-#: rust/src/browser.rs
+#: rust/src/browser.rs rust/src/packagestore.rs
 msgid "Imported"
 msgstr ""
 
@@ -1327,7 +1334,7 @@ msgstr ""
 msgid "Delete (moves it to %s)"
 msgstr ""
 
-#: rust/src/browser.rs rust/src/library.rs
+#: rust/src/browser.rs rust/src/library.rs rust/src/packagestore.rs
 msgid "Keep it"
 msgstr ""
 
@@ -1855,9 +1862,7 @@ msgid "Calligraphy"
 msgstr ""
 
 #. TRANSLATORS: the widget popup's title, beside the toolbar's Widgets button.
-#. TRANSLATORS: Settings' Packages category row: the widget package manager.
-#: rust/src/editor.rs rust/src/packagestore.rs rust/src/settingsmenu.rs
-#: rust/src/widgetpkgui.rs
+#: rust/src/editor.rs rust/src/packagestore.rs rust/src/widgetpkgui.rs
 msgid "Widgets"
 msgstr ""
 
@@ -4086,14 +4091,18 @@ msgid_plural "Checking %d fonts..."
 msgstr[0] ""
 msgstr[1] ""
 
-#. TRANSLATORS: Settings' Packages category row: the full-screen app package manager.
-#: rust/src/library.rs rust/src/packagestore.rs rust/src/settingsmenu.rs
-#: rust/src/widgetpkgui.rs
+#: rust/src/library.rs rust/src/packagestore.rs rust/src/widgetpkgui.rs
 msgid "Apps"
 msgstr ""
 
 #: rust/src/library.rs
 msgid "About"
+msgstr ""
+
+#. TRANSLATORS: the All apps page's button that opens the app package manager (as the widget
+#. popup's Manage widgets... opens the widget one).
+#: rust/src/library.rs
+msgid "Manage apps..."
 msgstr ""
 
 #: rust/src/library.rs
@@ -4903,6 +4912,14 @@ msgid "Downloading update..."
 msgstr ""
 
 #: rust/src/packagestore.rs
+msgid "Imported from packages/import"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Couldn't import"
+msgstr ""
+
+#: rust/src/packagestore.rs
 msgid "Installed"
 msgstr ""
 
@@ -4912,6 +4929,14 @@ msgstr ""
 
 #: rust/src/packagestore.rs rust/src/widgetpkgui.rs
 msgid "Reading package.yaml..."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Enter a GitHub repository or a .yaml address."
+msgstr ""
+
+#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
+msgid "Looking up the repository..."
 msgstr ""
 
 #: rust/src/packagestore.rs
@@ -4935,6 +4960,10 @@ msgid "That package is no longer in the Store."
 msgstr ""
 
 #: rust/src/packagestore.rs
+msgid "The Store does not know this package kind."
+msgstr ""
+
+#: rust/src/packagestore.rs
 #, c-format
 msgid "Updated %s to %s."
 msgstr ""
@@ -4952,7 +4981,46 @@ msgid "The manifest's version does not match its Store listing."
 msgstr ""
 
 #: rust/src/packagestore.rs
+#, c-format
+msgid ""
+"The update changes the license from %s to %s. Open the package in the Store "
+"and accept it there."
+msgstr ""
+
+#: rust/src/packagestore.rs
 msgid "Updated"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "That repository has no package.yaml."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Connect to the Internet to read the license's text."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "The package names no license text the Store could read."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "The repository has no license text the Store could read."
+msgstr ""
+
+#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
+msgid "Reading the license..."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Uninstalled"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Search packages"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "GitHub repository"
 msgstr ""
 
 #: rust/src/packagestore.rs
@@ -4965,6 +5033,18 @@ msgstr ""
 
 #: rust/src/packagestore.rs
 msgid "Featured"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Search:"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "No packages are installed."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "No packages match your search."
 msgstr ""
 
 #: rust/src/packagestore.rs
@@ -5024,7 +5104,27 @@ msgid "Package"
 msgstr ""
 
 #: rust/src/packagestore.rs
-msgid "Repository QR"
+msgid "Update to"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Uninstall"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Repository URL"
+msgstr ""
+
+#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
+msgid "License"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Show less"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Read more"
 msgstr ""
 
 #: rust/src/packagestore.rs
@@ -5044,12 +5144,82 @@ msgid ""
 "malfunction caused by installing or running it."
 msgstr ""
 
-#: rust/src/packagestore.rs rust/src/widgetpkgui.rs
-msgid "I trust this author, continue"
+#: rust/src/packagestore.rs
+#, c-format
+msgid ""
+"This update changes the license from %s to %s. Read it before you accept."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "I trust the author, continue"
 msgstr ""
 
 #: rust/src/packagestore.rs
 msgid "Back to the package"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Accept the license"
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid ""
+"The update changes the license from %s to %s. Read it and accept it to "
+"update %s."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid "Read the license and accept it to install %s."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "I accept the license"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Don't install"
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid "This update changes the license from %s to %s."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid "The license %s is installed under."
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid "The license %s is published under."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Uninstall this package?"
+msgstr ""
+
+#: rust/src/packagestore.rs
+#, c-format
+msgid ""
+"Uninstall %s? Its widget or app is closed and its files are deleted. Your "
+"layout is kept."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Install from GitHub"
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid ""
+"Type a GitHub repository as user/repo, or an https address ending in .yaml, "
+"on the keyboard below."
+msgstr ""
+
+#: rust/src/packagestore.rs
+msgid "Tap Done to download it. Nothing is written until you trust the author."
 msgstr ""
 
 #: rust/src/packagestore.rs rust/src/widgetpkgui.rs
@@ -5660,10 +5830,6 @@ msgid "Shortcuts: keys and controller buttons"
 msgstr ""
 
 #: rust/src/settingsmenu.rs
-msgid "Packages"
-msgstr ""
-
-#: rust/src/settingsmenu.rs
 msgid "KOReader"
 msgstr ""
 
@@ -5965,19 +6131,7 @@ msgid "%s %d"
 msgstr ""
 
 #: rust/src/widgetpkgui.rs
-msgid "Looking up the repository..."
-msgstr ""
-
-#: rust/src/widgetpkgui.rs
-msgid "Reading the license..."
-msgstr ""
-
-#: rust/src/widgetpkgui.rs
 msgid "Settings reset to defaults."
-msgstr ""
-
-#: rust/src/widgetpkgui.rs
-msgid "License"
 msgstr ""
 
 #: rust/src/widgetpkgui.rs
@@ -6046,6 +6200,10 @@ msgid "Tap Done on the keyboard to install."
 msgstr ""
 
 #: rust/src/widgetpkgui.rs
+msgid "I trust this author, continue"
+msgstr ""
+
+#: rust/src/widgetpkgui.rs
 msgid "No license text was found in the repository."
 msgstr ""
 
@@ -6063,6 +6221,13 @@ msgstr ""
 
 #: rust/src/widgetpkgui.rs
 msgid "Remove"
+msgstr ""
+
+#. TRANSLATORS: in a widget's frame, in place of its body: the widget uses a call of Grimoire's that this
+#. version does not have (%s is the call's name, such as grimoire_kit.row).
+#: rust/src/widgetwasm.rs
+#, c-format
+msgid "This widget needs a newer Grimoire (%s)."
 msgstr ""
 
 #. TRANSLATORS: the studio's presets, each a whole look, on buttons.

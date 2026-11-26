@@ -6,7 +6,7 @@
 # the app itself. Nothing has made their pictures at this first look (each job is held back 1.5 s here): the card
 # shows the package glyph and the detail page its glyph and its screenshot frame, and each picture that comes draws
 # the page again and refreshes only its own place, as a part that fills in by itself: one ui refresh of 57 x 87 px
-# at the card's icon, and one of 721 x 840 px at the screenshot, and no other. Seen again, the pictures are in the
+# at the card's icon, and one of 724 x 843 px at the screenshot, and no other. Seen again, the pictures are in the
 # cache: the pages have them with no job.
 # The Store's status bar keeps the clock: a minute on (the script's clock, which stands still otherwise, so no
 # refresh but the ones counted here), the page is drawn again and only the clock's own place is refreshed, 116 x
@@ -28,7 +28,7 @@ expect display.presents is ui 104 29 116 20
 expect library.store.list.icons is 0
 waitfor library.store.list.icons is 1
 wait 200
-expect display.presents is ui 404 379 57 87
+expect display.presents is ui 404 381 57 87
 shot 01-catalog-icon
 waitbg
 tap library store.package.com.example.fixture
@@ -42,7 +42,7 @@ expect display.presents not -1
 waitfor library.store.shot.loaded is 1
 wait 200
 expect library.store.shot.coming is 0
-expect display.presents is ui 561 1314 721 840
+expect display.presents is ui 559 1310 724 843
 shot 03-detail
 waitbg
 # Back and in again: both pictures are there at once, and nothing is asked of the worker.

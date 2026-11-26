@@ -21,7 +21,7 @@ fn fresh_root(name: &str) -> std::path::PathBuf {
 fn installed(id: &str, capabilities: &[&str], module: &[u8]) -> WidgetRuntime {
     let m = manifest(id, "Test", capabilities, FIXED_400_300, module);
     widget_package_install(&m, module, "", 1860, 2480).unwrap();
-    WidgetRuntime::new(id).unwrap()
+    WidgetRuntime::new(id, (BODY.w, BODY.h)).unwrap()
 }
 
 /// A package as an earlier install left it, from before the manifest check asked for `editor:overlay`: installed,
@@ -31,7 +31,7 @@ fn installed_earlier(id: &str, capabilities: &[&str], module: &[u8]) -> WidgetRu
     widget_package_install(&m, module, "", 1860, 2480).unwrap();
     let yaml = std::path::PathBuf::from(format!("{}/package.yaml", widget_package_dir(id)));
     rewrite(&yaml, "capabilities: [editor:overlay, storage:widget-local]", &format!("capabilities: [{}]", capabilities.join(", ")));
-    WidgetRuntime::new(id).unwrap()
+    WidgetRuntime::new(id, (BODY.w, BODY.h)).unwrap()
 }
 
 /// A canvas with no two neighbours alike, so that any pixel a draw changes shows.
@@ -193,7 +193,7 @@ fn a_package_without_the_storage_capability_has_no_saved_state() {
     assert_eq!(std::fs::read(state_file("test.keeps")).unwrap(), b"hello");
     rt.draw(&mut c, BODY);
     assert_eq!(rt.status(), "hello");
-    let mut rt = WidgetRuntime::new("test.keeps").unwrap();
+    let mut rt = WidgetRuntime::new("test.keeps", (BODY.w, BODY.h)).unwrap();
     rt.draw(&mut c, BODY);
     assert_eq!(rt.status(), "hello");
     // Not declared: state_get gives nothing, state_set keeps nothing, in a draw and in a tap, and no file is made.
@@ -210,7 +210,7 @@ fn a_package_without_the_storage_capability_has_no_saved_state() {
     // A state file from a version of the package that declared the capability is not read, and stays as it is.
     std::fs::create_dir_all(state_file("test.forgets").parent().unwrap()).unwrap();
     std::fs::write(state_file("test.forgets"), b"kept").unwrap();
-    let mut rt = WidgetRuntime::new("test.forgets").unwrap();
+    let mut rt = WidgetRuntime::new("test.forgets", (BODY.w, BODY.h)).unwrap();
     rt.draw(&mut c, BODY);
     rt.tap(20, 20);
     rt.draw(&mut c, BODY);
@@ -323,7 +323,7 @@ fn a_module_that_loops_for_ever_stops_when_its_instructions_are_used_up() {
     starts.start = Some(forever(&[]));
     let m = manifest("test.loop.start", "Test", &BOTH, FIXED_400_300, &starts.bytes());
     widget_package_install(&m, &starts.bytes(), "", 1860, 2480).unwrap();
-    assert_eq!(WidgetRuntime::new("test.loop.start").err().as_deref(), Some("The widget could not start: all fuel consumed by WebAssembly"));
+    assert_eq!(WidgetRuntime::new("test.loop.start", (BODY.w, BODY.h)).err().as_deref(), Some("The widget could not start: all fuel consumed by WebAssembly"));
     // A function that calls itself for ever ends too: the interpreter's own call stack has a depth.
     let mut deep = Wasm::new(vec![0x10, FIRST_EXTRA as u8]);
     deep.extra = vec![vec![0x10, FIRST_EXTRA as u8]];
@@ -413,7 +413,7 @@ fn load_of(id: &str, memories: &[u32], tables: &[u32]) -> Option<String> {
     w.tables = tables.iter().map(|&entries| (entries, None)).collect();
     let m = manifest(id, "Test", &BOTH, FIXED_400_300, &w.bytes());
     widget_package_install(&m, &w.bytes(), "", 1860, 2480).unwrap();
-    WidgetRuntime::new(id).err()
+    WidgetRuntime::new(id, (BODY.w, BODY.h)).err()
 }
 
 #[test]
@@ -510,6 +510,42 @@ fn lengths_are_held_before_memory_is_read() {
     rt.draw(&mut c, BODY);
     assert_eq!(rt.error(), None);
     assert!(rt.status().starts_with("hello"));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// setting and state_get write into the module's memory no more than the room it gives and the memory holds: the
+// bytes behind a short room are as they were, at the memory's end what fits is written, and at the end or past it
+// nothing. The status line is the last 26 bytes of the module's one page: two rooms of 8 bytes, the counts the
+// eight calls returned (as digits) and the page's last two bytes.
+#[test]
+fn what_setting_and_state_get_write_keeps_to_the_room_given() {
+    let root = fresh_root("writes");
+    let end = 65536;
+    let (rooms, counts) = (end - 26, end - 10);
+    // (a call whose answer is kept at `at` as a digit)
+    let counted = |at: i32, call: Vec<Op>| [vec![Op::I(at)], call, vec![Op::I(48), Op::Add, Op::Store8]].concat();
+    let draw = [
+        call("state_set", &[WORD_AT, 15]),
+        counted(counts, call("state_get", &[rooms, 3])),
+        counted(counts + 1, call("state_get", &[end - 2, 10])),
+        counted(counts + 2, call("state_get", &[end, 10])),
+        counted(counts + 3, call("state_get", &[end + 1, 10])),
+        counted(counts + 4, call("setting", &[100, 1, rooms + 8, 3])),
+        counted(counts + 5, call("setting", &[100, 1, end - 1, 10])),
+        counted(counts + 6, call("setting", &[100, 1, end, 10])),
+        counted(counts + 7, call("setting", &[100, 1, i32::MAX, 10])),
+        status(rooms, 26),
+    ]
+    .concat();
+    let marks = [b'#'; 26];
+    let module = module(&draw, &[], &[(WORD_AT as u32, &b"the saved state"[..]), (100, &b"k"[..]), (rooms as u32, &marks[..])]);
+    let m = format!("{}settings:\n  - key: k\n    label: K\n    type: choice\n    default: value\n    choices: [value, other]\n", manifest("test.writes", "Test", &BOTH, FIXED_400_300, &module));
+    widget_package_install(&m, &module, "", 1860, 2480).unwrap();
+    let mut rt = WidgetRuntime::new("test.writes", (BODY.w, BODY.h)).unwrap();
+    let mut c = patterned(700, 600);
+    rt.draw(&mut c, BODY);
+    assert_eq!(rt.error(), None);
+    assert_eq!(rt.status(), "the#####val#####32003100tv");
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -707,6 +743,8 @@ fn the_hosts_work_for_a_pass_is_paid_from_the_calls_budget() {
         ("512 texts of 32 letters at heights 512 to 257, no letter twice at a height", repeat(512, &tall), letters),
         ("16 buttons 9,000 px wide with labels of 512 one-letter words", repeat(16, &code(&button(1, 0, 0, 9000, 300, 0, 1023, 0))), &words),
         ("16 texts of 1,024 bytes cut short to 300 px", repeat(16, &code(&text(0, 0, 300, 100, 0, 1024, 40, 0))), &words),
+        // (one call, the last thing its pass does: it is the charge itself that ends the pass, wasmhost::charge)
+        ("one text of 1,024 bytes 512 px high", code(&text(0, 0, 60_000, 600, 0, 1024, 512, 0)), &words),
     ];
     for (i, (name, draw, data)) in long.into_iter().enumerate() {
         let mut w = Wasm::new(draw);
@@ -794,7 +832,7 @@ fn a_loop_of_one_import_is_ended_by_the_calls_budget() {
     starts.start = Some(forever(&dropped("now", &[])));
     let m = manifest("test.forever.start", "Test", &BOTH, FIXED_400_300, &starts.bytes());
     widget_package_install(&m, &starts.bytes(), "", 1860, 2480).unwrap();
-    assert_eq!(WidgetRuntime::new("test.forever.start").err().as_deref(), Some("The widget could not start: all fuel consumed by WebAssembly"));
+    assert_eq!(WidgetRuntime::new("test.forever.start", (BODY.w, BODY.h)).err().as_deref(), Some("The widget could not start: all fuel consumed by WebAssembly"));
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -802,7 +840,7 @@ fn a_loop_of_one_import_is_ended_by_the_calls_budget() {
 /// pass after it, several times over (the keys change the screen: the modes, their menu, the unit converter).
 /// The largest fuel a call used.
 fn calculators_largest_call(body: Rect) -> u64 {
-    let mut rt = WidgetRuntime::new("com.grimoire.calculator").unwrap();
+    let mut rt = WidgetRuntime::new("com.grimoire.calculator", (BODY.w, BODY.h)).unwrap();
     let mut c = patterned(1860, 2480);
     rt.draw(&mut c, body);
     let mut most = rt.fuel_used();
@@ -866,7 +904,7 @@ fn a_widget_manifest_declares_the_overlay_capability() {
     let area = Rect { x: 0, y: 0, w: 1860, h: 2480 };
     assert!(h.spawn(widget_def("com.grimoire.calculator").unwrap(), area, Rect { x: 1700, y: 220, w: 128, h: 1700 }));
     let body = h.frames[0].body_rect();
-    let mut rt = WidgetRuntime::new("com.grimoire.calculator").unwrap();
+    let mut rt = WidgetRuntime::new("com.grimoire.calculator", (BODY.w, BODY.h)).unwrap();
     let before = patterned(1860, 2480);
     let mut c = before.clone();
     rt.draw(&mut c, body);
@@ -882,7 +920,7 @@ fn a_widget_manifest_declares_the_overlay_capability() {
     // With the capability to draw alone it installs and draws too, and keeps no state.
     widget_package_remove("com.grimoire.calculator", false).unwrap();
     widget_package_install(&with_address.replace(both, "capabilities: [editor:overlay]\n"), &module, "", 1860, 2480).unwrap();
-    let mut rt = WidgetRuntime::new("com.grimoire.calculator").unwrap();
+    let mut rt = WidgetRuntime::new("com.grimoire.calculator", (BODY.w, BODY.h)).unwrap();
     let mut c = before.clone();
     rt.draw(&mut c, body);
     assert!(rt.error().is_none() && inked(&c, body) > 10_000 && rt.hit_count() > 10);
@@ -896,7 +934,7 @@ const NOT_READ: &str = "The widget's artifact could not be read.";
 
 /// The error of a load of the package, None when it loads.
 fn load(id: &str) -> Option<String> {
-    WidgetRuntime::new(id).err()
+    WidgetRuntime::new(id, (BODY.w, BODY.h)).err()
 }
 
 /// A file of the data root with `from` replaced by `to`, as a hand with an editor would.
@@ -1020,12 +1058,67 @@ fn a_module_is_checked_again_before_each_load() {
     assert_eq!(load("test.deep"), None);
 
     // The check is the load's: a frame that has loaded its module draws without reading the file again.
-    let mut rt = WidgetRuntime::new("test.load").unwrap();
+    let mut rt = WidgetRuntime::new("test.load", (BODY.w, BODY.h)).unwrap();
     std::fs::write(&file, &other).unwrap();
     let mut c = patterned(700, 600);
     rt.draw(&mut c, BODY);
     rt.draw(&mut c, BODY);
     assert_eq!(rt.error(), None);
     assert_eq!(load("test.load").as_deref(), Some(NOT_READ), "the next load checks it");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A frame of the installed package, its module loaded as the editor loads it when the frame is first drawn.
+fn frame_of(id: &str) -> WidgetFrame {
+    widget_catalog_invalidate();
+    let mut f = WidgetFrame::new(widget_def(id).unwrap());
+    f.ensure_runtime();
+    f
+}
+
+#[test]
+fn the_text_a_widgets_frame_shows_is_at_most_256_bytes() {
+    let root = fresh_root("says");
+    // Installs a module that imports one more call from `grimoire`, of this name, and returns why it does not start.
+    let install = |id: &str, import: &str| {
+        let module = module_importing(&[], &[], &[], &[import]);
+        widget_package_install(&manifest(id, "Test", &BOTH, FIXED_400_300, &module), &module, "", 1860, 2480).unwrap();
+        WidgetRuntime::new(id, (BODY.w, BODY.h)).err().unwrap()
+    };
+    let whose = "Test v1.0.0 · Grimoire tests";
+    // An ordinary reason is shown whole.
+    let ordinary = install("test.says.ordinary", "later");
+    assert!(ordinary.starts_with("The widget could not start: ") && ordinary.contains("later"), "{ordinary}");
+    let f = frame_of("test.says.ordinary");
+    assert_eq!(f.error(), Some(ordinary.as_str()));
+    assert_eq!(f.says(), Some((ordinary.clone(), whose.to_string())));
+    // An import's name of 99,000 bytes, of characters of one, two, three and four bytes: the reason names it, and the
+    // frame shows the start of the reason, at most 256 bytes cut between two characters, drawn inside its body.
+    for (i, ch) in ["a", "é", "€", "𝄞"].into_iter().enumerate() {
+        let id = format!("test.says.long-{i}");
+        let name = ch.repeat(99_000 / ch.len());
+        let full = install(&id, &name);
+        assert!(full.starts_with("The widget could not start: ") && full.contains(&name), "{ch}");
+        let f = frame_of(&id);
+        let (reason, said) = f.says().unwrap();
+        let body = f.body_rect();
+        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+            ui_set_theme(theme);
+            let before = patterned(700, 600);
+            let mut c = before.clone();
+            grimoire::editor::draw_widget_says(&mut c, body, &reason, &said);
+            assert_eq!(changed_outside(&before, &c, body), 0, "{ch} in {theme:?}");
+            assert_ne!(changed_outside(&before, &c, RECT_EMPTY), 0, "{ch} in {theme:?}: the reason is drawn");
+        }
+        assert!(reason.len() <= MESSAGE_SHOWN_MAX && reason.len() > MESSAGE_SHOWN_MAX - ch.len(), "{ch}: {} bytes", reason.len());
+        assert!(full.starts_with(&reason), "{ch}");
+        assert_eq!(f.error(), Some(reason.as_str()), "{ch}");
+        assert_eq!(said, whose, "{ch}");
+    }
+    ui_set_theme(UiTheme::Gothic);
+    // What the frame draws is the same for a name of 1,000 bytes as for one of 99,000.
+    install("test.says.shorter", &"a".repeat(1000));
+    assert_eq!(frame_of("test.says.shorter").says(), frame_of("test.says.long-0").says());
+    widget_catalog_invalidate();
     let _ = std::fs::remove_dir_all(&root);
 }
