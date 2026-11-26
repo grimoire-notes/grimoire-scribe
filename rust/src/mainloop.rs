@@ -381,6 +381,11 @@ fn script_batch() -> bool {
 // Everything after the command line: the data root, the language, the display and input, the App,
 // and the loop (main.c's main from getenv("GRIMOIRE_ROOT") on). In the headless build the loop's
 // poll is sim_sdl::input_poll_app, which the App is handed for the runner's expect checks.
+/// The input events the main loop reads at most before its tick and its flush: a backlog of samples never holds
+/// a screen update back for longer, and between two ticks a widget's or an app's module is called for input at
+/// most this many times (docs/KIT.md, How a pass follows input).
+pub const INPUT_BATCH_MAX: u32 = 64;
+
 fn run() -> i32 {
     #[cfg(feature = "kindle")]
     const DEFAULT_ROOT: &str = "/mnt/us/grimoire";
@@ -484,7 +489,7 @@ fn run() -> i32 {
             loop {
                 event_timed(&mut app, &ev, &mut slow);
                 count += 1;
-                if !(app.running && count < 64 && (now_ms().wrapping_sub(batch_at) < 8 || script_batch())) {
+                if !(app.running && count < INPUT_BATCH_MAX && (now_ms().wrapping_sub(batch_at) < 8 || script_batch())) {
                     app.input_drained = false;
                     break;
                 }
