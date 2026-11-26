@@ -67,7 +67,7 @@ const D_FIT: i32 = 9;
 
 pub fn dispmenu_control_point(m:&DispMenu,name:&str)->Option<(f32,f32)> {
     if !m.open{return None;}
-    let id=match name {"size"=>D_STATUS,"done"=>D_DONE,"back"=>D_BACK,"fit"=>D_FIT,"newpage"=>D_NEWPAGE,"time12"=>D_TIME12,"sleep"=>D_SLEEP_MODE,"pin"=>D_PIN,"sleep_after"=>D_SLEEP_AFTER,"brightness"=>D_BRIGHT,"warmth"=>D_WARM,"auto"=>D_AUTO,"notebooks"=>D_NOTEBOOKS,_=>return None};
+    let id=match name {"size"=>D_STATUS,"done"=>D_DONE,"back"=>D_BACK,"fit"=>D_FIT,"newpage"=>D_NEWPAGE,"time12"=>D_TIME12,"sleep"=>D_SLEEP_MODE,"pin"=>D_PIN,"sleep_after"=>D_SLEEP_AFTER,"brightness"=>D_BRIGHT,"warmth"=>D_WARM,"auto"=>D_AUTO,"notebooks"=>D_NOTEBOOKS,"keep_on"=>D_KEEP_ON,_=>return None};
     m.hits.h.iter().find(|h|h.id==id).map(|h|((h.r.x+h.r.w/2)as f32,(h.r.y+h.r.h/2)as f32))
 }
 const D_NEWPAGE: i32 = 11;
@@ -75,6 +75,8 @@ const D_TIME12: i32 = 12;
 const D_BACK: i32 = 13;
 const D_AUTO: i32 = 14;
 const D_NOTEBOOKS: i32 = 16;
+/// The Sleep settings page's one row where the device's system owns sleep (Services, sleep).
+const D_KEEP_ON: i32 = 17;
 
 /// A dragged slider's row is drawn at most this often, as Pen feel's sliders are.
 const DRAG_DRAW_MS: u32 = 80;
@@ -302,6 +304,19 @@ pub fn dispmenu_draw(m: &mut DispMenu, a: &mut App) -> Rect {
                 on: a.settings.gesture_new_page,
             });
         }
+        DmPage::Sleep if !sys_services().sleep => {
+            // The device's system owns sleep: its own timer and its own sleep picture, so neither the
+            // sleep screen nor Sleep after acts. What does is keeping the screen on (Sleep after:
+            // never, which the platform applies while Grimoire is open), one switch.
+            rows.push(DRowKind::Check {
+                id: D_KEEP_ON,
+                // TRANSLATORS: the Sleep settings page's one row on a device whose system owns sleep (its
+                // own timer and sleep picture): on keeps the screen from sleeping while Grimoire is open
+                // (Sleep after: never), off leaves it to the device. About 1500 px at 44 px, beside its switch.
+                label: tr("Keep the screen on while Grimoire is open").to_string(),
+                on: a.settings.sleep_minutes == 0,
+            });
+        }
         DmPage::Sleep => {
             let label = if a.native_pin {
                 tr("Sleep screen: Kindle PIN (native unlock)")
@@ -509,6 +524,13 @@ pub fn dispmenu_pointer(m: &mut DispMenu, a: &mut App, phase: i32, x: f32, y: f3
         D_SLEEP_MODE => {
             a.settings.sleep_mode = (a.settings.sleep_mode + 1) % 4;
             settings_save(&a.settings);
+        }
+        D_KEEP_ON => {
+            // On is Sleep after: never; off gives back the default minutes, which the device's own
+            // timer then overrules. Saved and applied as the Sleep after slider's release is.
+            a.settings.sleep_minutes = if a.settings.sleep_minutes == 0 { SLEEP_MINUTES_DEFAULT } else { 0 };
+            settings_save(&a.settings);
+            app_apply_sleep_policy(a);
         }
         D_STATUS => status_cycle_size(a),
         D_AUTO => {

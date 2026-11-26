@@ -174,7 +174,19 @@ fn cached_light_actions_do_not_read_unknown_levels() {
     let mut a = App::default();
     a.w = 1860; a.h = 2480;
     settings_default(&mut a.settings);
+    if !light_available() {
+        // The host's build has no front light: the actions say so and step nothing (action_offered leaves them
+        // out of the lists there).
+        for action in [SHORTCUT_LIGHT_DOWN, SHORTCUT_LIGHT_UP, SHORTCUT_WARMTH_DOWN, SHORTCUT_WARMTH_UP] {
+            check!(!action_offered(action));
+            check!(app_global_action(&mut a, action, ActionSrc::Key));
+            check!(a.toast == "Front light controls are not available here." && light_cached() == (-1, -1));
+        }
+        check!(std::fs::remove_dir_all(root).is_ok());
+        return;
+    }
     for action in [SHORTCUT_LIGHT_DOWN, SHORTCUT_LIGHT_UP, SHORTCUT_WARMTH_DOWN, SHORTCUT_WARMTH_UP] {
+        check!(action_offered(action));
         check!(app_global_action(&mut a, action, ActionSrc::Key));
         check!(a.toast == "Light not ready." && light_cached() == (-1, -1));
     }

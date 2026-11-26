@@ -573,6 +573,14 @@ cycles four existing choices: page, pinned page, Kindle screensaver, KOReader wa
 3 already existed). The light and warmth actions use cached controls; no input handler waits
 for a device read. Theme, language and invert deliberately request a Full refresh.
 
+The Buttons and Gestures lists offer an action only where it acts (actions.rs, `action_offered`):
+`light-down` and `light-up` with a front light, `warmth-down` and `warmth-up` with a light that has a
+warmth, `bluetooth-controller` where Grimoire pairs controllers, `update-channel` where it looks after
+updates, and `sleep-screen`, `sleep` and `sleep-after` where the device sleeps when Grimoire asks
+(light.rs, `Services`). A Kindle offers all of them, the warmth's where its light has one. A line
+written by hand for one that is not offered does nothing, except the light's: they toast that there
+is no front light, or no warmth.
+
 ## Live view keys
 
 While a browser shows Live view and its page has focus, the keyboard of that computer runs

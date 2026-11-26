@@ -461,8 +461,13 @@ pub fn app_handed_over() -> bool {
 
 // The sleep screen to use. Hosted, KOReader keeps the Kindle UI paused for its whole session and
 // the launcher never wakes it, so the Kindle's own screensaver (mode 2) cannot show: the page
-// does instead.
+// does instead. Where the device's system owns sleep (Services, sleep) the sleep screen is not
+// Grimoire's to choose: the page, whatever settings.ini says, so a mode 2 left in it hands nothing
+// over to a system that takes nothing back.
 fn sleep_mode(a: &App) -> i32 {
+    if !sys_services().sleep {
+        return 0;
+    }
     if a.native_pin {
         return 2;
     }
@@ -2473,10 +2478,12 @@ fn app_tick_screens(a: &mut App, now: u32) {
         a.wake_redraw_at = 0;
         app_invalidate_all(a, RefreshMode::Ui); // the screen is already right: just push it again
     }
-    // Sleep after a while without input, the same way the power button does.
+    // Sleep after a while without input, the same way the power button does (where the device sleeps
+    // when asked: elsewhere its own timer decides, and "never" is the one setting that acts).
     if !a.asleep
         && !a.sleep_requested
         && a.settings.sleep_minutes > 0
+        && sys_services().sleep
         && now.wrapping_sub(a.last_input) as i32 >= a.settings.sleep_minutes.wrapping_mul(sleep_minute_ms())
         && !(a.scr == ScreenId::Editor && editor_busy(a))
         && a.scr != ScreenId::Share
@@ -3713,6 +3720,77 @@ mod tests {
         assert!(import > 250 && import <= 600_000 / NOTICE_EVERY_MS + 1, "{import}");
         NOTICE_CLOCK.with(|c| c.set(None));
     }
+
+    // ---- the actions a device does not offer (actions.rs, action_offered) ----
+
+    /// Where the device's system owns sleep the sleep screen is the page, whatever settings.ini says (a mode 2
+    /// left there would hand the screen to a system that takes nothing).
+    #[test]
+    fn the_sleep_screen_is_the_page_where_the_system_owns_sleep() {
+        let mut a = App::default();
+        test_services(Some(Services::without("sleep")));
+        for mode in 0..4 {
+            a.settings.sleep_mode = mode;
+            assert_eq!(sleep_mode(&a), 0, "stored {mode}");
+        }
+        a.native_pin = true;
+        assert_eq!(sleep_mode(&a), 0, "native PIN");
+        a.native_pin = false;
+        test_services(None);
+        for mode in [0, 1, 3] {
+            a.settings.sleep_mode = mode;
+            assert_eq!(sleep_mode(&a), mode, "stored {mode}");
+        }
+    }
+
+    /// A binding written by hand for an action the lists leave out: Sleep now, Sleep screen, Sleep after without
+    /// sleep, Bluetooth controller without pairing and Update channel without updates do nothing, and Sleep now
+    /// never marks Grimoire asleep. The light's say why: no front light, or no warmth to it.
+    #[test]
+    fn actions_not_offered_do_nothing_when_bound_by_hand() {
+        let root = std::env::temp_dir().join(format!("grimoire-not-offered-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        let mut a = notice_app();
+        settings_default(&mut a.settings);
+        a.settings.sleep_minutes = 5;
+        let before = a.settings;
+        test_services(Some(Services::without("sleep,pairing,updates")));
+        for action in [SHORTCUT_SLEEP, SHORTCUT_SLEEP_SCREEN, SHORTCUT_SLEEP_AFTER, SHORTCUT_UPDATE_CHANNEL] {
+            assert!(app_global_action(&mut a, action, ActionSrc::Key), "{}", action_label(action));
+        }
+        assert!(app_global_action(&mut a, SHORTCUT_BLUETOOTH_CONTROLLER, ActionSrc::Touch));
+        assert!(!a.asleep && !a.sleep_requested && !a.toast_visible);
+        assert_eq!(
+            (a.settings.sleep_mode, a.settings.sleep_minutes, a.settings.updates, a.settings.controller),
+            (before.sleep_mode, before.sleep_minutes, before.updates, before.controller)
+        );
+        // With the services they act, as on the Kindle.
+        test_services(None);
+        assert!(app_global_action(&mut a, SHORTCUT_SLEEP_SCREEN, ActionSrc::Key));
+        assert!(app_global_action(&mut a, SHORTCUT_SLEEP_AFTER, ActionSrc::Key));
+        assert!(app_global_action(&mut a, SHORTCUT_UPDATE_CHANNEL, ActionSrc::Key));
+        assert_eq!((a.settings.sleep_mode, a.settings.sleep_minutes, a.settings.updates), (1, 10, 1));
+
+        // The light: none at all (the host's build), else one without warmth, then one with.
+        if !light_available() {
+            for action in [SHORTCUT_LIGHT_UP, SHORTCUT_WARMTH_DOWN] {
+                assert!(app_global_action(&mut a, action, ActionSrc::Key));
+                assert_eq!(a.toast.as_str(), "Front light controls are not available here.");
+            }
+        } else {
+            test_light_cached(10, -1);
+            assert!(app_global_action(&mut a, SHORTCUT_WARMTH_UP, ActionSrc::Key));
+            assert_eq!(a.toast.as_str(), "This Kindle has no warmth control.");
+            assert_eq!(light_cached(), (10, -1));
+            assert!(app_global_action(&mut a, SHORTCUT_LIGHT_UP, ActionSrc::Key));
+            assert_eq!(a.toast.as_str(), "Light 11 of 24");
+            test_light_cached(-1, -1);
+            assert!(app_global_action(&mut a, SHORTCUT_WARMTH_UP, ActionSrc::Key));
+            assert_eq!(a.toast.as_str(), "Light not ready.");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
 /// The existing screen lifecycle applied after a language or theme change.
 pub fn app_relayout(a: &mut App) {
@@ -3760,6 +3838,14 @@ pub fn app_toggle_controller(a: &mut App) {
 /// Settings actions shared by the editor and Library. Callers apply their modal/stroke guards.
 pub fn app_global_action(a: &mut App, action: i32, src: ActionSrc) -> bool {
     if !(SHORTCUT_INVERT..=SHORTCUT_UPDATE_CHANNEL).contains(&action) || action_sources(action) & src.mask() == 0 { return false; }
+    let light_step = matches!(action, SHORTCUT_LIGHT_DOWN | SHORTCUT_LIGHT_UP | SHORTCUT_WARMTH_DOWN | SHORTCUT_WARMTH_UP);
+    if !light_step && !action_offered(action) {
+        // A binding written by hand (shortcuts.ini, gestures.ini) for an action the lists leave out here
+        // (actions.rs, action_offered): it does nothing (the light's say why, below). Sleep now would mark
+        // Grimoire asleep on a screen that stays awake, with pen and touch set aside until the system
+        // sleeps and wakes.
+        return true;
+    }
     let mut msg = String::new();
     let mut relayout = false;
     match action {
@@ -3771,7 +3857,19 @@ pub fn app_global_action(a: &mut App, action: i32, src: ActionSrc) -> bool {
         }
         SHORTCUT_LIGHT_DOWN | SHORTCUT_LIGHT_UP | SHORTCUT_WARMTH_DOWN | SHORTCUT_WARMTH_UP => {
             let warm = action == SHORTCUT_WARMTH_DOWN || action == SHORTCUT_WARMTH_UP;
+            if !light_available() {
+                // TRANSLATORS: also a toast, when a light or warmth action bound by hand is used on a
+                // device without a front light; 1700 px at 44 px.
+                app_toast(a, tr("Front light controls are not available here."), 2000);
+                return true;
+            }
             let (light, warmth) = light_cached();
+            if warm && light >= 0 && warmth < 0 {
+                // TRANSLATORS: also a toast, when a warmth action bound by hand is used on a front light
+                // without warmth; 1700 px at 44 px.
+                app_toast(a, tr("This Kindle has no warmth control."), 2000);
+                return true;
+            }
             let level = if warm { warmth } else { light };
             if level < 0 {
                 // TRANSLATORS: light action before its cached level is known; toast, 1700 px at 44 px.

@@ -24,8 +24,9 @@ pub const LIGHT_MAX: i32 = 24;
 
 /// What of the device Grimoire looks after itself on a platform (`sys_services`). On the Kindle all
 /// of it. A platform whose system joins networks, pairs controllers or installs apps itself, that is
-/// not KOReader's host, or that hands over positions already calibrated says no to that one, and
-/// Settings leaves its row or button out.
+/// not KOReader's host, that hands over positions already calibrated, or that owns sleep says no to
+/// that one, and Settings leaves its row or button out (and the Buttons and Gestures lists the actions
+/// that need it: actions.rs, `action_offered`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Services {
     /// the Wi-Fi sheet: the radio and the device's saved networks
@@ -38,10 +39,16 @@ pub struct Services {
     pub koreader: bool,
     /// Calibrate pen and touch
     pub calibration: bool,
+    /// Sleep: the device sleeps when Grimoire asks (`sys_request_sleep`), shows the sleep screen
+    /// Grimoire draws while it sleeps, and the Sleep after timer asks it to. Without it the Sleep
+    /// settings page has only "Keep the screen on while Grimoire is open", the sleep screen is the
+    /// page whatever settings.ini says, and the timer asks nothing.
+    pub sleep: bool,
 }
 
 impl Services {
-    pub const ALL: Services = Services { wifi: true, pairing: true, updates: true, koreader: true, calibration: true };
+    pub const ALL: Services =
+        Services { wifi: true, pairing: true, updates: true, koreader: true, calibration: true, sleep: true };
 
     /// ALL but the ones named in `off`: a list of the fields' names with commas between them
     /// ("wifi,updates"); a name that is none of them is passed over.
@@ -54,6 +61,7 @@ impl Services {
                 "updates" => s.updates = false,
                 "koreader" => s.koreader = false,
                 "calibration" => s.calibration = false,
+                "sleep" => s.sleep = false,
                 _ => {}
             }
         }
@@ -88,6 +96,12 @@ pub fn light_get(intensity: &mut i32, warmth: &mut i32) {
 pub fn light_cached() -> (i32, i32) {
     let (intensity, warmth, _) = LIGHT_CACHE.get();
     (intensity, warmth)
+}
+/// Unit tests: the levels `light_cached` answers on this thread, as a read would leave them (a warmth
+/// of -1 with a level read: a light without warmth, which no set can leave).
+#[cfg(test)]
+pub fn test_light_cached(intensity: i32, warmth: i32) {
+    LIGHT_CACHE.set((intensity, warmth, LIGHT_CACHE.get().2));
 }
 #[inline]
 pub fn light_set_intensity(level: i32) {
@@ -200,7 +214,24 @@ pub fn sys_wall_clock() -> i64 {
 /// Which of the device's services Grimoire looks after itself here (`Services`).
 #[inline]
 pub fn sys_services() -> Services {
+    #[cfg(test)]
+    if let Some(s) = TEST_SERVICES.get() {
+        return s;
+    }
     active().sys_services()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A unit test's answer in place of the platform's, on that test's thread alone (`test_services`).
+    static TEST_SERVICES: Cell<Option<Services>> = const { Cell::new(None) };
+}
+
+/// Unit tests: `sys_services` answers `s` on this thread until it is called again with None (the
+/// platform's answer again). Tests run side by side, so an environment variable would reach the others.
+#[cfg(test)]
+pub fn test_services(s: Option<Services>) {
+    TEST_SERVICES.set(s);
 }
 /// What the device is called in Grimoire's text: "Kindle" on the Kindle, as the English and every
 /// translation say. Another name is put in its place wherever a text is looked up (i18n.rs, the
