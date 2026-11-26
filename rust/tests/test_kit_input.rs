@@ -630,3 +630,121 @@ fn an_apps_elapsed_time_is_counted_on_the_apps_clock() {
     canvas_free(&mut a.screen);
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// A drawing pass that input brings when a redraw request's time has come answers the request too: one pass, not
+/// two, in that tick; a request whose time has not come stands through it.
+#[cfg(feature = "sim")]
+#[test]
+fn an_input_pass_drawn_when_a_request_is_due_answers_it() {
+    let root = fresh_root("dueinput");
+    let id = "test.ki.dueinput";
+    // (each pass counts itself in the status line and asks to be drawn again 100 ms later; app_key is there, empty)
+    let count = seq(&[bump(R_AT, i(1)), load(R_AT), digits_of(SAID_AT, 6), host_status(SAID_AT, 6)]);
+    let mut k = Kit::new(Host::App, Vec::new());
+    k.imports.push(("grimoire", "request_redraw", "i", 'v'));
+    k.code[0] = seq(&[count, extra(&k, 0, &[100])]);
+    k.code.extend([Vec::new(), Vec::new()]);
+    k.data = vec![(SAID_AT as u32, b"000000".to_vec())];
+    let module = k.bytes();
+    app_package_install(&app_manifest(id, "Due", &[], false, &module), &module, None, "", SCREEN.0, SCREEN.1).unwrap();
+    let mut a = App { w: SCREEN.0, h: SCREEN.1, dpi: 300.0, ..Default::default() };
+    assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+    grimoire::library::library_init(&mut a);
+    sim_clock_set(Some(10_000));
+    assert!(grimoire::apphost::apphost_launch(&mut a, id));
+    assert_eq!(a.app_view.status(), "000001");
+    // a key 50 ms later: its pass, and the request (due at 10,100) stands
+    sim_clock_set(Some(10_050));
+    grimoire::apphost::apphost_key(&mut a, 30, 0, true);
+    grimoire::apphost::apphost_tick(&mut a, 10_050);
+    assert_eq!(a.app_view.status(), "000002");
+    // a key when the request is due: one pass answers both
+    sim_clock_set(Some(10_150));
+    grimoire::apphost::apphost_key(&mut a, 30, 0, false);
+    grimoire::apphost::apphost_tick(&mut a, 10_150);
+    assert_eq!(a.app_view.status(), "000003", "one pass for the key and the request");
+    // and the request that pass asked for comes 100 ms later, once
+    sim_clock_set(Some(10_249));
+    grimoire::apphost::apphost_tick(&mut a, 10_249);
+    assert_eq!(a.app_view.status(), "000003");
+    sim_clock_set(Some(10_250));
+    grimoire::apphost::apphost_tick(&mut a, 10_250);
+    assert_eq!(a.app_view.status(), "000004");
+    sim_clock_set(None);
+    grimoire::apphost::apphost_close(&mut a);
+    grimoire::library::library_free(&mut a);
+    canvas_free(&mut a.screen);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// In an open app, a contact the panel calls palm-sized, or one the platform cancels (a gesture took it, the pen came),
+/// is no TAP; app_pointer is still called for each of its phases, and its pass drawn.
+#[test]
+fn an_apps_palm_and_its_cancelled_contact_are_no_tap() {
+    let root = fresh_root("palm");
+    let id = "test.ki.palm";
+    let module = input(Host::App, true, Some(true)).bytes();
+    app_package_install(&app_manifest(id, "Palm", &[], false, &module), &module, None, "", SCREEN.0, SCREEN.1).unwrap();
+    let mut a = App { w: SCREEN.0, h: SCREEN.1, dpi: 300.0, ..Default::default() };
+    assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+    grimoire::library::library_init(&mut a);
+    assert!(grimoire::apphost::apphost_launch(&mut a, id));
+    let touch = |a: &mut App, type_: InType, x: f32, y: f32, value: i32| {
+        assert!(grimoire::apphost::apphost_event(a, &InEvent { type_, x, y, value, t_ms: now_ms(), ..Default::default() }));
+    };
+    // a palm: its down and its lift
+    touch(&mut a, InType::TouchDown, 600.0, 1000.0, TOUCH_F_BROAD);
+    touch(&mut a, InType::TouchUp, 600.0, 1000.0, TOUCH_F_BROAD);
+    grimoire::apphost::apphost_tick(&mut a, now_ms());
+    assert_eq!(a.app_view.status(), "p002 n002 t00 r00 s00 m00 e00 c00 q000 k00 a00 g00 h0", "no TAP for a palm");
+    // a finger the platform cancels: the off-screen lift
+    touch(&mut a, InType::TouchDown, 600.0, 1000.0, 0);
+    touch(&mut a, InType::TouchUp, -10000.0, -10000.0, TOUCH_F_CANCEL);
+    grimoire::apphost::apphost_tick(&mut a, now_ms());
+    assert_eq!(a.app_view.status(), "p003 n004 t00 r00 s00 m00 e00 c00 q000 k00 a00 g00 h0", "no TAP for a cancelled contact");
+    // and a finger that lifts where it came down: a TAP
+    touch(&mut a, InType::TouchDown, 600.0, 1000.0, 0);
+    touch(&mut a, InType::TouchUp, 600.0, 1000.0, 0);
+    grimoire::apphost::apphost_tick(&mut a, now_ms());
+    assert_eq!(a.app_view.status(), "p004 n006 t01 r00 s00 m00 e00 c00 q000 k00 a00 g00 h0");
+    grimoire::apphost::apphost_close(&mut a);
+    grimoire::library::library_free(&mut a);
+    canvas_free(&mut a.screen);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A widget's redraw request stands across its other calls, as an app's does: a tap (`widget_tap`) or an event does not
+/// drop the one a pass asked for, and a later call's later request does not put it off (the soonest stands).
+#[test]
+fn a_widgets_redraw_request_stands_across_its_other_calls_the_soonest_kept() {
+    let root = fresh_root("request");
+    for events in [false, true] {
+        let id = format!("test.ki.request.{events}");
+        let mut k = Kit::new(Host::Widget, Vec::new());
+        k.imports.push(("grimoire", "request_redraw", "i", 'v'));
+        k.code[0] = extra(&k, 0, &[1000]);
+        let asks_later = extra(&k, 0, &[5000]);
+        k = k.touch(asks_later);
+        if events {
+            k.event = Some(seq(&[extra(&k, 0, &[5000]), i(0)]));
+        }
+        let module = k.bytes();
+        widget_package_install(&widget_manifest(&id, "Request", &WIDGET_BOTH, 400, 300, &module), &module, "", SCREEN.0, SCREEN.1).unwrap();
+        let mut rt = WidgetRuntime::new(&id, (WIDGET_BODY.w, WIDGET_BODY.h)).unwrap();
+        widget_package_remove(&id, false).unwrap();
+        let mut c = Canvas::default();
+        assert_eq!(canvas_init(&mut c, SCREEN.0, SCREEN.1), 0);
+        let t = now_ms();
+        rt.draw(&mut c, WIDGET_BODY);
+        // (a tap, or a TAP event, that asks for a pass 5 s later)
+        if events {
+            assert_eq!(rt.event(&KitEvent::new(EV_TAP, -1, 0, 0, 0)), Some(false));
+        } else {
+            assert!(rt.tap(5, 5));
+        }
+        assert!(!rt.redraw_due(t.wrapping_add(900)), "events {events}: not before its time");
+        assert!(rt.redraw_due(t.wrapping_add(1000 + 500)), "events {events}: the pass's request stands, the soonest");
+        canvas_free(&mut c);
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
