@@ -802,12 +802,14 @@ pub fn when(cond: Vec<u8>, body: Vec<u8>) -> Vec<u8> {
     seq(&[cond, vec![0x04, 0x40], body, vec![0x0b]])
 }
 
-/// i32.sub, i32.mul, i32.and, i32.eq, i32.lt_u
+/// i32.sub, i32.mul, i32.and, i32.eq, i32.lt_u, i32.ge_u, i32.div_u
 pub const SUB: u8 = 0x6b;
 pub const MUL: u8 = 0x6c;
 pub const AND: u8 = 0x71;
 pub const EQ: u8 = 0x46;
 pub const LT_U: u8 = 0x49;
+pub const GE_U: u8 = 0x4f;
+pub const DIV_U: u8 = 0x6e;
 
 /// The status line's words as laid out at SAYS_AT, its digits all 0: `p000 n000 t00 ...`.
 pub fn says_template() -> String {
@@ -928,13 +930,17 @@ pub fn input_square(on: Host, side: i32, gray: i32, ask: Option<i32>) -> Kit {
 /// pass changes it: a pass `ask` ms after each while it has drawn fewer than `until` passes (after every one, given
 /// None).
 pub fn changing_square(on: Host, side: i32, ask: i32, until: Option<i32>) -> Kit {
-    let gray = seq(&[load(value(V_PASSES)), i(1), vec![AND], i(64), vec![MUL], i(96), vec![ADD]]);
-    square(on, side, gray, Some((ask, until)))
+    square(on, side, gray_of(load(value(V_PASSES))), Some((ask, until)))
+}
+
+/// The code that leaves a square's gray from what `count` leaves: 160 when it is odd, 96 when it is even.
+pub fn gray_of(count: Vec<u8>) -> Vec<u8> {
+    seq(&[count, i(1), vec![AND], i(64), vec![MUL], i(96), vec![ADD]])
 }
 
 /// The module of `input_square` with the code that leaves its square's gray, and the request it makes in each pass
 /// (its delay, and the passes it stops asking at).
-fn square(on: Host, side: i32, gray: Vec<u8>, ask: Option<(i32, Option<i32>)>) -> Kit {
+pub fn square(on: Host, side: i32, gray: Vec<u8>, ask: Option<(i32, Option<i32>)>) -> Kit {
     let mut k = input(on, true, Some(true));
     if ask.is_some() {
         k.imports.push(("grimoire", "request_redraw", "i", 'v'));

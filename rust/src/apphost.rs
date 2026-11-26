@@ -481,8 +481,8 @@ pub struct AppRun {
     /// what the passes' fast refreshes covered once no contact is down, and when the last of them was owed: owed one
     /// Clean refresh after a pause (apphost_wear_tick)
     worn: Option<(Rect, u32)>,
-    /// when the app last had a pass it asked for, or last sent a fast refresh, by the app's clock: a pass it asks for
-    /// within the pause of this is back to back (apphost_tick)
+    /// when a pass the app asked for last refreshed something, or the app last sent a fast refresh, by the app's clock:
+    /// a pass it asks for within the pause of this is back to back (apphost_tick)
     quick_at: Option<u32>,
 }
 
@@ -831,8 +831,8 @@ fn apphost_pause(a: &App) -> u32 {
 /// What an app's passes refreshed fast (input's while a contact was down, and those it asked for back to back) is
 /// cleaned as the editor cleans a notebook's (editor.rs du_wear_tick; the Library has no cleaning of its own): a fast
 /// refresh shows grays dithered to black and white, and a later refresh drives only the pixels that change. Once no
-/// contact is down and the last pass is drawn, after the pause (apphost_pause, since the lift or the last such pass),
-/// one Clean refresh of all they covered.
+/// contact is down and the last pass is drawn, after the pause (apphost_pause, since the lift, the last fast pass, or
+/// the last back-to-back pass that changed nothing, apphost_tick), one Clean refresh of all they covered.
 fn apphost_wear_tick(a: &mut App, now: u32) {
     let Some((worn, at)) = a.app_view.worn else { return };
     if a.app_view.input.pointer.is_down() || a.app_view.input.owed() || a.pen_action_down || !a.input_drained {
@@ -897,23 +897,33 @@ pub fn apphost_tick(a: &mut App, now: u32) {
         }
     }
     // A request that is due is taken, and the app is drawn once for it: only the part of the screen the pass changed
-    // is refreshed (nothing, when it changed nothing). After a rest (nothing owed a clean, and no pass asked for and no
-    // fast refresh within the pause, apphost_pause, counted across the clock's wrap) it is refreshed as the UI is, at
-    // full depth, and owes nothing: a clock's tick. Back to back it is refreshed fast, and what that covered joins what
-    // input passes refreshed fast, owed the same clean once the passes stop: an animation's. A pass that wants another
-    // asks again, and gets it no sooner than APP_REDRAW_MIN_MS later; while no request is due nothing is drawn and
-    // nothing is refreshed.
+    // is refreshed. It is back to back when it comes within the pause (apphost_pause, counted across the clock's wrap)
+    // of the app's last requested pass that refreshed something, or of its last fast refresh (`quick_at`). Not back to
+    // back, with nothing owed a clean, it is refreshed as the UI is, at full depth, and owes nothing: a clock's tick, a
+    // poll that brought a change. Otherwise it is refreshed fast, and what that covered joins what input passes
+    // refreshed fast, owed the same clean: an animation's frames. A pass that changed nothing refreshes nothing and
+    // does not move `quick_at`; back to back, it holds an owed clean back as a frame that changed would, so a frame
+    // that does not change in the middle of an animation does not let the clean out. A pass that wants another asks
+    // again, and gets it no sooner than APP_REDRAW_MIN_MS later; while no request is due nothing is drawn and nothing
+    // is refreshed.
     if a.app_view.runtime.as_mut().is_some_and(|r| r.redraw_taken(now)) {
         let pause = apphost_pause(a);
         let v = &a.app_view;
-        let rested = v.worn.is_none() && !v.input.fast_refreshed() && v.quick_at.map_or(true, |at| now.wrapping_sub(at) >= pause);
+        let back_to_back = v.quick_at.is_some_and(|at| now.wrapping_sub(at) < pause);
+        let rested = v.worn.is_none() && !v.input.fast_refreshed() && !back_to_back;
         let mode = if rested { RefreshMode::Ui } else { RefreshMode::Fast };
         let changed = apphost_pass(a, mode);
         a.app_view.refreshed(changed, mode, now);
-        a.app_view.quick_at = Some(now);
+        if !rect_is_empty(changed) {
+            a.app_view.quick_at = Some(now);
+        } else if back_to_back {
+            if let Some((w, _)) = a.app_view.worn {
+                a.app_view.worn = Some((w, now));
+            }
+        }
     }
-    // (once no contact is down, what the fast refreshes covered is owed one Clean refresh, after a pause from the last
-    // of them: an app that asks for passes back to back is cleaned once it has stopped asking for that long)
+    // (once no contact is down, what the fast refreshes covered is owed one Clean refresh, the pause after the last
+    // fast refresh or the last back-to-back pass that held it back: an animation is cleaned once, after it stops)
     if let Some(r) = a.app_view.input.take_worn() {
         let was = a.app_view.worn.map_or(RECT_EMPTY, |(w, _)| w);
         a.app_view.worn = Some((rect_union(was, r), now));
