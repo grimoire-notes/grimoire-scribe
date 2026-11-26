@@ -1403,6 +1403,13 @@ fn fetch_args(url: &str) -> Vec<String> {
     ["-q", "-fsSL", "-g", "--proto", "=https", "--proto-redir", "=https", "--max-redirs", &redirects, url].map(String::from).to_vec()
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Tests: the program this thread's fetches start in curl's place and its first arguments (empty: curl
+    /// itself, found on PATH). PATH stays as it is, so a test that starts the real curl meanwhile starts curl.
+    static FETCH_STAND_IN: RefCell<Vec<std::ffi::CString>> = const { RefCell::new(Vec::new()) };
+}
+
 impl WidgetFetch {
     pub fn start(url: &str, cap: usize) -> Result<WidgetFetch, String> {
         if !fetch_address_ok(url) {
@@ -1413,8 +1420,12 @@ impl WidgetFetch {
         let Ok(c_args) = fetch_args(url).into_iter().map(std::ffi::CString::new).collect::<Result<Vec<_>, _>>() else {
             return Err("That address has a NUL byte.".into());
         };
-        let mut argv: Vec<*const libc::c_char> = Vec::with_capacity(c_args.len() + 2);
-        argv.push(curl.as_ptr());
+        #[cfg(test)]
+        let lead = FETCH_STAND_IN.with_borrow(|stand_in| if stand_in.is_empty() { vec![curl] } else { stand_in.clone() });
+        #[cfg(not(test))]
+        let lead = [curl];
+        let mut argv: Vec<*const libc::c_char> = Vec::with_capacity(lead.len() + c_args.len() + 1);
+        argv.extend(lead.iter().map(|arg| arg.as_ptr()));
         argv.extend(c_args.iter().map(|arg| arg.as_ptr()));
         argv.push(std::ptr::null());
         // The fetcher's input is /dev/null, as a worker's is (sandbox.rs): Grimoire's own input can be
@@ -1477,7 +1488,7 @@ impl WidgetFetch {
                 }
                 // curl with fetch_args' list. HTTPS is checked by start and held by the list for every
                 // redirect (and the artifact's SHA-256 is checked by the install).
-                libc::execvp(curl.as_ptr(), argv.as_ptr());
+                libc::execvp(lead[0].as_ptr(), argv.as_ptr());
                 libc::_exit(127);
             }
         }
@@ -2009,28 +2020,18 @@ spec:
         assert_eq!(FETCH_REDIRECTS_MAX, 5);
     }
 
-    // PATH is the process's: one test at a time puts its stand-in curl first on it.
-    static STAND_IN_CURL: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    /// Runs `start` with a stand-in named curl, the shell script `script`, first on PATH. The stand-in's
-    /// folder is returned with what `start` gave, for the test to remove.
-    fn with_stand_in_curl<T>(name: &str, script: &str, start: impl FnOnce() -> T) -> (T, std::path::PathBuf) {
-        use std::os::unix::fs::PermissionsExt;
-        let _one = STAND_IN_CURL.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("grimoire-widget-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let stand_in = dir.join("curl");
-        std::fs::write(&stand_in, script).unwrap();
-        std::fs::set_permissions(&stand_in, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let path = std::env::var_os("PATH").unwrap_or_default();
-        let mut first = std::ffi::OsString::from(&dir);
-        first.push(":");
-        first.push(&path);
-        std::env::set_var("PATH", &first);
+    /// Runs `start` with `sh -c script` in curl's place (FETCH_STAND_IN), given curl's arguments as the
+    /// script's, or with None a program that is not there, as on a device without curl. No file is
+    /// written for the stand-in and PATH is not changed.
+    fn with_stand_in_curl<T>(script: Option<&str>, start: impl FnOnce() -> T) -> T {
+        let stand_in = match script {
+            Some(script) => vec!["sh", "-c", script, "curl"],
+            None => vec!["/nonexistent/curl"],
+        };
+        FETCH_STAND_IN.set(stand_in.into_iter().map(|arg| std::ffi::CString::new(arg).unwrap()).collect());
         let started = start();
-        std::env::set_var("PATH", &path);
-        (started, dir)
+        FETCH_STAND_IN.set(Vec::new());
+        started
     }
 
     /// The fetch's answer, ticked for until it comes.
@@ -2044,23 +2045,22 @@ spec:
         }
     }
 
-    // The fetcher starts curl with that list: a stand-in named curl, first on PATH for the start,
-    // answers with the arguments it was given, one a line.
+    // The fetcher starts curl with that list: a stand-in started in curl's place answers with the
+    // arguments it was given, one a line.
     #[test]
     fn the_fetcher_starts_curl_with_that_list() {
         let url = "https://example.org/w/package.yaml?a=[1-3]&b={x,y}";
-        let script = "#!/bin/sh\nfor arg in \"$@\"; do printf '%s\\n' \"$arg\"; done\n";
-        let (started, dir) = with_stand_in_curl("fetch", script, || WidgetFetch::start(url, 4096));
+        let script = "for arg in \"$@\"; do printf '%s\\n' \"$arg\"; done";
+        let started = with_stand_in_curl(Some(script), || WidgetFetch::start(url, 4096));
         let answer = String::from_utf8(fetch_answer(started).unwrap()).unwrap();
         assert_eq!(answer.lines().collect::<Vec<_>>(), fetch_args(url));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // The fetcher's input is /dev/null, not Grimoire's own: a stand-in curl that answers with its input,
     // started while the test's own input has a line waiting, answers nothing.
     #[test]
     fn the_fetcher_reads_nothing_of_grimoires_input() {
-        let (started, dir) = with_stand_in_curl("fetch-input", "#!/bin/sh\ncat\n", || {
+        let started = with_stand_in_curl(Some("cat"), || {
             // SAFETY: descriptors this test makes; fd 0 is a pipe holding the line for the start only,
             // then the one it was again.
             unsafe {
@@ -2083,7 +2083,6 @@ spec:
             }
         });
         assert_eq!(fetch_answer(started), Ok(Vec::new()));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // A failed fetch's text is looked up, so the device's name stands in for "Kindle" where a platform
@@ -2092,20 +2091,15 @@ spec:
     #[test]
     fn a_failed_fetch_says_why_in_the_devices_words() {
         let url = "https://example.org/package.yaml";
-        let failed = |name: &str, script: &str| {
-            let (started, dir) = with_stand_in_curl(name, script, || WidgetFetch::start(url, 4096));
-            let answer = fetch_answer(started);
-            let _ = std::fs::remove_dir_all(&dir);
-            answer.unwrap_err()
-        };
-        assert_eq!(failed("fetch-127", "#!/bin/sh\nexit 127\n"), "The Kindle has no curl to fetch packages with. (curl exited 127).");
-        assert_eq!(failed("fetch-28", "#!/bin/sh\nexit 28\n"), "The repository did not answer in time. (curl exited 28).");
+        let failed = |script: Option<&str>| fetch_answer(with_stand_in_curl(script, || WidgetFetch::start(url, 4096))).unwrap_err();
+        assert_eq!(failed(None), "The Kindle has no curl to fetch packages with. (curl exited 127).");
+        assert_eq!(failed(Some("exit 28")), "The repository did not answer in time. (curl exited 28).");
         assert_eq!(
-            failed("fetch-22", "#!/bin/sh\necho 'curl: (22) The requested URL returned error: 404' >&2\nexit 22\n"),
+            failed(Some("echo 'curl: (22) The requested URL returned error: 404' >&2; exit 22")),
             "Could not fetch the repository (curl exited 22): curl: (22) The requested URL returned error: 404"
         );
         crate::i18n::i18n_set_device_name("Slate");
-        let named = failed("fetch-127-named", "#!/bin/sh\nexit 127\n");
+        let named = failed(None);
         crate::i18n::i18n_set_device_name("Kindle");
         assert_eq!(named, "The Slate has no curl to fetch packages with. (curl exited 127).");
     }
