@@ -8552,7 +8552,6 @@ fn widget_input_tick(a: &mut App, now: u32) {
         widget_events(f, &events);
         if f.layout.minimized {
             f.input.answered();
-            let _ = f.input.take_worn();
             continue;
         }
         if let Some(mode) = f.input.pass_now(turn, fast_busy) {
