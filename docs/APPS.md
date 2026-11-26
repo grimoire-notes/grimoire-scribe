@@ -329,9 +329,13 @@ asks the host to run `app_stop`, save and return Home. `toast` shows a short Gri
 
 One redraw request stands at a time: the soonest asked for, whichever call of the module asked (a
 drawing pass, a touch, a key, an event), so a later call does not put an earlier one off. When its time has
-come, the app is drawn once and the whole screen refreshed once, and the request is gone (a pass drawn
-then for another reason answers it): a pass that wants another asks again. An app that asks in every pass is so drawn, and the screen
-refreshed, at most ten times a second; an app that asks for nothing is drawn only when it is
+come, the app is drawn once, and the request is gone (a pass drawn then for another reason answers it): a
+pass that wants another asks again. Only the part of the screen the pass changed is refreshed, fast (nothing,
+when it changed nothing), and what those fast refreshes covered gets one full-depth refresh once the app has
+asked for no pass for the pause a touch's cleaning waits (150 ms, 1.5 s with the pen near): passes that come
+closer together than that, an animation, are cleaned once, after the last. An app that asks in every pass
+is so drawn, and the screen refreshed, at most ten times a second; an app that asks for nothing is drawn
+only when it is
 touched, a key is pressed or Grimoire itself redraws. A refresh of an e-ink panel takes a few
 hundred milliseconds and its share of the battery: ask for the next pass when there is something
 new to show (the next minute for a clock, the next poll for a request in flight).

@@ -27,7 +27,8 @@
   to back (Esc) or home acts while an app is open, and leaves it. On the Kindle, as for every key, Settings >
   Shortcuts > Enable shortcuts must be on. A tap on an app draws it once (it was twice), a
   drag draws it at most every 120 ms, and only the part of the screen that changed is refreshed, in an app and in a
-  widget's frame alike (a tap refreshed the whole screen, or the whole frame). A held tap on a widget is still a tap.
+  widget's frame alike (a tap refreshed the whole screen, or the whole frame); so is a pass an app asks for itself,
+  an animation's, whose grays are cleaned once it pauses (#307). A held tap on a widget is still a tap.
   Packages made with the package kit can also tell a tap from a long press and a drag, and are told when their
   settings change. docs/KIT.md says how.
 
