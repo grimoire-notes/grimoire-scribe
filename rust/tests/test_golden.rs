@@ -185,7 +185,7 @@ const K_DARKER_PAPERS: [(&str, u32); 34] = [
     ("paper 6", 0xc6039fa5),
     ("paper 7", 0x3fa9a116),
     ("paper 10", 0x6acef115),
-    ("paper 11", 0x383ab3e6),
+    ("paper 11", 0x4f0073dd),
     ("paper 12", 0x1fbc57e1),
     ("medium rule, pencil", 0x87e6fc8f),
     ("medium rule, pencil, paper", 0xb72d0f4f),

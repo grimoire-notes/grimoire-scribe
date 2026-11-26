@@ -642,30 +642,36 @@ fn dots(c: &mut Canvas, dpi: f32) {
     }
 }
 
-// 5 mm graph paper, every fifth line darker and heavier.
+// 5 mm graph paper, every fifth line darker and heavier. The other lines are drawn first and every fifth
+// line after them, so a fifth line is whole where the lighter lines cross it, down the page as across it
+// (until 2.3.0 the lighter rows were drawn over the fifth columns: a notch every 5 mm, #314).
 fn grid(c: &mut Canvas, dpi: f32) {
     let pitch = mm_to_px(5.0, dpi);
-    let lt = thick(2.0, dpi);
-    let lt5 = thick(3.0, dpi);
-    let mut i = 0;
-    loop {
-        let x = lrintf(pitch * i as f32);
-        if x >= c.w {
-            break;
+    let (w, h) = (c.w, c.h);
+    for fifth in [false, true] {
+        let (t, g) = if fifth { (thick(3.0, dpi), GRID_FIFTH) } else { (thick(2.0, dpi), GRID_LINE) };
+        let mut i = 0;
+        loop {
+            let x = lrintf(pitch * i as f32);
+            if x >= w {
+                break;
+            }
+            if (i % 5 == 0) == fifth {
+                canvas_vline(c, x, 0, h, t, g);
+            }
+            i += 1;
         }
-        let h = c.h;
-        canvas_vline(c, x, 0, h, if i % 5 != 0 { lt } else { lt5 }, if i % 5 != 0 { GRID_LINE } else { GRID_FIFTH });
-        i += 1;
-    }
-    let mut j = 0;
-    loop {
-        let y = lrintf(pitch * j as f32);
-        if y >= c.h {
-            break;
+        let mut j = 0;
+        loop {
+            let y = lrintf(pitch * j as f32);
+            if y >= h {
+                break;
+            }
+            if (j % 5 == 0) == fifth {
+                canvas_hline(c, 0, w, y, t, g);
+            }
+            j += 1;
         }
-        let w = c.w;
-        canvas_hline(c, 0, w, y, if j % 5 != 0 { lt } else { lt5 }, if j % 5 != 0 { GRID_LINE } else { GRID_FIFTH });
-        j += 1;
     }
 }
 
@@ -1194,6 +1200,35 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn graph_papers_fifth_lines_are_whole_both_ways() {
+        // A column or row that is mostly the fifth lines' gray is a fifth line: it is that gray from end to end,
+        // where the lighter lines cross it too. At both page sizes the Scribes have.
+        for (w, h) in [(1860, 2480), (1986, 2648)] {
+            let c = drawn(PAPER_GRID, w, h);
+            let at = |x: i32, y: i32| c.px[(y * w + x) as usize];
+            let (mut columns, mut rows) = (0, 0);
+            for x in 0..w {
+                let n = (0..h).filter(|&y| at(x, y) == GRID_FIFTH).count() as i32;
+                if n > h / 2 {
+                    columns += 1;
+                    let cut = (0..h).find(|&y| at(x, y) != GRID_FIFTH);
+                    assert!(cut.is_none(), "{w}x{h}: the fifth line's column {x} is {} at {cut:?}", at(x, cut.unwrap_or(0)));
+                }
+            }
+            for y in 0..h {
+                let n = (0..w).filter(|&x| at(x, y) == GRID_FIFTH).count() as i32;
+                if n > w / 2 {
+                    rows += 1;
+                    let cut = (0..w).find(|&x| at(x, y) != GRID_FIFTH);
+                    assert!(cut.is_none(), "{w}x{h}: the fifth line's row {y} is {} at {cut:?}", at(cut.unwrap_or(0), y));
+                }
+            }
+            // (one every 25 mm from the corner, 3 px wide: seven down and nine across, on either page)
+            assert!(columns == 21 && rows == 27, "{w}x{h}: {columns} columns, {rows} rows");
         }
     }
 

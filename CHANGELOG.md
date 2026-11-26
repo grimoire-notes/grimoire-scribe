@@ -99,13 +99,13 @@
   Packages made with the package kit can also tell a tap from a long press and a drag, and are told when their
   settings change. docs/KIT.md says how.
 - **Darker paper lines** (#314). Narrow, Medium and Wide rule (with and without a margin), Cornell notes, Graph
-  paper, Dot grid, Cross grid, Isometric and Hexagon draw their lines darker, at least 2 px wide and on the
-  panel's own grays, as Seyes rule does, so they read as sharply on the Scribe: the rules 119 (were 175, where 0
-  is black and 255 white), the header 85 and the margin 102, Cornell's cue and summary lines 68 and its headings
-  85, graph paper 136 with every fifth line 85, the dots 51, the crosses 85, Isometric 136 and Hexagon 119. Seyes
-  rule, Blank and the music papers are unchanged. A page kept drawn to open quickly is drawn once more after the
-  update, so it shows the new lines; the Pages view's previews and the Library's cards keep the lines they were
-  made with until their page changes.
+  paper, Dot grid, Cross grid, Isometric and Hexagon draw their lines darker, at least 2 px wide and on the panel's
+  own grays, as Seyes rule does, so they read as sharply on the Scribe: the rules 119 (were 175, where 0 is black
+  and 255 white), the header 85 and the margin 102, Cornell's cue and summary lines 68 and its headings 85, graph
+  paper 136 with every fifth line 85 (now whole where the lighter lines cross it), the dots 51, the crosses 85,
+  Isometric 136 and Hexagon 119. Seyes rule, Blank and the music papers are unchanged. A page kept drawn to open
+  quickly is drawn once more after the update, so it shows the new lines; the Pages view's previews and the
+  Library's cards keep the lines they were made with until their page changes.
 
 ## 2.2.0 (2026-11-26)
 
