@@ -294,6 +294,14 @@ pub(crate) fn grimoire_rel() -> Option<String> {
     g.strip_prefix(root.trim_end_matches('/')).map(|r| r.trim_matches('/').to_string()).filter(|r| !r.is_empty())
 }
 
+/// One of Grimoire's own folders (`sub`: "trash", "PDFs", "fonts", ...) as the owner finds it from the storage
+/// root, which is what USB shows: "grimoire/trash" on the Kindle. The texts that name a folder take it from here,
+/// so they say where it is on a platform whose data root sits deeper or is named otherwise. With no storage root,
+/// or a data root outside it, the Kindle's spelling.
+pub(crate) fn own_folder_shown(sub: &str) -> String {
+    grimoire_rel().map_or_else(|| format!("grimoire/{sub}"), |g| format!("{g}/{sub}"))
+}
+
 /// The StoragePath of `rel` inside Grimoire's import folder.
 pub(crate) fn import_storage_path(rel: &str) -> Option<StoragePath> {
     StoragePath::new(format!("{}/import/{}", grimoire_rel()?, rel).as_bytes())
@@ -4319,6 +4327,37 @@ mod tests {
         assert!(mark_write(&Mark { state: MarkState::Waiting, src: good.src.clone(), pick: true, ..Default::default() }));
         assert_eq!(mark_read(&good.src).map(|m| m.src), Some(good.src));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The texts that name one of Grimoire's folders ("Moved to %s", "Copied to %s.", ...) name it as found from the
+    // storage root: "grimoire/trash" where the data root is "grimoire" in it, as on the Kindle; the path inside it
+    // where the data root sits deeper or is named otherwise; with no storage root set, from the folder around the
+    // data root (the root Files lists then); and the Kindle's spelling where the data root is not inside the storage.
+    #[test]
+    fn own_folders_are_named_as_found_from_the_storage_root() {
+        let base = std::env::var("GRIMOIRE_TEST_TMP").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+        let st = base.join(format!("grimoire-own-folder-{}", std::process::id()));
+        let out = base.join(format!("grimoire-out-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&st);
+        let _ = std::fs::remove_dir_all(&out);
+        let was = std::env::var_os("GRIMOIRE_STORAGE");
+        let data = |r: std::path::PathBuf| assert_eq!(store_init(r.to_str().unwrap()), 0);
+        std::env::set_var("GRIMOIRE_STORAGE", &st);
+        data(st.join("grimoire"));
+        assert_eq!(own_folder_shown("trash"), "grimoire/trash");
+        assert_eq!(own_folder_shown("import"), "grimoire/import");
+        data(st.join("Document/Grimoire"));
+        assert_eq!(own_folder_shown("trash"), "Document/Grimoire/trash");
+        assert_eq!(own_folder_shown("PDFs"), "Document/Grimoire/PDFs");
+        data(out.join("Notes"));
+        assert_eq!(own_folder_shown("fonts"), "grimoire/fonts");
+        std::env::remove_var("GRIMOIRE_STORAGE");
+        assert_eq!(own_folder_shown("fonts"), "Notes/fonts");
+        if let Some(v) = was {
+            std::env::set_var("GRIMOIRE_STORAGE", v);
+        }
+        let _ = std::fs::remove_dir_all(&st);
+        let _ = std::fs::remove_dir_all(&out);
     }
 
     fn sample_state() -> State {

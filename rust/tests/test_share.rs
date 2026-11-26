@@ -534,8 +534,11 @@ fn an_import_tap_says_what_happened() {
 
 #[test]
 fn test_share() {
-    let root = format!("{}/share-{}", tl_tmp(), std::process::id());
-    let _ = std::fs::remove_dir_all(&root);
+    // (Grimoire's folder is "grimoire" in the folder around it, as on the Kindle: the Import toast names its import
+    // folder as found from there)
+    let base = format!("{}/share-{}", tl_tmp(), std::process::id());
+    let root = format!("{base}/grimoire");
+    let _ = std::fs::remove_dir_all(&base);
     check!(store_init(&root) == 0);
     ui_init(300.0);
     check!(font_init() == 0);
@@ -550,6 +553,6 @@ fn test_share() {
     run!(share_x_and_esc_close_share_while_it_asks);
     run!(an_import_tap_says_what_happened);
     std::env::remove_var("GRIMOIRE_UPLOAD_QUIET_MS");
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&base);
     done();
 }

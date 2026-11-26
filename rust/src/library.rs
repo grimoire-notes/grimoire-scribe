@@ -1810,8 +1810,10 @@ fn draw_folder_picture(a: &mut App) {
     let gx = in_.x + (in_.w - gridw) / 2;
     let want = s.look_picture.clone();
     if s.look_photos.is_empty() {
-        // TRANSLATORS: the folder picture sheet, with no picture there: where its pictures are copied in.
-        font_draw_centered(c, FontFace::Regular, ui_text_size(), Rect::new(in_.x, top, in_.w, row_h), tr("No pictures in grimoire/photos."), 60);
+        // TRANSLATORS: the folder picture sheet, with no picture there: where its pictures are copied in. %s is the
+        // folder on the Kindle's storage, grimoire/photos.
+        let none = cformat!(tr("No pictures in %s."), crate::pdfimport::own_folder_shown("photos").as_str());
+        font_draw_centered(c, FontFace::Regular, ui_text_size(), Rect::new(in_.x, top, in_.w, row_h), &none, 60);
     }
     for k in 0..FOLDER_PHOTO_PER {
         let i = first + k;
@@ -6152,7 +6154,7 @@ fn draw_settings(a: &mut App) {
                     &mut label_buf,
                     256,
                     tr("Mirror PDFs to %s (USB)"),
-                    "grimoire/PDFs"
+                    crate::pdfimport::own_folder_shown("PDFs").as_str()
                 );
                 &label_buf
             }
@@ -6403,7 +6405,7 @@ fn draw_font_sheet_in(a: &mut App, applied: Option<usize>) {
     let mut heading = String::new();
     // TRANSLATORS: (Settings > Font) the heading over the fonts the owner copied onto the Kindle; %s is
     // their folder there, grimoire/fonts. 34 px bold, about 800 px.
-    csnprintf!(&mut heading, 160, tr("Your fonts (%s)"), "grimoire/fonts");
+    csnprintf!(&mut heading, 160, tr("Your fonts (%s)"), crate::pdfimport::own_folder_shown("fonts").as_str());
     let pages = items.div_ceil(per_page).max(1);
     let hw = if pages > 1 { in_.w - ui_px(420.0) } else { in_.w };
     font_draw_left(c, FontFace::Bold, ui_small_size(), Rect::new(in_.x, y, hw, lh2), &heading, 0);
@@ -6429,7 +6431,7 @@ fn draw_font_sheet_in(a: &mut App, applied: Option<usize>) {
         // TRANSLATORS: (Settings > Font, under Your fonts while the folder is empty) how to add a font: %s is
         // the folder on the Kindle's storage, grimoire/fonts. ".ttf" and ".otf" are file kinds: keep them.
         // Up to two lines of about 1600 px at 44 px, or at 34 px.
-        csnprintf!(&mut line, 256, tr("Copy .ttf or .otf files into %s over USB."), "grimoire/fonts");
+        csnprintf!(&mut line, 256, tr("Copy .ttf or .otf files into %s over USB."), crate::pdfimport::own_folder_shown("fonts").as_str());
         ui_text(c, FontFace::Regular, ui_text_size(), ui_small_size(), Rect::new(in_.x, y, in_.w, rh), &line, 2, false, 0);
     }
     for k in 0..shown {
@@ -7233,7 +7235,7 @@ fn draw_modal(a: &mut App) {
             let mut pdf = String::new();
             // TRANSLATORS: a notebook's menu, rows of 1470 px at 44 px in bold. %s is the folder on the
             // Kindle's storage the PDF goes in.
-            csnprintf!(&mut pdf, 256, tr("Save PDF to %s now"), "grimoire/PDFs");
+            csnprintf!(&mut pdf, 256, tr("Save PDF to %s now"), crate::pdfimport::own_folder_shown("PDFs").as_str());
             let rows = [
                 menu_row(
                     IconKind::Notebook,
@@ -7413,7 +7415,7 @@ fn draw_modal(a: &mut App) {
                 &mut del,
                 256,
                 tr("Delete (moves it to %s)"),
-                "grimoire/trash"
+                crate::pdfimport::own_folder_shown("trash").as_str()
             );
             let rows = [
                 menu_row(IconKind::Trash, &del, H_DELETE_YES, 0, ButtonStyle::Primary),
@@ -9183,7 +9185,7 @@ fn act(a: &mut App, h: &Hit) {
             redraw(a, RefreshMode::Full);
             let mut msg = String::new();
             // TRANSLATORS: a deleted notebook went to the trash folder on the Kindle's storage (%s).
-            csnprintf!(&mut msg, 256, tr("Moved to %s"), "grimoire/trash");
+            csnprintf!(&mut msg, 256, tr("Moved to %s"), crate::pdfimport::own_folder_shown("trash").as_str());
             app_toast(a, &msg, 2500);
         }
         H_FMORE_RENAME => {
@@ -12199,8 +12201,11 @@ mod tests {
     // moves nothing and answers at once, as before; a tap on its Delete after that deletes, as before.
     #[test]
     fn a_notebooks_delete_question_takes_its_delete_once_shown() {
-        let root = std::env::temp_dir().join(format!("grimoire-delete-seen-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        // (the data root is "grimoire" in the folder around it, as on the Kindle: the toast names the trash as
+        // found from there, pdfimport::own_folder_shown)
+        let base = std::env::temp_dir().join(format!("grimoire-delete-seen-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("grimoire");
         assert_eq!(store_init(root.to_str().unwrap()), 0);
         let mut nb = NotebookInfo::default();
         assert_eq!(store_create("A", "", PAPER_BLANK, &mut nb), 0);
@@ -12257,7 +12262,7 @@ mod tests {
         assert_eq!(a.toast.as_str(), "Moved to grimoire/trash");
         library_free(&mut a);
         canvas_free(&mut a.screen);
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     // A card held still for HOLD_MS (2.2) opens its menu as its "..." does: a notebook's, a folder's, the Files
