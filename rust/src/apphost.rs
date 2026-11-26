@@ -783,8 +783,8 @@ fn apphost_after_input(a: &mut App) -> bool {
     false
 }
 
-/// The drawing pass input owed: the app drawn once, and only the part of the screen the pass changed refreshed, in
-/// `mode` (nothing, when it changed nothing).
+/// A drawing pass of the app (the one input owed, or the status bar's minute): the app drawn once, and only the part
+/// of the screen the pass changed refreshed, in `mode` (nothing, when it changed nothing).
 fn apphost_pass(a: &mut App, mode: RefreshMode) {
     let screen = Rect::new(0, 0, a.w, a.h);
     let kept = kit_keep(&a.screen, screen);
@@ -849,11 +849,12 @@ pub fn apphost_tick(a: &mut App, now: u32) {
         apphost_draw(a);
         app_invalidate_all(a, RefreshMode::Fast);
     }
-    // The status bar's clock is the app's too when it is shown.
+    // The status bar's clock is the app's too when it is shown. Its pass refreshes all it changed, the bar's new
+    // minute and any of the body: a body change drawn and not refreshed would leave the screen ahead of the panel, and
+    // the next pass, compared with the screen, would not send it (apphost_pass).
     if a.app_view.status_bar {
         if crate::library::library_app_minute(a) {
-            apphost_draw(a);
-            app_invalidate(a, Rect::new(0, 0, a.w, gui_status_h()), RefreshMode::Ui);
+            apphost_pass(a, RefreshMode::Ui);
         }
     }
 }
