@@ -1589,7 +1589,10 @@ from the colour page measured above with about 60 MiB of headroom; previews and 
 writer 128, two copies of a 24 MB font; a file's preview 128, a picture or a font read whole; a file copy 64;
 compaction and the default 256; a picture job 512, above its own tighter cap), applied after `child_setup` for each bgjob child, the detached child, the share server's render children
 (128 MiB) and Live view's viewer children (64 MiB). A child that cannot read its own size (`/proc/self/statm`) is
-capped at 1 GiB plus its margin, never left without one. Both caps are Linux's; the host build applies nothing.
+capped at 1 GiB plus its margin, never left without one. Both caps are a Linux kernel's: a build with the
+`linux-kernel` feature (PORTING.md) applies them too, except that a child there that cannot read its size gets no
+address-space cap (an allocator there may hold more than 1 GiB from the start); the host build on macOS applies
+nothing.
 The CI job `sandbox` mirrors a Scribe-sized colour page under the real cap. The mirror logs its pages, how many it
 drew, its time and `VmHWM` ("bg: export of ...: N pages, D drawn, T ms, VmHWM K kB").
 
