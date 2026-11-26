@@ -1239,3 +1239,55 @@ fn an_apps_input_pass_waits_while_the_last_fast_refresh_shows() {
     app_done(a, id);
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// A pass an app asks for (`request_redraw`) refreshes fast only the part of the screen it changed, and nothing when it
+/// changed nothing; what its refreshes covered is owed one Clean refresh, sent once the app has asked for no pass for
+/// the pause (150 ms with the pen away, editor.rs SETTLE_LEFT_MS), so passes back to back are cleaned once, after the
+/// last.
+#[cfg(feature = "sim")]
+#[test]
+fn a_pass_an_app_asks_for_refreshes_what_it_changed_and_is_cleaned_once_it_stops_asking() {
+    let root = fresh_root("asked");
+    // (no status bar: its square, 200 px a side about 200, 200 of the body, is the screen's 100, 100)
+    let square = Rect::new(100, 100, 200, 200);
+    // Each pass the tick draws is the refresh it sent, if any: the part of the screen and the mode.
+    let tick = |a: &mut App, t: u32| -> Option<(Rect, RefreshMode)> {
+        sim_clock_set(Some(t));
+        a.dirty = RECT_EMPTY;
+        grimoire::apphost::apphost_tick(a, t);
+        (!rect_is_empty(a.dirty)).then_some((a.dirty, a.dirty_mode))
+    };
+    let open = |id: &str, module: &[u8]| -> App {
+        app_package_install(&app_manifest(id, "Asked", &[], false, module), module, None, "", SCREEN.0, SCREEN.1).unwrap();
+        let mut a = App { w: SCREEN.0, h: SCREEN.1, dpi: 300.0, input_drained: true, ..Default::default() };
+        assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+        grimoire::library::library_init(&mut a);
+        sim_clock_set(Some(10_000));
+        assert!(grimoire::apphost::apphost_launch(&mut a, id));
+        a
+    };
+    // A square of 160 and 96 by turns, a pass asked 100 ms after each of the first three: four passes in all.
+    let id = "test.ki.asked";
+    let mut a = open(id, &changing_square(Host::App, 200, 100, Some(4)).bytes());
+    assert_eq!(tick(&mut a, 10_099), None, "no pass before its time");
+    assert_eq!(tick(&mut a, 10_100), Some((square, RefreshMode::Fast)), "the square the pass changed, fast");
+    assert_eq!(tick(&mut a, 10_200), Some((square, RefreshMode::Fast)));
+    assert_eq!(tick(&mut a, 10_250), None, "no clean 150 ms after the first pass: the app is still asking");
+    assert_eq!(tick(&mut a, 10_300), Some((square, RefreshMode::Fast)));
+    assert!(a.app_view.status().starts_with("p004 "), "{}", a.app_view.status());
+    assert_eq!(tick(&mut a, 10_449), None, "no clean before the pause has passed since the last pass");
+    assert_eq!(tick(&mut a, 10_450), Some((square, RefreshMode::Clean)), "one clean of all the passes covered");
+    assert_eq!(tick(&mut a, 11_450), None, "and nothing more: the app asked for no other pass");
+    assert!(a.app_view.status().starts_with("p004 "), "{}", a.app_view.status());
+    app_done(a, id);
+    // A square that stays as it was, a pass asked 100 ms after each: each pass is drawn, and nothing is refreshed.
+    let id = "test.ki.asked.same";
+    let mut a = open(id, &input_square(Host::App, 200, 128, Some(100)).bytes());
+    assert_eq!(tick(&mut a, 10_100), None, "a pass that changed nothing refreshes nothing");
+    assert_eq!(tick(&mut a, 10_200), None);
+    assert_eq!(tick(&mut a, 10_500), None, "and owes no clean");
+    assert!(a.app_view.status().starts_with("p004 "), "{}", a.app_view.status());
+    sim_clock_set(None);
+    app_done(a, id);
+    let _ = std::fs::remove_dir_all(root);
+}

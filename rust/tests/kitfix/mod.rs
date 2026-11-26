@@ -921,6 +921,20 @@ pub fn input_packages() -> Vec<Package> {
 /// `side` px a side of `gray` about the place of its last touch in place of the black one, and, given `ask`, asks for a
 /// pass that many ms after each (`request_redraw`).
 pub fn input_square(on: Host, side: i32, gray: i32, ask: Option<i32>) -> Kit {
+    square(on, side, i(gray), ask.map(|ms| (ms, None)))
+}
+
+/// `input_square` asking for its own passes, its square gray 160 on its odd passes and 96 on its even ones, so that each
+/// pass changes it: a pass `ask` ms after each while it has drawn fewer than `until` passes (after every one, given
+/// None).
+pub fn changing_square(on: Host, side: i32, ask: i32, until: Option<i32>) -> Kit {
+    let gray = seq(&[load(value(V_PASSES)), i(1), vec![AND], i(64), vec![MUL], i(96), vec![ADD]]);
+    square(on, side, gray, Some((ask, until)))
+}
+
+/// The module of `input_square` with the code that leaves its square's gray, and the request it makes in each pass
+/// (its delay, and the passes it stops asking at).
+fn square(on: Host, side: i32, gray: Vec<u8>, ask: Option<(i32, Option<i32>)>) -> Kit {
     let mut k = input(on, true, Some(true));
     if ask.is_some() {
         k.imports.push(("grimoire", "request_redraw", "i", 'v'));
@@ -944,31 +958,41 @@ pub fn input_square(on: Host, side: i32, gray: i32, ask: Option<i32>) -> Kit {
         vec![SUB],
         i(side),
         i(side),
-        i(gray),
+        gray,
         invoke("fill"),
         say,
         host("status", &[SAYS_AT, says_template().len() as i32]),
     ]);
-    if let Some(ms) = ask {
-        draw.extend(extra(&k, 0, &[ms]));
+    if let Some((ms, until)) = ask {
+        let asking = extra(&k, 0, &[ms]);
+        draw.extend(match until {
+            Some(n) => when(seq(&[load(value(V_PASSES)), i(n), vec![LT_U]]), asking),
+            None => asking,
+        });
     }
     k.code[0] = draw;
     k
 }
 
 /// The packages of tests/fixtures/kitpanel, for the scenarios that hold what the panel shows after input
-/// (z_kit_input_overlap.qs, z_kit_input_minute.qs, z_kit_input_clean_app.qs, z_kit_input_clean_widget.qs): the
-/// input modules with a black square of 100 px (as test.kit.inputw and test.kit.input), a gray (128) one of 200 px,
-/// whose fast refreshes leave it dithered until a full-depth one, and a widget that asks for a pass a second after
-/// each and draws its square black, each a widget and the first two apps too, with the status bar.
+/// (z_kit_input_overlap.qs, z_kit_input_minute.qs, z_kit_input_clean_app.qs, z_kit_input_clean_widget.qs) and after
+/// the passes a module asks for (z_kit_redraw_app.qs, z_kit_redraw_run.qs, z_kit_redraw_widget.qs): the input modules
+/// with a black square of 100 px (as test.kit.inputw and test.kit.input), a gray (128) one of 200 px, whose fast
+/// refreshes leave it dithered until a full-depth one, and a widget that asks for a pass a second after each and draws
+/// its square black, each a widget and the first two apps too, with the status bar; then a square of 200 px whose gray
+/// changes with each pass (`changing_square`), asking for a pass a second after each, as a widget and an app, and as an
+/// app asking for passes back to back, 100 ms after each of its first seven.
 pub fn panel_packages() -> Vec<Package> {
     vec![
         widget("test.kit.blackw", "Black widget", &WIDGET_BOTH, input(Host::Widget, true, Some(true)).bytes()),
         widget("test.kit.grayw", "Gray widget", &WIDGET_BOTH, input_square(Host::Widget, 200, 128, None).bytes()),
         widget("test.kit.askw", "Ask widget", &WIDGET_BOTH, input_square(Host::Widget, 200, 0, Some(1000)).bytes()),
         widget("test.kit.tapw", "Tap widget", &WIDGET_BOTH, input(Host::Widget, true, None).bytes()),
+        widget("test.kit.graytickw", "Gray tick widget", &WIDGET_BOTH, changing_square(Host::Widget, 200, 1000, None).bytes()),
         app("test.kit.black", "Black app", input(Host::App, true, Some(true)).bytes()),
         app("test.kit.gray", "Gray app", input_square(Host::App, 200, 128, None).bytes()),
+        app("test.kit.graytick", "Gray tick app", changing_square(Host::App, 200, 1000, None).bytes()),
+        app("test.kit.grayrun", "Gray run app", changing_square(Host::App, 200, 100, Some(8)).bytes()),
     ]
 }
 

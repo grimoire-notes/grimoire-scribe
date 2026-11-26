@@ -1029,8 +1029,8 @@ impl KitInput {
         true
     }
 
-    /// A pass input owed went out as a refresh of `r` in `mode`: a fast one is kept in the part the fast refreshes
-    /// covered.
+    /// A pass (the one input owed, or in an app one a redraw request brought) went out as a refresh of `r` in `mode`: a
+    /// fast one is kept in the part the fast refreshes covered.
     pub fn refreshed(&mut self, r: Rect, mode: RefreshMode) {
         if mode == RefreshMode::Fast {
             self.worn = rect_union(self.worn, r);
