@@ -403,5 +403,5 @@ refreshes of a tap, a long press, a drag, a flood and a drag that leaves the bod
 `_half` and `_wrap` copies the same with the app's clock past 2^31 ms and across its wrap at 2^32;
 `z_kit_input_overlap.qs`, `z_kit_input_minute.qs`, `z_kit_input_clean_app.qs` and `z_kit_input_clean_widget.qs`
 hold that the panel shows what the screen does after a frame's pass drawn in part, a status bar's minute and the
-fast refreshes of a press or a drag; `z_kit_keys.qs` and `z_kit_keys_off.qs` the keys of an open app;
-`z_kit_settings.qs` a widget's SETTINGS.
+fast refreshes of a press or a drag; `z_kit_input_cancel.qs` a frame's cancelled contact; `z_kit_keys.qs` and
+`z_kit_keys_off.qs` the keys of an open app; `z_kit_settings.qs` a widget's SETTINGS.

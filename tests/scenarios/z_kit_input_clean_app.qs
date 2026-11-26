@@ -23,6 +23,9 @@ wait 700
 expect display.presents is fast 100 178 900 1322
 expect display.stale.700.1200.400.400 not 0
 touch up 900 1400
+wait 60
+# (the lift's pass changed nothing; the clean waits for the pause, 150 ms with the pen away)
+expect display.presents is
 wait 3000
 expect library.app.status has r01
 expect display.presents is clean 100 178 900 1322
@@ -42,9 +45,11 @@ wait 20
 touch move 900 1000
 wait 500
 touch up 900 1000
+wait 60
+expect display.presents is fast 300 900 700 600, fast 300 900 700 200
 wait 3000
 expect library.app.status has e01
-expect display.presents is fast 300 900 700 600, fast 300 900 700 200, clean 300 900 700 600
+expect display.presents is clean 300 900 700 600
 expect display.stale.0.0.1860.2480 is 0
 wait 30000
 expect display.presents is

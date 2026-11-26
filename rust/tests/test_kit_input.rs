@@ -240,6 +240,13 @@ fn the_hold_the_pace_and_a_redraw_request_are_durations_the_same_at_any_uptime_a
         assert_eq!(grimoire::wasmhost::Redraw::asked(Some(r), t(100), 500), r, "{base:#x}: a later ask does not put it off");
         let sooner = grimoire::wasmhost::Redraw::asked(Some(r), t(100), 100);
         assert!(!sooner.due(t(199)) && sooner.due(t(200)), "{base:#x}: a sooner ask stands in its place");
+        // and each still so once 2^31 ms have gone (where a signed difference of the clock turns negative)
+        let half = 0x8000_0000u32;
+        let mut p = KitPointer::default();
+        p.down(50, 60, 0, -1, t(0), slop(), false);
+        assert_eq!(p.tick(t(half)).map(|e| e.kind), Some(EV_PRESS), "{base:#x}: a hold 2^31 ms long");
+        assert!(k.turn(t(10 + 5 * KIT_PASS_MS + half), false), "{base:#x}: a turn 2^31 ms after the last");
+        assert!(r.due(t(half)), "{base:#x}: a request asked 2^31 ms ago");
     }
 }
 
