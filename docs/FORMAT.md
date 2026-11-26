@@ -24,7 +24,7 @@ image papers, for example, and never calls them "Newer paper".
 root/settings.ini                       the device's settings (below)
 root/settings.ini.unread                a settings.ini that was there but could not be read, kept aside; never read (2.2.0; settings.ini)
 root/folders.ini                        "# Grimoire folders", then one folder name per line
-root/folder-looks.ini                   a folder's icon and picture, a block a folder (2.2, issue #230; Folder icons and pictures)
+root/folder-looks.ini                   a folder's icon and picture, a block a folder (2.3, issue #230; Folder icons and pictures)
 root/sleep.pgm                          the pinned sleep screen (P5 PGM, full page)
 root/notebooks/<id>/notebook.ini        one notebook (below)
 root/notebooks/<id>/p<page id>.qpg      one page (below)
@@ -2168,7 +2168,7 @@ version: each reads the `pages` order it finds.
 ## Folder icons and pictures: `root/folder-looks.ini`
 
 A folder's card in the Library can show an icon of its own instead of the plain folder, and a picture from
-`root/photos/` in its place (2.2, issue #230: a folder's menu, Icon & picture...). A folder with neither has
+`root/photos/` in its place (2.3, issue #230: a folder's menu, Icon & picture...). A folder with neither has
 no block:
 
 ```

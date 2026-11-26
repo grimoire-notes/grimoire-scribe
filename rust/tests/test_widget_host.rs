@@ -1067,3 +1067,58 @@ fn a_module_is_checked_again_before_each_load() {
     assert_eq!(load("test.load").as_deref(), Some(NOT_READ), "the next load checks it");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A frame of the installed package, its module loaded as the editor loads it when the frame is first drawn.
+fn frame_of(id: &str) -> WidgetFrame {
+    widget_catalog_invalidate();
+    let mut f = WidgetFrame::new(widget_def(id).unwrap());
+    f.ensure_runtime();
+    f
+}
+
+#[test]
+fn the_text_a_widgets_frame_shows_is_at_most_256_bytes() {
+    let root = fresh_root("says");
+    // Installs a module that imports one more call from `grimoire`, of this name, and returns why it does not start.
+    let install = |id: &str, import: &str| {
+        let module = module_importing(&[], &[], &[], &[import]);
+        widget_package_install(&manifest(id, "Test", &BOTH, FIXED_400_300, &module), &module, "", 1860, 2480).unwrap();
+        WidgetRuntime::new(id).err().unwrap()
+    };
+    let whose = "Test v1.0.0 · Grimoire tests";
+    // An ordinary reason is shown whole.
+    let ordinary = install("test.says.ordinary", "later");
+    assert!(ordinary.starts_with("The widget could not start: ") && ordinary.contains("later"), "{ordinary}");
+    let f = frame_of("test.says.ordinary");
+    assert_eq!(f.error(), Some(ordinary.as_str()));
+    assert_eq!(f.says(), Some((ordinary.clone(), whose.to_string())));
+    // An import's name of 99,000 bytes, of characters of one, two, three and four bytes: the reason names it, and the
+    // frame shows the start of the reason, at most 256 bytes cut between two characters, drawn inside its body.
+    for (i, ch) in ["a", "é", "€", "𝄞"].into_iter().enumerate() {
+        let id = format!("test.says.long-{i}");
+        let name = ch.repeat(99_000 / ch.len());
+        let full = install(&id, &name);
+        assert!(full.starts_with("The widget could not start: ") && full.contains(&name), "{ch}");
+        let f = frame_of(&id);
+        let (reason, said) = f.says().unwrap();
+        let body = f.body_rect();
+        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+            ui_set_theme(theme);
+            let before = patterned(700, 600);
+            let mut c = before.clone();
+            grimoire::editor::draw_widget_says(&mut c, body, &reason, &said);
+            assert_eq!(changed_outside(&before, &c, body), 0, "{ch} in {theme:?}");
+            assert_ne!(changed_outside(&before, &c, RECT_EMPTY), 0, "{ch} in {theme:?}: the reason is drawn");
+        }
+        assert!(reason.len() <= MESSAGE_SHOWN_MAX && reason.len() > MESSAGE_SHOWN_MAX - ch.len(), "{ch}: {} bytes", reason.len());
+        assert!(full.starts_with(&reason), "{ch}");
+        assert_eq!(f.error(), Some(reason.as_str()), "{ch}");
+        assert_eq!(said, whose, "{ch}");
+    }
+    ui_set_theme(UiTheme::Gothic);
+    // What the frame draws is the same for a name of 1,000 bytes as for one of 99,000.
+    install("test.says.shorter", &"a".repeat(1000));
+    assert_eq!(frame_of("test.says.shorter").says(), frame_of("test.says.long-0").says());
+    widget_catalog_invalidate();
+    let _ = std::fs::remove_dir_all(&root);
+}
