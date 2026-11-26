@@ -20,11 +20,17 @@
 //! ```
 //!
 //! `phase` is 0 down, 1 move, 2 up; `source` is 0 touch, 1 pen. Coordinates are body-local.
+//! A module may also export the package kit's `kit_event(kind, id, a, b, c) -> i32` (kithost.rs): the body's
+//! contact recognised as a tap, a press or a drag, a key, a change of its settings. Input calls the module at once,
+//! `app_pointer` for every phase and `kit_event` for each event; the drawing pass either owes is drawn by the tick,
+//! once for all the input since the last pass, paced while a contact is down, and only the part of the screen it
+//! changed is refreshed (`apphost_tick`). Keys reach an open app before Grimoire's shortcuts (app.rs).
 //! The body is all a module draws on: every command is drawn with the canvas clipped to it, whatever
 //! coordinates and sizes it carries, and the `clip` call makes that part smaller, never larger
 //! (`AppRuntime::draw`). The shared status bar, when it is shown, is above the body.
 //! `app_stop` is called exactly once when the app is leaving, whether by gesture, `close()`, an
-//! update, or removal. It is the safe place to save state.
+//! update, or removal. It is the safe place to save state. `elapsed_ms` is the time since the last
+//! drawing pass by the app's clock (`now_ms`).
 //!
 //! Imports (`grimoire`): drawing and Grimoire's global UI elements, state and settings, time and
 //! date, battery and Wi-Fi state, screen geometry, and `close()`. All strings are UTF-8 in the
@@ -45,9 +51,12 @@
 //! pass's hit regions are the runner's names for the app's controls (`apphost_control_point`).
 
 use crate::globalui::{gui_app_tile, gui_chip, gui_fab, gui_select, gui_status_bar, gui_status_h, gui_surface, gui_text_field};
-use crate::kithost::{drawn_text_charge, icon_charge, kit_link, kit_missing_import, kit_render, label_charge, KitCmd, KitHost};
+use crate::kithost::{
+    drawn_text_charge, icon_charge, kit_keep, kit_link, kit_missing_import, kit_render, label_charge, KitCmd, KitEvent, KitHost,
+    KitInput, EV_KEY, EV_SETTINGS, KIT_EVENT,
+};
 use crate::prelude::*;
-use crate::wasmhost::{charge, in_body, line_in_reach, on_screen};
+use crate::wasmhost::{charge, in_body, line_in_reach, on_screen, Redraw};
 use std::time::Instant;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
@@ -235,9 +244,10 @@ struct HostState {
     toast: Option<(String, u32)>,
     dirty: bool,
     limits: StoreLimits,
-    /// when the module asked to be drawn again, by the app's clock (`now_ms`); None while no request stands.
-    /// One request stands at a time, the soonest asked for, until the host's tick takes it (`redraw_taken`).
-    redraw_at: Option<u32>,
+    /// the module's request to be drawn again (when it asked, by the app's clock, and how long after); None while
+    /// no request stands. One request stands at a time, the soonest asked for, until the host's tick takes it
+    /// (`redraw_taken`).
+    redraw_at: Option<Redraw>,
     screen_w: i32,
     screen_h: i32,
     clock_12h: bool,
@@ -245,6 +255,8 @@ struct HostState {
     network_http: bool,
     /// The one asynchronous curl request an app may have in flight.
     http: Option<HttpJob>,
+    /// the points of the DRAG_MOVE `kit_event` is being told of (`event_points`); none in another call
+    points: Vec<(i32, i32)>,
     /// Tests: the program started in curl's place and its first arguments (empty: curl itself).
     #[cfg(test)]
     http_stand_in: Vec<String>,
@@ -277,6 +289,9 @@ impl KitHost for HostState {
     }
     fn kit_read(&mut self, n: usize) {
         self.read_bytes += n;
+    }
+    fn kit_points(&self) -> &[(i32, i32)] {
+        &self.points
     }
     fn kit_status_bar_h(&self) -> i32 {
         if self.status_bar {
@@ -458,8 +473,14 @@ pub struct AppRun {
     /// Two-finger swipe tracking is the recognizer's Gesture event; this remembers the last
     /// body size so a rotation or a status-bar change redraws into the new one.
     last_body: Rect,
-    last_draw: Option<Instant>,
+    /// when the last drawing pass was, by the app's clock (`now_ms`): a pass's `elapsed_ms` is the time since
+    last_draw: Option<u32>,
     launched_at: Option<Instant>,
+    /// the body's contact recognised (the kit's events) and the drawing pass input owes (kithost.rs)
+    input: KitInput,
+    /// what the input passes' fast refreshes covered, once the contact lifted, and when: owed one Clean refresh after
+    /// a pause (apphost_wear_tick)
+    worn: Option<(Rect, u32)>,
 }
 
 impl AppRun {
@@ -502,18 +523,26 @@ impl AppRun {
         self.runtime.as_mut().and_then(|r| r.store.data_mut().toast.take())
     }
 
+    /// The app's settings page saved them: the module reads the new values from now on, and is told so (a
+    /// SETTINGS event), which owes a drawing pass when it says its picture changed.
     pub fn reload_settings(&mut self) {
         if let Some(m) = crate::apppkg::app_package_installed_manifest(&self.id) {
             if let Some(r) = self.runtime.as_mut() {
                 r.store.data_mut().settings = crate::apppkg::app_settings_load(&self.id, &m.settings);
+                if r.event(&KitEvent::new(EV_SETTINGS, 0, 0, 0, 0)) == Some(true) {
+                    self.input.owe();
+                }
             }
         }
     }
 
+    /// A drawing pass. Its `elapsed_ms` is the time since the last one by the app's clock (`now_ms`, which a
+    /// scenario's clock holds still), and it answers the pass input owed.
     fn draw(&mut self, c: &mut Canvas, body: Rect) {
-        let now = Instant::now();
-        let elapsed = self.last_draw.map_or(0, |at| now.duration_since(at).as_millis().min(i32::MAX as u128) as i32);
+        let now = now_ms();
+        let elapsed = self.last_draw.map_or(0, |at| now.wrapping_sub(at).min(i32::MAX as u32) as i32);
         self.last_draw = Some(now);
+        self.input.answered();
         let Some(r) = self.runtime.as_mut() else { return };
         r.draw(c, body, elapsed);
     }
@@ -569,8 +598,10 @@ pub fn apphost_launch(a: &mut App, id: &str) -> bool {
                 body: RECT_EMPTY,
                 runtime: Some(r),
                 last_body: RECT_EMPTY,
-                last_draw: Some(Instant::now()),
+                last_draw: Some(now_ms()),
                 launched_at: Some(Instant::now()),
+                input: KitInput::default(),
+                worn: None,
             };
             // An app may override the manifest preference once, before its first frame.
             if let Some(want) = a.app_view.runtime.as_mut().and_then(|r| r.export_status_bar()) {
@@ -582,7 +613,7 @@ pub fn apphost_launch(a: &mut App, id: &str) -> bool {
             set_body(a);
             a.app_view.last_body = a.app_view.body;
             crate::library::library_app_launched(a);
-            a.app_view.last_draw = Some(Instant::now());
+            a.app_view.last_draw = Some(now_ms());
             let App { screen: c, app_view, .. } = a;
             app_view.draw(c, app_view.body);
             // (a first drawing pass that stopped the module: the app is not left open with nothing drawn)
@@ -658,14 +689,7 @@ pub fn apphost_event(a: &mut App, ev: &InEvent) -> bool {
         return true;
     }
     if ev.type_ == InType::Key || ev.type_ == InType::KeyUp {
-        let mut r = a.app_view.runtime.take();
-        if let Some(r) = r.as_mut() {
-            r.key(ev.value, ev.key_mods as i32, ev.type_ == InType::Key);
-        }
-        a.app_view.runtime = r;
-        if apphost_after_call(a) {
-            return true;
-        }
+        apphost_key(a, ev.value, ev.key_mods as i32, ev.type_ == InType::Key);
         return true;
     }
     let ph = app_pointer_phase(ev);
@@ -673,22 +697,57 @@ pub fn apphost_event(a: &mut App, ev: &InEvent) -> bool {
         return false;
     }
     let body = app_body(a);
-    if !rect_contains(body, ev.x.round_ties_even() as i32, ev.y.round_ties_even() as i32) {
-        // The shared status bar is chrome, not app content. A lift still reaches the app so a
-        // contact that began in the body can end cleanly.
-        if ph != 2 {
-            return true;
-        }
+    // The shared status bar is chrome, not app content: a contact begins only in the body, and app_pointer is told
+    // of the samples inside it and of the lift, wherever it is, so a contact that began in the body ends cleanly. The
+    // recogniser takes every sample of a contact that began in the body, inside it or not, as a frame's does: a drag is
+    // the same drag in a widget and in an app (its points may lie outside the body, in body coordinates).
+    let inside = rect_contains(body, ev.x.round_ties_even() as i32, ev.y.round_ties_even() as i32);
+    if !inside && ph == 0 {
+        return true;
     }
     let x = ev.x.round_ties_even() as i32 - body.x;
     let y = ev.y.round_ties_even() as i32 - body.y;
-    let source = if matches!(ev.type_, InType::PenDown | InType::PenMove | InType::PenUp) { 1 } else { 0 };        let mut r = a.app_view.runtime.take();
-        if let Some(r) = r.as_mut() {
-            r.pointer(ph, x, y, source);
-        }
-        a.app_view.runtime = r;
-        apphost_after_call(a);
-        true
+    let source = if matches!(ev.type_, InType::PenDown | InType::PenMove | InType::PenUp) { 1 } else { 0 };
+    // (a finger the panel calls palm-sized, or one the platform cancelled, is no tap: kithost.rs KitPointer)
+    let palm = source == 0 && ev.value & TOUCH_F_BROAD != 0;
+    let slop = mm_to_px(TAP_SLOP_MM, a.dpi) as i32;
+    let Some(mut r) = a.app_view.runtime.take() else { return true };
+    // Every phase still calls `app_pointer`, and the events the contact makes call `kit_event`, at once; the
+    // drawing pass either owes is drawn by the tick (apphost_tick).
+    let mut owe = (inside || ph == 2) && r.pointer(ph, x, y, source);
+    let p = &mut a.app_view.input.pointer;
+    // (a contact's moves and its lift come from the source that began it, pen or finger, as the editor takes them)
+    let events = match ph {
+        0 => p.down(x, y, source, r.hit_at(x, y), now_ms(), slop, palm),
+        _ if !p.is_from(source) => Vec::new(),
+        1 => p.moved(x, y, palm),
+        _ => p.up(x, y, touch_cancelled(ev)),
+    };
+    for e in &events {
+        owe |= r.event(e) == Some(true);
+    }
+    a.app_view.runtime = Some(r);
+    if owe {
+        a.app_view.input.owe();
+    }
+    apphost_after_input(a);
+    true
+}
+
+/// A key pressed (`down`) or let go, for the open app: `app_key`, and a KEY event for `kit_event` (the key's code,
+/// its modifiers, 1 down or 0 up). The drawing pass either owes is drawn by the tick.
+pub fn apphost_key(a: &mut App, code: i32, mods: i32, down: bool) {
+    if !a.app_view.open {
+        return;
+    }
+    let Some(mut r) = a.app_view.runtime.take() else { return };
+    let mut owe = r.key(code, mods, down);
+    owe |= r.event(&KitEvent::new(EV_KEY, code, mods, i32::from(down), 0)) == Some(true);
+    a.app_view.runtime = Some(r);
+    if owe {
+        a.app_view.input.owe();
+    }
+    apphost_after_input(a);
 }
 
 /// The two-finger swipe up from the bottom to the middle returns Home. It is a system gesture:
@@ -704,7 +763,10 @@ fn app_exit_gesture(a: &mut App, ev: &InEvent) -> bool {
     false
 }
 
-fn apphost_after_call(a: &mut App) -> bool {
+/// After calls of the module for input (a touch, a key, a press, a drag's points, settings): what they asked for
+/// besides drawing (to show or hide the status bar, a toast, to close), and a call that stopped the module, which
+/// closes the app. The drawing pass they may owe is the tick's (apphost_tick). Returns whether the app was closed.
+fn apphost_after_input(a: &mut App) -> bool {
     let status_change = a.app_view.take_status_bar();
     let toast = a.app_view.take_toast();
     let close = a.app_view.take_close();
@@ -725,10 +787,41 @@ fn apphost_after_call(a: &mut App) -> bool {
         apphost_close(a);
         return true;
     }
-    // The module's visible work changed: draw it once now. Redraw requests pace the rest.
-    apphost_draw(a);
-    app_invalidate(a, Rect::new(0, 0, a.w, a.h), RefreshMode::Ui);
     false
+}
+
+/// A drawing pass of the app (the one input owed, or the status bar's minute): the app drawn once, and only the part
+/// of the screen the pass changed refreshed, in `mode` (nothing, when it changed nothing). Returns that part.
+fn apphost_pass(a: &mut App, mode: RefreshMode) -> Rect {
+    let screen = Rect::new(0, 0, a.w, a.h);
+    let kept = kit_keep(&a.screen, screen);
+    apphost_draw(a);
+    let changed = kept.map_or(screen, |(k, at)| canvas_changed_rect(&k, &a.screen, at));
+    if !rect_is_empty(changed) {
+        app_invalidate(a, changed, mode);
+    }
+    changed
+}
+
+/// What an app's input passes refreshed fast is cleaned as the editor cleans a notebook's (editor.rs du_wear_tick;
+/// the Library has no cleaning of its own): a fast refresh shows grays dithered to black and white, and the lift's
+/// refresh drives only the pixels that change. Once the contact has lifted and its last pass is drawn, after the
+/// editor's pause (SETTLE_LEFT_MS since the lift with the pen away, SETTLE_NEAR_MS with it near), one Clean refresh
+/// of all they covered.
+fn apphost_wear_tick(a: &mut App, now: u32) {
+    let Some((worn, at)) = a.app_view.worn else { return };
+    if a.app_view.input.pointer.is_down() || a.app_view.input.owed() || a.pen_action_down || !a.input_drained {
+        return;
+    }
+    let pause = if crate::status::status_busy(a) { crate::editor::SETTLE_NEAR_MS } else { crate::editor::SETTLE_LEFT_MS };
+    if now.wrapping_sub(at) < pause {
+        return;
+    }
+    a.app_view.worn = None;
+    let r = rect_intersect(worn, Rect::new(0, 0, a.w, a.h));
+    if !rect_is_empty(r) {
+        app_invalidate(a, r, RefreshMode::Clean);
+    }
 }
 
 /// An app whose module was stopped (a call that failed, used up its budget or went past a limit) is closed,
@@ -752,6 +845,39 @@ pub fn apphost_tick(a: &mut App, now: u32) {
     if apphost_failed(a) {
         return;
     }
+    // Input: a contact held still is a press; on the pace's turn a drag's gathered samples go to the module, and the
+    // drawing pass input owes is drawn once for all the input since the last pass (kithost.rs KitInput).
+    let fast_busy = display_fast_busy();
+    let mut events: Vec<KitEvent> = a.app_view.input.pointer.tick(now).into_iter().collect();
+    let turn = a.app_view.input.turn(now, fast_busy);
+    if turn {
+        events.extend(a.app_view.input.pointer.take_moves());
+    }
+    if !events.is_empty() {
+        if let Some(mut r) = a.app_view.runtime.take() {
+            let owe = events.iter().fold(false, |owe, e| r.event(e) == Some(true) || owe);
+            a.app_view.runtime = Some(r);
+            if owe {
+                a.app_view.input.owe();
+            }
+        }
+        if apphost_after_input(a) {
+            return;
+        }
+    }
+    if let Some(mode) = a.app_view.input.pass_now(turn, fast_busy) {
+        let changed = apphost_pass(a, mode);
+        a.app_view.input.refreshed(changed, mode);
+        if apphost_failed(a) {
+            return;
+        }
+    }
+    // (once the contact has lifted, what its fast refreshes covered is owed one Clean refresh, after a pause)
+    if let Some(r) = a.app_view.input.take_worn() {
+        let was = a.app_view.worn.map_or(RECT_EMPTY, |(w, _)| w);
+        a.app_view.worn = Some((rect_union(was, r), now));
+    }
+    apphost_wear_tick(a, now);
     // A request that is due is taken, and the app is drawn and the screen refreshed once for it. A pass that
     // wants another asks again, and gets it no sooner than APP_REDRAW_MIN_MS later; while no request is due
     // nothing is drawn and nothing is refreshed.
@@ -759,11 +885,12 @@ pub fn apphost_tick(a: &mut App, now: u32) {
         apphost_draw(a);
         app_invalidate_all(a, RefreshMode::Fast);
     }
-    // The status bar's clock is the app's too when it is shown.
+    // The status bar's clock is the app's too when it is shown. Its pass refreshes all it changed, the bar's new
+    // minute and any of the body: a body change drawn and not refreshed would leave the screen ahead of the panel, and
+    // the next pass, compared with the screen, would not send it (apphost_pass).
     if a.app_view.status_bar {
         if crate::library::library_app_minute(a) {
-            apphost_draw(a);
-            app_invalidate(a, Rect::new(0, 0, a.w, gui_status_h()), RefreshMode::Ui);
+            apphost_pass(a, RefreshMode::Ui);
         }
     }
 }
@@ -811,10 +938,13 @@ impl AppRuntime {
         // (a state file left by a version that declared the capability is not read, and stays as it is)
         let state = if storage { read_file_max(&state_path, APP_STATE_MAX).unwrap_or_default() } else { Vec::new() };
         let settings = crate::apppkg::app_settings_load(&it.id, &m.settings);
+        // (the body from the start on: the screen under the status bar the manifest asks for; an app that hides or
+        // shows the bar before its first pass has its body from that pass on)
+        let bar = if m.spec.status_bar { gui_status_h().max(0) } else { 0 };
         let mut store = Store::new(&engine, HostState {
             id: it.id.clone(),
             storage,
-            body: (0, 0),
+            body: (screen_w, (screen_h - bar).max(0)),
             commands: Vec::new(),
             hits: Vec::new(),
             text_bytes: 0,
@@ -836,6 +966,7 @@ impl AppRuntime {
             clock_12h,
             network_http: m.capabilities.iter().any(|c| c == APP_CAP_NETWORK),
             http: None,
+            points: Vec::new(),
             #[cfg(test)]
             http_stand_in: Vec::new(),
         });
@@ -876,6 +1007,10 @@ impl AppRuntime {
         };
         self.store.data_mut().status.clear();
         self.store.data_mut().texts.clear();
+        // (a redraw request whose time has come is answered by this pass, whatever brought it)
+        if self.redraw_due(now_ms()) {
+            self.store.data_mut().redraw_at = None;
+        }
         self.begin_call();
         self.store.data_mut().body = (body.w, body.h);
         let scale = ui_px(1000.0);
@@ -968,36 +1103,70 @@ impl AppRuntime {
         c.clip = saved_clip;
     }
 
-    /// Calls `app_pointer`, when the module has one: a pointer phase at a place of the body.
-    pub fn pointer(&mut self, phase: i32, x: i32, y: i32, source: i32) {
+    /// Calls `app_pointer`, when the module has one: a pointer phase at a place of the body. Whether it was called
+    /// (a call says nothing of the picture, so it owes a drawing pass).
+    pub fn pointer(&mut self, phase: i32, x: i32, y: i32, source: i32) -> bool {
         if self.error.is_some() {
-            return;
+            return false;
         }
-        let Some(f) = self.instance.get_typed_func::<(i32, i32, i32, i32), ()>(&self.store, "app_pointer").ok() else { return };
+        let Some(f) = self.instance.get_typed_func::<(i32, i32, i32, i32), ()>(&self.store, "app_pointer").ok() else { return false };
         self.begin_call();
         let called = f.call(&mut self.store, (phase, x, y, source));
         self.end_call();
         if called.is_err() {
             self.error = Some("The app stopped while handling a touch.".into());
-            return;
+            return true;
         }
         self.save();
+        true
     }
 
-    /// Calls `app_key`, when the module has one.
-    pub fn key(&mut self, code: i32, mods: i32, down: bool) {
+    /// Calls `app_key`, when the module has one. Whether it was called.
+    pub fn key(&mut self, code: i32, mods: i32, down: bool) -> bool {
         if self.error.is_some() {
-            return;
+            return false;
         }
-        let Some(f) = self.instance.get_typed_func::<(i32, i32, i32), ()>(&self.store, "app_key").ok() else { return };
+        let Some(f) = self.instance.get_typed_func::<(i32, i32, i32), ()>(&self.store, "app_key").ok() else { return false };
         self.begin_call();
         let called = f.call(&mut self.store, (code, mods, i32::from(down)));
         self.end_call();
         if called.is_err() {
             self.error = Some("The app stopped while handling a key.".into());
-            return;
+            return true;
         }
         self.save();
+        true
+    }
+
+    /// Calls `kit_event`, when the module has one, with the event's numbers; a DRAG_MOVE's points are what
+    /// `event_points` copies during the call. None for a module without it; else whether its picture changed
+    /// (what it returned was not 0). A call that stopped the module changed it: the app is closed with the reason.
+    pub fn event(&mut self, ev: &KitEvent) -> Option<bool> {
+        if self.error.is_some() {
+            return None;
+        }
+        let f = self.instance.get_typed_func::<(i32, i32, i32, i32, i32), i32>(&self.store, KIT_EVENT).ok()?;
+        self.begin_call();
+        self.store.data_mut().points = ev.points.clone();
+        let called = f.call(&mut self.store, (ev.kind, ev.id, ev.a, ev.b, ev.c));
+        self.store.data_mut().points = Vec::new();
+        self.end_call();
+        match called {
+            Ok(v) => {
+                self.save();
+                Some(v != 0)
+            }
+            Err(_) => {
+                self.error = Some("The app stopped while handling an event.".into());
+                Some(true)
+            }
+        }
+    }
+
+    /// The hit region of the last drawing pass under a place of the body (the first drawn that holds it), -1 for
+    /// none.
+    pub fn hit_at(&self, x: i32, y: i32) -> i32 {
+        self.hits.iter().find(|(_, r)| rect_contains(*r, x, y)).map_or(-1, |(id, _)| *id)
     }
 
     fn export_status_bar(&mut self) -> Option<bool> {
@@ -1080,10 +1249,11 @@ impl AppRuntime {
         }
     }
 
-    /// Whether the module asked for a drawing pass that is due at `now`, by the app's clock (`now_ms`, which
-    /// wraps: the longest delay is far under half its range). Nothing is due for a module that has stopped.
+    /// Whether the module asked for a drawing pass that is due at `now`, by the app's clock (`now_ms`: the time
+    /// since it asked, counted across the clock's wrap, wasmhost.rs Redraw). Nothing is due for a module that has
+    /// stopped.
     pub fn redraw_due(&self, now: u32) -> bool {
-        self.error.is_none() && self.store.data().redraw_at.is_some_and(|at| now.wrapping_sub(at) as i32 >= 0)
+        self.error.is_none() && self.store.data().redraw_at.is_some_and(|r| r.due(now))
     }
 
     /// `redraw_due`, and the request is taken: the host's tick asks this once and then draws the app, so one
@@ -1403,13 +1573,10 @@ fn install_imports(linker: &mut Linker<HostState>) -> Result<(), String> {
     }).map_err(e)?;
     linker.func_wrap(ABI, "request_redraw", |mut caller: Caller<'_, HostState>, after_ms: i32| -> Result<(), wasmi::Error> {
         called(&mut caller)?;
-        let at = now_ms().wrapping_add(after_ms.clamp(APP_REDRAW_MIN_MS, APP_REDRAW_MAX_MS) as u32);
+        let after = after_ms.clamp(APP_REDRAW_MIN_MS, APP_REDRAW_MAX_MS) as u32;
         let st = caller.data_mut();
         // (one request stands, the soonest asked for: a later call does not put an earlier one off)
-        st.redraw_at = Some(match st.redraw_at {
-            Some(was) if was.wrapping_sub(at) as i32 <= 0 => was,
-            _ => at,
-        });
+        st.redraw_at = Some(Redraw::asked(st.redraw_at, now_ms(), after));
         Ok(())
     }).map_err(e)?;
     linker.func_wrap(ABI, "close", |mut caller: Caller<'_, HostState>| -> Result<(), wasmi::Error> {
@@ -2312,6 +2479,7 @@ mod tests {
             clock_12h: false,
             network_http: true,
             http: None,
+            points: Vec::new(),
             http_stand_in: Vec::new(),
         }
     }
