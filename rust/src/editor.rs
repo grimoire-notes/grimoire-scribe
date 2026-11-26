@@ -16380,15 +16380,16 @@ mod tests {
 
     #[test]
     fn ink_over_white_in_both_papers_is_sampled_as_ever() {
-        // blit_over_paper over a paper drawn white, of a page whose paper is white: blit_canvas's pixels, at every
-        // view of blit_canvas_matches_reference_and_fast_blit_aligns, whole and in parts.
+        // blit_over_paper over a paper drawn white, of a page whose paper is white: blit_canvas's pixels, at the views
+        // of blit_canvas_matches_reference_and_fast_blit_aligns off 100% and more below it, the page's edges in
+        // view, whole and in parts. (At exactly 100% blit_canvas copies the page, and the view never comes here.)
         let mut pc = Canvas::default();
         assert_eq!(canvas_init(&mut pc, 64, 48), 0);
         for (i, p) in pc.px.iter_mut().enumerate() {
             *p = if i % 5 == 0 { 255 } else if i % 7 == 0 { 0 } else { ((i * 37) % 251) as u8 };
         }
         let paper = vec![255u8; 64 * 48];
-        for (zoom, ox, oy) in [(0.5f32, -32.0f32, -24.0f32), (0.73, -10.5, -5.25), (0.75, -9.3, 2.6), (1.0, 0.0, 0.0), (1.0, 12.0, 8.0), (1.0, -4.0, -3.0), (1.25, 10.3, 6.7), (2.3, 20.1, 15.9), (4.0, 48.0, 36.0)] {
+        for (zoom, ox, oy) in [(0.5f32, -32.0f32, -24.0f32), (0.73, -10.5, -5.25), (0.75, -9.3, 2.6), (0.9, -4.0, -3.0), (0.97, 3.3, -1.7), (1.25, 10.3, 6.7), (2.3, 20.1, 15.9), (4.0, 48.0, 36.0)] {
             let mut want = Canvas::default();
             assert_eq!(canvas_init(&mut want, 64, 48), 0);
             blit_canvas(&mut want, &pc, zoom, ox, oy, Rect::new(0, 0, 64, 48));
