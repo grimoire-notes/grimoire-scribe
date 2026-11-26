@@ -7,7 +7,9 @@
 // until 2.0.0-beta.5 recorded the tip on each stroke, issue #5: old strokes match this table
 // again, and the vertical tip's own renders are listed separately below. 2.3.0 draws the ruled
 // papers, Cornell, Graph paper and Dot grid darker, on the owner's ask, issue #314: their renders
-// are listed separately below too, and every render of the ink alone still matches this table.)
+// are listed separately below too, and every render of the ink alone still matches this table.
+// The papers that came after 1.0.0-beta, Cross grid, Isometric, Hexagon and Seyes rule, are
+// recorded from 2.3.0 in a table of their own below: Seyes's render is 2.2.0's, unchanged.)
 //
 // GRIMOIRE_GOLDEN_PRINT=1 prints the table instead of checking it (that is how it was made).
 // The values hold for the host build this suite runs on (clang on arm64 macOS): another
@@ -214,6 +216,17 @@ const K_DARKER_PAPERS: [(&str, u32); 34] = [
     ("medium rule, every tool, read back", 0xca81475f),
 ];
 
+// The papers that came after 1.0.0-beta (PAPER_RETICLE..PAPER_SEYES), recorded from 2.3.0 on 2026-11-26 (issue
+// #314) at Seyes's panel scale 1 (paper_set_panel_ppi: the simulator's, the tests' and the host exporter's), so
+// that they hold from then on as the papers above do: Seyes rule as the owner tuned it in 2.0.0-beta.2 and 2.1.0
+// (its render here is 2.2.0's, byte for byte), Cross grid, Isometric and Hexagon as #314 drew them darker.
+const K_LATER_PAPERS: [(&str, u32); 4] = [
+    ("paper 17", 0x585397f1),
+    ("paper 18", 0x936f8509),
+    ("paper 19", 0x58706660),
+    ("paper 20", 0x8746ab47),
+];
+
 fn crc32_bytes(crc: u32, p: &[u8]) -> u32 {
     static CRC_TABLE: OnceLock<[u32; 256]> = OnceLock::new();
     let table = CRC_TABLE.get_or_init(|| {
@@ -255,7 +268,7 @@ fn golden(name: &str, crc: u32) {
     if !GOLDEN_HOST {
         return;
     }
-    for &(n, expected) in K_DARKER_PAPERS.iter().chain(K_GOLDEN.iter()).chain(K_VERTICAL_TIP.iter()) {
+    for &(n, expected) in K_DARKER_PAPERS.iter().chain(K_GOLDEN.iter()).chain(K_VERTICAL_TIP.iter()).chain(K_LATER_PAPERS.iter()) {
         if n != name {
             continue;
         }
@@ -336,10 +349,14 @@ fn papers() {
     let mut c = Canvas::default();
     check!(canvas_init(&mut c, W, H) == 0);
     let full = Rect { x: 0, y: 0, w: W, h: H };
+    // (Seyes at the layout's own millimetres, as with no panel: K_LATER_PAPERS)
+    paper_set_panel_ppi(0.0, DPI);
     for gothic in 0..2 {
         // Paper labels and clefs come from Terminess in both themes: the theme never shows on a page.
         font_set_gothic(gothic != 0);
-        for k in 0..BETA_PAPER_COUNT {
+        // (every fixed kind: those 1.0.0-beta knows, then K_LATER_PAPERS; a kind added later has no value
+        // recorded, and fails until it has one)
+        for k in 0..PAPER_COUNT {
             canvas_fill(&mut c, full, 0);
             paper_render(&mut c, PaperKind(k as u32), full, DPI);
             let key = cformat!("paper %d", k);

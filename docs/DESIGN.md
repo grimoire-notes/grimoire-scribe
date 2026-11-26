@@ -821,9 +821,11 @@ announcements: goingToScreenSaver draws the sleep screen, outOfScreenSaver is th
   every tool, and a page's bytes. A page someone already wrote must look exactly the same in every
   later version, so it is never re-recorded to make a change pass. It compares on the recording
   host only (clang on arm64 macOS). 2.3.0 changes the papers on purpose, the owner's ask (issue
-  #314): the ruled, Cornell, graph and dot papers draw darker lines, rust/tests/test_golden.rs
-  lists those renders apart (K_DARKER_PAPERS), and every render of the ink alone still matches
-  the table.
+  #314): of the papers the table knows, the ruled, Cornell, graph and dot papers draw darker lines,
+  rust/tests/test_golden.rs lists those renders apart (K_DARKER_PAPERS), and every render of the
+  ink alone still matches the table. The papers that came after 1.0.0-beta (Cross grid, Isometric,
+  Hexagon and Seyes rule) are recorded from 2.3.0 in a table of their own (K_LATER_PAPERS), Seyes's
+  render unchanged since 2.2.0.
 - tests/test_format.c checks pages against tests/beta_format.h, a frozen copy of the 1.0.0-beta
   page reader and writer (the "Moving between versions" table in docs/FORMAT.md).
 - tests/test_font.c pins text renders by CRC, recorded at 56d931c: all printable ASCII in every
