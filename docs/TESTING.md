@@ -227,10 +227,12 @@ is drawn, as a notebook opens on it and as the page is turned to; never for a li
 z_previews_4_picker (the destination picker does the same), z_previews_5_turn (a screen turned to while a
 batch runs gets its previews after it), z_previews_6_beside (with the cores, beside it), z_previews_7_once
 (Pages opened over the idle warm-up of its own screen waits on it: no second process draws the dense page
-again) and z_previews_8_moved (a page deleted while a batch runs, the view opened again: the page moved into
-the screen is asked for, not left with its number). The dense pages make the job slow with
-GRIMOIRE_SIM_DENSE_DRAW_MS, as a Kindle draws them; tests/pages_cache_check.py still
-holds that page turns and saves write no preview. Each batch logs `previews: nb=... pages=... cached=...
+again), z_previews_8_moved (a page deleted while a batch runs, the view opened again: the page moved into
+the screen is asked for, not left with its number) and z_previews_10_renderer (a preview an earlier version
+drew, current for its page file, is drawn again after the update, as the start finds no renderer noted:
+2.3.0, #314; the ghost fixture's scenarios keep theirs with GRIMOIRE_SIM_PREVIEWS_CURRENT=1). The dense
+pages make the job slow with GRIMOIRE_SIM_DENSE_DRAW_MS, as a Kindle draws them; tests/pages_cache_check.py
+still holds that page turns and saves write no preview. Each batch logs `previews: nb=... pages=... cached=...
 kept=... drawn=... keep=... ms=... first=... slow=... cores=...` in grimoire.log.
 
 On the Kindle, in a notebook with dense pages (2.0-b1 DEMO: pages 1, 7, 8 and 12 are 0.6 to 2.6 MB): open
