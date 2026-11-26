@@ -2597,7 +2597,8 @@ mod tests {
             format!("\u{6f22}\u{5b57}{}", "abcdefghij".repeat(12)),
             format!("{}\u{3072}\u{3089}", "abcdefghij".repeat(12)),
             "e\u{301}\u{200b}\u{200d}x\u{202e}".repeat(30),
-            "a\u{10fffd}b\u{e000}\t\u{3000}\u{a0}c".repeat(20),
+            // (two private-use characters, at the areas' bounds, and a symbol no face has)
+            format!("a{}b{}\t\u{3000}\u{a0}c\u{1d11e}", char::from_u32(0x10FFFD).unwrap(), char::from_u32(0xE000).unwrap()).repeat(20),
             "\u{1f600}\u{fffd}\u{0}z".repeat(25),
             "\u{3072}\u{3089}\u{304c}\u{306a}\u{30ab}\u{30bf}".repeat(20),
         ];
