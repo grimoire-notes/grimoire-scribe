@@ -114,14 +114,14 @@ expect editor.sel_box is 360 645 678 683
 expect editor.live_matches_render is 1
 expect editor.halo is 3
 expect editor.layered is 0
-# (the selection's frame, at its left edge, covers four of the rules' pixels)
-expect display.dark.360.870.594.111 is 2372
+# (from 4 px inside the selection's left edge, where its frame is drawn: the rules' pixels alone)
+expect display.dark.364.870.590.111 is 2360
 expect display.dark.690.1137.44.17 is 0
 expect display.dark.697.1302.26.17 is 0
 tap panel select.done
 wait 300
 waitfor display.stale.300.600.1200.1000 is 0
-expect display.dark.360.870.594.111 is 2376
+expect display.dark.364.870.590.111 is 2360
 expect display.dark.690.1137.44.17 is 0
 expect display.dark.697.1302.26.17 is 0
 # undo puts the page back exactly
@@ -162,8 +162,8 @@ expect editor.sel_box is 360 645 924 932
 expect editor.live_matches_render is 1
 expect editor.halo is 3
 expect editor.layered is 1
-# (the selection's frame, at its left edge, covers four of the rules' pixels)
-expect display.dark.360.953.780.150 is 3116
+# (from 4 px inside the selection's left edge, where its frame is drawn: the rules' pixels alone)
+expect display.dark.364.953.776.150 is 3104
 expect display.dark.810.1316.60.24 is 0
 expect display.dark.819.1541.36.24 is 72
 expect display.dark.1140.960.20.120 not 80
@@ -184,13 +184,13 @@ expect editor.select is selected
 expect editor.sel_box is 360 645 745 751
 expect editor.live_matches_render is 1
 expect editor.halo is 3
-# (the selection's frame, at its left edge, covers four of the rules' pixels)
-expect display.dark.360.891.648.125 is 2588
+# (from 4 px inside the selection's left edge, where its frame is drawn: the rules' pixels alone)
+expect display.dark.364.891.644.125 is 2576
 expect display.dark.1140.960.20.120 not 80
 tap panel select.done
 wait 300
 waitfor display.stale.300.600.1500.1300 is 0
-expect display.dark.360.891.648.125 is 2592
+expect display.dark.364.891.644.125 is 2576
 expect display.dark.1140.960.20.120 not 80
 # two undos: back exactly as it was
 pentap panel undo
