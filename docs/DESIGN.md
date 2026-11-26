@@ -78,6 +78,22 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   (`canvas_blit_fit`). `App.screen` is what the panel shows: the viewed page plus overlays
   (floating panel, modals). Overlays are re-drawn on top of the page whenever a region is
   recomposed.
+- Off 100% the view samples the page canvas with a two-tap bilinear (`blit_canvas`), and the panel
+  then cuts each gray to its 16. Below 100% (to half), a paper of lines alone (the six ruled kinds,
+  sheet music, graph, the cross grid and Seyes: `PAPER_LINE_KINDS`) is drawn at the screen's scale
+  instead (issue #308, `blit_canvas_ruled`). `paper_render_view` draws the paper over the rect, every
+  line on whole screen pixels as wide and as gray as on the page, placed by one rounding of its page
+  coordinates, and the page's ink is sampled over it (`blit_over_paper`). A screen pixel whose taps
+  hold the paper alone (the page canvas equal to `s.paper`, the paper alone at page size, which the
+  first such frame makes: `view_rules`) keeps the drawn paper. One with ink takes each tap as that ink
+  would show over the drawn paper (ink darkens toward its gray: a tap darker than its paper is ink of
+  the darkest gray among the taps over part of the pixel), mixed with the bilinear's weights and
+  rounding, so ink over paper that is white in both comes out exactly as before. Sampled with the
+  page, each line fell at its own fraction of a pixel: at 0.75 (the whole page sideways) Seyes's inner
+  lines came out in four shapes, the heaviest a third darker than the lightest on the 16 grays. The
+  100% view, zooms of 100% and more, a pinch's fast frames, the Links bar's preview of another page
+  and the other papers are sampled from the page as before, and nothing drawn at page size (pages,
+  exports, previews, kept drawings) changes.
 - Screens never call display directly. They call `app_invalidate(app, rect, mode)` and the
   main loop calls `app_flush(app)` after draining all pending input events, so a burst of
   pen samples becomes one refresh.
@@ -754,11 +770,13 @@ announcements: goingToScreenSaver draws the sleep screen, outOfScreenSaver is th
   failed check, an unknown script line or a leftover `*.tmp` fails the build once every scenario
   has run, and a headless run waits for the PDF exports it started. A `# root: NAME` line starts a
   scenario from another scenario's data (d_persist, x_turn_calibrated and y_pagesize_1_ksc use
-  b_library's, s_passcode_once r_passcode's, y_pagesize_2_back y_pagesize_1_ksc's, z_language_kept
-  y_language's), `# env: K=V` lines set its environment (`GRIMOIRE_PASSCODE` in r_passcode,
+  b_library's, s_passcode_once r_passcode's, y_pagesize_2_back y_pagesize_1_ksc's,
+  y_rulings_2_other_size y_rulings_1_sideways's, z_language_kept y_language's), `# env: K=V` lines
+  set its environment (`GRIMOIRE_PASSCODE` in r_passcode,
   s_passcode_once, t_passcode_left_off and z_annotate_f_passcode, `GRIMOIRE_BG_DELAY_MS` in
   v_leave_from_editor, `GRIMOIRE_HOST` in y_koreader_hosted and y_koreader_not_hosted,
-  `GRIMOIRE_LANG` in y_language and z_language_kept, `GRIMOIRE_SIM_SIZE` in y_pagesize_1_ksc,
+  `GRIMOIRE_LANG` in y_language and z_language_kept, `GRIMOIRE_SIM_SIZE` in y_pagesize_1_ksc and
+  y_rulings_2_other_size,
   `GRIMOIRE_CHECK_FIT` and `GRIMOIRE_SIM_ADDRS` in y_all_screens), `# settings: key=value` lines
   go into its settings.ini, and a `# pdfs: N` line wants exactly N PDFs in its root's PDFs/ folder.
   The rule unsets the test hooks first, so nothing else of the caller's reaches them, and runs

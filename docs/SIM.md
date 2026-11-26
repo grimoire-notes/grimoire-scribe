@@ -721,9 +721,12 @@ key draw nothing, the release refreshes the key alone, and a pause gets one GL16
 
 y_pagesize_1_ksc opens b_library's data on a 1986x2648 screen (fitted notebooks, new pages at the
 notebook's size, Custom music for its page, a scaled calibration, a notebook made there), and
-y_pagesize_2_back takes it back to 1860x2480. y_koreader_hosted runs as the plugin starts Grimoire:
-its shots are 01 and 02 (Back to KOReader in Gothic, upright and sideways), 03 (sleep mode 2 asleep:
-the page) and 04 and 05 (Classic); y_koreader_not_hosted, from the Library, takes no shots and
+y_pagesize_2_back takes it back to 1860x2480. y_rulings_1_sideways turns a Seyes notebook sideways
+(the whole page at 0.75, its paper drawn at the screen's scale: shots 02 and 03), and
+y_rulings_2_other_size opens it on a 1920x2560 screen, sideways at 0.77 (shot 01).
+y_koreader_hosted runs as the plugin starts Grimoire: its shots are 01 and 02 (Back to KOReader in
+Gothic, upright and sideways), 03 (sleep mode 2 asleep: the page) and 04 and 05 (Classic);
+y_koreader_not_hosted, from the Library, takes no shots and
 holds that mode 2 stays the Kindle's own screensaver there (`asleep.mode` 2).
 
 A headless run ends only once the PDF exports it started are written (the app leaves them to
@@ -741,9 +744,10 @@ v_shortcuts_awake and v_shortcuts_disabled set `GRIMOIRE_SLEEP_MINUTE_MS`, v_sho
 `GRIMOIRE_SIM_UPTIME_MS`, y_status_corner sets `TZ=UTC`,
 y_koreader_hosted sets `GRIMOIRE_HOST` as the KOReader plugin's start does and
 y_koreader_not_hosted sets it empty, y_language and z_language_kept set `GRIMOIRE_LANG`,
-y_pagesize_1_ksc sets `GRIMOIRE_SIM_SIZE=1986x2648`, and y_all_screens sets `GRIMOIRE_CHECK_FIT`
-and a made-up `GRIMOIRE_SIM_ADDRS`). The rule first unsets `GRIMOIRE_HOST`, `GRIMOIRE_PASSCODE`,
-`GRIMOIRE_SIM_ADDRS`, `GRIMOIRE_HTTPD_DELAY_MS`, `GRIMOIRE_BG_DELAY_MS`, `GRIMOIRE_SIM_PRESSURE`,
+y_pagesize_1_ksc sets `GRIMOIRE_SIM_SIZE=1986x2648` and y_rulings_2_other_size `1920x2560`,
+and y_all_screens sets `GRIMOIRE_CHECK_FIT` and a made-up `GRIMOIRE_SIM_ADDRS`). The rule first
+unsets `GRIMOIRE_HOST`, `GRIMOIRE_PASSCODE`, `GRIMOIRE_SIM_ADDRS`, `GRIMOIRE_HTTPD_DELAY_MS`,
+`GRIMOIRE_BG_DELAY_MS`, `GRIMOIRE_SIM_PRESSURE`,
 `GRIMOIRE_SIM_STATS`, `GRIMOIRE_SIM_SIZE`, `GRIMOIRE_CHECK_FIT`, `GRIMOIRE_LANG`,
 `GRIMOIRE_L10N_DIR`, `GRIMOIRE_SIM_PEN_BUTTON2` and `GRIMOIRE_SLEEP_MINUTE_MS` (tests/share_check.sh does too), so only
 `# env:` lines set them, and runs every scenario in English (`GRIMOIRE_LANG=en`) unless its
