@@ -287,11 +287,16 @@ pub(crate) fn storage_root() -> Option<String> {
     None
 }
 
-/// Grimoire's folder relative to the storage root ("grimoire" on the Kindle).
+/// Grimoire's folder relative to the storage root ("grimoire" on the Kindle). None when the data root is the root
+/// itself or not inside it: a data root whose path only begins with the root's spelling (/a/bc under /a/b) is not
+/// inside it, as FsStorage::open has it.
 pub(crate) fn grimoire_rel() -> Option<String> {
     let root = storage_root()?;
     let g = store_root();
-    g.strip_prefix(root.trim_end_matches('/')).map(|r| r.trim_matches('/').to_string()).filter(|r| !r.is_empty())
+    g.strip_prefix(root.trim_end_matches('/'))
+        .filter(|r| r.is_empty() || r.starts_with('/'))
+        .map(|r| r.trim_matches('/').to_string())
+        .filter(|r| !r.is_empty())
 }
 
 /// One of Grimoire's own folders (`sub`: "trash", "PDFs", "fonts", ...) as the owner finds it from the storage
@@ -4332,7 +4337,8 @@ mod tests {
     // The texts that name one of Grimoire's folders ("Moved to %s", "Copied to %s.", ...) name it as found from the
     // storage root: "grimoire/trash" where the data root is "grimoire" in it, as on the Kindle; the path inside it
     // where the data root sits deeper or is named otherwise; with no storage root set, from the folder around the
-    // data root (the root Files lists then); and the Kindle's spelling where the data root is not inside the storage.
+    // data root (the root Files lists then); and the Kindle's spelling where the data root is not inside the storage,
+    // as one whose path only begins with the storage's spelling is not.
     #[test]
     fn own_folders_are_named_as_found_from_the_storage_root() {
         let base = std::env::var("GRIMOIRE_TEST_TMP").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
@@ -4349,6 +4355,12 @@ mod tests {
         data(st.join("Books/Grimoire"));
         assert_eq!(own_folder_shown("trash"), "Books/Grimoire/trash");
         assert_eq!(own_folder_shown("PDFs"), "Books/Grimoire/PDFs");
+        // (a data root whose path only begins with the storage root's spelling is not inside it)
+        let mut near = st.clone().into_os_string();
+        near.push("c");
+        data(std::path::PathBuf::from(&near).join("grimoire"));
+        assert_eq!(grimoire_rel(), None);
+        assert_eq!(own_folder_shown("fonts"), "grimoire/fonts");
         data(out.join("Notes"));
         assert_eq!(own_folder_shown("fonts"), "grimoire/fonts");
         std::env::remove_var("GRIMOIRE_STORAGE");
@@ -4357,6 +4369,7 @@ mod tests {
             std::env::set_var("GRIMOIRE_STORAGE", v);
         }
         let _ = std::fs::remove_dir_all(&st);
+        let _ = std::fs::remove_dir_all(&near);
         let _ = std::fs::remove_dir_all(&out);
     }
 
