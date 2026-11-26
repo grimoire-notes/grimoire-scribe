@@ -342,29 +342,27 @@ fn sync_dir(dir: &str) {
 // (BG_DECODE_BUDGET) and room for the page picture it makes. Past it an allocation fails, and the
 // job with it (an import keeps its folder), before the Kindle runs out of memory and its kernel
 // picks a process to kill. The decode budget keeps stb_image within it already: this catches the
-// rest. A Linux kernel's only: on Linux, and in a build with the `linux-kernel` feature (PORTING.md),
-// where memory an allocator hands out of what it reserved at start is not counted; a process that
-// cannot read its own size is left as it is. (The C also stays out of the sanitizers' builds, whose
-// shadow memory is address space too; a Rust build has none.)
+// rest. Linux only. (The C also stays out of the sanitizers' builds, whose shadow memory is address
+// space too; a Rust build has none.)
 
 struct MemCap {
     set: bool,
     was: libc::rlimit,
 }
 
-#[cfg(any(target_os = "linux", feature = "linux-kernel"))]
+#[cfg(target_os = "linux")]
 fn cap_memory() -> MemCap {
     let mut m = MemCap { set: false, was: libc::rlimit { rlim_cur: 0, rlim_max: 0 } };
     cap_memory_linux(&mut m);
     m
 }
 
-#[cfg(not(any(target_os = "linux", feature = "linux-kernel")))]
+#[cfg(not(target_os = "linux"))]
 fn cap_memory() -> MemCap {
     MemCap { set: false, was: libc::rlimit { rlim_cur: 0, rlim_max: 0 } }
 }
 
-#[cfg(any(target_os = "linux", feature = "linux-kernel"))]
+#[cfg(target_os = "linux")]
 fn cap_memory_linux(m: &mut MemCap) {
     // (the first number of /proc/self/statm: the pages of address space the process holds)
     let Ok(statm) = std::fs::read("/proc/self/statm") else { return };

@@ -28,10 +28,7 @@ kindle = []
 sim = []
 external-platform = []
 # A platform kept in another crate whose system runs a Linux kernel under another name than Linux: the sandbox's
-# worker steps are built for it, and its workers hold the ones that need no root (sandbox.rs, PORTING.md). The
-# rest of what needs only a Linux kernel is built for it too: the kernel's clocks (pdfwork.rs), the background
-# children's caps, names and parent-death signals (childcaps.rs, bgjob.rs, bgwork_template.rs, bgwork_compact.rs)
-# and Live view's socket tuning (live.rs).
+# worker steps are built for it, and its workers hold the ones that need no root (sandbox.rs, PORTING.md).
 linux-kernel = []
 
 [lib]

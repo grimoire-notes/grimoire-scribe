@@ -288,15 +288,14 @@ fn parent_gone(parent: libc::pid_t) -> bool {
     p != parent || p == 1
 }
 
-// Grimoire gone: stop (its list keeps the pages). A Linux kernel's prctl, under another system's name too
-// (the `linux-kernel` feature); elsewhere `parent_gone` alone stops the pass.
-#[cfg(any(target_os = "linux", feature = "linux-kernel"))]
+// Grimoire gone: stop (its list keeps the pages)
+#[cfg(target_os = "linux")]
 fn stop_with_parent() {
     // SAFETY: prctl(PR_SET_PDEATHSIG, sig) only sets the signal this process gets when its parent
     // dies.
     unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM as libc::c_ulong) };
 }
-#[cfg(not(any(target_os = "linux", feature = "linux-kernel")))]
+#[cfg(not(target_os = "linux"))]
 fn stop_with_parent() {}
 
 // Replaces `path` with `data` through a temporary file, but only if the file still holds `was`

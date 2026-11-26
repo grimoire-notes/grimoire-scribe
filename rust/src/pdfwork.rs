@@ -1797,18 +1797,17 @@ impl Session {
     }
 }
 
-/// What the device has slept since it started, in ms: CLOCK_BOOTTIME (which counts a suspend) less
-/// CLOCK_MONOTONIC (which does not, as the watchdogs do not). It grows only while asleep. A Linux kernel has both
-/// clocks, under another system's name too (the `linux-kernel` feature, PORTING.md). 0 where there is no such
-/// clock (a wake is then never seen), or, in headless and test builds, with GRIMOIRE_PDF_TEST_WOKE an hour more at
-/// every look.
+/// What the Kindle has slept since it started, in ms: CLOCK_BOOTTIME (which counts a suspend) less
+/// CLOCK_MONOTONIC (which does not, as the watchdogs do not). It grows only while asleep. 0 where there is no
+/// such clock (a wake is then never seen), or, in headless and test builds, with GRIMOIRE_PDF_TEST_WOKE an hour
+/// more at every look.
 fn slept_ms() -> i64 {
     #[cfg(not(feature = "kindle"))]
     if std::env::var_os("GRIMOIRE_PDF_TEST_WOKE").is_some() {
         static N: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
         return N.fetch_add(3_600_000, std::sync::atomic::Ordering::Relaxed);
     }
-    #[cfg(any(target_os = "linux", feature = "linux-kernel"))]
+    #[cfg(target_os = "linux")]
     {
         // SAFETY: both are written by clock_gettime before they are read.
         let (mut b, mut m): (libc::timespec, libc::timespec) = unsafe { (std::mem::zeroed(), std::mem::zeroed()) };
@@ -1818,7 +1817,7 @@ fn slept_ms() -> i64 {
         }
         (b.tv_sec as i64 - m.tv_sec as i64) * 1000 + (b.tv_nsec as i64 - m.tv_nsec as i64) / 1_000_000
     }
-    #[cfg(not(any(target_os = "linux", feature = "linux-kernel")))]
+    #[cfg(not(target_os = "linux"))]
     {
         0
     }
