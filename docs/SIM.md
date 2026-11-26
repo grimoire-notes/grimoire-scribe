@@ -511,7 +511,7 @@ shows what the app holds.
 | `editor.tool` | the pen's tool by its settings.ini name: `pencil`, `mech`, `ballpoint`, `eraser`, `highlighter`, `fountain`, `fineliner`, `marker`, `charcoal` or `calligraphy` |
 | `editor.view` | the view: the zoom as `editor.zoom`, then the page point at the screen's top left, `2.25 517 667` (2.0.0-beta.2) |
 | `editor.notebook_back` | how many notebooks Back returns through (links followed into another notebook) and the newest one's id, `1 A`; `0` for none (2.0.0-beta.2) |
-| `editor.zoom` | the zoom with two decimals: `1.00` is the usual view (the page's width fitting the screen's: 100% upright for a notebook of this screen's size; sideways the whole page while `landscape_fit` is on, its default) |
+| `editor.zoom` | the zoom with two decimals: `1.00` is the usual view (the page's width fitting the screen's: 100% upright for a notebook of this screen's size; sideways the whole page while `landscape_fit` is on, its default; 100%, centred, for a page a little smaller than the screen) |
 | `editor.zoomed` | `1` while the view is zoomed or panned, else `0` |
 | `editor.back` | the back list (Back to the page before): `DEPTH TOP`, how many pages it holds and the page number of the newest (`2 3`), `0 0` when it is empty or no notebook is open. Pages deleted since are not counted |
 | `editor.scrolls` | `V H`: whether the page scrolls on the vertical and the horizontal axis now (`1 0`), what touchgest.rs reads to tell a two-finger pan from a swipe: `0 0` at the whole page, with a surface in front that does not pan (the Pages view, a sheet), or with no notebook open |
@@ -528,7 +528,7 @@ shows what the app holds.
 | `editor.bar.peek` | the page number the bar shows above itself, `0` when it shows none (also while it is closed) |
 | `editor.canvas_cache` | what the bar's page canvas cache did since the bar opened, `HITS MISSES ENTRIES`: taps that found their page drawn already, taps that did not (it was read and drawn then, or only partly drawn ahead), and the pages it holds now (the pages the entries go to are got ready, a 160-row band a tick, while nothing touches the screen: `1 0 2`) |
 | `editor.bar.rect` | the bar's card, `x y w h`: upright 20 from each side and 20 above the bottom edge, 316 + 140 R px tall (R rows of chips, 1 to 3; two columns upright, three sideways, two rows at most), and 60 more for its second header line the first three times it opens; empty while it is closed |
-| `editor.scale` | screen px per page px, two decimals: `1.00` for a notebook of this screen's size upright, `1.07` for an 1860x2480 notebook on a 1986x2648 screen, `0.94` the other way; `0.00` with no notebook open |
+| `editor.scale` | screen px per page px, two decimals: `1.00` for a notebook of this screen's size upright, `1.07` for an 1860x2480 notebook on a 1986x2648 screen, `0.94` the other way, `1.00` again for an 1860x2480 notebook on a 1920x2560 screen (within 4%: at 100%, centred, `editor.view` `1.00 -30 -40`); `0.00` with no notebook open |
 | `editor.page_size` | the open page's own size, `WxH`: its notebook's, so a page that came at the screen's size instead would show here; empty with no notebook open |
 | `editor.stroke_start` | where the open page's newest stroke starts, in page px rounded, `x y`; empty with no stroke |
 | `editor.stroke_points` | sample count of the newest stored stroke, zero with no stroke |
