@@ -1663,14 +1663,14 @@ fn http_child_rules(parent: libc::pid_t, caps: ChildCaps, oom: &[u8]) -> std::io
                 libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
             }
         }
-        #[cfg(any(target_os = "linux", feature = "linux-kernel"))]
+        #[cfg(target_os = "linux")]
         if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong, 0, 0, 0) != 0 {
             return Err(std::io::Error::last_os_error());
         }
         if libc::getppid() != parent {
             return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
         }
-        #[cfg(any(target_os = "linux", feature = "linux-kernel"))]
+        #[cfg(target_os = "linux")]
         {
             let fd = libc::open(c"/proc/self/oom_score_adj".as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
             if fd >= 0 {
@@ -1678,8 +1678,8 @@ fn http_child_rules(parent: libc::pid_t, caps: ChildCaps, oom: &[u8]) -> std::io
                 libc::close(fd);
             }
         }
-        #[cfg(not(any(target_os = "linux", feature = "linux-kernel")))]
-        let _ = oom; // (only a Linux kernel has the file, under another system's name too)
+        #[cfg(not(target_os = "linux"))]
+        let _ = oom; // (only Linux has the file)
         if let Some(cap) = caps.as_bytes {
             let cap = cap as libc::rlim_t;
             let mut was = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
