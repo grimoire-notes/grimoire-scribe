@@ -617,6 +617,7 @@ shows what the app holds.
 | `editor.widgets` | the open widget frames: their count, then their ids (`0`, or `1 com.example.timer`) |
 | `editor.widgets.open` | `1` while the Widgets popup is up, else `0` |
 | `editor.packages`, `editor.packages.open` | the installed widget packages: their count, then their ids and versions (`0`, or `1 com.example.timer 1.0.0`), and `1` while the Packages page is up, else `0` |
+| `editor.packages.error` | what the Packages page's error view says while it is up (why an install failed, such as `The Kindle has no curl to fetch packages with. (curl exited 127).`), else empty |
 | `editor.widget.N.status`, `editor.widget.N.text` | the text the frame's package last passed to its `status` import, and the text it drew, joined by `\|`; empty until its first draw |
 | `editor.widget.N.hits`, `editor.widget.N.error` | how many hit regions its last draw registered, and the runtime error that stopped it, empty while it runs |
 | `editor.widget.N.says` | what a frame whose module failed says in place of its body, in the order it is drawn: the reason, ` \| `, then the package's name, version and author (`The widget stopped: ... \| Timer v1.0.0 · Jane Doe`); empty while it runs |
