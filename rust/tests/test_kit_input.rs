@@ -1064,3 +1064,171 @@ fn an_input_event_makes_at_most_three_events_and_a_tick_one_more() {
     let _ = app_package_remove(id, false);
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// A module that keeps what its last KEY event and its last `app_key` call said, each counted: its pass says `k` the
+/// KEY events, `i` the last one's id, `m` its modifiers, `d` its down flag; `a` the app_key calls, `c` the last one's
+/// code, `o` its modifiers, `w` its down flag.
+fn key_probe() -> Kit {
+    let r = |n: i32| R_AT + 4 * n;
+    let fields: [(&str, usize, i32); 8] = [("k", 3, r(0)), ("i", 5, r(1)), ("m", 5, r(2)), ("d", 1, r(3)), ("a", 3, r(4)), ("c", 5, r(5)), ("o", 5, r(6)), ("w", 1, r(7))];
+    let mut say = Vec::new();
+    let mut template = String::new();
+    for (letter, n, from) in fields {
+        if !template.is_empty() {
+            template.push(' ');
+        }
+        template.push_str(letter);
+        let at = SAID_AT + template.len() as i32;
+        template.push_str(&"0".repeat(n));
+        say.extend(seq(&[load(from), digits_of(at, n)]));
+    }
+    let mut k = Kit::new(Host::App, seq(&[say, host_status(SAID_AT, template.len() as i32)]));
+    k.data = vec![(SAID_AT as u32, template.into_bytes())];
+    k.code.push(Vec::new()); // app_pointer
+    k.code.push(seq(&[bump(r(4), i(1)), store(r(5), arg(0)), store(r(6), arg(1)), store(r(7), arg(2))])); // app_key
+    k.event = Some(seq(&[
+        when(seq(&[arg(0), i(EV_KEY), vec![EQ]]), seq(&[bump(r(0), i(1)), store(r(1), arg(1)), store(r(2), arg(2)), store(r(3), arg(3))])),
+        i(1),
+    ]));
+    k
+}
+
+/// An App with an app of `module` open (no status bar), shortcuts on with `shortcuts` as shortcuts.ini.
+fn app_open_with(root: &std::path::Path, id: &str, module: &[u8], shortcuts: &str) -> App {
+    app_package_install(&app_manifest(id, "Keys", &[], false, module), module, None, "", SCREEN.0, SCREEN.1).unwrap();
+    let mut a = App { w: SCREEN.0, h: SCREEN.1, dpi: 300.0, ..Default::default() };
+    assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+    grimoire::library::library_init(&mut a);
+    a.scr = ScreenId::Library;
+    a.settings.shortcuts_enabled = true;
+    let ini = root.join("shortcuts.ini");
+    std::fs::write(&ini, shortcuts).unwrap();
+    shortcuts_load_all(&mut a.shortcuts, ini.to_str().unwrap(), "/nonexistent/controller.ini");
+    assert!(grimoire::apphost::apphost_launch(&mut a, id));
+    a
+}
+
+fn app_done(mut a: App, id: &str) {
+    grimoire::apphost::apphost_close(&mut a);
+    grimoire::library::library_free(&mut a);
+    canvas_free(&mut a.screen);
+    let _ = app_package_remove(id, false);
+}
+
+/// A key or a controller's button, pressed or let go, through the App's input (app::app_event), and the tick after.
+fn press(a: &mut App, code: i32, mods: u32, pad: bool, down: bool) {
+    let type_ = if down { InType::Key } else { InType::KeyUp };
+    grimoire::app::app_event(a, &InEvent { type_, value: code, key_mods: mods, gamepad: pad, t_ms: now_ms(), ..Default::default() });
+    grimoire::apphost::apphost_tick(a, now_ms());
+}
+
+/// While an app is open, a key pressed and let go reaches it twice, through `app_key` and a KEY event: with its code
+/// (the KEY's id), its modifiers (`a`) and 1 pressed, 0 let go (`b`). While the Kindle sleeps no key and no release
+/// reaches it.
+#[test]
+fn an_open_apps_keys_reach_it_pressed_and_let_go_with_their_code_and_modifiers_and_none_while_asleep() {
+    let root = fresh_root("keys");
+    let id = "test.ki.keys";
+    let mut a = app_open_with(&root, id, &key_probe().bytes(), "key.Escape=back\n");
+    assert_eq!(a.app_view.status(), "k000 i00000 m00000 d0 a000 c00000 o00000 w0");
+    press(&mut a, 30, KEYMOD_SHIFT as u32, false, true);
+    assert_eq!(a.app_view.status(), "k001 i00030 m00002 d1 a001 c00030 o00002 w1", "Shift+A pressed");
+    press(&mut a, 30, KEYMOD_SHIFT as u32, false, false);
+    assert_eq!(a.app_view.status(), "k002 i00030 m00002 d0 a002 c00030 o00002 w0", "and let go");
+    a.asleep = true;
+    press(&mut a, 31, 0, false, true);
+    press(&mut a, 31, 0, false, false);
+    a.asleep = false;
+    grimoire::apphost::apphost_draw(&mut a);
+    assert_eq!(a.app_view.status(), "k002 i00030 m00002 d0 a002 c00030 o00002 w0", "nothing while asleep");
+    assert!(a.app_view.open);
+    app_done(a, id);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A controller's buttons reach an open app as keys (`app_key` and KEY, with the button's code), and one leaves the
+/// app when the controller's bindings bind it to `back`, looked up among the controller's bindings, not the keys'.
+#[test]
+fn a_controllers_buttons_reach_an_open_app_and_one_bound_to_back_leaves_it() {
+    let root = fresh_root("pad");
+    let id = "test.ki.pad";
+    // (a key with the code of the controller's button is bound to nothing; the button is bound to back)
+    let mut a = app_open_with(&root, id, &key_probe().bytes(), "key.Escape=back\npad.305=back\npad.304=undo\n");
+    press(&mut a, 304, 0, true, true);
+    press(&mut a, 304, 0, true, false);
+    assert_eq!(a.app_view.status(), "k002 i00304 m00000 d0 a002 c00304 o00000 w0", "a button bound to undo is the app's");
+    press(&mut a, 305, 0, true, true);
+    assert!(!a.app_view.open, "a button bound to back leaves the app");
+    app_done(a, id);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A SETTINGS event owes a drawing pass only when `kit_event` says the picture changed: in an app and in a frame, a
+/// module that answers SETTINGS with 0 is told and not drawn for it.
+#[test]
+fn a_settings_event_owes_a_pass_only_when_the_module_says_its_picture_changed() {
+    let root = fresh_root("settings0");
+    // an app: Quiet's kit_event answers a TAP alone
+    let id = "test.ki.settings0";
+    let module = input(Host::App, false, Some(false)).bytes();
+    let m = format!("{}{INPUT_SETTINGS}", app_manifest(id, "Settings", &[], false, &module));
+    app_package_install(&m, &module, None, "", SCREEN.0, SCREEN.1).unwrap();
+    let mut a = App { w: SCREEN.0, h: SCREEN.1, dpi: 300.0, ..Default::default() };
+    assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+    grimoire::library::library_init(&mut a);
+    assert!(grimoire::apphost::apphost_launch(&mut a, id));
+    assert_eq!(app_settings_save(id, &[("mode".to_string(), "false".to_string())]), 0);
+    a.app_view.reload_settings();
+    grimoire::apphost::apphost_tick(&mut a, now_ms());
+    assert_eq!(a.app_view.status(), "p001 n000 t00 r00 s00 m00 e00 c00 q000 k00 a00 g00 h0", "told, and not drawn for it");
+    grimoire::apphost::apphost_draw(&mut a);
+    assert_eq!(a.app_view.status(), "p002 n000 t00 r00 s00 m00 e00 c00 q000 k00 a00 g01 h0", "the SETTINGS event came");
+    app_done(a, id);
+    // a frame: Quiet widget owes nothing, Input widget a pass
+    for (wid, events, owes) in [("test.ki.settings0w", false, false), ("test.ki.settings1w", true, true)] {
+        let module = input(Host::Widget, true, Some(events)).bytes();
+        let m = format!("{}{INPUT_SETTINGS}", widget_manifest(wid, "Settings", &WIDGET_BOTH, 400, 300, &module));
+        widget_package_install(&m, &module, "", SCREEN.0, SCREEN.1).unwrap();
+        widget_catalog_invalidate();
+        let mut host = grimoire::widgets::WidgetHost::new();
+        host.frames.push(grimoire::widgets::WidgetFrame::new(grimoire::widgets::widget_def(wid).unwrap()));
+        host.frames[0].ensure_runtime();
+        assert!(host.frames[0].runtime.is_some());
+        host.reload_settings(wid);
+        assert_eq!(host.frames[0].input.owed(), owes, "{wid}");
+        widget_package_remove(wid, false).unwrap();
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// An app's pass that input owes waits while the panel's last fast refresh is still showing: a press's PRESS is told
+/// at once, its pass comes once the refresh has ended; a drag's turn waits likewise.
+#[cfg(feature = "sim")]
+#[test]
+fn an_apps_input_pass_waits_while_the_last_fast_refresh_shows() {
+    let root = fresh_root("fastbusy");
+    let id = "test.ki.fastbusy";
+    let module = input(Host::App, true, Some(true)).bytes();
+    app_package_install(&app_manifest(id, "Busy", &[], false, &module), &module, None, "", SCREEN.0, SCREEN.1).unwrap();
+    let mut a = App { w: SCREEN.0, h: SCREEN.1, dpi: 300.0, ..Default::default() };
+    assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+    grimoire::library::library_init(&mut a);
+    sim_clock_set(Some(100_000));
+    assert!(grimoire::apphost::apphost_launch(&mut a, id));
+    let at = |a: &mut App, t: u32| {
+        sim_clock_set(Some(t));
+        grimoire::apphost::apphost_tick(a, t);
+    };
+    assert!(grimoire::apphost::apphost_event(&mut a, &InEvent { type_: InType::TouchDown, x: 600.0, y: 1000.0, t_ms: now_ms(), ..Default::default() }));
+    sim_fast_busy_set(true);
+    at(&mut a, 100_000 + HOLD_MS);
+    at(&mut a, 100_000 + HOLD_MS + 200);
+    assert_eq!(a.app_view.status(), "p001 n000 t00 r00 s00 m00 e00 c00 q000 k00 a00 g00 h0", "no pass while the fast refresh shows");
+    sim_fast_busy_set(false);
+    at(&mut a, 100_000 + HOLD_MS + 300);
+    assert_eq!(a.app_view.status(), "p002 n001 t00 r01 s00 m00 e00 c00 q000 k00 a00 g00 h0", "the PRESS's pass once it has ended");
+    sim_fast_busy_set(false);
+    sim_clock_set(None);
+    app_done(a, id);
+    let _ = std::fs::remove_dir_all(root);
+}

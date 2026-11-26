@@ -14251,6 +14251,51 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// A frame's input waits while a sheet or the peek is over the frames and while the Kindle sleeps: no PRESS is
+    /// made, no turn taken and no pass drawn for a contact on its body (widget_input_tick), and all go on after.
+    #[test]
+    fn a_frames_input_waits_while_a_sheet_is_up_or_the_kindle_sleeps() {
+        static DEF: crate::widgets::WidgetDef = crate::widgets::WidgetDef {
+            id: "test.waits",
+            name: "Waits",
+            icon: IconKind::None,
+            default_w: 400.0,
+            default_h: 300.0,
+            min_w: 400.0,
+            min_h: 300.0,
+            max_w: 400.0,
+            max_h: 300.0,
+            resizable: false,
+            version: "",
+            author: "",
+            description: "",
+        };
+        let mut a = app(1860, 2480, 1860, 2480);
+        ed(&mut a).open = true;
+        let mut f = crate::widgets::WidgetFrame::new(&DEF);
+        // (no module to load: the frame's recogniser and pace alone)
+        f.runtime_error = Some(String::new());
+        f.input.pointer.down(10, 10, 0, -1, 1000, 59, false);
+        ed(&mut a).widgets.frames.push(f);
+        let undecided = |a: &App| ed_ref(a).widgets.frames[0].input.pointer.undecided();
+        ed(&mut a).widgets_open = true;
+        widget_input_tick(&mut a, 1000 + HOLD_MS);
+        assert!(undecided(&a), "no PRESS under a sheet");
+        ed(&mut a).widgets_open = false;
+        ed(&mut a).peek.active = true;
+        widget_input_tick(&mut a, 1000 + HOLD_MS);
+        assert!(undecided(&a), "nor under the peek");
+        ed(&mut a).peek.active = false;
+        a.asleep = true;
+        widget_input_tick(&mut a, 1000 + HOLD_MS);
+        assert!(undecided(&a), "nor while the Kindle sleeps");
+        a.asleep = false;
+        widget_input_tick(&mut a, 1000 + HOLD_MS);
+        assert!(!undecided(&a), "the PRESS once nothing is over the frames");
+        ed(&mut a).widgets.frames.clear();
+        canvas_free(&mut a.screen);
+    }
+
     /// The quick sizes card is a sheet in every check that asks whether something is in front, and Live view's fast
     /// ink never previews a pen contact on it (the card keeps the clock corner, as the long-press card does).
     #[test]
