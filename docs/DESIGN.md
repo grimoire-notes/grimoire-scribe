@@ -3734,8 +3734,9 @@ instruction budget). Each host has its own import module, `grimoire`, whose call
 Both link a second import module, `grimoire_kit` (`kithost.rs`; [KIT.md](KIT.md) is its reference), whose calls
 are written once and mean the same in either: the theme's standard sizes, text by role, and the elements Grimoire's
 own screens draw, which take the theme's standard size when a call gives them none. The sizes are functions of
-`globalui.rs` and `ui.rs` that the screens they come from read (Settings' rows, the package manager's actions, the
-home's chips and Sort), so a package's row given no height is Settings' row pixel for pixel. A host gives the kit
+`globalui.rs` and `ui.rs` that the screens they come from read (Settings' rows, the Package Store's action buttons
+and chips, the home's chips and Sort; a field's height, which no screen draws yet, is the kit's own), so a
+package's row given no height is Settings' row pixel for pixel. A host gives the kit
 its body, its limits and its records through the `KitHost` trait; a kit command is one of the host's drawing
 commands, drawn in the order the module called it. The work of each call is a function that no host's type is part
 of, so one copy of it serves both hosts, and each host's linker holds a thin call of it.
@@ -3745,7 +3746,8 @@ limit before the module's memory is read; the host's work paid from the call's b
 both hosts; drawing held to the body (`on_screen`, the body's clip); a command and a hit region counted against
 the host's limits; and, in a widget, drawing only for a package that declares `editor:overlay`. A package's text
 is drawn with no report to the translation fit check, and its icons at most 1,024 px each way. A module that
-imports a call of the kit this Grimoire does not have is not started, and its frame or a toast names the call.
+imports a call of the kit this Grimoire does not have is not started, and its frame or a toast names the call when
+the name has a call's shape. The text a widget's frame shows in place of its body is at most 256 bytes.
 
 ## Shared building blocks (2.1, lane L0)
 

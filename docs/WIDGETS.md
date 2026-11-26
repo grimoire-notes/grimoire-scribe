@@ -379,6 +379,9 @@ and one by size where the work grows with what the import is given.
 | `text` | and, for each byte, 32 for each pixel of its height (1 to 512) up to 64 pixels; above 64 pixels, half the square of the height for each byte, since a tall letter costs by its area; and 16 times the square of its bytes, counted to 256 bytes (a line that does not fit is cut short, and a label is broken in two, by steps that each measure the text again) |
 | `status`, `setting`, `state_get`, `state_set` | and 4 for each byte read from the module's memory or written to it |
 
+The package kit's calls ([KIT.md](KIT.md)) are paid from the same budget, as KIT.md's "What a call's
+budget pays for" says.
+
 A call whose budget cannot pay a charge ends exactly as a call that ran out of instructions: its frame
 shows the same error, and nothing of the pass is drawn. A call of an import the package has no
 capability for pays the fixed charge and returns.

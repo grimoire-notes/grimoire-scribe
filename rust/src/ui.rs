@@ -615,7 +615,7 @@ pub fn ui_line() -> i32 {
 pub fn ui_card(c: &mut Canvas, r: Rect, st: ButtonStyle) {
     match st {
         ButtonStyle::Selected => ui_frame(c, r, ui_card_radius(), 0, true, 0),
-        ButtonStyle::Disabled => ui_frame(c, r, ui_card_radius(), 170, false, ui_line()),
+        ButtonStyle::Disabled => ui_frame(c, r, ui_card_radius(), crate::globalui::GUI_GRAY_DISABLED, false, ui_line()),
         _ => ui_frame(c, r, ui_card_radius(), 0, false, ui_line()),
     }
 }
@@ -696,7 +696,7 @@ fn ui_row_with(c: &mut Canvas, r: Rect, row: &Row, app_icon: Option<&AppIcon>) {
     let fg: u8 = if row.style == ButtonStyle::Selected {
         255
     } else if row.style == ButtonStyle::Disabled {
-        170
+        crate::globalui::GUI_GRAY_DISABLED
     } else {
         0
     };

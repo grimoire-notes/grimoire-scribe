@@ -806,8 +806,8 @@ fn a_call_at_a_limit_runs_and_one_past_it_stops_as_out_of_instructions() {
 fn a_length_is_compared_with_its_limit_before_the_modules_memory_is_read() {
     let root = fresh_root("reads");
     // The bytes the host read of the module's memory in the pass, for calls given lengths at and past their limits:
-    // a text past its limit stops the call before a byte is read; an icon's name past 64 bytes names no icon and is
-    // not read; a version is written, never read.
+    // a text past its limit stops the call before a byte is read; an icon's name past 64 bytes is not read (it is
+    // drawn as a name of no icon is); a version is written, never read.
     let data: Vec<u8> = (0..4096).map(|k| b'a' + (k % 26) as u8).collect();
     for host in HOSTS {
         let one = match host {
@@ -919,7 +919,8 @@ fn whatever_the_kit_draws_lands_in_the_body_and_its_hit_regions_are_cut_to_it() 
             }
         }
         assert!(drew > 1_000_000, "{host:?}: the passes drew");
-        // A clip makes the part drawn on smaller, never larger: a fill of the whole screen after a clip of 10 px.
+        // A clip holds what is drawn after it to its rectangle, cut to the body: a fill of the whole screen after a
+        // clip whose part inside the body is 10 px each way.
         let mut rt = loaded(&format!("test.kit.clip.{}", tag(host)), &pass(host, &[K::Clip(-20, -20, 30, 30), K::Fill(-5000, -5000, 20_000, 20_000, 0), K::ClipClear]));
         let mut c = before.clone();
         rt.draw(&mut c);

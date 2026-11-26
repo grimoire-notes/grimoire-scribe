@@ -130,8 +130,9 @@ pub const M_GRAY_DISABLED: i32 = 43;
 pub const M_GRAY_RULE: i32 = 44;
 
 /// The theme's standard size or value `id`, in screen pixels unless docs/KIT.md says otherwise, for a call drawing
-/// on a body of `body` under a status bar `status_bar_h` high; -1 for an id this level does not have. Each is
-/// the function Grimoire's own screen reads (globalui.rs, ui.rs), so the two cannot differ.
+/// on a body of `body` under a status bar `status_bar_h` high; -1 for an id this level does not have. Each size a
+/// screen of Grimoire's draws at is the function that screen reads (globalui.rs, ui.rs), so the two cannot differ;
+/// FIELD_H, which no screen draws yet, is the kit's own.
 pub fn kit_metric(id: i32, body: (i32, i32), status_bar_h: i32) -> i32 {
     let line = |role: i32| {
         let (f, px) = role_face(role);
@@ -783,7 +784,7 @@ fn text_of(cx: &mut dyn Call, ptr: i32, len: i32, cost: impl FnOnce(usize) -> u6
 }
 
 /// An icon's name, read when it is no longer than a name can be (APP_ICON_NAME_MAX), for 4 a byte. A longer one
-/// is not read, and names no icon.
+/// is not read, and is drawn as a name of no icon is (the grid).
 fn icon_name(cx: &mut dyn Call, ptr: i32, len: i32) -> Res<String> {
     if len.max(0) as usize > APP_ICON_NAME_MAX {
         return Ok("?".to_string());

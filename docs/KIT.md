@@ -31,7 +31,7 @@ A package's `min_grimoire_version` stays the install gate.
 The unit is the screen pixel, as for the hosts' own calls: the body's size, a place, a size. Every place is
 relative to the body's top left. Sizes come from the theme: `metric` answers the standard sizes Grimoire's
 screens use, already at the panel's scale, and an element given a width or a height of 0 or less takes the
-standard one (the table of Elements). Each element returns the extent it took (a row its height, a button its
+standard one the table of Elements gives (`fill` and `frame` given a height of 0 or less draw nothing). Each element returns the extent it took (a row its height, a button its
 width), so a module lays its screen out with a cursor:
 
 ```text
@@ -95,8 +95,9 @@ pager(prev_id, next_id, x, y, w, page, pages) -> i32                            
 
 ## Metrics
 
-Pixels at 300 dpi, the size on every supported panel (Gothic / Classic where they differ). Each is the function
-the screen it comes from reads (`globalui.rs`, `ui.rs`), so the two cannot differ.
+Pixels at 300 dpi, the size on every supported panel (Gothic / Classic where they differ). Each size a screen of
+Grimoire's draws at is the function that screen reads (`globalui.rs`, `ui.rs`), so the two cannot differ; FIELD_H,
+which no screen draws yet, is the kit's own.
 
 | id | name | value | from |
 |---|---|---|---|
@@ -160,19 +161,20 @@ and 5 the tone (0 ink, 1 muted 100, 2 disabled 170, 3 paper 255, for text on a f
 - FIT is Grimoire's label rule: the role's size, else a smaller one down to the small size that holds it on one
   line, else two lines at the small size. Given no height it takes one line, or two when it takes two.
 - WRAP breaks the text into lines: at its own line breaks (`\n`), then as many whole words as fit the width on each
-  line, and a word wider than the width is broken between its characters. The lines are centred as a block in
+  line, and a word wider than the width is broken between its characters. With both WRAP and FIT, WRAP is taken. The lines are centred as a block in
   the rectangle, as many as it is high for; when more follow, the last line shown holds the rest, cut short. Given
   no height it takes as many lines as it needs, and `text` returns their height.
 - `text_lines` breaks the text the same way and draws, from the top of its rectangle, the lines from `first_line`
   (0 is the first) that its height holds, and returns how many lines the whole text has: a module pages a long
-  text so, as the license viewer does. Given no height it takes the rest of the body below `y`.
+  text so, as the license viewer does. Given no height it takes the rest of the body below `y`. FIT has no effect
+  on it.
 - A package's text is not reported to Grimoire's translation fit check (a scenario's `GRIMOIRE_CHECK_FIT`).
 
 ## Elements
 
 Each is the element Grimoire's own screens draw, in the theme in use. `style` is 0 plain, 1 selected, 2 disabled,
-3 primary; another number is plain. `switch` is -1 none, 0 off, 1 on (another negative number is none). A tone is
-as a text's.
+3 primary; another number is plain. `switch` is -1 none, 0 off, 1 on (another negative number is none, a number
+above 1 is on). A tone is as a text's.
 
 | call | draws | height given 0 or less | width given 0 or less | returns |
 |---|---|---|---|---|
@@ -183,7 +185,7 @@ as a text's.
 | `row` | Settings' row: its card, icon, label (two lines at most) and switch | ROW_H | the rest of the body | the height |
 | `chip` | a filter chip; `selected` fills it | CHIP_H | the Package Store's chip: its label in the bold face and 78 px, at least 170 | the width |
 | `field` | a text field: icon, text or its hint, the mark that clears it; `flags` 1 draws the text as a star for each character | FIELD_H | the rest of the body | the height |
-| `select` | a select: `caption: value` and its chevron | SELECT_H | the rest of the body | the height |
+| `select` | a select: `caption: value` (its first 159 bytes, cut between two characters, before the label rule) and its chevron | SELECT_H | the rest of the body | the height |
 | `checkbox` | a checkbox and its label (two lines at most); its rectangle is filled white first | TOUCH_MIN | the rest of the body | the height |
 | `card` | a Settings card | ROW_H | the rest of the body | |
 | `divider` | the theme's rule at `y`: a line 3 px thick (in Gothic, a thin one 5 px under it) | | the rest of the body | |
@@ -191,7 +193,7 @@ as a text's.
 | `fill` | a rectangle of a gray (0 to 255; another number the nearer end) | nothing is drawn | the rest of the body | |
 | `frame` | a box with the theme's corners at RADIUS, filled or outlined `thickness` thick (0 or less: LINE; at most 4,096) | nothing is drawn | the rest of the body | |
 | `line` | a line `width` wide (0.1 to 4,096), of a gray | | | |
-| `clip` | makes the part of the body drawn on smaller, never larger | | | |
+| `clip` | what is drawn after it is drawn only in its rectangle, cut to the body and to the part of it the host draws on; a later `clip` takes its place, larger or smaller, never past the body | | | |
 | `clip_clear` | gives the whole body back | | | |
 | `hit` | a hit region, nothing drawn | | | |
 | `pager` | Settings' pager | 90 | the rest of the body | the height |
@@ -224,7 +226,7 @@ and to the kit's own:
 
 | limit | |
 |---|---|
-| an icon's name | 64 bytes; a longer one is not read and names no icon |
+| an icon's name | 64 bytes; a longer one is not read, and is drawn as a name of no icon is (the grid) |
 | what `version` writes | 32 bytes at most |
 | the rows `list_page` and `pager` count | 10,000; more is taken as 10,000 |
 | the heights `list_page` lays out with | 32,767 px; a larger one is taken as that |
