@@ -8566,9 +8566,6 @@ fn widget_down(a: &mut App, index: usize, part: WidgetPart, ev: &InEvent, pen: b
         if let Some(f) = ed(a).widgets.frames.get_mut(index) {
             f.ensure_runtime();
             let body = widget_body(f);
-            if let Some(rt) = f.runtime.as_mut() {
-                rt.set_body((body.w, body.h));
-            }
             let id = f.runtime.as_ref().map_or(-1, |rt| rt.hit_at(x - body.x, y - body.y));
             let events = f.input.pointer.down(x - body.x, y - body.y, pen as i32, id, now_ms(), slop, palm);
             widget_events(f, &events);

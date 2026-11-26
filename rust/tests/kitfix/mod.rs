@@ -261,12 +261,14 @@ pub struct Kit {
     pub event: Option<Vec<u8>>,
     /// exports of the host's left out (`app_pointer`, `widget_tap`, ...)
     pub without: Vec<&'static str>,
+    /// the body of a start function, which instantiating the module runs (none: no start section)
+    pub start: Option<Vec<u8>>,
 }
 
 impl Kit {
     /// A module whose drawing pass (`widget_draw` or `app_draw`) is `draw`.
     pub fn new(host: Host, draw: Vec<u8>) -> Kit {
-        Kit { host, pages: 1, code: vec![draw], imports: Vec::new(), data: Vec::new(), event: None, without: Vec::new() }
+        Kit { host, pages: 1, code: vec![draw], imports: Vec::new(), data: Vec::new(), event: None, without: Vec::new(), start: None }
     }
 
     /// The module's exports after `memory`: each one's name, parameters, result and body.
@@ -314,7 +316,11 @@ impl Kit {
             imports.push((m, n, type_of(p, *r)));
         }
         let exports = self.exports();
-        let funcs: Vec<u32> = exports.iter().map(|(_, p, r, _)| type_of(p, *r)).collect();
+        let mut funcs: Vec<u32> = exports.iter().map(|(_, p, r, _)| type_of(p, *r)).collect();
+        // (a start function after the exports' functions, exported as nothing)
+        if self.start.is_some() {
+            funcs.push(type_of("", 'v'));
+        }
 
         let mut out = b"\0asm\x01\0\0\0".to_vec();
         let mut s = Vec::new();
@@ -359,9 +365,15 @@ impl Kit {
             uleb(&mut s, (imports.len() + at) as u32);
         }
         section(&mut out, 7, &s);
+        if self.start.is_some() {
+            s.clear();
+            uleb(&mut s, (imports.len() + exports.len()) as u32);
+            section(&mut out, 8, &s);
+        }
         s.clear();
         uleb(&mut s, funcs.len() as u32);
-        for (_, _, _, code) in &exports {
+        let bodies: Vec<&[u8]> = exports.iter().map(|e| e.3).chain(self.start.as_deref()).collect();
+        for code in bodies {
             let mut b = vec![1, 8, 0x7f]; // eight i32 locals
             b.extend_from_slice(code);
             b.push(0x0b);

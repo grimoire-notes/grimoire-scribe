@@ -519,11 +519,6 @@ impl WidgetRuntime {
         self.hits.iter().find(|(_, r)| rect_contains(*r, x, y)).map_or(-1, |(id, _)| *id)
     }
 
-    /// The frame's body is now `body` (width, height): the calls before the next drawing pass are given it.
-    pub fn set_body(&mut self, body: (i32, i32)) {
-        self.store.data_mut().body = (body.0.max(0), body.1.max(0));
-    }
-
     /// Starts a call of the module: its instruction budget, and a pass with nothing recorded and
     /// nothing counted yet. What an earlier call left recorded (a tap that drew) is dropped: a pass
     /// holds its own commands only, so its limits are the most the host ever keeps. A redraw request

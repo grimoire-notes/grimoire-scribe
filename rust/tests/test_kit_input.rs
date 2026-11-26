@@ -549,3 +549,84 @@ fn an_open_app_is_told_its_settings_were_saved_and_drawn_once_for_it() {
     canvas_free(&mut a.screen);
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// A module whose start section asks for the body's size (`metric` BODY_W, BODY_H), and whose drawing passes say
+/// what it was given there, as `w` and `h`, and their own body, as `x` and `y`.
+fn starting(host: Host) -> Kit {
+    let r = |n: i32| R_AT + 4 * n;
+    let mut k = Kit::new(host, Vec::new());
+    k.start = Some(seq(&[store(r(0), seq(&[i(36), invoke("metric")])), store(r(1), seq(&[i(37), invoke("metric")]))]));
+    let template = "w00000 h00000 x00000 y00000";
+    let mut say = Vec::new();
+    for (at, from) in [(1, r(0)), (8, r(1))] {
+        say.extend(seq(&[load(from), digits_of(SAID_AT + at, 5)]));
+    }
+    for (at, id) in [(15, 36), (22, 37)] {
+        say.extend(seq(&[i(id), invoke("metric"), digits_of(SAID_AT + at, 5)]));
+    }
+    k.code[0] = seq(&[say, host_status(SAID_AT, template.len() as i32)]);
+    k.data = vec![(SAID_AT as u32, template.as_bytes().to_vec())];
+    k
+}
+
+#[test]
+fn a_frames_module_and_an_apps_have_their_body_in_their_start_section() {
+    let root = fresh_root("start");
+    // a frame loads its module with the frame's body (WidgetFrame::ensure_runtime), which its start section is given
+    let id = "test.ki.start.w";
+    let module = starting(Host::Widget).bytes();
+    widget_package_install(&widget_manifest(id, "Start", &WIDGET_BOTH, 400, 300, &module), &module, "", SCREEN.0, SCREEN.1).unwrap();
+    let mut f = grimoire::widgets::WidgetFrame::new(grimoire::widgets::widget_def(id).unwrap());
+    f.layout = grimoire::widgets::WidgetLayout { x: 100, y: 200, w: 700, h: 900, minimized: false, z: 0 };
+    let body = f.body_rect();
+    f.ensure_runtime();
+    let mut c = Canvas::default();
+    assert_eq!(canvas_init(&mut c, SCREEN.0, SCREEN.1), 0);
+    let rt = f.runtime.as_mut().unwrap();
+    rt.draw(&mut c, body);
+    assert_eq!(rt.status(), format!("w{:05} h{:05} x{:05} y{:05}", body.w, body.h, body.w, body.h), "the frame's body, from the start");
+    widget_package_remove(id, false).unwrap();
+    // an app's start section is given the screen under the status bar its manifest asks for
+    let mut rt = loaded("test.ki.start.a", &starting(Host::App));
+    rt.draw();
+    let b = app_body();
+    assert_eq!(rt.status(), format!("w{:05} h{:05} x{:05} y{:05}", b.w, b.h, b.w, b.h));
+    canvas_free(&mut c);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// An app's `elapsed_ms` is the time since its last drawing pass by the app's clock, which the script holds here (the
+/// machine's clock moves on meanwhile), across the clock's wrap too.
+#[cfg(feature = "sim")]
+#[test]
+fn an_apps_elapsed_time_is_counted_on_the_apps_clock() {
+    let root = fresh_root("elapsed");
+    let id = "test.ki.elapsed";
+    let mut k = Kit::new(Host::App, seq(&[arg(3), digits_of(SAID_AT, 6), host_status(SAID_AT, 6)]));
+    k.data = vec![(SAID_AT as u32, b"000000".to_vec())];
+    let module = k.bytes();
+    app_package_install(&app_manifest(id, "Elapsed", &[], false, &module), &module, None, "", SCREEN.0, SCREEN.1).unwrap();
+    let mut a = App { w: SCREEN.0, h: SCREEN.1, dpi: 300.0, ..Default::default() };
+    assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+    grimoire::library::library_init(&mut a);
+    sim_clock_set(Some(5000));
+    assert!(grimoire::apphost::apphost_launch(&mut a, id));
+    assert_eq!(a.app_view.status(), "000000", "the first pass, at the launch");
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    sim_clock_set(Some(5000 + 1234));
+    grimoire::apphost::apphost_draw(&mut a);
+    assert_eq!(a.app_view.status(), "001234", "1,234 ms of the app's clock, whatever the machine's did");
+    sim_clock_set(Some(5000 + 1234));
+    grimoire::apphost::apphost_draw(&mut a);
+    assert_eq!(a.app_view.status(), "000000", "none since");
+    sim_clock_set(Some(u32::MAX - 99));
+    grimoire::apphost::apphost_draw(&mut a);
+    sim_clock_set(Some(400));
+    grimoire::apphost::apphost_draw(&mut a);
+    assert_eq!(a.app_view.status(), "000500", "across the clock's wrap");
+    sim_clock_set(None);
+    grimoire::apphost::apphost_close(&mut a);
+    grimoire::library::library_free(&mut a);
+    canvas_free(&mut a.screen);
+    let _ = std::fs::remove_dir_all(root);
+}
