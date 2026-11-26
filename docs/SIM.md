@@ -39,6 +39,16 @@ timer run out.
 storage, `/mnt/us`, for the storage layer (`fsview.rs`, 2.1): the root every `StoragePath` is relative to.
 An absolute path, never `/`; without it there is no storage to browse. Nothing reads it yet but the
 tests (`tests/test_fsview.rs`); the scenarios unset it.
+Three more hooks of the same kind (off the Kindle only; compiled out of the Kindle build) say what such a storage
+names otherwise, for a platform whose data root sits inside a larger storage (rust/PORTING.md).
+`GRIMOIRE_PLACE_DOCUMENTS=NAME`, `GRIMOIRE_PLACE_DOWNLOADS=NAME` and `GRIMOIRE_PLACE_FONTS=NAME` are the folders
+at the storage root of Files' Documents, Downloads and Kindle fonts places (unset: the Kindle's `documents`,
+`Downloads` and `fonts`). Each is one name, never a path; set empty, or to anything that is not one name, there is
+no such place. The places keep their labels and their runner names (`files.item.documents`).
+`GRIMOIRE_STORAGE_SYSTEM=NAME/NAME...` names more of the system's folders at the storage root, separated by `/`
+(an empty name and one that begins with a dot are left out): Files lists none of them and its walk refuses them,
+by name in any ASCII case and by identity, as it does the Kindle's own (`system`, `koreader`, ...). It is read
+once, the first time a path is checked. tests/scenarios/files_43_places_named.qs sets all four.
 
 Live view's raw digitizer has stand-ins (headless runner only; tests/live_pen_stall.py uses them):
 `GRIMOIRE_SIM_RAWPEN=PATH` names a FIFO of `struct input_event` records in the host's layout (x
