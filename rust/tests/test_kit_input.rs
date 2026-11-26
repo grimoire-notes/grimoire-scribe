@@ -864,3 +864,37 @@ fn the_kit_input_scenarios_at_other_uptimes_are_their_bases_but_for_the_start() 
         assert!(c[4..c.len() - rest.len()].iter().all(|l| l.starts_with("# ")), "{base}_{tag}.qs: a note of comment lines");
     }
 }
+
+/// A frame's pass answers a redraw request whose time has come only when it draws the whole body: one drawn with the
+/// canvas clipped to part of the body (a region of another frame's, or of the page, that the editor composes) leaves
+/// the request standing for the editor's tick, which draws the frame whole.
+#[cfg(feature = "sim")]
+#[test]
+fn a_frames_due_request_is_answered_only_by_a_pass_of_its_whole_body() {
+    let root = fresh_root("partial");
+    let id = "test.ki.partial";
+    let mut k = Kit::new(Host::Widget, Vec::new());
+    k.imports.push(("grimoire", "request_redraw", "i", 'v'));
+    k.code[0] = extra(&k, 0, &[1000]);
+    let module = k.bytes();
+    widget_package_install(&widget_manifest(id, "Partial", &WIDGET_BOTH, 400, 300, &module), &module, "", SCREEN.0, SCREEN.1).unwrap();
+    let mut rt = WidgetRuntime::new(id, (WIDGET_BODY.w, WIDGET_BODY.h)).unwrap();
+    widget_package_remove(id, false).unwrap();
+    let mut c = Canvas::default();
+    assert_eq!(canvas_init(&mut c, SCREEN.0, SCREEN.1), 0);
+    sim_clock_set(Some(50_000));
+    rt.draw(&mut c, WIDGET_BODY);
+    sim_clock_set(Some(51_500));
+    assert!(rt.redraw_due(51_500), "the pass's request, due");
+    // a pass of the body's lower half
+    let whole = c.clip;
+    c.clip = Rect { y: WIDGET_BODY.y + WIDGET_BODY.h / 2, h: WIDGET_BODY.h / 2, ..WIDGET_BODY };
+    rt.draw(&mut c, WIDGET_BODY);
+    assert!(rt.redraw_due(51_500), "a pass of part of the body leaves it standing");
+    c.clip = whole;
+    rt.draw(&mut c, WIDGET_BODY);
+    assert!(!rt.redraw_due(51_500) && rt.redraw_due(52_500), "a pass of the whole body answers it, and asks again");
+    sim_clock_set(None);
+    canvas_free(&mut c);
+    let _ = std::fs::remove_dir_all(root);
+}

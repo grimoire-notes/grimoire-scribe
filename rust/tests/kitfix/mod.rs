@@ -917,6 +917,61 @@ pub fn input_packages() -> Vec<Package> {
     .collect()
 }
 
+/// An input module (`input` with the host's touch export and every event answered) whose drawing pass fills a square
+/// `side` px a side of `gray` about the place of its last touch in place of the black one, and, given `ask`, asks for a
+/// pass that many ms after each (`request_redraw`).
+pub fn input_square(on: Host, side: i32, gray: i32, ask: Option<i32>) -> Kit {
+    let mut k = input(on, true, Some(true));
+    if ask.is_some() {
+        k.imports.push(("grimoire", "request_redraw", "i", 'v'));
+    }
+    let mut say = Vec::new();
+    let mut at = SAYS_AT;
+    for (letter, n, from) in SAYS {
+        at += letter.len() as i32;
+        say.extend(seq(&[load(from), digits_of(at, n)]));
+        at += n as i32 + 1;
+    }
+    let mut draw = seq(&[
+        bump(value(V_PASSES), i(1)),
+        call("hit", &[1, 0, 0, 400, 400]),
+        call("hit", &[2, 400, 0, 400, 400]),
+        load(value(V_X)),
+        i(side / 2),
+        vec![SUB],
+        load(value(V_Y)),
+        i(side / 2),
+        vec![SUB],
+        i(side),
+        i(side),
+        i(gray),
+        invoke("fill"),
+        say,
+        host("status", &[SAYS_AT, says_template().len() as i32]),
+    ]);
+    if let Some(ms) = ask {
+        draw.extend(extra(&k, 0, &[ms]));
+    }
+    k.code[0] = draw;
+    k
+}
+
+/// The packages of tests/fixtures/kitpanel, for the scenarios that hold what the panel shows after input
+/// (z_kit_input_overlap.qs, z_kit_input_minute.qs, z_kit_input_clean_app.qs, z_kit_input_clean_widget.qs): the
+/// input modules with a black square of 100 px (as test.kit.inputw and test.kit.input), a gray (128) one of 200 px,
+/// whose fast refreshes leave it dithered until a full-depth one, and a widget that asks for a pass a second after
+/// each and draws its square black, each a widget and the first two apps too, with the status bar.
+pub fn panel_packages() -> Vec<Package> {
+    vec![
+        widget("test.kit.blackw", "Black widget", &WIDGET_BOTH, input(Host::Widget, true, Some(true)).bytes()),
+        widget("test.kit.grayw", "Gray widget", &WIDGET_BOTH, input_square(Host::Widget, 200, 128, None).bytes()),
+        widget("test.kit.askw", "Ask widget", &WIDGET_BOTH, input_square(Host::Widget, 200, 0, Some(1000)).bytes()),
+        widget("test.kit.tapw", "Tap widget", &WIDGET_BOTH, input(Host::Widget, true, None).bytes()),
+        app("test.kit.black", "Black app", input(Host::App, true, Some(true)).bytes()),
+        app("test.kit.gray", "Gray app", input_square(Host::App, 200, 128, None).bytes()),
+    ]
+}
+
 /// A package of the scenarios' data root.
 pub struct Package {
     pub id: &'static str,

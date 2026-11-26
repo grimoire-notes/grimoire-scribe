@@ -405,9 +405,10 @@ impl WidgetRuntime {
             Err(e) => { self.stopped(format!("The widget has no widget_draw export: {e}")); return; }
         };
         self.store.data_mut().status.clear();
-        // (a redraw request whose time has come is answered by this pass, whatever brought it: a request that waited
-        // while the frame was minimized or the pen was near is the pass that draws the frame again)
-        if self.redraw_due(now_ms()) {
+        // (a redraw request whose time has come is answered by this pass, whatever brought it, when it draws the whole
+        // body: a request that waited while the frame was minimized or the pen was near is the pass that draws the
+        // frame again; a pass of part of the body, the canvas clipped to less of it, leaves it to the editor's tick)
+        if rect_contains_rect(c.clip, body) && self.redraw_due(now_ms()) {
             self.store.data_mut().redraw_at = None;
         }
         self.begin_call();

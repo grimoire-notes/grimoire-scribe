@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "packages": [
+    {"id":"test.kit.blackw","name":"Black widget","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/widgets/test.kit.blackw/module.bin","sha":"645fd60ac7ee475c06962534b387e69dcbd5e051129befc56339c83895b3bd44","installed_at":1,"source_url":""},
+    {"id":"test.kit.grayw","name":"Gray widget","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/widgets/test.kit.grayw/module.bin","sha":"ed1c0bbfe7c6b890afab4469e0ab828a83c80c9714f27d25bf1d400017ca17b6","installed_at":1,"source_url":""},
+    {"id":"test.kit.askw","name":"Ask widget","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/widgets/test.kit.askw/module.bin","sha":"2ea4760e67829ec5447ffec03b10959379006f93c73c3707528373bfa9bc8602","installed_at":1,"source_url":""},
+    {"id":"test.kit.tapw","name":"Tap widget","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/widgets/test.kit.tapw/module.bin","sha":"a6a56d7bad3e956d86e7752c631b939287f7805a07ef627a95611aad0babb055","installed_at":1,"source_url":""}
+  ]
+}

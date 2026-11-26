@@ -2622,7 +2622,12 @@ fn draw_widget_frame(a: &mut App, i: usize) {
         f.ensure_runtime();
         if let Some(rt) = f.runtime.as_mut() {
             rt.draw(c, body);
-            f.input.answered();
+            // (a pass answers what input owed only when it drew the whole body, which the compose that drew it then
+            // refreshes: one drawn for a region that holds part of the body left the rest of the body as it was, on
+            // the screen and on the panel, and the owed pass is widget_input_tick's still)
+            if rect_contains_rect(c.clip, body) {
+                f.input.answered();
+            }
         }
         if let Some((reason, whose)) = f.says() {
             draw_widget_says(c, body, &reason, &whose);

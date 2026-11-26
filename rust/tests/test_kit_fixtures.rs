@@ -1,6 +1,6 @@
-// test_kit_fixtures.rs: the installed packages the package kit's scenarios copy (tests/fixtures/kit/ and
-// tests/fixtures/kitinput/) are what tests/kitfix makes now (as test_widget_fixtures.rs and test_app_fixtures.rs check
-// the hosts'). `make kit-fixtures` writes them (GRIMOIRE_WRITE_KIT_FIXTURES=<tests/fixtures>).
+// test_kit_fixtures.rs: the installed packages the package kit's scenarios copy (tests/fixtures/kit/,
+// tests/fixtures/kitinput/ and tests/fixtures/kitpanel/) are what tests/kitfix makes now (as test_widget_fixtures.rs
+// and test_app_fixtures.rs check the hosts'). `make kit-fixtures` writes them (GRIMOIRE_WRITE_KIT_FIXTURES=<tests/fixtures>).
 mod kitfix;
 
 fn dir(root: &str) -> std::path::PathBuf {
@@ -55,12 +55,19 @@ fn committed_kit_input_fixtures_are_what_the_generator_makes() {
 }
 
 #[test]
+fn committed_kit_panel_fixtures_are_what_the_generator_makes() {
+    committed("kitpanel", &kitfix::panel_packages());
+}
+
+#[test]
 fn the_generator_is_deterministic_and_its_modules_are_webassembly() {
     let (one, two) = (kitfix::packages(), kitfix::packages());
     let (three, four) = (kitfix::input_packages(), kitfix::input_packages());
+    let (five, six) = (kitfix::panel_packages(), kitfix::panel_packages());
     assert_eq!(one.len(), two.len());
     assert_eq!(three.len(), four.len());
-    for (p, q) in one.iter().zip(&two).chain(three.iter().zip(&four)) {
+    assert_eq!(five.len(), six.len());
+    for (p, q) in one.iter().zip(&two).chain(three.iter().zip(&four)).chain(five.iter().zip(&six)) {
         assert!(p.module == q.module && p.manifest == q.manifest, "{}", p.id);
         assert!(p.module.starts_with(b"\0asm\x01\0\0\0"), "{}", p.id);
         assert!(p.manifest.contains(&format!("id: {}\n", p.id)));

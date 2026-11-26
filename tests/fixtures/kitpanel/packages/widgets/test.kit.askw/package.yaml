@@ -1,0 +1,17 @@
+name: Ask widget
+id: test.kit.askw
+type: widget
+version: 1.0.0
+author: Grimoire tests
+description: A module of the package kit's tests.
+platforms: [all]
+artifact:
+  path: module.bin
+  sha256: 2ea4760e67829ec5447ffec03b10959379006f93c73c3707528373bfa9bc8602
+  size: 1895
+capabilities: [editor:overlay, storage:widget-local]
+spec:
+  runtime: wasm
+  size:
+    mode: fixed
+    default: [900, 1100]

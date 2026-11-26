@@ -464,9 +464,9 @@ widget-fixtures:
 app-fixtures:
 	$(call RCARGO,GRIMOIRE_WRITE_APP_FIXTURES="$(abspath tests/fixtures)") test --test test_app_fixtures
 
-# The installed widget and app packages the package kit's scenarios copy (tests/fixtures/kit/ and
-# tests/fixtures/kitinput/), made by the fixture writer in rust/tests/kitfix, never edited by hand;
-# rust/tests/test_kit_fixtures.rs checks the committed bytes are what it makes now.
+# The installed widget and app packages the package kit's scenarios copy (tests/fixtures/kit/,
+# tests/fixtures/kitinput/ and tests/fixtures/kitpanel/), made by the fixture writer in rust/tests/kitfix,
+# never edited by hand; rust/tests/test_kit_fixtures.rs checks the committed bytes are what it makes now.
 .PHONY: kit-fixtures
 kit-fixtures:
 	$(call RCARGO,GRIMOIRE_WRITE_KIT_FIXTURES="$(abspath tests/fixtures)") test --test test_kit_fixtures
