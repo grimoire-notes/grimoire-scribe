@@ -6,7 +6,7 @@
 mod kitfix;
 
 use grimoire::globalui::{
-    gui_button, gui_button_h, gui_button_row, gui_chip, gui_chip_h, gui_chip_w, gui_field_h, gui_gap, gui_head_h, gui_icon_button, gui_margin,
+    gui_button, gui_button_h, gui_button_row, gui_button_row_need_w, gui_chip, gui_chip_h, gui_chip_w, gui_field_h, gui_gap, gui_head_h, gui_icon_button, gui_margin,
     gui_page_title_px, gui_row_h, gui_row_min_h, gui_select, gui_select_h, gui_status_h, gui_text_field, gui_top_button_h,
 };
 use kitfix::KIT as KIT_IMPORTS;
@@ -557,6 +557,7 @@ fn the_calls_return_the_level_the_version_and_the_extent_each_element_took() {
             kept("button", &[-1, 0, 0, 0, 0, lp, ln, 0, 0, 0]),
             kept("button", &[-1, 0, 0, 0, 60, 0, 0, gp, gn, 0]),
             kept("button", &[-1, 0, 0, 333, 0, lp, ln, 0, 0, 0]),
+            kept("button", &[-1, 0, 0, 0, 0, lp, ln, gp, gn, 0]),
             kept("icon_button", &[-1, 0, 0, 0, 0, gp, gn, 0]),
             kept("icon_button", &[-1, 0, 0, 0, 70, gp, gn, 0]),
             kept("chip", &[-1, 0, 0, 0, 0, cp, cn, 0]),
@@ -588,6 +589,8 @@ fn the_calls_return_the_level_the_version_and_the_extent_each_element_took() {
                 need(96, false, "Button"),
                 60,
                 333,
+                // (in Gothic, with an icon and a label: what the Store's action button needs for them on one line)
+                gui_button_row_need_w(96, "Button") as i64,
                 96,
                 70,
                 gui_chip_w("Chip") as i64,
