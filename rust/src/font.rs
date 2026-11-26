@@ -1547,16 +1547,6 @@ fn skip_spaces(t: &[u8], mut s: usize) -> usize {
     s
 }
 
-fn next_char(t: &[u8], mut s: usize) -> usize {
-    if at(t, s) != 0 {
-        s += 1;
-    }
-    while (at(t, s) & 0xC0) == 0x80 {
-        s += 1;
-    }
-    s
-}
-
 /// True for a character Japanese breaks lines between: kana, kanji, CJK punctuation and fullwidth
 /// forms. (Latin words, including accented ones, must stay whole.) about.rs breaks a version's notes
 /// there too.
@@ -2527,6 +2517,16 @@ mod tests {
         // text that fits is one line; nothing but spaces is none
         assert_eq!(font_wrap_lines(FontFace::Regular, 34.0, text, 10000, Some(&mut widest)), 1);
         assert_eq!(font_wrap_lines(FontFace::Regular, 34.0, "   ", 10000, None), 0);
+    }
+
+    fn next_char(t: &[u8], mut s: usize) -> usize {
+        if at(t, s) != 0 {
+            s += 1;
+        }
+        while (at(t, s) & 0xC0) == 0x80 {
+            s += 1;
+        }
+        s
     }
 
     /// The lines of wrap_greedy as measuring each line from its start gives them: a word wider than the line
