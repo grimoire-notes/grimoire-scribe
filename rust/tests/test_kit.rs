@@ -679,6 +679,7 @@ fn each_call_takes_its_charge_from_the_calls_budget_the_same_in_both_hosts() {
         near(charged(host, &h("text.cut.long"), text(20, 1000, 1, 0), text(20, 0, 1, 0), &letters), 1000 * 34 * 32 + 16 * 256 * 256, "its bytes to 256 in the square");
         near(charged(host, &h("text.wrap"), text(300, 100, 0, 4), text(300, 0, 0, 4), &letters), 100 * 44 * 32 + 100 * 384, "a text wrapped");
         near(charged(host, &h("text.fit"), text(300, 100, 0, 8), text(300, 0, 0, 8), &letters), 100 * 44 * 32 + 16 * 100 * 100, "a text fitted");
+        near(charged(host, &h("text.fit.long"), text(300, 1000, 1, 8), text(300, 0, 1, 8), &letters), 1000 * 34 * 32 + 16 * 1000 * 1000, "all its bytes in the square");
         near(charged(host, &h("lines"), call("text_lines", &[0, 0, 300, 100, 0, 100, 0, 0, 0]), call("text_lines", &[0, 0, 300, 100, 0, 0, 0, 0, 0]), &letters), 100 * 44 * 32 + 100 * 384, "a page of lines");
         // The elements, as the app host's: frames by their pixels and corners, labels at 48 px, icons by their side.
         let row = |w: i32, hh: i32, icon: i32, label: i32, switch: i32| call("row", &[-1, 0, 0, w, hh, 0, icon, 0, label, 0, switch]);
@@ -687,9 +688,11 @@ fn each_call_takes_its_charge_from_the_calls_budget_the_same_in_both_hosts() {
         near(charged(host, &h("row.switch"), row(900, 120, 0, 0, 1), row(900, 120, 0, 0, -1), &letters), 30_000, "its switch");
         near(charged(host, &h("row.icon"), row(900, 120, 4, 0, -1), row(900, 120, 0, 0, -1), &letters), 64 * 64 * 2 + 16, "its icon and the icon's name");
         near(charged(host, &h("row.label"), row(900, 120, 0, 300, -1), row(900, 120, 0, 0, -1), &letters), 300 * 48 * 32 + 16 * 300 * 300, "its label on up to two lines");
+        near(charged(host, &h("row.label.long"), row(900, 120, 0, 1000, -1), row(900, 120, 0, 0, -1), &letters), 1000 * 48 * 32 + 16 * 1000 * 1000, "all its label's bytes in the square");
         let button = |w: i32, hh: i32, label: i32, icon: i32| call("button", &[-1, 0, 0, w, hh, 0, label, 0, icon, 0]);
         near(charged(host, &h("button"), button(400, 120, 0, 0), button(1, 1, 0, 0), &letters), 3 * (frame(400, 120, 32) - frame(1, 1, 32)), "a button");
         near(charged(host, &h("button.label"), button(400, 120, 10, 0), button(400, 120, 0, 0), &letters), 10 * 48 * 32 + 16 * 100, "its label");
+        near(charged(host, &h("button.label.long"), button(400, 120, 1000, 0), button(400, 120, 0, 0), &letters), 1000 * 48 * 32 + 16 * 1000 * 1000, "its label on up to two lines");
         near(charged(host, &h("button.icon"), button(400, 120, 0, 4), button(400, 120, 0, 0), &letters), 120 * 120 * 2 + 16, "its icon");
         near(charged(host, &h("icon_button"), call("icon_button", &[-1, 0, 0, 96, 96, 0, 0, 0]), call("icon_button", &[-1, 0, 0, 1, 1, 0, 0, 0]), &letters), 3 * (frame(96, 96, 32) - frame(1, 1, 32)) + 96 * 96 * 2 - 2, "an icon button");
         let chip = |w: i32, label: i32| call("chip", &[-1, 0, 0, w, 80, 0, label, 0]);
@@ -699,12 +702,16 @@ fn each_call_takes_its_charge_from_the_calls_budget_the_same_in_both_hosts() {
         near(charged(host, &h("field"), field(900, 0, 0, 0), field(1, 0, 0, 0), &letters), 2 * frame(900, 100, 82) - 2 * frame(1, 100, 32), "a field");
         near(charged(host, &h("field.icon"), field(900, 4, 0, 0), field(900, 0, 0, 0), &letters), 100 * 100 * 2 + 16, "its icon, as tall as the field");
         near(charged(host, &h("field.texts"), field(900, 0, 5, 6), field(900, 0, 0, 0), &letters), 5 * 48 * 32 + 16 * 25 + 6 * 48 * 32 + 16 * 36, "its text and its hint");
+        near(charged(host, &h("field.whole"), field(1, 0, 0, 0), Vec::new(), &letters), 500 + 2 * frame(1, 100, 32) + 64 * 64 * 2, "a field: the call, its frames and the mark that clears it");
         let select = |w: i32, caption: i32, value: i32| call("select", &[-1, 0, 0, w, 100, 0, caption, 0, value]);
         near(charged(host, &h("select"), select(660, 0, 0), select(1, 0, 0), &letters), 2 * frame(660, 100, 82) - 2 * frame(1, 100, 32), "a select");
         near(charged(host, &h("select.texts"), select(660, 4, 6), select(660, 0, 0), &letters), 4 * 48 * 32 + 16 * 16 + 6 * 48 * 32 + 16 * 36, "its caption and its value");
+        near(charged(host, &h("select.whole"), select(1, 0, 0), Vec::new(), &letters), 500 + 2 * frame(1, 100, 32) + 64 * 64 * 2, "a select: the call, its frames and its chevron");
         let check = |w: i32, label: i32| call("checkbox", &[-1, 0, 0, w, 90, 0, label, 0]);
         near(charged(host, &h("checkbox"), check(900, 0), check(1, 0), &letters), frame(900, 90, 0) - frame(1, 90, 0), "a checkbox");
         near(charged(host, &h("checkbox.label"), check(900, 20), check(900, 0), &letters), 20 * 48 * 32 + 16 * 400, "its label");
+        near(charged(host, &h("checkbox.label.long"), check(900, 1000), check(900, 0), &letters), 1000 * 48 * 32 + 16 * 1000 * 1000, "its label on up to two lines");
+        near(charged(host, &h("checkbox.whole"), check(1, 0), Vec::new(), &letters), 500 + frame(1, 90, 0) + 2 * frame(64, 64, 64) + 64 * 64 * 2, "a checkbox: the call, its rectangle, its box and its mark");
         near(charged(host, &h("card"), call("card", &[0, 0, 500, 200, 0]), call("card", &[0, 0, 1, 1, 0]), &letters), frame(500, 200, 32) - frame(1, 1, 32), "a card");
         near(charged(host, &h("divider"), call("divider", &[0, 0, 900]), call("divider", &[0, 0, 1]), &letters), frame(900, 10, 0) - frame(1, 10, 0), "a divider: the room of the theme's rule");
         near(charged(host, &h("icon"), call("icon", &[0, 0, 96, 96, 0, 4, 0]), call("icon", &[0, 0, 1, 1, 0, 0, 0]), &letters), 96 * 96 * 2 - 2 + 16, "an icon and its name");
@@ -763,6 +770,22 @@ fn a_call_at_a_limit_runs_and_one_past_it_stops_as_out_of_instructions() {
             ("the bytes of a hint", call("field", &[-1, 0, 0, 10, 10, 0, 0, 0, 0, 0, one, 0]), call("field", &[-1, 0, 0, 10, 10, 0, 0, 0, 0, 0, one + 1, 0])),
             ("the bytes of the texts of a call", repeat(all / 1000, &call("measure_width", &[0, 1000, 0])), repeat(all / 1000 + 1, &call("measure_width", &[0, 1000, 0]))),
         ];
+        // (each element given an id needs room for its region: one more than the regions there is room for stops
+        // the call, whatever kind it is)
+        let mut cases = cases;
+        for (kind, element) in [
+            ("button", call("button", &[1, 0, 0, 10, 10, 0, 0, 0, 0, 0])),
+            ("icon_button", call("icon_button", &[1, 0, 0, 10, 10, 0, 0, 0])),
+            ("row", call("row", &[1, 0, 0, 10, 10, 0, 0, 0, 0, 0, -1])),
+            ("chip", call("chip", &[1, 0, 0, 10, 10, 0, 0, 0])),
+            ("field", call("field", &[1, 0, 0, 10, 10, 0, 0, 0, 0, 0, 0, 0])),
+            ("select", call("select", &[1, 0, 0, 10, 10, 0, 0, 0, 0])),
+            ("checkbox", call("checkbox", &[1, 0, 0, 10, 10, 0, 0, 0])),
+            ("pager", call("pager", &[-1, 2, 0, -1000, 300, 0, 3])),
+        ] {
+            let what: &'static str = Box::leak(format!("the hit region of a {kind}").into_boxed_str());
+            cases.push((what, seq(&[repeat(hits - 1, &call("hit", &[1, 0, 0, 1, 1])), element.clone()]), seq(&[repeat(hits, &call("hit", &[1, 0, 0, 1, 1])), element])));
+        }
         for (what, at, past) in cases {
             let mut rt = loaded(&format!("test.kit.limit.at.{}.{}", tag(host), what.len()), &module(host, at));
             let before = patterned();
@@ -929,6 +952,156 @@ fn a_widget_that_may_not_draw_draws_nothing_and_has_no_hit_region() {
     assert_eq!(rt.error(), None);
     let got: Vec<i64> = rt.status().split(' ').map(|d| d.parse::<i64>().unwrap() - 1_000_000_000).collect();
     assert_eq!(got, vec![0, 0, 0, 1, 118]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_widget_that_may_not_draw_pays_the_fixed_charge_for_each_drawing_call() {
+    let root = fresh_root("barecharge");
+    let letters: Vec<u8> = (0..2048).map(|k| b'a' + (k % 26) as u8).collect();
+    // (the fuel of a pass of two calls against a pass of one, in a widget without `editor:overlay`)
+    let bare = |id: &str, code: Vec<u8>| {
+        let mut kit = Kit::new(Host::Widget, code);
+        kit.pages = 2;
+        kit.data = vec![(0, letters.clone())];
+        let mut rt = load(&format!("test.kit.barecharge.{id}"), &kit, false).unwrap();
+        let _ = drawn(&mut rt);
+        let _ = drawn(&mut rt);
+        assert_eq!(rt.error(), None, "{id}");
+        rt.fuel()
+    };
+    for (name, args) in [
+        ("fill", vec![0, 0, 900, 900, 0]),
+        ("row", vec![1, 0, 0, 900, 0, 0, 4, 0, 100, 0, 1]),
+        ("text", vec![0, 0, 300, 100, 0, 100, 0, 8]),
+        ("clip", vec![0, 0, 10, 10]),
+        ("hit", vec![1, 0, 0, 10, 10]),
+        ("pager", vec![1, 2, 0, 0, 1000, 1, 3]),
+    ] {
+        let one = call(name, &args);
+        let n = bare(&format!("{name}.2"), times(2, &one)).saturating_sub(bare(&format!("{name}.1"), one));
+        assert!((500..500 + 96).contains(&n), "{name}: {n}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_callers_clip_smaller_than_the_body_is_kept() {
+    let root = fresh_root("callerclip");
+    // The editor draws a frame clipped to the part of the screen it redraws: nothing the kit draws, clip_clear and
+    // a clip of everything among it, reaches outside that part, and the canvas has its clip again after the pass.
+    for (host, own) in [(Host::App, ("grimoire", "fill_rect", "iiiii", 'v')), (Host::Widget, ("grimoire", "rect", "iiiii", 'v'))] {
+        let mut k = Kit::new(host, Vec::new());
+        k.imports.push(own);
+        k.code[0] = seq(&[
+            call("clip_clear", &[]),
+            call("fill", &[-100, -100, 100_000, 100_000, 0]),
+            call("clip", &[-100, -100, 100_000, 100_000]),
+            call("fill", &[-100, -100, 100_000, 100_000, 30]),
+            extra(&k, 0, &[-100, -100, 100_000, 100_000, 1]),
+            call("row", &[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1]),
+        ]);
+        let mut rt = loaded(&format!("test.kit.callerclip.{}", tag(host)), &k);
+        let body = rt.body();
+        let part = Rect::new(body.x + 100, body.y + 100, 300, 200);
+        let before = patterned();
+        let mut c = before.clone();
+        c.clip = part;
+        rt.draw(&mut c);
+        assert_eq!(rt.error(), None);
+        assert_eq!(changed_outside(&before, &c, part), 0, "{host:?}: nothing outside the caller's clip");
+        assert!(inked(&c, part) > 0, "{host:?}: the part is drawn on");
+        assert_eq!(c.clip, part, "{host:?}: the caller's clip after the pass");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_apps_hit_regions_are_those_of_its_last_drawing_pass() {
+    let root = fresh_root("apphits");
+    // (a touch that makes regions of its own: they are not the next pass's)
+    let kit = Kit::new(Host::App, call("hit", &[1, 0, 0, 100, 100])).touch(times(3, &call("hit", &[2, 200, 200, 100, 100])));
+    let Rt::A(mut rt) = loaded("test.kit.apphits", &kit) else { unreachable!() };
+    let mut c = patterned();
+    rt.draw(&mut c, app_body(), 0);
+    rt.pointer(0, 10, 10, 0);
+    rt.draw(&mut c, app_body(), 0);
+    assert_eq!(rt.error(), None);
+    assert_eq!(rt.hits(), &[(1, Rect::new(0, 0, 100, 100))]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn wrapped_text_centres_its_block_and_cuts_its_last_line_short_and_a_right_text_too_wide_is_drawn_as_left() {
+    let root = fresh_root("textrules");
+    for host in HOSTS {
+        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+            ui_set_theme(theme);
+            let lh = line_of(0);
+            let (f, px) = role(0);
+            let one = |id: &str, cmds: &[K]| {
+                let mut rt = loaded(&format!("test.kit.textrules.{}.{}.{id}", tag(host), look(theme)), &pass(host, cmds));
+                let c = drawn(&mut rt);
+                assert_eq!(rt.error(), None);
+                (c, rt.body())
+            };
+            let own = |body: Rect, draw: &dyn Fn(&mut Canvas, Rect)| {
+                let mut c = patterned();
+                let whole = c.clip;
+                canvas_set_clip(&mut c, rect_intersect(whole, body));
+                canvas_fill(&mut c, body, 255);
+                draw(&mut c, body);
+                c.clip = whole;
+                c
+            };
+            // Three lines in a room for six: the block in its middle.
+            let (got, body) = one("centred", &[K::Text(20, 100, 600, 6 * lh, "First line\nSecond line\nThird", 0, 4)]);
+            let want = own(body, &|c, b| {
+                for (k, s) in ["First line", "Second line", "Third"].iter().enumerate() {
+                    font_draw_left_name(c, f, px, Rect::new(b.x + 20, b.y + 100 + (6 * lh - 3 * lh) / 2 + k as i32 * lh, 600, lh), s, 0);
+                }
+            });
+            assert!(got.px == want.px, "{host:?} {theme:?}: the block of lines is centred in its room");
+            // Four lines in a room for two: the first, then the rest on the second, cut short.
+            let (got, body) = one("cut", &[K::Text(20, 100, 260, 2 * lh, "alpha\nbravo charlie delta echo\nfoxtrot\ngolf", 0, 4)]);
+            let want = own(body, &|c, b| {
+                font_draw_left_name(c, f, px, Rect::new(b.x + 20, b.y + 100, 260, lh), "alpha", 0);
+                let lines = kit_lines(f, px, "alpha\nbravo charlie delta echo\nfoxtrot\ngolf", 260);
+                font_draw_left_name(c, f, px, Rect::new(b.x + 20, b.y + 100 + lh, 260, lh), &lines[1..].join(" "), 0);
+            });
+            assert!(got.px == want.px, "{host:?} {theme:?}: the last line shown holds the rest, cut short");
+            // A right-aligned text too wide for its room: as a left-aligned one.
+            let (right, _) = one("right", &[K::Text(20, 100, 120, 0, "A text far wider than its room", 0, 2)]);
+            let (left, _) = one("left", &[K::Text(20, 100, 120, 0, "A text far wider than its room", 0, 0)]);
+            assert!(right.px == left.px, "{host:?} {theme:?}");
+        }
+    }
+    ui_set_theme(UiTheme::Gothic);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn text_lines_given_no_height_takes_the_rest_of_the_body_and_a_pager_and_hit_make_only_the_regions_they_say() {
+    let root = fresh_root("lineshits");
+    for host in HOSTS {
+        let lh = line_of(0);
+        let body = match host {
+            Host::Widget => WIDGET_BODY,
+            Host::App => app_body(),
+        };
+        // (three lines from 4 lines above the body's foot: all three drawn, as with a height of three lines)
+        let y = body.h - 4 * lh;
+        let mut a = loaded(&format!("test.kit.lineshits.a.{}", tag(host)), &pass(host, &[K::Lines(20, y, 600, 0, "one\ntwo\nthree", 0, 0, 0)]));
+        let mut b = loaded(&format!("test.kit.lineshits.b.{}", tag(host)), &pass(host, &[K::Lines(20, y, 600, 3 * lh, "one\ntwo\nthree", 0, 0, 0)]));
+        let (ca, cb) = (drawn(&mut a), drawn(&mut b));
+        assert!(inked(&ca, body) > 0 && ca.px == cb.px, "{host:?}");
+        // A pager on its first page has no region for the previous page's arrow; `hit` with id -1 makes none.
+        let mut rt = loaded(&format!("test.kit.lineshits.p.{}", tag(host)), &pass(host, &[K::Pager(8, 9, 20, 100, 1100, 0, 3), K::Hit(-1, 0, 0, 100, 100)]));
+        let _ = drawn(&mut rt);
+        assert_eq!((rt.hits(), rt.hit(8), rt.hit(9).is_some()), (1, None, true), "{host:?}");
+    }
+    // (a line break with a carriage return before it is a line break)
+    assert_eq!(kit_lines(FontFace::Regular, 44.0, "one\r\ntwo\r\n", 600), vec!["one", "two", ""]);
     let _ = std::fs::remove_dir_all(&root);
 }
 

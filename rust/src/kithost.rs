@@ -282,11 +282,11 @@ fn fitting(f: FontFace, px: f32, s: &str, w: i32) -> usize {
 /// line, and a word wider than the width broken between its characters (at least one to a line). The license
 /// viewer breaks a license so (widgetpkgui.rs, `license_lines`); `text` with WRAP, `text_lines` and
 /// `measure_height` break a package's text so, its work growing with the text's length times the log of a line's.
+/// (A carriage return before a line break is white space between words, as a tab is.)
 pub fn kit_lines(f: FontFace, px: f32, text: &str, w: i32) -> Vec<String> {
     let space = font_measure(f, px, " ");
     let mut out = Vec::new();
     for raw in text.split('\n') {
-        let raw = raw.strip_suffix('\r').unwrap_or(raw);
         let mut line = String::new();
         let mut lw = 0i32;
         for word in raw.split_whitespace() {
