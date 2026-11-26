@@ -48,7 +48,7 @@ no such place. The places keep their labels and their runner names (`files.item.
 `GRIMOIRE_STORAGE_SYSTEM=NAME/NAME...` names more of the system's folders at the storage root, separated by `/`
 (an empty name and one that begins with a dot are left out): Files lists none of them and its walk refuses them,
 by name in any ASCII case and by identity, as it does the Kindle's own (`system`, `koreader`, ...). It is read
-once, the first time a path is checked. tests/scenarios/files_43_places_named.qs sets all four.
+once, when it is first needed. tests/scenarios/files_43_places_named.qs sets all four.
 
 Live view's raw digitizer has stand-ins (headless runner only; tests/live_pen_stall.py uses them):
 `GRIMOIRE_SIM_RAWPEN=PATH` names a FIFO of `struct input_event` records in the host's layout (x
