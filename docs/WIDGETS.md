@@ -324,7 +324,8 @@ is not shown: a pass holds the commands of its own `widget_draw` only). That pas
 after the tap, and only the part of the body it changed is refreshed (nothing, when the picture is the
 same). A module that exports the kit's `kit_event` is told of a tap by a TAP event instead of
 `widget_tap`, and of long presses and drags too, whose passes are drawn at most every 120 ms while
-the contact is down ([KIT.md](KIT.md#events)). A widget gets no keys: they stay the notebook's
+the contact is down, refreshed fast, and what they refreshed gets one full-depth refresh after the
+lift ([KIT.md](KIT.md#events)). A widget gets no keys: they stay the notebook's
 shortcuts. A
 module may call `state_set` during a tap or a draw; the host writes the state file after the call,
 at `packages/widgets/<id>/state/runtime.bin`. For a timer or a sticky note, that is the whole

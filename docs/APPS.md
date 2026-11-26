@@ -218,7 +218,9 @@ cleanly.
 A touch calls the module at once, and the drawing pass it owes is drawn once for all the input since
 the last pass: none while the contact may still be a tap, so that a tap is one pass, at its lift; at
 most one every 120 ms while a finger drags or is held; and only the part of the screen the pass
-changed is refreshed ([KIT.md](KIT.md#how-a-pass-follows-input)). `kit_event`, the package kit's
+changed is refreshed, by every pass of the app's, the status bar's minute too. What those passes
+refreshed fast while a finger was down gets one full-depth refresh after the lift
+([KIT.md](KIT.md#how-a-pass-follows-input)). `kit_event`, the package kit's
 optional export, is also told what the contact was: a tap (with the kit's hit region under it), a
 long press or a drag with its samples ([KIT.md](KIT.md#events)).
 
