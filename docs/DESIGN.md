@@ -1294,8 +1294,8 @@ announcements: goingToScreenSaver draws the sleep screen, outOfScreenSaver is th
    came out corrupt (its WebM changed size mid-file). Viewers end with a bye when Live view stops
    (Stop on the card, 10 minutes without a viewer, Grimoire leaving: `app_shutdown` stops them
    before anything else, so no export child inherits a socket and the headless runner never waits
-   for one); on Linux they also have PR_SET_PDEATHSIG, and everywhere they end once their parent
-   has gone.
+   for one); on Linux (and in a build with the `linux-kernel` feature, PORTING.md) they also have
+   PR_SET_PDEATHSIG, and everywhere they end once their parent has gone.
    An icon-only chip says Live view is on: in the top right corner (inside the 50 px margin) on the Library,
    Share and the other screens, and beside the editor's panel on a notebook page (and none while a menu is
    in front of it); it is overlaid at the present like the toast, and the screen guard skips it
