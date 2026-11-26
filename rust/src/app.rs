@@ -997,8 +997,8 @@ fn app_text_key(a: &mut App, ev: &InEvent) -> bool {
 }
 
 /// The shortcuts that still act while an app is open: the ways out of it. A key bound to `back` (Esc, in the keys
-/// Grimoire writes) or to `home` closes the app, as the two-finger swipe does, and `home` then goes to the home; every
-/// other key goes to the app (apphost_key), and no other shortcut acts.
+/// Grimoire writes) or to `home` closes the app, as the two-finger swipe does, and does nothing more (the Library is
+/// where the app was opened from); every other key goes to the app (apphost_key), and no other shortcut acts.
 pub const APP_LEAVE_ACTIONS: [i32; 2] = [SHORTCUT_BACK, SHORTCUT_HOME];
 
 /// Shared keyboard/controller/Live view dispatch. Callers own enablement, wake gating and
@@ -1010,9 +1010,7 @@ fn app_shortcut_action(a: &mut App, action: i32, src: ActionSrc) -> bool {
             return false;
         }
         crate::apphost::apphost_close(a);
-        if action != SHORTCUT_HOME {
-            return true;
-        }
+        return true;
     }
     if action == SHORTCUT_STATUS {
         status_toggle(a);
@@ -3503,7 +3501,7 @@ mod tests {
     // ---- the keys of an open app ----
 
     // While an app is open only the shortcuts that leave it act, wherever an action comes from (a key, a controller's
-    // button, Live view's keys): `back` closes the app and does no more, `home` closes it and goes to the home, and any
+    // button, Live view's keys): `back` and `home` close the app and do no more, and any
     // other does nothing (the theme stays, no notebook is made).
     #[test]
     fn while_an_app_is_open_only_the_shortcuts_that_leave_it_act() {

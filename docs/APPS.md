@@ -227,8 +227,8 @@ long press or a drag with its samples ([KIT.md](KIT.md#events)).
 and every button of a controller, is the app's, pressed and let go (`app_key`, and a KEY event for
 `kit_event`), before Grimoire's shortcuts and whether Settings > Shortcuts is on or off; no shortcut
 acts but the two that leave the app: with Shortcuts on, a key bound to `back` (Esc, in the keys
-Grimoire writes) or to `home` closes the app as the two-finger swipe does (`app_stop` runs), and
-`home` then goes to the home. A keyboard of Grimoire's open over the app takes the keys that type.
+Grimoire writes) or to `home` closes the app as the two-finger swipe does (`app_stop` runs), and does
+nothing more. A keyboard of Grimoire's open over the app takes the keys that type.
 The kit's `key_char` gives the character a key types.
 
 `app_status_bar` is called once, before the first frame. Returning 0 starts with the bar hidden and
