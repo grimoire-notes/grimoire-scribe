@@ -697,12 +697,13 @@ pub fn apphost_event(a: &mut App, ev: &InEvent) -> bool {
         return false;
     }
     let body = app_body(a);
-    if !rect_contains(body, ev.x.round_ties_even() as i32, ev.y.round_ties_even() as i32) {
-        // The shared status bar is chrome, not app content. A lift still reaches the app so a
-        // contact that began in the body can end cleanly.
-        if ph != 2 {
-            return true;
-        }
+    // The shared status bar is chrome, not app content: a contact begins only in the body, and app_pointer is told
+    // of the samples inside it and of the lift, wherever it is, so a contact that began in the body ends cleanly. The
+    // recogniser takes every sample of a contact that began in the body, inside it or not, as a frame's does: a drag is
+    // the same drag in a widget and in an app (its points may lie outside the body, in body coordinates).
+    let inside = rect_contains(body, ev.x.round_ties_even() as i32, ev.y.round_ties_even() as i32);
+    if !inside && ph == 0 {
+        return true;
     }
     let x = ev.x.round_ties_even() as i32 - body.x;
     let y = ev.y.round_ties_even() as i32 - body.y;
@@ -713,7 +714,7 @@ pub fn apphost_event(a: &mut App, ev: &InEvent) -> bool {
     let Some(mut r) = a.app_view.runtime.take() else { return true };
     // Every phase still calls `app_pointer`, and the events the contact makes call `kit_event`, at once; the
     // drawing pass either owes is drawn by the tick (apphost_tick).
-    let mut owe = r.pointer(ph, x, y, source);
+    let mut owe = (inside || ph == 2) && r.pointer(ph, x, y, source);
     let p = &mut a.app_view.input.pointer;
     // (a contact's moves and its lift come from the source that began it, pen or finger, as the editor takes them)
     let events = match ph {

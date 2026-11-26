@@ -111,6 +111,19 @@ wait 500
 expect library.app.status is p012 n030 t02 r01 s02 m07 e02 c00 q304 k00 a00 g00 h0
 expect display.presents is fast 326 550 1224 1100, ui 326 1550 1224 100, clean 326 550 1224 1100
 shot 01-input-app
+# A contact that leaves the body (into the status bar) and comes back to lift within the slop before 600 ms is a
+# drag, as in a widget (z_kit_input_widget.qs): the recogniser takes its samples outside the body too, in body
+# coordinates; app_pointer is told of those inside the body and of the lift alone.
+touch down 900 1400
+wait 50
+touch move 900 30
+wait 50
+touch move 910 1400
+wait 50
+touch up 910 1400
+wait 500
+expect library.app.status is p014 n033 t02 r01 s03 m09 e03 c00 q306 k00 a00 g00 h0
+expect display.presents is fast 850 78 700 1572, ui 850 78 110 1372, clean 850 78 700 1572
 swipe 2 930 2200 0 -1000
 wait 300
 expect library.app.open is 0

@@ -110,6 +110,18 @@ wait 500
 expect editor.widget.0.status is p013 n000 t01 r01 s02 m07 e02 c00 q308 k00 a00 g00 h0
 expect display.presents is fast 872 850 778 300, ui 872 1050 778 100, clean 872 850 778 300
 shot 01-input-widget
+# A contact that leaves the body (above the frame) and comes back to lift within the slop before 600 ms is a drag,
+# as in an app (z_kit_input_app.qs): its samples outside the body reach kit_event too, in body coordinates.
+touch down 1300 800
+wait 50
+touch move 1300 60
+wait 50
+touch move 1310 800
+wait 50
+touch up 1310 800
+wait 500
+expect editor.widget.0.status is p016 n000 t01 r01 s03 m09 e03 c00 q310 k00 a00 g00 h0
+expect display.presents is fast 1550 1050 100 100, ui 1260 750 100 100, clean 1550 1050 100 100
 tap panel widget.0.close
 wait 300
 expect editor.widgets is 0

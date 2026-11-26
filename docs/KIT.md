@@ -243,11 +243,17 @@ A contact on the body is one of these, by one recogniser for both hosts (`kithos
 - one held 600 ms within the slop is a PRESS, once, and its lift is nothing;
 - one that moves past the slop, a held one too, is a drag: DRAG_START once; then its samples are gathered and handed
   over in DRAG_MOVEs at the pace of its drawing passes (below), the newest 256 when more came; and at its lift a last
-  DRAG_MOVE with the samples left, and DRAG_END. A lift past the slop of a contact whose moves did not reach the body
-  ends a drag the same way;
+  DRAG_MOVE with the samples left, and DRAG_END. A lift past the slop of a contact whose moves were not seen ends a
+  drag the same way;
 - one the platform cancels (a second finger made a gesture of it, the pen came) or the panel calls palm-sized is no
   tap and no press, and a drag it was ends with DRAG_END marked cancelled (the samples since its last DRAG_MOVE are
   dropped).
+
+A contact begins only in the body, and the recogniser takes every sample of it, in both hosts, also where it leaves
+the body: a drag is the same drag in a widget's frame and in an app. So a drag's points (`event_points`) and
+DRAG_END's place may lie outside the body, in body coordinates (below 0, or at or past `BODY_W` or `BODY_H`), and a
+contact that leaves the body and comes back to lift within the slop before 600 ms is a drag, not a tap. A contact's
+moves and its lift come from the source that began it, the pen or a finger.
 
 `event_points(ptr, cap)` writes the points of the DRAG_MOVE being handled into the module's memory at `ptr`,
 oldest first, each an x and a y as two i32 (8 bytes, little-endian): as many whole points as `cap` bytes hold, the
@@ -287,8 +293,8 @@ types into it with this.
   does not gets `widget_tap(id)` for a lift within the slop, held or not, as before, and nothing for a drag. The
   title bar, the frame's buttons and its corner are the frame's. A tap's pass is drawn at its lift with the pen near
   or not; a pass the module asks for itself (`request_redraw`) waits for the pen.
-- **An app** gets them in its body, KEY and SETTINGS; `app_pointer` is still called for every phase and `app_key` for
-  every key, each before `kit_event`. While an app is open the keys are its own: no shortcut of Grimoire's acts but
+- **An app** gets them in its body, KEY and SETTINGS; `app_pointer` is still called as before, for every phase inside
+  the body and for the lift wherever it is, and `app_key` for every key, each before `kit_event`. While an app is open the keys are its own: no shortcut of Grimoire's acts but
   `back` and `home`, which leave it ([APPS.md](APPS.md#lifecycle-and-exports)).
 
 ## Capabilities

@@ -958,3 +958,43 @@ fn an_apps_contact_takes_its_moves_and_lift_from_the_source_that_began_it() {
     let _ = app_package_remove(id, false);
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// A contact that began in an app's body is seen whole by the recogniser, also where it leaves the body (into the
+/// status bar over it), as a frame's is: one that leaves the body and comes back to lift within the slop before
+/// HOLD_MS is a drag in both hosts, no TAP, its samples outside the body among its points. app_pointer is told of
+/// what it always was: the samples inside the body, and the lift.
+#[test]
+fn an_apps_drag_is_seen_whole_where_it_leaves_the_body_and_app_pointer_only_inside() {
+    let root = fresh_root("outside");
+    let id = "test.ki.outside";
+    let module = input(Host::App, true, Some(true)).bytes();
+    app_package_install(&app_manifest(id, "Outside", &[], true, &module), &module, None, "", SCREEN.0, SCREEN.1).unwrap();
+    let mut a = App { w: SCREEN.0, h: SCREEN.1, dpi: 300.0, ..Default::default() };
+    assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+    grimoire::library::library_init(&mut a);
+    assert!(grimoire::apphost::apphost_launch(&mut a, id));
+    let bar = grimoire::globalui::gui_status_h();
+    assert!(bar > 30, "the app shows the status bar over its body");
+    // (the status bar's first minute: a pass of its own)
+    grimoire::apphost::apphost_tick(&mut a, now_ms());
+    let ev = |a: &mut App, type_: InType, x: f32, y: f32| {
+        assert!(grimoire::apphost::apphost_event(a, &InEvent { type_, x, y, t_ms: now_ms(), ..Default::default() }));
+    };
+    ev(&mut a, InType::TouchDown, 600.0, 1000.0);
+    ev(&mut a, InType::TouchMove, 600.0, 10.0);
+    ev(&mut a, InType::TouchMove, 610.0, 1000.0);
+    ev(&mut a, InType::TouchUp, 610.0, 1000.0);
+    grimoire::apphost::apphost_tick(&mut a, now_ms());
+    assert_eq!(a.app_view.status(), "p003 n003 t00 r00 s01 m01 e01 c00 q002 k00 a00 g00 h0", "a drag of two points; app_pointer told of three phases");
+    // a contact that begins in the status bar is none of the app's
+    ev(&mut a, InType::TouchDown, 600.0, 10.0);
+    ev(&mut a, InType::TouchMove, 600.0, 1000.0);
+    ev(&mut a, InType::TouchUp, 600.0, 1000.0);
+    grimoire::apphost::apphost_tick(&mut a, now_ms());
+    assert_eq!(a.app_view.status(), "p004 n005 t00 r00 s01 m01 e01 c00 q002 k00 a00 g00 h0", "app_pointer told of the move and the lift inside, as before; no event");
+    grimoire::apphost::apphost_close(&mut a);
+    grimoire::library::library_free(&mut a);
+    canvas_free(&mut a.screen);
+    let _ = app_package_remove(id, false);
+    let _ = std::fs::remove_dir_all(root);
+}
