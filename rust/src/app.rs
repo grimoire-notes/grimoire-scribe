@@ -98,6 +98,9 @@ pub struct App {
     /// what waits to be flushed is only what fills in by itself (app_invalidate_filling): its Ui is never the one
     /// promoted to the cleaning Full
     pub dirty_filling: bool,
+    /// what waits to be flushed is only what nobody asked for (app_invalidate_filling, app_invalidate_unasked):
+    /// its present goes out with display_unasked, as long as it is a Ui
+    pub dirty_unasked: bool,
     /// what fast refreshes left on the panel that only a flash wipes (display.rs, issue #11): the
     /// editor adds to it and cleans it; every Full, and a Clean over it, wipes it here at the flush
     pub du_wear: DuWear,
@@ -2514,6 +2517,7 @@ pub fn app_invalidate(a: &mut App, r: Rect, m: RefreshMode) {
         return;
     }
     a.dirty_filling = false; // (whatever else is waiting, this refresh is one something asked for)
+    a.dirty_unasked = false;
     invalidate_in(a, r, m);
 }
 
@@ -2521,13 +2525,29 @@ pub fn app_invalidate(a: &mut App, r: Rect, m: RefreshMode) {
 /// previews arrive): a Ui refresh of `r` like any other, and counted like any other, but never the one that
 /// becomes the cleaning Full (app_flush: every 30th Ui), which would flash the whole panel in the middle of a
 /// screen that is still arriving. The count runs on, and the next refresh that anything else asks for (a page
-/// turn, a tap) is the Full instead. Only while nothing else waits to be flushed with it.
+/// turn, a tap) is the Full instead. Its present tells the platform that nobody asked for it (display_unasked).
+/// Only while nothing else waits to be flushed with it.
 pub fn app_invalidate_filling(a: &mut App, r: Rect) {
     let r = rect_intersect(r, Rect { x: 0, y: 0, w: a.w, h: a.h });
     if rect_is_empty(r) {
         return;
     }
     a.dirty_filling = rect_is_empty(a.dirty) || a.dirty_filling;
+    a.dirty_unasked = rect_is_empty(a.dirty) || a.dirty_unasked;
+    invalidate_in(a, r, RefreshMode::Ui);
+}
+
+/// A part of the screen that redraws by itself when its time comes, nobody having touched anything (a widget
+/// frame's timed redraw): a Ui refresh of `r` counted like any other and promoted like any other (its 30th is
+/// the cleaning Full), whose present tells the platform that nobody asked for it (display_unasked), as a filling
+/// refresh's does. Only while nothing else waits to be flushed with it.
+pub fn app_invalidate_unasked(a: &mut App, r: Rect) {
+    let r = rect_intersect(r, Rect { x: 0, y: 0, w: a.w, h: a.h });
+    if rect_is_empty(r) {
+        return;
+    }
+    a.dirty_filling = false; // (counted and promoted as app_invalidate's: only the hint is its own)
+    a.dirty_unasked = rect_is_empty(a.dirty) || a.dirty_unasked;
     invalidate_in(a, r, RefreshMode::Ui);
 }
 
@@ -2588,6 +2608,8 @@ fn app_flush_in(a: &mut App) {
     }
     // (a refresh of what fills in by itself, alone: counted, and never promoted: app_invalidate_filling)
     let filling = std::mem::take(&mut a.dirty_filling) && rect_is_empty(self_dirty);
+    // (and of what nobody asked for, alone, filling or redrawn on its own time: display_unasked says so)
+    let unasked = std::mem::take(&mut a.dirty_unasked) && rect_is_empty(self_dirty);
     if m == RefreshMode::Ui {
         a.ui_refreshes_since_full += 1;
         if a.ui_refreshes_since_full >= 30 && !filling {
@@ -2632,6 +2654,8 @@ fn app_flush_in(a: &mut App) {
         }
     }
     live_toast_sync(a, overlay, reached, noticed.is_some());
+    // (never the cleaning Full, nor a refresh with anything asked for in it)
+    display_unasked(unasked && m == RefreshMode::Ui);
     display_present(&a.screen, a.dirty, m);
     du_wear_presented(&mut a.du_wear, a.dirty, m);
     if a.asked == Asked::Drawn {
@@ -3576,6 +3600,90 @@ mod tests {
         // nothing of it off the screen
         app_invalidate_filling(&mut a, Rect { x: -500, y: 0, w: 100, h: 100 });
         assert!(!a.dirty_filling && rect_is_empty(a.dirty));
+    }
+
+    /// The presents since the last call that went with display_unasked, as the simulator counts them; None where
+    /// no platform hears of it (the host build's tests).
+    #[cfg(feature = "sim")]
+    fn unasked_sent() -> Option<String> {
+        crate::sim_sdl::display_probe_read("display.unasked")
+    }
+    #[cfg(not(feature = "sim"))]
+    fn unasked_sent() -> Option<String> {
+        None
+    }
+
+    /// What nobody asked for, flushed alone as a Ui, goes out with display_unasked: a part that fills in by itself
+    /// (app_invalidate_filling, Files' Covers tiles) and a part redrawn when its time comes (app_invalidate_unasked,
+    /// a widget frame's timed redraw). A refresh with anything asked for in it, before or after, goes without, as
+    /// does the cleaning Full. The timed redraw is counted and promoted as any Ui (its 30th is the Full), where a
+    /// filling refresh is never the Full.
+    #[test]
+    fn what_nobody_asked_for_goes_out_with_the_hint() {
+        let mut a = notice_app();
+        let r = Rect { x: 100, y: 500, w: 400, h: 300 };
+        let other = Rect { x: 900, y: 900, w: 50, h: 50 };
+        let sent = |want: &str| {
+            if let Some(got) = unasked_sent() {
+                assert_eq!(got, want);
+            }
+        };
+        let _ = unasked_sent();
+        // a Covers tile, alone
+        app_invalidate_filling(&mut a, r);
+        assert!(a.dirty_unasked && a.dirty_filling);
+        app_flush(&mut a);
+        assert!(!a.dirty_unasked);
+        sent("1");
+        // a widget's timed redraw, alone: a Ui, counted, and no filling one
+        a.ui_refreshes_since_full = 0;
+        app_invalidate_unasked(&mut a, r);
+        assert!(a.dirty_unasked && !a.dirty_filling && a.dirty_mode == RefreshMode::Ui && a.dirty == r);
+        app_flush(&mut a);
+        assert!(!a.dirty_unasked && rect_is_empty(a.dirty));
+        assert_eq!(a.ui_refreshes_since_full, 1);
+        sent("1");
+        // something asked for (a tap, a page turn): no hint
+        app_invalidate(&mut a, other, RefreshMode::Ui);
+        assert!(!a.dirty_unasked);
+        app_flush(&mut a);
+        sent("0");
+        // the two in one flush, in either order: an asked one, no hint
+        for asked_first in [false, true] {
+            if asked_first {
+                app_invalidate(&mut a, other, RefreshMode::Ui);
+            }
+            app_invalidate_unasked(&mut a, r);
+            app_invalidate_filling(&mut a, r);
+            if !asked_first {
+                app_invalidate(&mut a, other, RefreshMode::Ui);
+            }
+            assert!(!a.dirty_unasked && !a.dirty_filling && a.dirty == rect_union(r, other));
+            app_flush(&mut a);
+            sent("0");
+        }
+        // the 30th: a timed redraw is the cleaning Full, as before, and the Full goes without the hint; a filling
+        // refresh stays a Ui and has it
+        a.ui_refreshes_since_full = 29;
+        app_invalidate_unasked(&mut a, r);
+        app_flush(&mut a);
+        assert_eq!(a.ui_refreshes_since_full, 0, "promoted");
+        sent("0");
+        a.ui_refreshes_since_full = 29;
+        app_invalidate_filling(&mut a, r);
+        app_flush(&mut a);
+        assert_eq!(a.ui_refreshes_since_full, 30, "never promoted");
+        sent("1");
+        // a fast refresh asked for after it (a stroke's): something asked for, no hint
+        app_invalidate_unasked(&mut a, r);
+        app_invalidate(&mut a, r, RefreshMode::Fast);
+        assert!(!a.dirty_unasked, "anything asked for takes it away");
+        app_flush(&mut a);
+        sent("0");
+        // nothing of it off the screen
+        app_invalidate_unasked(&mut a, Rect { x: -500, y: 0, w: 100, h: 100 });
+        assert!(!a.dirty_unasked && rect_is_empty(a.dirty));
+        canvas_free(&mut a.screen);
     }
 
     /// Shown at the next flush; drawn again only for a new text, at most once every 2 s; none of it counted
