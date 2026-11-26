@@ -1594,11 +1594,11 @@ const K_DARKER_PAPERS: [(&str, u32); 13] = [
 // strokes drawn since 2.0.0-beta.5 record it: what 2.0.0-beta.2 to beta.4 drew for every such
 // stroke (issue #5). K_LOOK is the round tip, which older strokes (no tip recorded) get.
 const K_VERTICAL: [(&str, u32); 4] = [
-        ("medium rule, white highlighter, vertical tip", 0x1d8309ca),
-        ("medium rule, white highlighter, vertical tip, ink", 0x14d61db0),
-        ("grand staff, white highlighter, vertical tip", 0x0a4bc45d),
-        ("grand staff, white highlighter, vertical tip, ink", 0x14d61db0),
-    ];
+    ("medium rule, white highlighter, vertical tip", 0x1d8309ca),
+    ("medium rule, white highlighter, vertical tip, ink", 0x14d61db0),
+    ("grand staff, white highlighter, vertical tip", 0x0a4bc45d),
+    ("grand staff, white highlighter, vertical tip, ink", 0x14d61db0),
+];
 
 fn look(name: &str, crc: u32) {
     if g_print() {
