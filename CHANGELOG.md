@@ -2,6 +2,71 @@
 
 ## 2.3.0 (unreleased)
 
+- **A new home** (#225, nebuff). The Library opens as a home screen: the status bar at the top, then the
+  Library's title with its Settings and Search buttons, a row of apps (Files, Share, Settings, Package Store and
+  any app installed, most recently used first) with Show All at its end, the All, Notebooks and Folders chips
+  beside Sort (Name (A-Z), Name (Z-A), Newest first, Oldest first), both kept across restarts, and the cards. The
+  + button at the bottom right makes a New notebook or a New folder, or opens Share (Import over Wi-Fi). Search
+  opens the keyboard and shows, as you type, the notebooks and folders in every folder whose names hold what is
+  typed. The top bar of New, Folder, Share, Settings and Exit is gone: Exit is at the foot of Settings' left
+  column.
+- **The Apps page and What's new** (#225, nebuff). Show All opens Apps: every app, most recently used first,
+  with What's new, About (Settings > System > About: device and storage) and Manage apps... at its foot. What's
+  new is a screen of its own, no longer a card under the bat: every version down the left, newest first, and the
+  notes of the one tapped at the right, set to fit. It still opens by itself once after each update, on this
+  version's notes; its X or Esc closes it.
+- **Quick settings** (#225, nebuff). A one-finger pull down from the top of any screen, a notebook's or an app's
+  too, opens Brightness and Warmth, Settings, Rotation lock (the screen stays turned as it is) and Auto
+  brightness. A notebook's toolbar has no Display button any more: brightness and warmth are here, and the rest
+  of its sheet is Settings > Display > Display: brightness, warmth.
+- **A status bar** (#225, nebuff). The clock and battery corner is replaced by a bar on every screen (an app may
+  hide it): the time and date at the left, Wi-Fi, Bluetooth and the battery's percent at the right. In a notebook it lies over the
+  page's top margin with the page showing through; a tap on it hides it, and a tap on the top strip brings it
+  back. There its minute's refresh waits while the pen is writing or near the screen, and comes once the pen has
+  left (#242). Settings > Sleep & Clock > Status bar (was Clock settings) has Hide status bar inside Notebooks,
+  Display time as 12 hour and its size (small, medium, large); the corner rows are gone.
+- **Apps** (#225, nebuff; #238, #259). Full-screen programs packaged for Grimoire, installed from the Package
+  Store. One opens from the home's app row or Apps, and two fingers swiped up from the bottom of the screen to
+  the middle bring the home back in every app. Manage apps... at the foot of Apps has each app's settings page,
+  its update check and Remove. Grimoire runs an app's WebAssembly with no access to files or a shell: its file is
+  checked against its SHA-256 when it is installed and again each time it opens, it keeps state of its own only
+  when its manifest declares `storage:app-local`, and it makes requests, to http and https addresses alone, only
+  with `network:http`.
+- **The Package Store** (#225, #260, nebuff; #241). The home's Package Store is a catalog of apps and widgets
+  (Grimoire's is grimoire-notes/package-store-contents on GitHub): All, Apps, Widgets and Installed, a search, and
+  each package's page with its screenshots, description, license and repository. Install asks whether you trust
+  the author, then shows the license the package names to read and accept (#260, nebuff), again for an update
+  whose license has changed, and checks the download against the manifest's size and SHA-256 before anything is
+  written. An installed package's page has Uninstall, and Update to when the catalog has a newer version; the
+  arrow at the top installs a package from a GitHub repository (`user/repo`) or an https `.yaml` address. The last
+  catalog opens without a network. Icons and screenshots are decoded by the sandboxed worker that reads PDFs and
+  pictures, not by Grimoire itself (#241). Settings > General > Updates lists, under Package Updates, each
+  installed package the Store has a newer version of, each with its Update button.
+- **Widgets come from the Package Store** (#225, #260, nebuff). Settings > Packages is gone: widgets are installed
+  from the Package Store, and Manage widgets... at the foot of a notebook's Widgets popup opens their package
+  manager (each widget's settings, Update all, Install from repository... and Remove).
+- **For package authors: apps** (#225, nebuff; #238, #259). docs/APPS.md is the guide to a package of
+  `type: app`: its module draws the whole screen through the `grimoire` calls (Grimoire's own elements in the
+  theme in use, text, the status bar, saved state, its settings, a toast, the clock, the battery, Wi-Fi, HTTP),
+  each call held to limits (an instruction budget of 30,000,000 that pays for the host's work too, 4,096 drawing
+  commands, one memory of at most 48 MiB). A request follows at most five redirects, sends at most 2 MiB and takes
+  an answer of at most 8 MiB within 30 seconds. A repository cloned into `grimoire/packages/import/` is installed
+  when the Store opens, to try a package before it is published.
+- **For package authors: the package kit, level 1** (#267). Widgets and apps can import a second module,
+  `grimoire_kit`, whose calls mean the same in both: the theme's standard sizes, text by role, and Grimoire's own
+  elements (buttons, rows, chips, fields, selects, checkboxes, cards, a pager) at those sizes, so a package's
+  screen is drawn as Grimoire's own are, in Gothic and Classic and in each font. A module that imports a call this
+  Grimoire does not have is not started, and says so: "This widget needs a newer Grimoire (...)." or, for an app,
+  a toast. docs/KIT.md is the reference.
+- A notebook's PDF (over Share, or mirrored over USB) and Share's zips compress their pages in pieces of a fixed
+  size, where they used one block that doubled as it grew and could be held twice while it was moved, so a colour
+  page takes less memory at its peak. The files are the same, byte for byte (#83).
+- Hardening (#252, nebuff): a copy into Grimoire's folders (From a file..., Add a font..., and Files' Use as
+  template, Use as photo and Add to fonts) checks that the file is still the one listed by its modification time
+  to the nanosecond, where it went to the second, so a file rewritten within the same second is not copied as
+  the one picked.
+- Housekeeping: package-check's size guard for the Kindle binary is now 14 MB (was 13 MB; the zip's stays 7 MB):
+  Apps, the Package Store and the package kit brought the binary past 13 MB (#253).
 - **Folder icons and pictures** (#230). A folder's menu (its `...`) has Icon & picture...: pick one of 48 icons for
   the folder's card, in two pages of ordinary uses (school, work, documents, photos, music, recipes, travel, pets
   and more), or give it a picture from `grimoire/photos` (From a file... copies one in from anywhere on the Kindle).
