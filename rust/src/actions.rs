@@ -1420,44 +1420,23 @@ pub fn learn_row_at(group: usize, row: usize) -> Option<LearnRow> {
 }
 
 /// Whether an action does something on this device, so the Buttons and Gestures lists offer it:
-/// Light down / up only where there is a front light, Warmth down / up only where that light has a
-/// warmth, Bluetooth controller only where Grimoire pairs controllers, Update channel only where it
-/// looks after updates, and Sleep screen, Sleep now and Sleep after only where the device sleeps when
-/// Grimoire asks (light.rs, `Services`). Every other action is offered. app_global_action keeps a
-/// binding written by hand for one of these from acting.
+/// Light down / up and Warmth down / up only where there is a front light, Bluetooth controller only
+/// where Grimoire pairs controllers, Update channel only where it looks after updates, and Sleep
+/// screen, Sleep now and Sleep after only where the device sleeps when Grimoire asks (light.rs,
+/// `Services`). Every other action is offered. app_global_action keeps a binding written by hand for
+/// one of these from acting. Warmth down / up go by the light alone, not by its warmth: on a light
+/// without warmth they stay listed, so a binding made in them stays in sight to be cleared, and they
+/// say there is no warmth control.
 pub fn action_offered(id: i32) -> bool {
-    offered_on(id, sys_services(), || LightSeen::of(light_available(), light_cached()))
+    offered_on(id, sys_services(), light_available)
 }
 
-/// The front light as the actions that step it see it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum LightSeen {
-    /// no front light at all
-    None,
-    /// a light whose level is read and whose warmth is not: a light without warmth
-    NoWarmth,
-    /// a light with a warmth, or one whose levels are not read yet (its actions then say so)
-    Light,
-}
-
-impl LightSeen {
-    fn of(available: bool, (level, warmth): (i32, i32)) -> LightSeen {
-        if !available {
-            LightSeen::None
-        } else if level >= 0 && warmth < 0 {
-            LightSeen::NoWarmth
-        } else {
-            LightSeen::Light
-        }
-    }
-}
-
-/// action_offered, given the device's services and its light. The light is asked for only by the
-/// light's own actions: light_available() looks for the power service's tool on the Kindle.
-fn offered_on(id: i32, services: Services, light: impl FnOnce() -> LightSeen) -> bool {
+/// action_offered, given the device's services and whether it has a front light. The light is asked
+/// for only by the light's own actions: light_available() looks for the power service's tool on the
+/// Kindle.
+fn offered_on(id: i32, services: Services, light: impl FnOnce() -> bool) -> bool {
     match id {
-        SHORTCUT_LIGHT_DOWN | SHORTCUT_LIGHT_UP => light() != LightSeen::None,
-        SHORTCUT_WARMTH_DOWN | SHORTCUT_WARMTH_UP => light() == LightSeen::Light,
+        SHORTCUT_LIGHT_DOWN | SHORTCUT_LIGHT_UP | SHORTCUT_WARMTH_DOWN | SHORTCUT_WARMTH_UP => light(),
         SHORTCUT_BLUETOOTH_CONTROLLER => services.pairing,
         SHORTCUT_UPDATE_CHANNEL => services.updates,
         SHORTCUT_SLEEP_SCREEN | SHORTCUT_SLEEP | SHORTCUT_SLEEP_AFTER => services.sleep,
@@ -1548,29 +1527,20 @@ mod tests {
         assert_eq!(action_places(SHORTCUT_HOME), PL_LIBRARY);
     }
 
-    /// The actions offered: all of them on the Kindle (every service, a light with warmth); the light's without
-    /// a light, warmth's without warmth, and each service's without that service.
+    /// The actions offered: all of them on the Kindle (every service, a front light); the light's (Light and Warmth)
+    /// without a front light, and each service's without that service.
     #[test]
     fn actions_are_offered_only_where_they_act() {
-        let light = || LightSeen::Light;
+        let light = || true;
         for g in 0..N_GROUPS {
             for i in 0..group_row_count(g) {
                 let r = learn_row_at(g, i).unwrap();
                 assert!(offered_on(r.act[0], Services::ALL, light), "{} is not offered on the Kindle", action_label(r.act[0]));
             }
         }
-        // The light: none, one without warmth, one with warmth or not read yet.
-        assert_eq!(LightSeen::of(false, (10, 6)), LightSeen::None);
-        assert_eq!(LightSeen::of(true, (10, -1)), LightSeen::NoWarmth);
-        assert_eq!(LightSeen::of(true, (10, 6)), LightSeen::Light);
-        assert_eq!(LightSeen::of(true, (-1, -1)), LightSeen::Light);
-        for id in [SHORTCUT_LIGHT_DOWN, SHORTCUT_LIGHT_UP] {
-            assert!(!offered_on(id, Services::ALL, || LightSeen::None));
-            assert!(offered_on(id, Services::ALL, || LightSeen::NoWarmth));
-        }
-        for id in [SHORTCUT_WARMTH_DOWN, SHORTCUT_WARMTH_UP] {
-            assert!(!offered_on(id, Services::ALL, || LightSeen::None));
-            assert!(!offered_on(id, Services::ALL, || LightSeen::NoWarmth));
+        // The light: Light and Warmth go with a front light, whatever its warmth.
+        for id in [SHORTCUT_LIGHT_DOWN, SHORTCUT_LIGHT_UP, SHORTCUT_WARMTH_DOWN, SHORTCUT_WARMTH_UP] {
+            assert!(!offered_on(id, Services::ALL, || false), "{} with no light", action_label(id));
             assert!(offered_on(id, Services::ALL, light));
         }
         // The services: each action goes with its own alone.

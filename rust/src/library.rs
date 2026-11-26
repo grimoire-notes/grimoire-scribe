@@ -13830,6 +13830,13 @@ mod tests {
         let hidden = [SHORTCUT_SLEEP_SCREEN, SHORTCUT_SLEEP, SHORTCUT_SLEEP_AFTER, SHORTCUT_BLUETOOTH_CONTROLLER, SHORTCUT_UPDATE_CHANNEL];
         let light_rows = if lit { 0 } else { 2 };
         assert_eq!(binding_row_count(GESTURES, 5), 10 - light_rows);
+        if lit {
+            // A light read without warmth keeps Warmth down / up (and a binding made there in sight).
+            test_light_cached(10, -1);
+            assert_eq!(binding_row_count(GESTURES, 5), 10);
+            assert!(binding_row_index(GESTURES, 5, SHORTCUT_WARMTH_UP).is_some());
+            test_light_cached(-1, -1);
+        }
         assert_eq!((binding_row_count(GESTURES, 6), binding_row_count(BUTTONS, 6)), (6, 4));
         test_services(Some(Services::without("sleep,pairing,updates")));
         // Screen: no Sleep screen, no Sleep now. System: Gestures, Shortcuts and Language for gestures;

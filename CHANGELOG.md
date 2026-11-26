@@ -95,13 +95,13 @@
 - Housekeeping: a platform kept in another crate whose system runs a Linux kernel under another name can
   build the sandbox's steps that need no root for that process (`linux-kernel`, rust/PORTING.md). No change
   in the app.
-- Housekeeping: the Buttons and Gestures lists offer an action only where it acts (#282). Light down / up needs
-  a front light and Warmth down / up a light with warmth, so a Kindle without warm light no longer lists Warmth,
-  and a Warmth key or gesture written by hand there says the Kindle has no warmth control instead of "Light not
-  ready.". On a platform kept in another crate whose system owns sleep (rust/PORTING.md), the Sleep settings page
-  has one switch, Keep the screen on while Grimoire is open, the sleep screen is the page, and Sleep now, Sleep
-  screen and Sleep after are not offered (nor Bluetooth controller or Update channel where the platform leaves
-  pairing or updates to its system). No other change on the Kindle.
+- Housekeeping: the Buttons and Gestures lists offer an action only where it acts (#282). On a platform kept in
+  another crate whose system owns sleep (rust/PORTING.md), the Sleep settings page has one switch, Keep the screen
+  on while Grimoire is open, the sleep screen is the page, and Sleep now, Sleep screen and Sleep after are not
+  offered (nor Bluetooth controller or Update channel where the platform leaves pairing or updates to its system,
+  nor Light and Warmth without a front light). The Kindle keeps its lists and its Sleep settings page; the one
+  change there is that Warmth down / up on a Kindle whose light has no warmth says "This Kindle has no warmth
+  control." instead of "Light not ready.".
 - Housekeeping: the documents of the safe loader and of your own fonts say what the code does (the limit
   on a worker's record lines, what a build off the Kindle takes of the sandbox, the font check's second
   try), `licenses/rust-crates.txt` says it lists every crate `Cargo.lock` names, and the crate check

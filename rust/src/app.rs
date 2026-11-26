@@ -1862,8 +1862,10 @@ fn app_sleep(a: &mut App) {
     if a.scr == ScreenId::Share {
         share_sleep(a);
     }
-    qlog!("sleep: mode %d", a.settings.sleep_mode);
     let mode = sleep_mode(a);
+    // (the sleep screen drawn, then settings.ini's: they differ under the native PIN, hosted by
+    // KOReader, and where the device's system owns sleep)
+    qlog!("sleep: mode %d (settings %d)", mode, a.settings.sleep_mode);
     with(|s| s.sleep_shown = mode);
     display_sleep();
     if mode == 2 {
@@ -3865,8 +3867,8 @@ pub fn app_global_action(a: &mut App, action: i32, src: ActionSrc) -> bool {
             }
             let (light, warmth) = light_cached();
             if warm && light >= 0 && warmth < 0 {
-                // TRANSLATORS: also a toast, when a warmth action bound by hand is used on a front light
-                // without warmth; 1700 px at 44 px.
+                // TRANSLATORS: also a toast, when Warmth down or up (a key or gesture) is used on a front
+                // light without warmth; 1700 px at 44 px.
                 app_toast(a, tr("This Kindle has no warmth control."), 2000);
                 return true;
             }
