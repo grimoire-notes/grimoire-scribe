@@ -326,8 +326,9 @@ its wide bezel): the Display page has its Auto brightness row, and `light.auto` 
 sensor. Without the hook the simulator has no sensor, as a Kindle without one. The scenario harness
 clears it between runs.
 `GRIMOIRE_SIM_DEVICE_NAME=NAME` makes the simulator a platform whose device is called NAME: every
-text that is looked up says NAME where it says Kindle (i18n.rs, the device's name). The scenario
-harness clears it between runs.
+text that is looked up says NAME where it says Kindle (i18n.rs, the device's name), and Settings >
+System > About shows NAME as its title, where it says This computer without the hook
+(z_device_name_3_about). The scenario harness clears it between runs.
 `GRIMOIRE_TOUCH_TUNE=v1` selects the old tuning table; otherwise the simulator and runner use
 the provisional `TG_TUNE`. The scenario harness clears both hooks between runs. Synthetic
 shapes and `tests/fixtures/touch/synthetic.txt` are regression inputs, not owner evidence.

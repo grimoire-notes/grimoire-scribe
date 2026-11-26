@@ -6307,10 +6307,11 @@ fn redraw(a: &mut App, m: RefreshMode) {
 }
 
 /// The device's name for About: the Kindle's own model (its device tree, else /proc/usid's model
-/// code, its first 6 characters: never the serial number), or this computer's.
+/// code, its first 6 characters: never the serial number), or the platform's device name, or this
+/// computer's.
 fn device_name() -> String {
     // (the reads are here for the Kindle build and are type-checked by every build; a computer has
-    // neither file, so the host and the simulator show their own line)
+    // neither file)
     if cfg!(feature = "kindle") {
         if let Ok(raw) = std::fs::read("/proc/device-tree/model") {
             let name: String = raw.iter().take_while(|&&c| c != 0).map(|&c| c as char).collect();
@@ -6330,9 +6331,20 @@ fn device_name() -> String {
         }
         return tr("Kindle").to_string();
     }
+    if let Some(name) = platform_device_name(sys_device_name()) {
+        return name.to_string();
+    }
     // TRANSLATORS: Settings > System > About, the device's name on a computer (the Kindle build names
     // the Kindle's own model).
     tr("This computer").to_string()
+}
+
+/// About's name for a platform whose device has a name of its own (sys_device_name, light.rs): that
+/// name as it is, since a product's name is not translated. None where the platform says Kindle, as
+/// the host and the simulator do (the simulator says another name under GRIMOIRE_SIM_DEVICE_NAME,
+/// docs/SIM.md): About shows their own line.
+fn platform_device_name(named: &str) -> Option<&str> {
+    (!named.is_empty() && named != "Kindle").then_some(named)
 }
 
 /// One of Settings > System > About's links: the name its row shows and the address its page shows
@@ -9465,6 +9477,9 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
         csnprintf!(out, cap, "darker-lines");
     } else if key == "sheet" && s.modal == Modal::DeviceInfo {
         csnprintf!(out, cap, "about-device");
+    } else if key == "device.name" {
+        // The device's name Settings > System > About shows as its title.
+        csnprintf!(out, cap, "%s", &device_name());
     } else if key == "sheet" && s.modal == Modal::LinkQr {
         csnprintf!(out, cap, "about-link");
     } else if key == "sheet" && s.modal == Modal::FilesMore {
@@ -11925,6 +11940,15 @@ mod tests {
         ui_init(300.0);
         ui_set_theme(UiTheme::Gothic);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // About's title off the Kindle: a platform's own device name as it is, and this computer's line
+    // where the platform says Kindle (the host, the simulator) or says nothing.
+    #[test]
+    fn about_names_a_platforms_own_device() {
+        assert_eq!(platform_device_name("Slate"), Some("Slate"));
+        assert_eq!(platform_device_name("Kindle"), None);
+        assert_eq!(platform_device_name(""), None);
     }
 
     // Settings > Updates: one button that carries the version, and a switch for the branch updates come
