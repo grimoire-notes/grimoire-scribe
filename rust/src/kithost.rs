@@ -1503,8 +1503,12 @@ fn event_points(cx: &mut dyn Call, [ptr, cap]: [i32; 2]) -> Res<i32> {
     if n == 0 {
         return Ok(0);
     }
-    let bytes: Vec<u8> = cx.host().kit_points()[..n].iter().flat_map(|&(x, y)| [x.to_le_bytes(), y.to_le_bytes()].concat()).collect();
-    cx.charge(bytes.len() as u64 / APP_CHARGE_COPY_BYTES)?;
+    cx.charge((n * KIT_POINT_BYTES) as u64 / APP_CHARGE_COPY_BYTES)?;
+    let mut bytes = Vec::with_capacity(n * KIT_POINT_BYTES);
+    for &(x, y) in &cx.host().kit_points()[..n] {
+        bytes.extend_from_slice(&x.to_le_bytes());
+        bytes.extend_from_slice(&y.to_le_bytes());
+    }
     Ok(cx.write(ptr, bytes.len() as i32, &bytes) / KIT_POINT_BYTES as i32)
 }
 
