@@ -20,11 +20,12 @@
   brightness. A notebook's toolbar has no Display button any more: brightness and warmth are here, and the rest
   of its sheet is Settings > Display > Display: brightness, warmth.
 - **A status bar** (#225, nebuff). The clock and battery corner is replaced by a bar on every screen (an app may
-  hide it): the time and date at the left, Wi-Fi, Bluetooth and the battery's percent at the right. In a notebook it lies over the
-  page's top margin with the page showing through; a tap on it hides it, and a tap on the top strip brings it
-  back. There its minute's refresh waits while the pen is writing or near the screen, and comes once the pen has
-  left (#242). Settings > Sleep & Clock > Status bar (was Clock settings) has Hide status bar inside Notebooks,
-  Display time as 12 hour and its size (small, medium, large); the corner rows are gone.
+  hide it): the time and date at the left, Wi-Fi, Bluetooth and the battery's percent at the right. In a
+  notebook it lies over the page's top margin with the page showing through; a tap on it hides it, and a tap on
+  the top strip brings it back. There its minute's refresh waits while the pen is writing or near the screen,
+  and comes once the pen has left (#242). Settings > Sleep & Clock > Status bar (was Clock settings) has Hide
+  status bar inside Notebooks, Display time as 12 hour and its size (small, medium, large); the corner rows are
+  gone.
 - **Apps** (#225, nebuff; #238, #259). Full-screen programs packaged for Grimoire, installed from the Package
   Store. One opens from the home's app row or Apps, and two fingers swiped up from the bottom of the screen to
   the middle bring the home back in every app. Manage apps... at the foot of Apps has each app's settings page,
