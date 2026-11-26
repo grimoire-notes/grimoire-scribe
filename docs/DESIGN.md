@@ -3749,6 +3749,16 @@ is drawn with no report to the translation fit check, and its icons at most 1,02
 imports a call of the kit this Grimoire does not have is not started, and its frame or a toast names the call when
 the name has a call's shape. The text a widget's frame shows in place of its body is at most 256 bytes.
 
+Input (issue #272): a module may export `kit_event(kind, id, a, b, c) -> i32`, which both hosts call for what
+happens in the body. One recogniser, `KitPointer`, makes a contact a TAP, a PRESS at `HOLD_MS` or a drag (its
+samples gathered, the newest 256, for DRAG_MOVE and `event_points`), and a palm or a gesture cancels it; an app's
+keys and a change of a package's settings are events too. Input calls the module at once (and the hosts' own
+`app_pointer`, `app_key` and `widget_tap` as before); the drawing pass it owes (`KitInput`) is drawn by the host's
+tick once for all the input since the last: none while a contact may still be a tap, one every 120 ms while it is
+down, and only the part of the screen the pass changed (`kit_keep`, `kit_changed`) is refreshed. While an app is
+open the keys are its own, before the shortcuts; only `back` and `home` act, and leave it (`app.rs`,
+`APP_LEAVE_ACTIONS`).
+
 ## Shared building blocks (2.1, lane L0)
 
 The 2.1 plan builds a few pieces once, for every later lane to reuse (no second one grows beside them).

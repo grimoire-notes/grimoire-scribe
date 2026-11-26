@@ -180,6 +180,13 @@
   checked against its SHA-256 at the install and again each time it is loaded, and one call of it is held to
   limits; a frame that asks to be drawn again waits while the pen is writing. docs/WIDGETS.md is the developer's
   guide.
+- **Packages: keys for apps, and fewer refreshes after a touch** (#272). An open app now gets a paired keyboard's
+  keys and a controller's buttons before Grimoire's shortcuts, so a game can be played with them; only a key bound
+  to back (Esc) or home acts while an app is open, and leaves it. A tap on an app draws it once (it was twice), a
+  drag draws it at most every 120 ms, and only the part of the screen that changed is refreshed, in an app and in a
+  widget's frame alike (a tap refreshed the whole screen, or the whole frame). A held tap on a widget is still a tap.
+  Packages made with the package kit can also tell a tap from a long press and a drag, and are told when their
+  settings change. docs/KIT.md says how.
 - **Faster zoom in a notebook** (#216, #217, tibidibi). Zooming a page, by a pinch or with the pen, keeps up with
   the hand: the preview while zooming is drawn in black and white and paced to the screen, and the page settles
   to its full rendering at the lift.
