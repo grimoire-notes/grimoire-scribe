@@ -7594,7 +7594,7 @@ pub(crate) fn redraw_filling(a: &mut App) {
     }
     before.px.extend_from_slice(&a.screen.px);
     draw_front(a);
-    let changed = canvas_changed_rect(&before, &a.screen);
+    let changed = canvas_changed_rect(&before, &a.screen, Rect { x: 0, y: 0, w: a.screen.w, h: a.screen.h });
     if !rect_is_empty(changed) {
         app_invalidate_filling(a, changed);
     }

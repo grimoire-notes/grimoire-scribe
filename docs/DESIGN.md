@@ -3755,7 +3755,7 @@ samples gathered, the newest 256, for DRAG_MOVE and `event_points`), and a palm 
 keys and a change of a package's settings are events too. Input calls the module at once (and the hosts' own
 `app_pointer`, `app_key` and `widget_tap` as before); the drawing pass it owes (`KitInput`) is drawn by the host's
 tick once for all the input since the last: none while a contact may still be a tap, one every 120 ms while it is
-down, and only the part of the screen the pass changed (`kit_keep`, `kit_changed`) is refreshed. While an app is
+down, and only the part of the screen the pass changed (`kit_keep`, `canvas_changed_rect`) is refreshed. While an app is
 open the keys are its own, before the shortcuts; only `back` and `home` act, and leave it (`app.rs`,
 `APP_LEAVE_ACTIONS`).
 

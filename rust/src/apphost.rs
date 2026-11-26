@@ -52,7 +52,7 @@
 
 use crate::globalui::{gui_app_tile, gui_chip, gui_fab, gui_select, gui_status_bar, gui_status_h, gui_surface, gui_text_field};
 use crate::kithost::{
-    drawn_text_charge, icon_charge, kit_changed, kit_keep, kit_link, kit_missing_import, kit_render, label_charge, KitCmd, KitEvent, KitHost,
+    drawn_text_charge, icon_charge, kit_keep, kit_link, kit_missing_import, kit_render, label_charge, KitCmd, KitEvent, KitHost,
     KitInput, EV_KEY, EV_SETTINGS, KIT_EVENT,
 };
 use crate::prelude::*;
@@ -789,7 +789,7 @@ fn apphost_pass(a: &mut App, mode: RefreshMode) {
     let screen = Rect::new(0, 0, a.w, a.h);
     let kept = kit_keep(&a.screen, screen);
     apphost_draw(a);
-    let changed = kept.map_or(screen, |(k, at)| kit_changed(&k, at, &a.screen));
+    let changed = kept.map_or(screen, |(k, at)| canvas_changed_rect(&k, &a.screen, at));
     if !rect_is_empty(changed) {
         app_invalidate(a, changed, mode);
     }

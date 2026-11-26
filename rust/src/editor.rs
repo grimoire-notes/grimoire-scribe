@@ -9,7 +9,7 @@
 
 use crate::browser::{Browser, BrowserResult, FilesPrefs, PickSpec};
 use crate::globalui::gui_status_h;
-use crate::kithost::{kit_changed, kit_keep, KitEvent};
+use crate::kithost::{kit_keep, KitEvent};
 use crate::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -8553,7 +8553,7 @@ fn widget_input_tick(a: &mut App, now: u32) {
         let kept = kit_keep(&a.screen, body);
         compose(a, body);
         ed(a).widgets.frames[i].input.answered();
-        let changed = kept.map_or(body, |(k, at)| kit_changed(&k, at, &a.screen));
+        let changed = kept.map_or(body, |(k, at)| canvas_changed_rect(&k, &a.screen, at));
         if !rect_is_empty(changed) {
             app_invalidate(a, changed, mode);
             if mode == RefreshMode::Fast {

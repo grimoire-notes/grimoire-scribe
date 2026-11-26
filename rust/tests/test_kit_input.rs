@@ -1,7 +1,7 @@
 // test_kit_input.rs: the package kit's input (kithost.rs, docs/KIT.md, Events): the recogniser of a contact
 // (`KitPointer`: a tap, a press at HOLD_MS, the slop of TAP_SLOP_MM each way, a drag's start, gathered samples and
 // end, a cancel, the pen and a finger, more samples than a DRAG_MOVE holds), the pace of the passes input owes
-// (`KitInput`), the part of the screen a pass changed (`kit_changed`), and `kit_event`, `event_points` and `key_char`
+// (`KitInput`), the part of the screen a pass changed (`kit_keep`, `canvas_changed_rect`), and `kit_event`, `event_points` and `key_char`
 // in both hosts, with modules written for the purpose (tests/kitfix): their numbers, limits and charges, the body
 // before the first pass, the budget and stop rules of an event.
 mod kitfix;
@@ -253,17 +253,17 @@ fn the_part_a_pass_changed_is_the_box_of_the_pixels_that_differ_inside_the_part_
     let at = Rect::new(100, 50, 200, 200);
     let (kept, cut) = kit_keep(&c, at).unwrap();
     assert_eq!(cut, at);
-    assert!(rect_is_empty(kit_changed(&kept, cut, &c)), "nothing changed");
+    assert!(rect_is_empty(canvas_changed_rect(&kept, &c, cut)), "nothing changed");
     canvas_fill(&mut c, Rect::new(150, 60, 10, 20), 0);
     canvas_fill(&mut c, Rect::new(280, 230, 5, 5), 0);
     // (a change outside the part kept is not the pass's)
     canvas_fill(&mut c, Rect::new(10, 10, 5, 5), 0);
-    assert_eq!(kit_changed(&kept, cut, &c), Rect::new(150, 60, 135, 175));
+    assert_eq!(canvas_changed_rect(&kept, &c, cut), Rect::new(150, 60, 135, 175));
     // a part reaching off the screen is cut to it
     let (kept, cut) = kit_keep(&c, Rect::new(350, 250, 200, 200)).unwrap();
     assert_eq!(cut, Rect::new(350, 250, 50, 50));
     canvas_fill(&mut c, Rect::new(399, 299, 1, 1), 0);
-    assert_eq!(kit_changed(&kept, cut, &c), Rect::new(399, 299, 1, 1));
+    assert_eq!(canvas_changed_rect(&kept, &c, cut), Rect::new(399, 299, 1, 1));
     assert!(kit_keep(&c, Rect::new(500, 500, 10, 10)).is_none(), "nothing of it on the screen");
     canvas_free(&mut c);
 }

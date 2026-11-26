@@ -1033,8 +1033,8 @@ impl KitInput {
     }
 }
 
-/// A copy of `at` of the screen (cut to it), to see what a pass changes there (`kit_changed`). None when there is
-/// no memory for it (or nothing of `at` is on the screen).
+/// A copy of `at` of the screen (cut to it), to see what a pass changes there (canvas.rs `canvas_changed_rect` of the
+/// copy, the screen and the part returned). None when there is no memory for it (or nothing of `at` is on the screen).
 pub fn kit_keep(screen: &Canvas, at: Rect) -> Option<(Canvas, Rect)> {
     let at = rect_intersect(at, Rect { x: 0, y: 0, w: screen.w, h: screen.h });
     if rect_is_empty(at) {
@@ -1046,33 +1046,6 @@ pub fn kit_keep(screen: &Canvas, at: Rect) -> Option<(Canvas, Rect)> {
     }
     canvas_blit(&mut kept, screen, at, 0, 0);
     Some((kept, at))
-}
-
-/// The part of `at` of the screen that differs from `kept` (`kit_keep`'s copy of it), in screen pixels; empty when
-/// nothing does.
-pub fn kit_changed(kept: &Canvas, at: Rect, screen: &Canvas) -> Rect {
-    let (w, h) = (at.w.max(0) as usize, at.h.max(0) as usize);
-    let (ks, ss) = (kept.stride.max(0) as usize, screen.stride.max(0) as usize);
-    let fits = kept.w == at.w && kept.h == at.h && at.x >= 0 && at.y >= 0 && at.x + at.w <= screen.w && at.y + at.h <= screen.h;
-    if !fits || kept.px.len() < ks * h || screen.px.len() < ss * (at.y as usize + h) {
-        return at;
-    }
-    let was = |y: usize| &kept.px[y * ks..y * ks + w];
-    let now = |y: usize| &screen.px[(at.y as usize + y) * ss + at.x as usize..(at.y as usize + y) * ss + at.x as usize + w];
-    let differs = |y: &usize| was(*y) != now(*y);
-    let Some(y0) = (0..h).find(differs) else { return RECT_EMPTY };
-    let y1 = (y0..h).rev().find(differs).unwrap_or(y0);
-    let (mut x0, mut x1) = (w, 0);
-    for y in y0..=y1 {
-        let (a, b) = (was(y), now(y));
-        if let Some(x) = (0..x0).find(|&x| a[x] != b[x]) {
-            x0 = x;
-        }
-        if let Some(x) = (x1..w).rev().find(|&x| a[x] != b[x]) {
-            x1 = x;
-        }
-    }
-    Rect { x: at.x + x0 as i32, y: at.y + y0 as i32, w: (x1 + 1 - x0) as i32, h: (y1 + 1 - y0) as i32 }
 }
 
 // ---- the work of each call ----
