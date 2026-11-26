@@ -2183,9 +2183,11 @@ impl Browser {
         r.kind == RowKind::Trashed && r.trash.as_ref().is_some_and(|t| matches!(t.kind, TrashKind::File | TrashKind::Notebook))
     }
 
-    /// The trash, as the Delete row and its toast name it (Grimoire's own folder's, relative to the storage).
+    /// The trash, as the Delete row and its toast name it (Grimoire's own folder's, relative to the storage): the
+    /// Trash place's path, else the name the Library's Delete gives it (pdfimport::own_folder_shown), so the two
+    /// never name one folder two ways.
     fn trash_label(&self) -> String {
-        self.place_path(PlaceKind::Trash).map_or_else(|| "grimoire/trash".to_string(), |p| p.to_string_lossy())
+        self.place_path(PlaceKind::Trash).map_or_else(|| crate::pdfimport::own_folder_shown("trash"), |p| p.to_string_lossy())
     }
 
     /// The open card's item, checked again before an act: its path and its stat then. Err: what the toast says, and

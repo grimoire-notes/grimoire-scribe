@@ -100,6 +100,11 @@ one with the feature on, implements `Platform` on a type of its own, and from it
 3. calls `mainloop::main(args)` on the thread that stays the app's only thread, and exits with
    what it returns.
 
+The texts that name one of Grimoire's own folders (Delete's trash, Mirror PDFs, the fonts, templates and photos
+folders, Share's import) name it as found from the storage root Files lists (`pdfimport::own_folder_shown`):
+`GRIMOIRE_STORAGE` when it is set, else the folder around `GRIMOIRE_ROOT`. On the Kindle that is
+`grimoire/trash`; where the data root sits deeper or is named otherwise, the path from that root.
+
 A worker (`<binary> --work ...`, sandbox.rs) is a fresh exec of that binary: its `main` hands `--work`
 to `mainloop::main` before it starts a thread or opens anything, as the in-tree binaries do. On Linux
 the worker's filter lets it wait and wake only on private futexes and map nothing executable, which one
