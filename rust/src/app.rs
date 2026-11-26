@@ -1107,10 +1107,11 @@ fn app_event_screens(a: &mut App, ev: &InEvent) {
             note_input(a);
             return;
         }
-        // An open app takes the keys before Grimoire's shortcuts and the Library under it, shortcuts on or off (a
-        // controller's buttons too): `app_key` and the package kit's KEY event (apphost.rs). Only a key bound to one of
-        // the shortcuts that leave the app (APP_LEAVE_ACTIONS) acts, and leaves it. (A keyboard of Grimoire's open over
-        // the app took the keys that type, above.)
+        // An open app takes the keys before Grimoire's shortcuts and the Library under it (a controller's buttons too):
+        // `app_key` and the package kit's KEY event (apphost.rs). Only a key bound to one of the shortcuts that leave the
+        // app (APP_LEAVE_ACTIONS) acts, and leaves it, with the shortcuts on. (On the Kindle a keyboard or a controller is
+        // read only while Settings > Shortcuts is on: an app gets keys while it is on, and none with it off. A keyboard
+        // of Grimoire's open over the app took the keys that type, above.)
         if !a.asleep && crate::apphost::apphost_open(a) {
             note_input(a);
             if !app_leave_key(a, ev) {

@@ -4,10 +4,11 @@
 # env: GRIMOIRE_SIM_CLOCK=script TZ=UTC
 # copy: tests/fixtures/kitinput .
 # copy: tests/fixtures/home-keys .
-# Keys reach an open app with Settings > Shortcuts off too (issue #272), with Input app of tests/fixtures/kitinput
-# (k counts its KEY events, a its app_key calls) and the shortcuts of tests/fixtures/home-keys. No shortcut acts then,
-# the ones that leave an app neither: Escape, bound to back, is the app's, and the app is left by the two-finger
-# swipe as always. (On a Kindle a keyboard is read only while Shortcuts is on.)
+# With Settings > Shortcuts off, a key that reaches an open app is the app's (issue #272), with Input app of
+# tests/fixtures/kitinput (k counts its KEY events, a its app_key calls) and the shortcuts of tests/fixtures/home-keys.
+# No shortcut acts then, the ones that leave an app neither: Escape, bound to back, is the app's, and the app is left
+# by the two-finger swipe as always. (The simulator delivers keys with Shortcuts off; on a Kindle a keyboard and a
+# controller are read only while Shortcuts is on, so with it off no key comes at all.)
 # App time is the script's (GRIMOIRE_SIM_CLOCK=script); the status bar's clock is held still, in UTC.
 clock 1700000000
 wait 3600

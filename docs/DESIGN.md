@@ -3758,7 +3758,7 @@ tick once for all the input since the last: none while a contact may still be a 
 down, and only the part of the screen the pass changed (`kit_keep`, `canvas_changed_rect`) is refreshed, what fast
 refreshes covered while it was down cleaned once after the lift. While an app is
 open the keys are its own, before the shortcuts; only `back` and `home` act, and leave it (`app.rs`,
-`APP_LEAVE_ACTIONS`).
+`APP_LEAVE_ACTIONS`). On the Kindle keys are read only while Settings > Shortcuts is on.
 
 ## Shared building blocks (2.1, lane L0)
 

@@ -225,12 +225,13 @@ optional export, is also told what the contact was: a tap (with the kit's hit re
 long press or a drag with its samples ([KIT.md](KIT.md#events)).
 
 `app_key` receives hardware keys. `code` is the Grimoire key code, `mods` its modifier bits, and
-`down` is 1 for a press and 0 for a release. While an app is open every key of a paired keyboard,
-and every button of a controller, is the app's, pressed and let go (`app_key`, and a KEY event for
-`kit_event`), before Grimoire's shortcuts and whether Settings > Shortcuts is on or off; no shortcut
-acts but the two that leave the app: with Shortcuts on, a key bound to `back` (Esc, in the keys
-Grimoire writes) or to `home` closes the app as the two-finger swipe does (`app_stop` runs), and does
-nothing more. A keyboard of Grimoire's open over the app takes the keys that type.
+`down` is 1 for a press and 0 for a release. On the Kindle a paired keyboard and a controller are
+read only while Settings > Shortcuts is on: an open app gets keys while Shortcuts is on, and none are
+read with it off. While an app is open every key of a paired keyboard, and every button of a
+controller, is the app's, pressed and let go (`app_key`, and a KEY event for `kit_event`), before
+Grimoire's shortcuts; no shortcut acts but the two that leave the app: a key bound to `back` (Esc, in
+the keys Grimoire writes) or to `home` closes the app as the two-finger swipe does (`app_stop` runs),
+and does nothing more. A keyboard of Grimoire's open over the app takes the keys that type.
 The kit's `key_char` gives the character a key types.
 
 `app_status_bar` is called once, before the first frame. Returning 0 starts with the bar hidden and

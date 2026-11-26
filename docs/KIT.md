@@ -304,7 +304,8 @@ types into it with this.
   or not; a pass the module asks for itself (`request_redraw`) waits for the pen.
 - **An app** gets them in its body, KEY and SETTINGS; `app_pointer` is still called as before, for every phase inside
   the body and for the lift wherever it is, and `app_key` for every key, each before `kit_event`. While an app is open the keys are its own: no shortcut of Grimoire's acts but
-  `back` and `home`, which leave it ([APPS.md](APPS.md#lifecycle-and-exports)).
+  `back` and `home`, which leave it ([APPS.md](APPS.md#lifecycle-and-exports)). On a Kindle a keyboard and a
+  controller are read only while Settings > Shortcuts is on: an app gets keys while it is on, and none with it off.
 
 ## Capabilities
 
