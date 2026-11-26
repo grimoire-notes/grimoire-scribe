@@ -9,4 +9,6 @@ key 19 0
 wait 100
 key 19 0
 expect toast is La rotación sigue al Slate.
+# About's title is the name as it is, in every language.
+expect library.device.name is Slate
 quit

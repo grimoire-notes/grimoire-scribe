@@ -140,7 +140,8 @@ the scenarios.
 
 And it says what the device is called (`sys_device_name`). The English and the translations say
 Kindle; on a platform with another name every looked-up text has that name in its place, "Kindle
-Scribe" as a whole (i18n.rs, the device's name). No string changes for it. The simulator's
+Scribe" as a whole (i18n.rs, the device's name). No string changes for it. Settings > System >
+About shows the name as its title, as it is, where the host build says This computer. The simulator's
 `GRIMOIRE_SIM_DEVICE_NAME` is that name for the scenarios.
 
 A platform reads its own system files (under /proc or /sys, a locale file) with
