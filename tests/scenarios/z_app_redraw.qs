@@ -91,21 +91,21 @@ wait 3000
 expect library.app.status is 000001
 expect display.presents is
 # Touched, it asks to be drawn again half a second later. (The touch's two phases are two calls of the module,
-# each followed by a drawing pass.) The request stands through those passes: 400 ms after the touch nothing more
-# has been drawn, and 200 ms later the one pass it asked for has, with one refresh.
+# and one drawing pass follows them, at the lift.) The request stands through that pass: 400 ms after the touch
+# nothing more has been drawn, and 200 ms later the one pass it asked for has, with one refresh.
 tap 930 1300
 wait 300
-expect library.app.status is 000003
+expect library.app.status is 000002
 expect display.presents not -1
 wait 100
-expect library.app.status is 000003
+expect library.app.status is 000002
 expect display.presents is
 wait 200
-expect library.app.status is 000004
+expect library.app.status is 000003
 expect display.presents is fast 0 0 1860 2480
 # The request was taken, and the pass it brought asked for nothing: three seconds more, no pass and no refresh.
 wait 3000
-expect library.app.status is 000004
+expect library.app.status is 000003
 expect display.presents is
 shot 02-once
 swipe 2 930 2200 0 -1000

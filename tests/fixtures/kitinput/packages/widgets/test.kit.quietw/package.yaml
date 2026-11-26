@@ -1,0 +1,17 @@
+name: Quiet widget
+id: test.kit.quietw
+type: widget
+version: 1.0.0
+author: Grimoire tests
+description: A module of the package kit's tests.
+platforms: [all]
+artifact:
+  path: module.bin
+  sha256: 1560dc2a57abdeae2426221350a140b852a3a03c2717aa13662abab9e9ba6f4e
+  size: 1816
+capabilities: [editor:overlay, storage:widget-local]
+spec:
+  runtime: wasm
+  size:
+    mode: fixed
+    default: [900, 1100]

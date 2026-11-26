@@ -11,8 +11,11 @@
 //! `widget_draw` draws through the `grimoire` imports below. Coordinates are screen pixels inside
 //! the frame's body; `scale_milli` is the UI scale times 1000, so a package can keep 300 dpi sizes.
 //! `widget_tap` receives the id of the hit region under the tap, or -1 for a tap elsewhere in the
-//! body. A package keeps its state through `state_get` / `state_set`, which the host saves under
-//! `packages/widgets/<id>/state/runtime.bin`.
+//! body. A module may export the package kit's `kit_event(kind, id, a, b, c) -> i32` instead
+//! (kithost.rs): the body's contact recognised as a tap (a TAP, and no `widget_tap`), a press or a
+//! drag, and a change of its settings. The editor draws the pass either owes once for all the input
+//! since the last (editor.rs, widget_input_tick). A package keeps its state through `state_get` /
+//! `state_set`, which the host saves under `packages/widgets/<id>/state/runtime.bin`.
 //!
 //! The body is all a module draws on and is tapped in: every command is drawn with the canvas
 //! clipped to the body, whatever coordinates and sizes it carries, and a hit region is the part of
@@ -46,7 +49,7 @@
 //! links too: its drawing calls and hit regions are recorded with this host's own commands, in the order the
 //! module called them, held to this host's limits, and need `editor:overlay` as its own do.
 
-use crate::kithost::{kit_link, kit_missing_import, kit_render, KitCmd, KitHost};
+use crate::kithost::{kit_link, kit_missing_import, kit_render, KitCmd, KitEvent, KitHost, KIT_EVENT};
 use crate::prelude::*;
 use crate::wasmhost::{charge, in_body as hit_in_body, on_screen, TextCharge};
 use crate::widgetpkg::{WIDGET_CAP_OVERLAY, WIDGET_CAP_STORAGE};
@@ -165,8 +168,12 @@ struct HostState {
     status: String,
     dirty: bool,
     limits: StoreLimits,
-    /// when the module asked to be drawn again, by the app's clock (`now_ms`); None when it did not
+    /// when the module asked to be drawn again, by the app's clock (`now_ms`); None while no request stands. One
+    /// request stands at a time, the soonest asked for, whichever call asked, until the editor's tick takes it
+    /// (`redraw_taken`)
     redraw_at: Option<u32>,
+    /// the points of the DRAG_MOVE `kit_event` is being told of (`event_points`); none in another call
+    points: Vec<(i32, i32)>,
 }
 
 /// What the package kit's calls (kithost.rs) are given by this host: its body, its capability to draw, its
@@ -197,6 +204,9 @@ impl KitHost for HostState {
     fn kit_status_bar_h(&self) -> i32 {
         crate::globalui::gui_status_h()
     }
+    fn kit_points(&self) -> &[(i32, i32)] {
+        &self.points
+    }
 }
 
 /// One open package's WebAssembly instance, its last draw and its saved state.
@@ -221,8 +231,10 @@ impl std::fmt::Debug for WidgetRuntime {
 impl WidgetRuntime {
     /// Compiles and instantiates the installed package's artifact, once its file has been checked again
     /// (`widget_package_artifact`: a plain file inside the package's folder, with the SHA-256 recorded at
-    /// the install). A frame loads its module once, when it first draws.
-    pub fn new(id: &str) -> Result<Self, String> {
+    /// the install), for a frame whose body is `body` (width, height): every call, its start section first, has
+    /// that body until a drawing pass is given another. A frame loads its module once, when it first draws or is
+    /// first touched.
+    pub fn new(id: &str, body: (i32, i32)) -> Result<Self, String> {
         let (m, bytes) = crate::widgetpkg::widget_package_artifact(id)?;
         if m.spec.runtime != "wasm" {
             return Err("This package is not a WebAssembly widget.".into());
@@ -249,7 +261,7 @@ impl WidgetRuntime {
             id: id.to_string(),
             overlay,
             storage,
-            body: (0, 0),
+            body: (body.0.max(0), body.1.max(0)),
             commands: Vec::new(),
             hits: Vec::new(),
             text_bytes: 0,
@@ -262,6 +274,7 @@ impl WidgetRuntime {
             dirty: false,
             limits: crate::wasmhost::store_limits(MEMORY_MAX, WIDGET_TABLE_MAX),
             redraw_at: None,
+            points: Vec::new(),
         });
         store.limiter(|st| &mut st.limits);
         // The start section runs here, before a frame can draw: give it the same budget as a call.
@@ -325,8 +338,13 @@ impl WidgetRuntime {
             charge(&mut caller, WIDGET_CHARGE_CALL)?;
             // (a pass is drawing: a package that may not draw is not drawn again for the asking)
             if caller.data().overlay {
-                let after_ms = after_ms.clamp(WIDGET_REDRAW_MIN_MS, WIDGET_REDRAW_MAX_MS) as u32;
-                caller.data_mut().redraw_at = Some(now_ms().wrapping_add(after_ms));
+                let at = now_ms().wrapping_add(after_ms.clamp(WIDGET_REDRAW_MIN_MS, WIDGET_REDRAW_MAX_MS) as u32);
+                let st = caller.data_mut();
+                // (one request stands, the soonest asked for: a later call does not put an earlier one off)
+                st.redraw_at = Some(match st.redraw_at {
+                    Some(was) if was.wrapping_sub(at) as i32 <= 0 => was,
+                    _ => at,
+                });
             }
             Ok(())
         }).map_err(|e| e.to_string())?;
@@ -390,6 +408,11 @@ impl WidgetRuntime {
             Err(e) => { self.stopped(format!("The widget has no widget_draw export: {e}")); return; }
         };
         self.store.data_mut().status.clear();
+        // (a redraw request whose time has come is answered by this pass, whatever brought it: a request that waited
+        // while the frame was minimized or the pen was near is the pass that draws the frame again)
+        if self.redraw_due(now_ms()) {
+            self.store.data_mut().redraw_at = None;
+        }
         self.begin_call();
         self.store.data_mut().body = (body.w, body.h);
         let scale = ui_px(1000.0);
@@ -437,32 +460,76 @@ impl WidgetRuntime {
         c.clip = clip;
     }
 
-    /// Sends a tap in body-local coordinates. Returns whether the module was called.
-    pub fn tap(&mut self, x: i32, y: i32) {
+    /// Sends a tap in body-local coordinates to `widget_tap`: the hit region under it, -1 for none. Returns whether
+    /// the module was called (a call says nothing of the picture, so it owes a drawing pass).
+    pub fn tap(&mut self, x: i32, y: i32) -> bool {
         if self.error.is_some() {
-            return;
+            return false;
         }
-        let id = self.hits.iter().find(|(_, r)| rect_contains(*r, x, y)).map_or(-1, |(id, _)| *id);
+        let id = self.hit_at(x, y);
         let tap = match self.instance.get_typed_func::<(i32,), ()>(&self.store, "widget_tap") {
             Ok(f) => f,
-            Err(_) => return,
+            Err(_) => return false,
         };
         self.begin_call();
         let called = tap.call(&mut self.store, (id,));
         self.end_call();
         if called.is_err() {
             self.stopped("The widget stopped while handling a tap.".into());
-            return;
+            return true;
         }
         self.save();
+        true
+    }
+
+    /// Whether the module exports `kit_event`: it is told of input by the kit's events (a tap is a TAP there, not a
+    /// call of `widget_tap`).
+    pub fn has_events(&self) -> bool {
+        self.instance.get_typed_func::<(i32, i32, i32, i32, i32), i32>(&self.store, KIT_EVENT).is_ok()
+    }
+
+    /// Calls `kit_event`, when the module has one, with the event's numbers; a DRAG_MOVE's points are what
+    /// `event_points` copies during the call. None for a module without it; else whether its picture changed
+    /// (what it returned was not 0). A call that stopped the module changed it: the frame shows why.
+    pub fn event(&mut self, ev: &KitEvent) -> Option<bool> {
+        if self.error.is_some() {
+            return None;
+        }
+        let f = self.instance.get_typed_func::<(i32, i32, i32, i32, i32), i32>(&self.store, KIT_EVENT).ok()?;
+        self.begin_call();
+        self.store.data_mut().points = ev.points.clone();
+        let called = f.call(&mut self.store, (ev.kind, ev.id, ev.a, ev.b, ev.c));
+        self.store.data_mut().points = Vec::new();
+        self.end_call();
+        match called {
+            Ok(v) => {
+                self.save();
+                Some(v != 0)
+            }
+            Err(_) => {
+                self.stopped("The widget stopped while handling an event.".into());
+                Some(true)
+            }
+        }
+    }
+
+    /// The hit region of the last drawing pass under a place of the body (the first drawn that holds it), -1 for
+    /// none.
+    pub fn hit_at(&self, x: i32, y: i32) -> i32 {
+        self.hits.iter().find(|(_, r)| rect_contains(*r, x, y)).map_or(-1, |(id, _)| *id)
+    }
+
+    /// The frame's body is now `body` (width, height): the calls before the next drawing pass are given it.
+    pub fn set_body(&mut self, body: (i32, i32)) {
+        self.store.data_mut().body = (body.0.max(0), body.1.max(0));
     }
 
     /// Starts a call of the module: its instruction budget, and a pass with nothing recorded and
     /// nothing counted yet. What an earlier call left recorded (a tap that drew) is dropped: a pass
-    /// holds its own commands only, so its limits are the most the host ever keeps.
+    /// holds its own commands only, so its limits are the most the host ever keeps. A redraw request
+    /// stands across calls.
     fn begin_call(&mut self) {
         let st = self.store.data_mut();
-        st.redraw_at = None;
         st.commands.clear();
         st.hits.clear();
         st.text_bytes = 0;

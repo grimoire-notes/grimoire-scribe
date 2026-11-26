@@ -1,0 +1,15 @@
+name: Quiet app
+id: test.kit.quiet
+type: app
+version: 1.0.0
+author: Grimoire tests
+description: A module of the package kit's tests.
+platforms: [all]
+artifact:
+  path: app.wasm
+  sha256: 8c7bc33f36e5d82affdc032827b3e852d50f398c46f9ce82e4631ed6b8789f3c
+  size: 1830
+capabilities: []
+spec:
+  runtime: wasm
+  status_bar: true

@@ -9,6 +9,7 @@
 
 use crate::browser::{Browser, BrowserResult, FilesPrefs, PickSpec};
 use crate::globalui::gui_status_h;
+use crate::kithost::{kit_changed, kit_keep, KitEvent};
 use crate::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -2619,6 +2620,7 @@ fn draw_widget_frame(a: &mut App, i: usize) {
         f.ensure_runtime();
         if let Some(rt) = f.runtime.as_mut() {
             rt.draw(c, body);
+            f.input.answered();
         }
         if let Some((reason, whose)) = f.says() {
             // The reason first, in as many lines as it needs and the body holds, so that a small body shows it;
@@ -8504,7 +8506,74 @@ fn widget_runtime_tick(a: &mut App, now: u32) {
     }
 }
 
+/// The events a frame's contact (or its tick) made, handed to its module (`kit_event`); a drawing pass is owed for
+/// each that changed its picture. Nothing for a module without `kit_event`.
+fn widget_events(f: &mut WidgetFrame, events: &[KitEvent]) {
+    let Some(rt) = f.runtime.as_mut() else { return };
+    let owe = events.iter().fold(false, |owe, e| rt.event(e) == Some(true) || owe);
+    if owe {
+        f.input.owe();
+    }
+}
+
+/// editor_tick: the package kit's input in the frames (kithost.rs KitInput). A contact held still on a body is a
+/// press; on the pace's turn a drag's gathered samples go to its module; and the drawing pass that input owes a
+/// frame is drawn once for all its input since the last, and only the part of its body the pass changed is
+/// refreshed: fast while the contact is down, as the screen's UI after it. A tap's pass is drawn at its lift, the pen
+/// near or not, as a tap's always was; the passes a module asks for itself wait for the pen (widget_runtime_tick).
+/// Nothing while a sheet, the peek or Settings is over the frames. A minimized frame draws no body: what was owed
+/// is dropped.
+fn widget_input_tick(a: &mut App, now: u32) {
+    let s = ed_ref(a);
+    if !s.open || a.asleep || s.peek.active || sheet_open(s) || crate::library::library_settings_active(a) {
+        return;
+    }
+    let fast_busy = display_fast_busy();
+    for i in 0..ed_ref(a).widgets.frames.len() {
+        let f = &mut ed(a).widgets.frames[i];
+        let mut events: Vec<KitEvent> = f.input.pointer.tick(now).into_iter().collect();
+        let turn = f.input.turn(now, fast_busy);
+        if turn {
+            events.extend(f.input.pointer.take_moves());
+        }
+        widget_events(f, &events);
+        if f.layout.minimized {
+            f.input.answered();
+            continue;
+        }
+        let Some(mode) = f.input.pass_now(turn, fast_busy) else { continue };
+        let body = widget_body(f);
+        let kept = kit_keep(&a.screen, body);
+        compose(a, body);
+        ed(a).widgets.frames[i].input.answered();
+        let changed = kept.map_or(body, |(k, at)| kit_changed(&k, at, &a.screen));
+        if !rect_is_empty(changed) {
+            app_invalidate(a, changed, mode);
+            if mode == RefreshMode::Fast {
+                // (what fast refreshes left is cleaned after a pause, as a selection's drag's is: du_wear_tick)
+                du_wear_add(&mut a.du_wear, changed, changed.w as i64 * changed.h as i64, now);
+            }
+        }
+    }
+}
+
 fn widget_down(a: &mut App, index: usize, part: WidgetPart, ev: &InEvent, pen: bool) {
+    if part == WidgetPart::Body {
+        // The body's contact: the kit's recogniser (a tap, a press, a drag), and the module loaded for it.
+        let slop = mm_to_px(TAP_SLOP_MM, a.dpi) as i32;
+        let palm = !pen && ev.value & TOUCH_F_BROAD != 0;
+        let (x, y) = (ev.x.round_ties_even() as i32, ev.y.round_ties_even() as i32);
+        if let Some(f) = ed(a).widgets.frames.get_mut(index) {
+            f.ensure_runtime();
+            let body = widget_body(f);
+            if let Some(rt) = f.runtime.as_mut() {
+                rt.set_body((body.w, body.h));
+            }
+            let id = f.runtime.as_ref().map_or(-1, |rt| rt.hit_at(x - body.x, y - body.y));
+            let events = f.input.pointer.down(x - body.x, y - body.y, pen as i32, id, now_ms(), slop, palm);
+            widget_events(f, &events);
+        }
+    }
     let s = ed(a);
     s.widgets.raise(index);
     s.widget_drag_view = WidgetDragView::default();
@@ -8557,6 +8626,15 @@ fn widget_pointer(a: &mut App, ph: i32, ev: &InEvent, pen: bool) {
             v.moved_at = now_ms();
             v.samples = v.samples.wrapping_add(1);
         }
+        if d.part == WidgetPart::Body {
+            // (the body's contact: past the slop it is a drag, its samples gathered for the module)
+            let palm = !pen && ev.value & TOUCH_F_BROAD != 0;
+            if let Some(f) = ed(a).widgets.frames.get_mut(d.index) {
+                let body = widget_body(f);
+                let events = f.input.pointer.moved(ev.x.round_ties_even() as i32 - body.x, ev.y.round_ties_even() as i32 - body.y, palm);
+                widget_events(f, &events);
+            }
+        }
         ed(a).widget_drag = Some(d);
         return;
     }
@@ -8568,6 +8646,24 @@ fn widget_pointer(a: &mut App, ph: i32, ev: &InEvent, pen: bool) {
     }
     ed(a).owner = Owner::None;
     let cancelled = touch_cancelled(ev);
+    if d.part == WidgetPart::Body {
+        // The body's contact ends: a module with `kit_event` is told what it was (a TAP, a drag's end, nothing after a
+        // press or a cancel); one without it gets `widget_tap` for a lift within the slop, held or not, as before. The
+        // drawing pass either owes is widget_input_tick's.
+        if let Some(f) = ed(a).widgets.frames.get_mut(d.index) {
+            let body = widget_body(f);
+            let events = f.input.pointer.up(ev.x.round_ties_even() as i32 - body.x, ev.y.round_ties_even() as i32 - body.y, cancelled);
+            if f.runtime.as_ref().is_some_and(WidgetRuntime::has_events) {
+                widget_events(f, &events);
+            } else if !cancelled && !d.moved && f.runtime.as_mut().is_some_and(|rt| rt.tap(d.down_x - body.x, d.down_y - body.y)) {
+                f.input.owe();
+            }
+        }
+        ed(a).widget_drag = None;
+        ed(a).widget_drag_view = WidgetDragView::default();
+        let _ = pen;
+        return;
+    }
     let area = widget_area(a);
     let mut redraw = d.start;
     if let Some(p) = ed(a).widget_drag_view.shown {
@@ -8594,14 +8690,6 @@ fn widget_pointer(a: &mut App, ph: i32, ev: &InEvent, pen: bool) {
                     f.clamp(area);
                     redraw = rect_union(redraw, f.rect());
                     save = true;
-                }
-                WidgetPart::Body => {
-                    let body = widget_body(f);
-                    f.ensure_runtime();
-                    if let Some(rt) = f.runtime.as_mut() {
-                        rt.tap(d.down_x - body.x, d.down_y - body.y);
-                        redraw = rect_union(redraw, body);
-                    }
                 }
                 _ => {}
             }
@@ -12669,6 +12757,7 @@ pub fn editor_tick(a: &mut App, now: u32) {
     if ed(a).open {
         sel_tick(a, now);
         widget_runtime_tick(a, now);
+        widget_input_tick(a, now);
         if ed_ref(a).owner == Owner::Widget {
             widget_tick(a, now);
         }

@@ -1,0 +1,15 @@
+name: Pointer app
+id: test.kit.pointer
+type: app
+version: 1.0.0
+author: Grimoire tests
+description: A module of the package kit's tests.
+platforms: [all]
+artifact:
+  path: app.wasm
+  sha256: f6e6f0c92effb91a241d998952268c672af728319db897c0c9835a797030bd5a
+  size: 1764
+capabilities: []
+spec:
+  runtime: wasm
+  status_bar: true

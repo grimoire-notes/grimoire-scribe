@@ -3756,7 +3756,7 @@ Lane L0 adds them with nothing visible: each keeps what the Scribe showed before
 
 - **One hold, `ui::HOLD_MS` (600 ms).** Every touch hold that offers a control's choices reads it: the link
   hold and Select's paste hold in the editor, the Library's row hold, the Pages view's card hold (its drag
-  hold is `HOLD_MS / 2`) and the Links bar's. Not the pen dwell for shapes (a setting), the pen button's
+  hold is `HOLD_MS / 2`), the Links bar's, and a package's PRESS (`kithost.rs` `KitPointer`). Not the pen dwell for shapes (a setting), the pen button's
   1200 ms, the power key's 4 s or the keyboard's repeat. rust/tests/test_ui.rs `every_hold_reads_hold_ms`
   fails on a hold of its own number.
 - **One popout's place, `popout.rs` `popout_place(w, h, anchor, screen, avoid)`.** A card beside what was

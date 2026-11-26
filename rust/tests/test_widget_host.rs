@@ -21,7 +21,7 @@ fn fresh_root(name: &str) -> std::path::PathBuf {
 fn installed(id: &str, capabilities: &[&str], module: &[u8]) -> WidgetRuntime {
     let m = manifest(id, "Test", capabilities, FIXED_400_300, module);
     widget_package_install(&m, module, "", 1860, 2480).unwrap();
-    WidgetRuntime::new(id).unwrap()
+    WidgetRuntime::new(id, (BODY.w, BODY.h)).unwrap()
 }
 
 /// A package as an earlier install left it, from before the manifest check asked for `editor:overlay`: installed,
@@ -31,7 +31,7 @@ fn installed_earlier(id: &str, capabilities: &[&str], module: &[u8]) -> WidgetRu
     widget_package_install(&m, module, "", 1860, 2480).unwrap();
     let yaml = std::path::PathBuf::from(format!("{}/package.yaml", widget_package_dir(id)));
     rewrite(&yaml, "capabilities: [editor:overlay, storage:widget-local]", &format!("capabilities: [{}]", capabilities.join(", ")));
-    WidgetRuntime::new(id).unwrap()
+    WidgetRuntime::new(id, (BODY.w, BODY.h)).unwrap()
 }
 
 /// A canvas with no two neighbours alike, so that any pixel a draw changes shows.
@@ -193,7 +193,7 @@ fn a_package_without_the_storage_capability_has_no_saved_state() {
     assert_eq!(std::fs::read(state_file("test.keeps")).unwrap(), b"hello");
     rt.draw(&mut c, BODY);
     assert_eq!(rt.status(), "hello");
-    let mut rt = WidgetRuntime::new("test.keeps").unwrap();
+    let mut rt = WidgetRuntime::new("test.keeps", (BODY.w, BODY.h)).unwrap();
     rt.draw(&mut c, BODY);
     assert_eq!(rt.status(), "hello");
     // Not declared: state_get gives nothing, state_set keeps nothing, in a draw and in a tap, and no file is made.
@@ -210,7 +210,7 @@ fn a_package_without_the_storage_capability_has_no_saved_state() {
     // A state file from a version of the package that declared the capability is not read, and stays as it is.
     std::fs::create_dir_all(state_file("test.forgets").parent().unwrap()).unwrap();
     std::fs::write(state_file("test.forgets"), b"kept").unwrap();
-    let mut rt = WidgetRuntime::new("test.forgets").unwrap();
+    let mut rt = WidgetRuntime::new("test.forgets", (BODY.w, BODY.h)).unwrap();
     rt.draw(&mut c, BODY);
     rt.tap(20, 20);
     rt.draw(&mut c, BODY);
@@ -323,7 +323,7 @@ fn a_module_that_loops_for_ever_stops_when_its_instructions_are_used_up() {
     starts.start = Some(forever(&[]));
     let m = manifest("test.loop.start", "Test", &BOTH, FIXED_400_300, &starts.bytes());
     widget_package_install(&m, &starts.bytes(), "", 1860, 2480).unwrap();
-    assert_eq!(WidgetRuntime::new("test.loop.start").err().as_deref(), Some("The widget could not start: all fuel consumed by WebAssembly"));
+    assert_eq!(WidgetRuntime::new("test.loop.start", (BODY.w, BODY.h)).err().as_deref(), Some("The widget could not start: all fuel consumed by WebAssembly"));
     // A function that calls itself for ever ends too: the interpreter's own call stack has a depth.
     let mut deep = Wasm::new(vec![0x10, FIRST_EXTRA as u8]);
     deep.extra = vec![vec![0x10, FIRST_EXTRA as u8]];
@@ -413,7 +413,7 @@ fn load_of(id: &str, memories: &[u32], tables: &[u32]) -> Option<String> {
     w.tables = tables.iter().map(|&entries| (entries, None)).collect();
     let m = manifest(id, "Test", &BOTH, FIXED_400_300, &w.bytes());
     widget_package_install(&m, &w.bytes(), "", 1860, 2480).unwrap();
-    WidgetRuntime::new(id).err()
+    WidgetRuntime::new(id, (BODY.w, BODY.h)).err()
 }
 
 #[test]
@@ -541,7 +541,7 @@ fn what_setting_and_state_get_write_keeps_to_the_room_given() {
     let module = module(&draw, &[], &[(WORD_AT as u32, &b"the saved state"[..]), (100, &b"k"[..]), (rooms as u32, &marks[..])]);
     let m = format!("{}settings:\n  - key: k\n    label: K\n    type: choice\n    default: value\n    choices: [value, other]\n", manifest("test.writes", "Test", &BOTH, FIXED_400_300, &module));
     widget_package_install(&m, &module, "", 1860, 2480).unwrap();
-    let mut rt = WidgetRuntime::new("test.writes").unwrap();
+    let mut rt = WidgetRuntime::new("test.writes", (BODY.w, BODY.h)).unwrap();
     let mut c = patterned(700, 600);
     rt.draw(&mut c, BODY);
     assert_eq!(rt.error(), None);
@@ -832,7 +832,7 @@ fn a_loop_of_one_import_is_ended_by_the_calls_budget() {
     starts.start = Some(forever(&dropped("now", &[])));
     let m = manifest("test.forever.start", "Test", &BOTH, FIXED_400_300, &starts.bytes());
     widget_package_install(&m, &starts.bytes(), "", 1860, 2480).unwrap();
-    assert_eq!(WidgetRuntime::new("test.forever.start").err().as_deref(), Some("The widget could not start: all fuel consumed by WebAssembly"));
+    assert_eq!(WidgetRuntime::new("test.forever.start", (BODY.w, BODY.h)).err().as_deref(), Some("The widget could not start: all fuel consumed by WebAssembly"));
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -840,7 +840,7 @@ fn a_loop_of_one_import_is_ended_by_the_calls_budget() {
 /// pass after it, several times over (the keys change the screen: the modes, their menu, the unit converter).
 /// The largest fuel a call used.
 fn calculators_largest_call(body: Rect) -> u64 {
-    let mut rt = WidgetRuntime::new("com.grimoire.calculator").unwrap();
+    let mut rt = WidgetRuntime::new("com.grimoire.calculator", (BODY.w, BODY.h)).unwrap();
     let mut c = patterned(1860, 2480);
     rt.draw(&mut c, body);
     let mut most = rt.fuel_used();
@@ -904,7 +904,7 @@ fn a_widget_manifest_declares_the_overlay_capability() {
     let area = Rect { x: 0, y: 0, w: 1860, h: 2480 };
     assert!(h.spawn(widget_def("com.grimoire.calculator").unwrap(), area, Rect { x: 1700, y: 220, w: 128, h: 1700 }));
     let body = h.frames[0].body_rect();
-    let mut rt = WidgetRuntime::new("com.grimoire.calculator").unwrap();
+    let mut rt = WidgetRuntime::new("com.grimoire.calculator", (BODY.w, BODY.h)).unwrap();
     let before = patterned(1860, 2480);
     let mut c = before.clone();
     rt.draw(&mut c, body);
@@ -920,7 +920,7 @@ fn a_widget_manifest_declares_the_overlay_capability() {
     // With the capability to draw alone it installs and draws too, and keeps no state.
     widget_package_remove("com.grimoire.calculator", false).unwrap();
     widget_package_install(&with_address.replace(both, "capabilities: [editor:overlay]\n"), &module, "", 1860, 2480).unwrap();
-    let mut rt = WidgetRuntime::new("com.grimoire.calculator").unwrap();
+    let mut rt = WidgetRuntime::new("com.grimoire.calculator", (BODY.w, BODY.h)).unwrap();
     let mut c = before.clone();
     rt.draw(&mut c, body);
     assert!(rt.error().is_none() && inked(&c, body) > 10_000 && rt.hit_count() > 10);
@@ -934,7 +934,7 @@ const NOT_READ: &str = "The widget's artifact could not be read.";
 
 /// The error of a load of the package, None when it loads.
 fn load(id: &str) -> Option<String> {
-    WidgetRuntime::new(id).err()
+    WidgetRuntime::new(id, (BODY.w, BODY.h)).err()
 }
 
 /// A file of the data root with `from` replaced by `to`, as a hand with an editor would.
@@ -1058,7 +1058,7 @@ fn a_module_is_checked_again_before_each_load() {
     assert_eq!(load("test.deep"), None);
 
     // The check is the load's: a frame that has loaded its module draws without reading the file again.
-    let mut rt = WidgetRuntime::new("test.load").unwrap();
+    let mut rt = WidgetRuntime::new("test.load", (BODY.w, BODY.h)).unwrap();
     std::fs::write(&file, &other).unwrap();
     let mut c = patterned(700, 600);
     rt.draw(&mut c, BODY);
