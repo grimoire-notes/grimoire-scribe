@@ -4995,15 +4995,22 @@ pub fn editor_live_style(a: &App, ev: &InEvent, out: &mut LiveStyle) {
     out.pressure_gamma = prm.pressure_gamma;
     out.opacity_min = prm.opacity_min;
     out.opacity_max = prm.opacity_max;
-    out.clip = rect_intersect(page_to_screen(a, Rect { x: 0, y: 0, w: s.pgw, h: s.pgh ,
-            },
-        ), Rect { x: 0, y: 0, w: a.w, h: a.h ,
-        },
-    );
-    out.clip = rect_intersect(out.clip, Rect { x: 0, y: status_reserved(a), w: a.w, h: a.h - status_reserved(a) ,
+    out.clip = rect_intersect(page_on_screen(a), Rect { x: 0, y: status_reserved(a), w: a.w, h: a.h - status_reserved(a) ,
         },
     );
     out.exclude = s.panel;
+}
+
+/// The screen pixels the page covers, at least in part, with no margin, inside the screen. (page_to_screen pads a
+/// damage rect by a few pixels. Live view's fast ink clips to this rect instead, so it stops where the page does
+/// where the desk shows around it: a page a little smaller than the screen, the whole page sideways.)
+fn page_on_screen(a: &App) -> Rect {
+    let s = ed_ref(a);
+    let x0 = ((0.0 - s.ox) * s.zoom).floor() as i32;
+    let y0 = ((0.0 - s.oy) * s.zoom).floor() as i32;
+    let x1 = ((s.pgw as f32 - s.ox) * s.zoom).ceil() as i32;
+    let y1 = ((s.pgh as f32 - s.oy) * s.zoom).ceil() as i32;
+    rect_intersect(Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, Rect { x: 0, y: 0, w: a.w, h: a.h })
 }
 
 /// A bound side-button contact. Its viewport anchor is fixed for the whole contact.
@@ -15813,6 +15820,49 @@ mod tests {
         view_reset(&mut a);
         let s = ed_ref(&a);
         assert_eq!((s.zoom, s.ox, s.oy), (1860.0 / 1920.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn live_views_fast_ink_stops_at_the_pages_edge() {
+        // Live view's fast ink clips to the page's own pixels on the screen, not to a padded damage rect: an
+        // 1860x2480 page at rest on a 1920x2560 screen covers x 30..1890 and y 40..2520, and no fast ink goes into
+        // the desk around it.
+        let mut a = app(1920, 2560, 1860, 2480);
+        a.scr = ScreenId::Editor;
+        let s = ed(&mut a);
+        nav_init(&mut s.nav);
+        s.open = true;
+        s.nb.page_ids = vec![1];
+        let i = s.entry_for(1).unwrap();
+        s.hist[i].page = Some(page_new(1860, 2480, PAPER_BLANK));
+        s.page = Some(1);
+        view_reset(&mut a);
+        assert_eq!(page_to_screen(&a, Rect::new(0, 0, 1860, 2480)), Rect::new(28, 38, 1865, 2485));
+        let ev = InEvent { type_: InType::PenDown, x: 900.0, y: 900.0, pressure: 0.5, ..Default::default() };
+        let mut out = LiveStyle::default();
+        editor_live_style(&a, &ev, &mut out);
+        assert_eq!(out.enabled, 1);
+        assert_eq!(out.clip, Rect::new(30, 40, 1860, 2480));
+        // The screen's own size: the whole screen. A page further off, fitted: the screen it fills.
+        for (aw, ah, pw, ph) in [(1860, 2480, 1860, 2480), (1920, 2560, 1986, 2648), (1986, 2648, 1860, 2480)] {
+            let mut a = app(aw, ah, pw, ph);
+            view_reset(&mut a);
+            assert_eq!(page_on_screen(&a), Rect::new(0, 0, aw, ah), "{aw}x{ah} page {pw}x{ph}");
+        }
+        // The whole page sideways (landscape_fit), centred at 75%: x 542.5..1937.5, the edge pixels in part.
+        let mut a = app(2480, 1860, 1860, 2480);
+        a.settings.landscape_fit = true;
+        view_reset(&mut a);
+        assert_eq!(page_on_screen(&a), Rect::new(542, 0, 1396, 1860));
+        // Pinched in and panned: the screen, the page's edges off it.
+        let mut a = app(1920, 2560, 1860, 2480);
+        view_reset(&mut a);
+        let s = ed(&mut a);
+        s.zoom = 2.0;
+        s.ox = 400.0;
+        s.oy = 600.0;
+        view_clamp(&mut a);
+        assert_eq!(page_on_screen(&a), Rect::new(0, 0, 1920, 2560));
     }
 
     #[test]
