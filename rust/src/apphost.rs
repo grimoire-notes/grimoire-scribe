@@ -53,7 +53,7 @@
 use crate::globalui::{gui_app_tile, gui_chip, gui_fab, gui_select, gui_status_bar, gui_status_h, gui_surface, gui_text_field};
 use crate::kithost::{
     drawn_text_charge, icon_charge, kit_changed, kit_keep, kit_link, kit_missing_import, kit_render, label_charge, KitCmd, KitEvent, KitHost,
-    KitInput, EV_KEY, KIT_EVENT,
+    KitInput, EV_KEY, EV_SETTINGS, KIT_EVENT,
 };
 use crate::prelude::*;
 use crate::wasmhost::{charge, in_body, line_in_reach, on_screen};
@@ -519,10 +519,15 @@ impl AppRun {
         self.runtime.as_mut().and_then(|r| r.store.data_mut().toast.take())
     }
 
+    /// The app's settings page saved them: the module reads the new values from now on, and is told so (a
+    /// SETTINGS event), which owes a drawing pass when it says its picture changed.
     pub fn reload_settings(&mut self) {
         if let Some(m) = crate::apppkg::app_package_installed_manifest(&self.id) {
             if let Some(r) = self.runtime.as_mut() {
                 r.store.data_mut().settings = crate::apppkg::app_settings_load(&self.id, &m.settings);
+                if r.event(&KitEvent::new(EV_SETTINGS, 0, 0, 0, 0)) == Some(true) {
+                    self.input.owe();
+                }
             }
         }
     }

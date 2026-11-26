@@ -882,8 +882,16 @@ pub fn input(on: Host, touch: bool, events: Option<bool>) -> Kit {
     k
 }
 
-/// The packages of tests/fixtures/kitinput: the input modules (`input`) as widgets, then as apps.
+/// The settings page of the input packages: one switch, so that a change of settings can be made and told.
+pub const INPUT_SETTINGS: &str = "settings:\n  - key: mode\n    label: Mode\n    type: toggle\n    default: true\n";
+
+/// The packages of tests/fixtures/kitinput: the input modules (`input`) as widgets, then as apps, each with a
+/// settings page (INPUT_SETTINGS).
 pub fn input_packages() -> Vec<Package> {
+    let with_settings = |mut p: Package| {
+        p.manifest.push_str(INPUT_SETTINGS);
+        p
+    };
     vec![
         widget("test.kit.inputw", "Input widget", &WIDGET_BOTH, input(Host::Widget, true, Some(true)).bytes()),
         widget("test.kit.quietw", "Quiet widget", &WIDGET_BOTH, input(Host::Widget, false, Some(false)).bytes()),
@@ -892,6 +900,9 @@ pub fn input_packages() -> Vec<Package> {
         app("test.kit.pointer", "Pointer app", input(Host::App, true, None).bytes()),
         app("test.kit.quiet", "Quiet app", input(Host::App, false, Some(false)).bytes()),
     ]
+    .into_iter()
+    .map(with_settings)
+    .collect()
 }
 
 /// A package of the scenarios' data root.

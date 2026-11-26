@@ -326,11 +326,16 @@ impl WidgetHost {
         self.frames.iter().position(|f| f.def.id == id)
     }
 
-    /// Lets an open frame of this package read the settings that were just saved.
+    /// Lets an open frame of this package read the settings that were just saved, and tells its module so (a
+    /// SETTINGS event), which owes a drawing pass when it says its picture changed.
     pub fn reload_settings(&mut self, id: &str) {
         if let Some(i) = self.index_of(id) {
-            if let Some(rt) = self.frames[i].runtime.as_mut() {
+            let f = &mut self.frames[i];
+            if let Some(rt) = f.runtime.as_mut() {
                 rt.reload_settings(id);
+                if rt.event(&crate::kithost::KitEvent::new(crate::kithost::EV_SETTINGS, 0, 0, 0, 0)) == Some(true) {
+                    f.input.owe();
+                }
             }
         }
     }

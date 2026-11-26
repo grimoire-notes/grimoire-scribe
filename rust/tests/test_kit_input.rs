@@ -522,3 +522,30 @@ fn event_points_and_key_char_take_their_charges_from_the_events_budget() {
     }
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn an_open_app_is_told_its_settings_were_saved_and_drawn_once_for_it() {
+    let root = fresh_root("settings");
+    let id = "test.ki.settings";
+    let module = input(Host::App, true, Some(true)).bytes();
+    // (with the status bar hidden: its minute brings passes of its own)
+    let m = format!("{}{INPUT_SETTINGS}", app_manifest(id, "Settings", &[], false, &module));
+    app_package_install(&m, &module, None, "", SCREEN.0, SCREEN.1).unwrap();
+    let mut a = App { w: SCREEN.0, h: SCREEN.1, dpi: 300.0, ..Default::default() };
+    assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+    grimoire::library::library_init(&mut a);
+    assert!(grimoire::apphost::apphost_launch(&mut a, id));
+    assert_eq!(a.app_view.status(), "p001 n000 t00 r00 s00 m00 e00 c00 q000 k00 a00 g00 h0");
+    // (what the app's settings page does when the reader changes a value, the app open)
+    assert_eq!(app_settings_save(id, &[("mode".to_string(), "false".to_string())]), 0);
+    a.app_view.reload_settings();
+    assert_eq!(a.app_view.status(), "p001 n000 t00 r00 s00 m00 e00 c00 q000 k00 a00 g00 h0", "the pass is owed, not drawn at once");
+    grimoire::apphost::apphost_tick(&mut a, now_ms());
+    assert_eq!(a.app_view.status(), "p002 n000 t00 r00 s00 m00 e00 c00 q000 k00 a00 g01 h0", "one SETTINGS event, and one pass for it");
+    grimoire::apphost::apphost_tick(&mut a, now_ms());
+    assert_eq!(a.app_view.status(), "p002 n000 t00 r00 s00 m00 e00 c00 q000 k00 a00 g01 h0", "and no other");
+    grimoire::apphost::apphost_close(&mut a);
+    grimoire::library::library_free(&mut a);
+    canvas_free(&mut a.screen);
+    let _ = std::fs::remove_dir_all(root);
+}

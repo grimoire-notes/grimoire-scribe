@@ -13,3 +13,8 @@ capabilities: []
 spec:
   runtime: wasm
   status_bar: true
+settings:
+  - key: mode
+    label: Mode
+    type: toggle
+    default: true
