@@ -820,7 +820,10 @@ announcements: goingToScreenSaver draws the sleep screen, outOfScreenSaver is th
 - tests/test_golden.c holds renders recorded from 1.0.0-beta: every paper it knows, a stroke of
   every tool, and a page's bytes. A page someone already wrote must look exactly the same in every
   later version, so it is never re-recorded to make a change pass. It compares on the recording
-  host only (clang on arm64 macOS).
+  host only (clang on arm64 macOS). 2.3.0 changes the papers on purpose, the owner's ask (issue
+  #314): the ruled, Cornell, graph and dot papers draw darker lines, rust/tests/test_golden.rs
+  lists those renders apart (K_DARKER_PAPERS), and every render of the ink alone still matches
+  the table.
 - tests/test_format.c checks pages against tests/beta_format.h, a frozen copy of the 1.0.0-beta
   page reader and writer (the "Moving between versions" table in docs/FORMAT.md).
 - tests/test_font.c pins text renders by CRC, recorded at 56d931c: all printable ASCII in every

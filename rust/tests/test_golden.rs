@@ -5,7 +5,9 @@
 // later version: if one of these fails, old pages changed. Never re-record the table to make a
 // change pass; fix the change. (1.2.0's vertical highlighter tip drew old strokes with the new tip
 // until 2.0.0-beta.5 recorded the tip on each stroke, issue #5: old strokes match this table
-// again, and the vertical tip's own renders are listed separately below.)
+// again, and the vertical tip's own renders are listed separately below. 2.3.0 draws the ruled
+// papers, Cornell, Graph paper and Dot grid darker, on the owner's ask, issue #314: their renders
+// are listed separately below too, and every render of the ink alone still matches this table.)
 //
 // GRIMOIRE_GOLDEN_PRINT=1 prints the table instead of checking it (that is how it was made).
 // The values hold for the host build this suite runs on (clang on arm64 macOS): another
@@ -170,6 +172,48 @@ const K_VERTICAL_TIP: [(&str, u32); 6] = [
     ("grand staff, highlighter, vertical tip, paper", 0x0531cc67),
 ];
 
+// The papers 2.3.0 draws darker (issue #314; the owner, 2026-11-26: "can we darken all the layouts except
+// seyes?"): Narrow, Medium and Wide rule with and without margin, Cornell, Dot grid and Graph paper (Cross
+// grid, Isometric and Hexagon came after 1.0.0-beta and have no render here), and so the renders of ink on
+// Medium rule as a whole and of Medium rule alone. These replace the table's values for these names only:
+// the ink alone (", ink"), the music papers, Blank and the page files are still the table's.
+const K_DARKER_PAPERS: [(&str, u32); 34] = [
+    ("paper 0", 0x796efd0f),
+    ("paper 1", 0xb72d0f4f),
+    ("paper 2", 0x2a39dbfe),
+    ("paper 5", 0x45c9e336),
+    ("paper 6", 0xc6039fa5),
+    ("paper 7", 0x3fa9a116),
+    ("paper 10", 0x6acef115),
+    ("paper 11", 0x383ab3e6),
+    ("paper 12", 0x1fbc57e1),
+    ("medium rule, pencil", 0x87e6fc8f),
+    ("medium rule, pencil, paper", 0xb72d0f4f),
+    ("medium rule, mechanical pencil", 0xc2e1145f),
+    ("medium rule, mechanical pencil, paper", 0xb72d0f4f),
+    ("medium rule, ballpoint", 0x163d1d28),
+    ("medium rule, ballpoint, paper", 0xb72d0f4f),
+    ("medium rule, eraser", 0xb72d0f4f),
+    ("medium rule, eraser, paper", 0xb72d0f4f),
+    ("medium rule, highlighter", 0x35389423),
+    ("medium rule, highlighter, paper", 0xb72d0f4f),
+    ("medium rule, highlighter, vertical tip", 0x7ab8ce7a),
+    ("medium rule, highlighter, vertical tip, paper", 0xb72d0f4f),
+    ("medium rule, fountain pen", 0xfea47a49),
+    ("medium rule, fountain pen, paper", 0xb72d0f4f),
+    ("medium rule, fineliner", 0xfaae563f),
+    ("medium rule, fineliner, paper", 0xb72d0f4f),
+    ("medium rule, marker", 0xab568557),
+    ("medium rule, marker, paper", 0xb72d0f4f),
+    ("medium rule, charcoal", 0x4a05a78c),
+    ("medium rule, charcoal, paper", 0xb72d0f4f),
+    ("medium rule, calligraphy pen", 0x6b2b9d00),
+    ("medium rule, calligraphy pen, paper", 0xb72d0f4f),
+    ("medium rule, every tool", 0xb85616e9),
+    ("medium rule, every tool, paper", 0xb72d0f4f),
+    ("medium rule, every tool, read back", 0xca81475f),
+];
+
 fn crc32_bytes(crc: u32, p: &[u8]) -> u32 {
     static CRC_TABLE: OnceLock<[u32; 256]> = OnceLock::new();
     let table = CRC_TABLE.get_or_init(|| {
@@ -211,7 +255,7 @@ fn golden(name: &str, crc: u32) {
     if !GOLDEN_HOST {
         return;
     }
-    for &(n, expected) in K_GOLDEN.iter().chain(K_VERTICAL_TIP.iter()) {
+    for &(n, expected) in K_DARKER_PAPERS.iter().chain(K_GOLDEN.iter()).chain(K_VERTICAL_TIP.iter()) {
         if n != name {
             continue;
         }
@@ -276,6 +320,16 @@ fn golden_page(c: &mut Canvas, pg: &Page, name: &str) {
     canvas_fill(c, full, 0);
     page_render_layers(c, pg, full, DPI, PAGE_LAYER_PAPER);
     golden(&cformat!("%s, paper", name), crc_canvas(c));
+}
+
+// Every name the darker papers list is one the tables recorded, with another value, and none is a render of
+// ink alone: what a page's strokes draw is unchanged.
+fn darker_papers_replace_paper_renders_only() {
+    for &(name, crc) in &K_DARKER_PAPERS {
+        let before = K_GOLDEN.iter().chain(K_VERTICAL_TIP.iter()).find(|&&(n, _)| n == name);
+        check!(before.is_some_and(|&(_, was)| was != crc) && !name.ends_with(", ink") && !name.contains("file of"));
+        check!(name.starts_with("medium rule") || ["paper 0", "paper 1", "paper 2", "paper 5", "paper 6", "paper 7", "paper 10", "paper 11", "paper 12"].contains(&name));
+    }
 }
 
 fn papers() {
@@ -378,6 +432,7 @@ fn test_golden() {
     if g_print() {
         println!("const K_GOLDEN: [(&str, u32); N] = [");
     }
+    run!(darker_papers_replace_paper_renders_only);
     run!(papers);
     run!(one_stroke_of_every_tool);
     run!(all_tools_on_one_page);

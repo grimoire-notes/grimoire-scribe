@@ -162,7 +162,8 @@ The 13 parameters, in order, with the range every reader clamps them to:
 Readers also read a float that is not finite as 0 and clamp x and y to -10000..30000. Rendering
 replays each stroke from its first point, so how a page looks depends on these bytes alone:
 `tests/test_golden.c` holds renders recorded from 1.0.0-beta that every later version must
-reproduce.
+reproduce. (The ink: 2.3.0 draws the lines of the ruled, Cornell, graph and dot papers darker, on
+purpose, issue #314.)
 
 ### Page size
 

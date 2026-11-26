@@ -5,7 +5,11 @@ use grimoire::prelude::*;
 use testlib::*;
 
 fn page_with_ink(w: i32, h: i32) -> Box<Page> {
-    let mut p = page_new(w, h, PAPER_NARROW);
+    page_with_ink_on(PAPER_NARROW, w, h)
+}
+
+fn page_with_ink_on(paper: PaperKind, w: i32, h: i32) -> Box<Page> {
+    let mut p = page_new(w, h, paper);
     for t in [TOOL_MARKER, TOOL_CHARCOAL, TOOL_BALLPOINT] {
         let mut prm = ToolParams::default();
         tool_params_default(t, &mut prm);
@@ -164,6 +168,122 @@ fn every_paper_is_in_the_fingerprint() {
     check!(store_page_render_kept(&nb, pid, w, h, false) && store_load_page_render(&nb, pid, w, h, &mut back, false) && back.px == drawn.px);
 }
 
+// Graph paper and Hexagon as main drew them before 2.3.0 (issue #314): lines of 200 at 1 px with every fifth 170
+// at 2 px; edges of 175 at 1.5 px anti-aliased. Every other paper as this build draws it.
+fn grid_before(c: &mut Canvas, dpi: f32) {
+    let pitch = mm_to_px(5.0, dpi);
+    let thick = |px: f32| ((px * dpi / 300.0).round_ties_even() as i32).max(1);
+    let (w, h) = (c.w, c.h);
+    let at = |i: i32| (pitch * i as f32).round_ties_even() as i32;
+    let mut i = 0;
+    while at(i) < w {
+        let x = at(i);
+        canvas_vline(c, x, 0, h, if i % 5 != 0 { thick(1.0) } else { thick(2.0) }, if i % 5 != 0 { 200 } else { 170 });
+        i += 1;
+    }
+    let mut j = 0;
+    while at(j) < h {
+        let y = at(j);
+        canvas_hline(c, 0, w, y, if j % 5 != 0 { thick(1.0) } else { thick(2.0) }, if j % 5 != 0 { 200 } else { 170 });
+        j += 1;
+    }
+}
+fn hex_before(c: &mut Canvas, dpi: f32) {
+    let a = mm_to_px(4.0, dpi);
+    let hh = a * 0.866_025_4;
+    let (w, h) = (c.w as f32, c.h as f32);
+    let lw = ((2.0 * dpi / 300.0).round_ties_even() as i32).max(1) as f32 * 0.75;
+    let cols = (w / (1.5 * a)) as i32 + 2;
+    let rows = (h / (2.0 * hh)) as i32 + 2;
+    let x0 = (w - (cols - 1) as f32 * 1.5 * a) / 2.0;
+    for i in 0..cols {
+        let cx = fmla(i as f32, 1.5 * a, x0);
+        let shift = if i % 2 != 0 { hh } else { 0.0 };
+        for j in -1..rows {
+            let cy = fmla(j as f32, 2.0 * hh, shift);
+            let (l, top, bot) = (cx - a, cy - hh, cy + hh);
+            canvas_line_aa(c, cx - a / 2.0, top, cx + a / 2.0, top, lw, 175);
+            canvas_line_aa(c, l, cy, cx - a / 2.0, top, lw, 175);
+            canvas_line_aa(c, l, cy, cx - a / 2.0, bot, lw, 175);
+        }
+    }
+}
+fn papers_before(c: &mut Canvas, k: PaperKind, region: Rect, dpi: f32) {
+    if k != PAPER_GRID && k != PAPER_HEX {
+        paper_render(c, k, region, dpi);
+        return;
+    }
+    let saved = c.clip;
+    canvas_set_clip(c, rect_intersect(region, saved));
+    let clip = c.clip;
+    canvas_fill(c, clip, 255);
+    if k == PAPER_GRID {
+        grid_before(c, dpi);
+    } else {
+        hex_before(c, dpi);
+    }
+    c.clip = saved;
+}
+
+fn drawings_kept_under_earlier_papers_are_drawn_again() {
+    // 2.3.0 draws the ruled, grid, dot and pattern papers darker (#314): a page kept drawn with the lines before
+    // must be drawn again. The fingerprint before 2.3.0 hashed the ink page alone, this build's ink half; and a
+    // renderer that draws ink as this one does but Graph paper or Hexagon as main did has another fingerprint
+    // too, each paper alone.
+    let main = page_ink_fingerprint();
+    let papers_main = page_render_fingerprint_with(main, &papers_before);
+    check!(main != 0 && papers_main != 0);
+    check!(page_render_fingerprint() != main && page_render_fingerprint() != papers_main);
+    for k in [PAPER_GRID, PAPER_HEX] {
+        let one = move |c: &mut Canvas, kk: PaperKind, r: Rect, dpi: f32| {
+            if kk == k { papers_before(c, kk, r, dpi) } else { paper_render(c, kk, r, dpi) }
+        };
+        check!(page_render_fingerprint_with(main, &one) != page_render_fingerprint());
+    }
+    let (w, h) = (600, 800);
+    let whole = Rect { x: 0, y: 0, w, h };
+    for paper in [PAPER_GRID, PAPER_HEX] {
+        let mut nb = NotebookInfo::default();
+        check!(store_create("Earlier paper", "", paper, &mut nb) == 0);
+        let p = page_with_ink_on(paper, w, h);
+        check!(store_save_page(&nb, 0, &p) == 0);
+        let pid = nb.page_ids[0];
+        // the page as main drew it: its paper, the ink over it
+        let mut old = Canvas::default();
+        check!(canvas_init(&mut old, w, h) == 0);
+        papers_before(&mut old, paper, whole, 300.0);
+        page_render_layers(&mut old, &p, whole, 300.0, PAGE_LAYER_INK);
+        let mut back = Canvas::default();
+        check!(canvas_init(&mut back, w, h) == 0);
+        for fp in [main, papers_main] {
+            check!(store_save_page_render(&nb, pid, &old, false));
+            kept_under(&nb, pid, fp);
+            check!(!store_page_render_kept(&nb, pid, w, h, false));
+            check!(!store_load_page_render(&nb, pid, w, h, &mut back, false));
+        }
+        // (the same file under this build's fingerprint is read: the renderer is all that differs)
+        kept_under(&nb, pid, page_render_fingerprint());
+        check!(store_page_render_kept(&nb, pid, w, h, false) && store_load_page_render(&nb, pid, w, h, &mut back, false) && back.px == old.px);
+        // Drawn again, the page has the darker lines and none of the lines before.
+        let mut now = Canvas::default();
+        check!(canvas_init(&mut now, w, h) == 0);
+        page_render(&mut now, &p, whole, 300.0);
+        check!(now.px != old.px);
+        let (mut then, mut lines) = (Canvas::default(), Canvas::default());
+        check!(canvas_init(&mut then, w, h) == 0 && canvas_init(&mut lines, w, h) == 0);
+        papers_before(&mut then, paper, whole, 300.0);
+        page_render_layers(&mut lines, &p, whole, 300.0, PAGE_LAYER_PAPER);
+        let has = |c: &Canvas, g: u8| c.px.contains(&g);
+        let darkest = |c: &Canvas| c.px.iter().copied().min().unwrap_or(255);
+        if paper == PAPER_GRID {
+            check!(has(&then, 200) && has(&then, 170) && has(&lines, 136) && has(&lines, 85) && !has(&lines, 200) && !has(&lines, 170));
+        } else {
+            check!(darkest(&then) == 175 && darkest(&lines) == 119);
+        }
+        check!(store_save_page_render(&nb, pid, &now, false) && store_page_render_kept(&nb, pid, w, h, false));
+    }
+}
+
 #[test]
 fn test_render_keep() {
     let root = format!("{}/render-keep-{}", tl_tmp(), std::process::id());
@@ -172,6 +292,7 @@ fn test_render_keep() {
     run!(kept_drawings_are_exact_and_only_current);
     run!(drawings_kept_by_2_0_1_are_never_read_and_retired_once);
     run!(every_paper_is_in_the_fingerprint);
+    run!(drawings_kept_under_earlier_papers_are_drawn_again);
     let _ = std::fs::remove_dir_all(&root);
     done(); // (a failed check fails the test: it did not, without this)
 }
