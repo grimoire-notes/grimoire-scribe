@@ -2064,21 +2064,231 @@ fn zoomed(a: &App) -> bool {
     (s.zoom - s.zoom_default).abs() > 0.01 || s.ox != s.rest_ox || s.oy + status_reserved(a) as f32 / s.zoom > 0.5
 }
 
-// Draws the visible page into a screen rect: bilinear sampling for grayscale frames, nearest-neighbor
-// during live fast (DU) pinch/pan previews, and a gray desk outside the page. Input is pumped every
-// 64 rows (work_pump, common.h).
+// Draws the visible page into a screen rect: bilinear sampling for grayscale frames (below 100% on a
+// paper of lines alone, the paper drawn at the screen's scale and the ink sampled over it: view_rules),
+// nearest-neighbor during live fast (DU) pinch/pan previews, and a gray desk outside the page. Input is
+// pumped every 64 rows (work_pump, common.h).
 fn blit_view(a: &mut App, r: Rect) {
     let top = status_reserved(a);
     let r = rect_intersect(r, Rect { x: 0, y: top, w: a.w, h: a.h - top ,
         },
     );
+    let dpi = a.dpi;
+    let rules = if rect_is_empty(r) { None } else { view_rules(ed(a), dpi) };
     let App { screen, ed, .. } = a;
     let s = ed.as_deref().unwrap();
     if s.fast_blit {
         blit_canvas_fast(screen, &s.page_canvas, s.zoom, s.ox, s.oy, r);
+    } else if let (Some(k), Some(paper)) = (rules, s.paper.px.as_deref()) {
+        blit_canvas_ruled(screen, &s.page_canvas, paper, s.paper.stride, k, dpi, s.zoom, s.ox, s.oy, r);
     } else {
         blit_canvas(screen, &s.page_canvas, s.zoom, s.ox, s.oy, r);
     }
+}
+
+/// The least zoom a view draws a paper of lines at its own scale (view_rules). The views below 100% are the whole
+/// page sideways (0.75 on the Kindle, 0.77 for a 1860x2480 page on a screen of 2560x1920), a notebook from a
+/// larger screen fitted upright, and the pinches between them and 100%; under half, the lines would crowd
+/// (Seyes's 2 mm is 12 px there), and the page is sampled as at any other zoom.
+const RULES_MIN_ZOOM: f32 = 0.5;
+
+// Whether the view draws the open page's paper at the screen's scale (blit_canvas_ruled, #308), and which
+// paper: a final frame (not a pinch's fast one) below 100% (to RULES_MIN_ZOOM), the open page drawn in the
+// page canvas on a paper of lines alone (paper_view_lines), and its paper alone (s.paper, page_paper) current
+// for it. That is made here when it is not, unless a stroke is being drawn (an erase stroke's brush holds
+// it): the first such frame of a paper or a page size draws a page of paper (10-40 ms on the Kindle). None:
+// the view samples the page as it always has.
+fn view_rules(s: &mut EditorState, dpi: f32) -> Option<PaperKind> {
+    if s.fast_blit || !(RULES_MIN_ZOOM..1.0).contains(&s.zoom) {
+        return None;
+    }
+    let k = s.open_page()?.paper;
+    let pc = &s.page_canvas;
+    if !paper_view_lines(k) || pc.px.is_empty() || s.canvas_page != s.open_page_ref() || pc.w != s.pgw || pc.h != s.pgh {
+        return None;
+    }
+    let current = |s: &EditorState| s.paper.px.is_some() && s.paper.w == s.pgw && s.paper.h == s.pgh && s.paper_k == k && !s.paper_stale;
+    if !current(s) && (s.cur.is_some() || !page_paper(s, dpi) || !current(s)) {
+        return None;
+    }
+    Some(k)
+}
+
+// The screen columns (or rows) [first, end) a view samples a page n px across from, as blit_canvas samples it:
+// those whose sample, floor((s + 0.5) / zoom + o - 0.5) worked out in f32 as blit_canvas works it out, falls in
+// -1..n (its desk is outside them; -1 is the page's edge pixel again).
+fn view_span(zoom: f32, o: f32, n: i32) -> (i32, i32) {
+    let at = |s: i32| ((s as f32 + 0.5) / zoom + o - 0.5).floor() as i32;
+    // the first s whose sample is lim or more (it never falls as s grows)
+    let first = |lim: i32| {
+        let (mut lo, mut hi) = (-(1 << 22), 1 << 22);
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if at(mid) >= lim {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        lo
+    };
+    (first(-1), first(n))
+}
+
+// blit_canvas for a page on a paper of lines alone, below 100% (view_rules, #308): the paper drawn on the screen
+// at the screen's scale (paper_render_view), every line on whole pixels at its page width and gray, and the page's
+// ink sampled over it (blit_over_paper). The desk is blit_canvas's, and so is all of r for a paper drawn otherwise.
+fn blit_canvas_ruled(screen: &mut Canvas, pc: &Canvas, paper: &[u8], pstride: i32, k: PaperKind, dpi: f32, zoom: f32, ox: f32, oy: f32, r: Rect) {
+    if rect_is_empty(r) {
+        return;
+    }
+    if pc.w <= 0 || pc.h <= 0 || zoom <= 0.0 || pstride < pc.w || paper.len() < pstride as usize * pc.h as usize {
+        blit_canvas(screen, pc, zoom, ox, oy, r);
+        return;
+    }
+    let (x0, x1) = view_span(zoom, ox, pc.w);
+    let (y0, y1) = view_span(zoom, oy, pc.h);
+    let view = PaperView { zoom, ox, oy, foot: Rect::new(x0, y0, x1 - x0, y1 - y0) };
+    if !paper_render_view(screen, k, pc.w, pc.h, dpi, view, r) {
+        blit_canvas(screen, pc, zoom, ox, oy, r);
+        return;
+    }
+    blit_over_paper(screen, pc, paper, pstride, zoom, ox, oy, r);
+}
+
+// What page pixel p over its paper q shows over v, the paper drawn at that screen pixel (blit_over_paper), k the
+// darkest ink among the pixel's taps. Ink darkens toward its gray (canvas_deposit_px), and erasing lightens back
+// toward the paper, never past it: p < q is ink of gray k (at most p) over (q - p) / (q - k) of the pixel, laid
+// over v the same way, darkening only. p == q is the paper alone, or ink no darker than the paper under it, which
+// a deposit leaves as it was: with ink as dark as k beside it (k at least q) it is taken to be there, hidden under
+// q (a highlighter's 110 under Seyes's strong lines, 68) and showing over a lighter v. Where v is q, p comes back.
+fn rules_tap(p: u8, q: u8, k: u8, v: u8) -> u8 {
+    if p >= q {
+        return if q <= k { v.min(k) } else { v };
+    }
+    // (k is at most p for a tap that weighs; one that does not is kept inside the arithmetic)
+    let k = k.min(p);
+    if v <= k {
+        return v;
+    }
+    let (p, q, k, v) = (p as u32, q as u32, k as u32, v as u32);
+    (v - ((v - k) * (q - p) + (q - k) / 2) / (q - k)) as u8
+}
+
+// One screen pixel of blit_over_paper: v the paper drawn there, p and q the page and its paper at the bilinear's
+// four taps (top left, top right, bottom left, bottom right; the bottom ones the top ones again where the page's
+// rows are one), wf and wy blit_canvas's weights. The taps that weigh (the right ones unless wf is 0, the bottom
+// ones if `bottom`) decide: the paper alone keeps v; a tap lighter than its paper (nothing a pen draws makes one)
+// gives blit_canvas's value; ink gives each tap over v (rules_tap), mixed as blit_canvas mixes.
+#[inline]
+fn over_paper_px(v: u8, p: [u8; 4], q: [u8; 4], wf: u32, wy: u32, bottom: bool) -> u8 {
+    let weighs = [true, wf != 0, bottom, bottom && wf != 0];
+    let mut ink: Option<u8> = None;
+    let mut lighter = false;
+    for i in 0..4 {
+        if weighs[i] {
+            if p[i] < q[i] {
+                ink = Some(ink.map_or(p[i], |k| k.min(p[i])));
+            } else if p[i] > q[i] {
+                lighter = true;
+            }
+        }
+    }
+    let u = match (ink, lighter) {
+        (None, false) => return v,
+        (Some(k), false) => [0, 1, 2, 3].map(|i| rules_tap(p[i], q[i], k, v)),
+        (_, true) => p,
+    };
+    let (iwf, iwy) = (255 - wf, 255 - wy);
+    let t = u[0] as u32 * iwf + u[1] as u32 * wf;
+    let b = u[2] as u32 * iwf + u[3] as u32 * wf;
+    ((t * iwy + b * wy + 32512) / 65025) as u8
+}
+
+// The ink of page canvas pc, whose paper alone is `paper` (row stride pstride), sampled over the paper
+// blit_canvas_ruled drew on the screen over r, with blit_canvas's taps and weights. A screen row whose taps' page
+// rows are their paper over the columns it reads keeps the drawn paper whole; in another, the pixels whose taps
+// meet the columns where those rows differ from it are worked out (over_paper_px), the rest keep it. The desk is
+// blit_canvas's. Input is pumped every 64 rows.
+fn blit_over_paper(screen: &mut Canvas, pc: &Canvas, paper: &[u8], pstride: i32, zoom: f32, ox: f32, oy: f32, r: Rect) {
+    let w = r.w as usize;
+    let (mut ix, mut wx) = BLIT_SCRATCH.with(|cell| {
+        let mut g = cell.borrow_mut();
+        (std::mem::take(&mut g.ix), std::mem::take(&mut g.wx))
+    });
+    ix.resize(w, 0);
+    wx.resize(w, 0);
+    for i in 0..w {
+        let fx = ((r.x + i as i32) as f32 + 0.5) / zoom + ox - 0.5;
+        let x = fx.floor() as i32;
+        ix[i] = x;
+        wx[i] = ((fx - x as f32) * 255.0) as u8;
+    }
+    let mut desk_l = 0usize;
+    while desk_l < w && ix[desk_l] < -1 {
+        desk_l += 1;
+    }
+    let mut desk_r = w;
+    while desk_r > desk_l && ix[desk_r - 1] >= pc.w {
+        desk_r -= 1;
+    }
+    let (ps, qs) = (pc.stride as usize, pstride as usize);
+    // the page's columns the row's pixels read
+    let (lo, hi) = if desk_l < desk_r { (clampi(ix[desk_l], 0, pc.w - 1) as usize, clampi(ix[desk_r - 1] + 1, 0, pc.w - 1) as usize) } else { (0, 0) };
+    // the first and the last of them where page row y is not its paper
+    let differs = |y: usize| -> Option<(usize, usize)> {
+        let a = &pc.px[y * ps + lo..=y * ps + hi];
+        let b = &paper[y * qs + lo..=y * qs + hi];
+        if a == b {
+            return None;
+        }
+        let first = a.iter().zip(b).position(|(p, q)| p != q)?;
+        let end = a.iter().zip(b).rposition(|(p, q)| p != q)?;
+        Some((lo + first, lo + end))
+    };
+    for y in r.y..r.y + r.h {
+        let dst_off = y as usize * screen.stride as usize + r.x as usize;
+        let row = &mut screen.px[dst_off..dst_off + w];
+        let fy = (y as f32 + 0.5) / zoom + oy - 0.5;
+        let py = fy.floor() as i32;
+        if py < -1 || py >= pc.h {
+            row.fill(205);
+        } else {
+            row[..desk_l].fill(205);
+            row[desk_r..].fill(205);
+            let wy = ((fy - py as f32) * 255.0) as u32;
+            let py0 = clampi(py, 0, pc.h - 1) as usize;
+            let py1 = clampi(py + 1, 0, pc.h - 1) as usize;
+            let bottom = wy != 0 && py1 != py0;
+            let span = match (differs(py0), if bottom { differs(py1) } else { None }) {
+                (None, None) => None,
+                (Some(d), None) | (None, Some(d)) => Some(d),
+                (Some(a), Some(b)) => Some((a.0.min(b.0), a.1.max(b.1))),
+            };
+            if let Some((dl, dh)) = span {
+                let (p0, p1, q0, q1) = (py0 * ps, py1 * ps, py0 * qs, py1 * qs);
+                for i in desk_l..desk_r {
+                    let x = ix[i];
+                    let xa = clampi(x, 0, pc.w - 1) as usize;
+                    let xb = clampi(x + 1, 0, pc.w - 1) as usize;
+                    if xb < dl || xa > dh {
+                        continue;
+                    }
+                    let p = [pc.px[p0 + xa], pc.px[p0 + xb], pc.px[p1 + xa], pc.px[p1 + xb]];
+                    let q = [paper[q0 + xa], paper[q0 + xb], paper[q1 + xa], paper[q1 + xb]];
+                    row[i] = over_paper_px(row[i], p, q, wx[i] as u32, wy, bottom);
+                }
+            }
+        }
+        if ((y - r.y) & 63) == 63 {
+            work_pump();
+        }
+    }
+    BLIT_SCRATCH.with(|cell| {
+        let mut g = cell.borrow_mut();
+        g.ix = ix;
+        g.wx = wx;
+    });
 }
 
 // Reusable per-row scratch buffers for separable bilinear blit_canvas (replaces a 40 KB stack
@@ -15738,6 +15948,275 @@ mod tests {
         let top = at(32, 24) * (255 - w) + at(33, 24) * w;
         let bot = at(32, 25) * (255 - w) + at(33, 25) * w;
         assert_eq!(a.screen.px[24 * 64 + 32] as u32, (top * (255 - w) + bot * w + 32512) / 65025);
+    }
+
+    // The editor on an aw x ah screen with page 1 of a notebook of pw x ph pages on paper k open and drawn,
+    // resting as a turn leaves it (sideways, the whole page: landscape_fit, the default).
+    fn ruled_app(aw: i32, ah: i32, pw: i32, ph: i32, k: PaperKind) -> App {
+        paper_set_panel_ppi(0.0, 300.0);
+        let mut a = app(aw, ah, pw, ph);
+        a.scr = ScreenId::Editor;
+        a.settings.status_on = false;
+        a.settings.landscape_fit = true;
+        let s = ed(&mut a);
+        nav_init(&mut s.nav);
+        s.open = true;
+        s.nb.page_ids = vec![1];
+        let i = s.entry_for(1).unwrap();
+        s.hist[i].page = Some(page_new(pw, ph, k));
+        s.page = Some(1);
+        assert_eq!(canvas_init(&mut s.page_canvas, pw, ph), 0);
+        render_page_full(&mut a);
+        view_reset(&mut a);
+        a
+    }
+
+    // The runs of pixels darker than white along a line of them (the rulings it crosses), as the panel shows them
+    // when `cut` (16 grays: the low four bits dropped).
+    fn dark_runs(vals: impl Iterator<Item = u8>, cut: bool) -> Vec<Vec<u8>> {
+        let mut runs = vec![];
+        let mut run = vec![];
+        for v in vals.map(|v| if cut { (v >> 4) * 17 } else { v }) {
+            if v < 255 {
+                run.push(v);
+            } else if !run.is_empty() {
+                runs.push(std::mem::take(&mut run));
+            }
+        }
+        if !run.is_empty() {
+            runs.push(run);
+        }
+        runs
+    }
+
+    // How much darker than white a run is in all, and the heaviest of a set of runs against the lightest.
+    fn run_ink(r: &[u8]) -> u32 {
+        r.iter().map(|&v| 255 - v as u32).sum()
+    }
+    fn ink_spread(runs: &[&Vec<u8>]) -> f32 {
+        let inks = runs.iter().map(|r| run_ink(r));
+        inks.clone().max().unwrap() as f32 / inks.min().unwrap() as f32
+    }
+
+    #[test]
+    fn a_view_below_100_percent_draws_every_ruling_alike() {
+        // Seyes sideways at the whole page (#308): a Kindle page on the Kindle (0.75), and on a screen of 2560x1920
+        // (0.77), and a 1920x2560 page there (0.75). Sampled from the page, as every view was before, each line
+        // fell at its own fraction of a pixel: the inner lines in four shapes or more, a third heavier one to the
+        // next once cut to the panel's 16 grays. Drawn at the screen's scale, every inner line is the page's two
+        // rows of 136, every strong line its three of 68, every vertical its two columns of 119.
+        for (aw, ah, pw, ph, zoom) in [(2480, 1860, 1860, 2480, 0.75f32), (2560, 1920, 1860, 2480, 1920.0 / 2480.0), (2560, 1920, 1920, 2560, 0.75)] {
+            let mut a = ruled_app(aw, ah, pw, ph, PAPER_SEYES);
+            let whole = Rect::new(0, 0, aw, ah);
+            assert_eq!(ed_ref(&a).zoom, zoom);
+            blit_view(&mut a, whole);
+            assert!(ed_ref(&a).paper.px.is_some(), "the view made the page's paper alone");
+            let s = ed_ref(&a);
+            let ruled = a.screen.clone();
+            let mut sampled = a.screen.clone();
+            blit_canvas(&mut sampled, &s.page_canvas, s.zoom, s.ox, s.oy, whole);
+            let (sx, sy) = (|v: f32| ((v - s.ox) * s.zoom) as i32, |v: f32| ((v - s.oy) * s.zoom) as i32);
+            for cut in [false, true] {
+                // Down a band of columns left of the margin, where the horizontal lines cross nothing; each column
+                // of the band alike.
+                let across = |c: &Canvas| {
+                    let col = |x: i32| dark_runs((0..ah).map(|y| c.px[(y * c.stride + x) as usize]), cut);
+                    let runs = col(sx(60.0));
+                    assert!((sx(60.0)..sx(300.0)).all(|x| col(x) == runs));
+                    runs
+                };
+                // Along a band of rows in the first 2 mm below the first strong line, where the verticals and the
+                // margin cross nothing.
+                let first = mm_to_px(20.0, 300.0);
+                let down = |c: &Canvas| {
+                    let row = |y: i32| dark_runs((sx(5.0)..sx(pw as f32 - 5.0)).map(|x| c.px[(y * c.stride + x) as usize]), cut);
+                    let (y0, y1) = (sy(first + 7.0), sy(first + 19.0));
+                    let runs = row(y0);
+                    assert!(y1 > y0 && (y0..y1).all(|y| row(y) == runs));
+                    runs
+                };
+                let (h, v) = (across(&ruled), down(&ruled));
+                let (strong, faint): (Vec<_>, Vec<_>) = h.iter().partition(|r| *r.iter().min().unwrap() < 100);
+                let (margin, verticals): (Vec<_>, Vec<_>) = v.iter().partition(|r| *r.iter().min().unwrap() < 60);
+                assert!(faint.len() >= 60 && strong.len() >= 20 && verticals.len() >= 14 && margin.len() == 1, "{aw}x{ah}: {} {} {} {}", faint.len(), strong.len(), verticals.len(), margin.len());
+                assert!(faint.iter().all(|r| **r == [136, 136]), "{aw}x{ah} cut {cut}: {faint:?}");
+                assert!(strong.iter().all(|r| **r == [68, 68, 68]), "{aw}x{ah} cut {cut}: {strong:?}");
+                assert!(verticals.iter().all(|r| **r == [119, 119]), "{aw}x{ah} cut {cut}: {verticals:?}");
+                assert!(margin.iter().all(|r| **r == [34, 34, 34]), "{aw}x{ah} cut {cut}: {margin:?}");
+                assert_eq!((ink_spread(&faint), ink_spread(&verticals)), (1.0, 1.0));
+                // The same lines sampled from the page: the measure sees what the owner saw.
+                let (h, v) = (across(&sampled), down(&sampled));
+                let faint: Vec<_> = h.iter().filter(|r| *r.iter().min().unwrap() >= 100).collect();
+                let verticals: Vec<_> = v.iter().filter(|r| *r.iter().min().unwrap() >= 60).collect();
+                let least = if cut { 1.3 } else { 1.2 };
+                assert!(ink_spread(&faint) > least && ink_spread(&verticals) > least, "{aw}x{ah} cut {cut}: {} {}", ink_spread(&faint), ink_spread(&verticals));
+            }
+            // The desk is where blit_canvas has it: around the footprint view_span gives, which the drawn paper
+            // fills (its grays alone, none of them the desk's 205).
+            let (x0, x1) = view_span(s.zoom, s.ox, pw);
+            let (y0, y1) = view_span(s.zoom, s.oy, ph);
+            let mut white = Canvas::default();
+            assert_eq!(canvas_init(&mut white, pw, ph), 0);
+            let mut desk = Canvas::default();
+            assert_eq!(canvas_init(&mut desk, aw, ah), 0);
+            blit_canvas(&mut desk, &white, s.zoom, s.ox, s.oy, whole);
+            for y in 0..ah {
+                for x in 0..aw {
+                    let i = (y * aw + x) as usize;
+                    let inside = x >= x0 && x < x1 && y >= y0 && y < y1;
+                    assert_eq!(desk.px[i] == 205, !inside, "{x},{y}");
+                    assert_eq!(ruled.px[i] == 205, !inside, "{x},{y}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ink_over_white_in_both_papers_is_sampled_as_ever() {
+        // blit_over_paper over a paper drawn white, of a page whose paper is white: blit_canvas's pixels, at every
+        // view of blit_canvas_matches_reference_and_fast_blit_aligns, whole and in parts.
+        let mut pc = Canvas::default();
+        assert_eq!(canvas_init(&mut pc, 64, 48), 0);
+        for (i, p) in pc.px.iter_mut().enumerate() {
+            *p = if i % 5 == 0 { 255 } else if i % 7 == 0 { 0 } else { ((i * 37) % 251) as u8 };
+        }
+        let paper = vec![255u8; 64 * 48];
+        for (zoom, ox, oy) in [(0.5f32, -32.0f32, -24.0f32), (0.73, -10.5, -5.25), (0.75, -9.3, 2.6), (1.0, 0.0, 0.0), (1.0, 12.0, 8.0), (1.0, -4.0, -3.0), (1.25, 10.3, 6.7), (2.3, 20.1, 15.9), (4.0, 48.0, 36.0)] {
+            let mut want = Canvas::default();
+            assert_eq!(canvas_init(&mut want, 64, 48), 0);
+            blit_canvas(&mut want, &pc, zoom, ox, oy, Rect::new(0, 0, 64, 48));
+            for parts in [&[Rect::new(0, 0, 64, 48)][..], &[Rect::new(0, 0, 13, 48), Rect::new(13, 0, 51, 17), Rect::new(13, 17, 51, 31)]] {
+                let mut got = Canvas::default();
+                assert_eq!(canvas_init(&mut got, 64, 48), 0);
+                for &r in parts {
+                    blit_over_paper(&mut got, &pc, &paper, 64, zoom, ox, oy, r);
+                }
+                assert_eq!(got.px, want.px, "zoom={zoom} ox={ox} oy={oy}");
+            }
+        }
+    }
+
+    #[test]
+    fn ink_over_a_ruled_view_and_its_parts() {
+        // On a Seyes page sideways on a screen of 2560x1920: black over the margin and the lines, a highlighter's
+        // gray across every kind of line, a stroke's soft edge fading out across the page, and a page pixel lighter
+        // than its paper, as deposits and nothing else would leave them.
+        let mut a = ruled_app(2560, 1920, 1860, 2480, PAPER_SEYES);
+        let whole = Rect::new(0, 0, 2560, 1920);
+        {
+            let pc = &mut ed(&mut a).page_canvas;
+            let w = pc.stride as usize;
+            for y in 300..700 {
+                for x in 200..600 {
+                    pc.px[y * w + x] = pc.px[y * w + x].min(20);
+                }
+            }
+            for y in 900..1300 {
+                for x in 250..900 {
+                    pc.px[y * w + x] = pc.px[y * w + x].min(110);
+                }
+            }
+            for y in 1500..1560 {
+                for x in 100..1700 {
+                    canvas_deposit_px(pc, x as i32, y as i32, 12, (x - 100) as f32 / 1600.0);
+                }
+            }
+            // (a faint line's rows are 2008 and 2009)
+            pc.px[2008 * w + 1000] = 255;
+            pc.px[2009 * w + 1001] = 200;
+        }
+        blit_view(&mut a, whole);
+        let composed = a.screen.px.clone();
+        // the view's parts, composed one by one, come out as the whole
+        canvas_fill(&mut a.screen, whole, 0);
+        for y in (0..1920).step_by(61) {
+            for x in (0..2560).step_by(97) {
+                blit_view(&mut a, Rect::new(x, y, 97, 61));
+            }
+        }
+        assert!(a.screen.px == composed);
+        // Inside the blocks (where every tap is), black is its gray, and the highlighter's gray is over the paper
+        // drawn at the screen's scale, the lines darker than it (the strong ones and the margin) showing through.
+        let s = ed_ref(&a);
+        let (x0, x1) = view_span(s.zoom, s.ox, 1860);
+        let (y0, y1) = view_span(s.zoom, s.oy, 2480);
+        let mut drawn = Canvas::default();
+        assert_eq!(canvas_init(&mut drawn, 2560, 1920), 0);
+        let view = PaperView { zoom: s.zoom, ox: s.ox, oy: s.oy, foot: Rect::new(x0, y0, x1 - x0, y1 - y0) };
+        assert!(paper_render_view(&mut drawn, PAPER_SEYES, 1860, 2480, 300.0, view, whole));
+        let (sx, sy) = (|v: i32| ((v as f32 - s.ox) * s.zoom) as i32, |v: i32| ((v as f32 - s.oy) * s.zoom) as i32);
+        let (mut black, mut light) = (0, 0);
+        for y in 0..1920 {
+            for x in 0..2560 {
+                let i = (y * 2560 + x) as usize;
+                if x > sx(201) && x < sx(598) && y > sy(301) && y < sy(698) {
+                    assert_eq!(composed[i], 20, "{x},{y}");
+                    black += 1;
+                }
+                if x > sx(251) && x < sx(898) && y > sy(901) && y < sy(1298) {
+                    assert_eq!(composed[i], drawn.px[i].min(110), "{x},{y}");
+                    light += (drawn.px[i] < 110) as i32;
+                }
+            }
+        }
+        assert!(black > 80_000 && light > 4_000, "{black} {light}");
+    }
+
+    #[test]
+    fn views_the_ruled_view_leaves_as_they_were() {
+        // 100%: the page as it is.
+        let whole = |a: &App| Rect::new(0, 0, a.w, a.h);
+        let mut a = ruled_app(1860, 2480, 1860, 2480, PAPER_SEYES);
+        let r = whole(&a);
+        blit_view(&mut a, r);
+        assert!(a.screen.px == ed_ref(&a).page_canvas.px && ed_ref(&a).paper.px.is_none());
+        let sampled = |a: &App| {
+            let s = ed_ref(a);
+            let mut c = a.screen.clone();
+            blit_canvas(&mut c, &s.page_canvas, s.zoom, s.ox, s.oy, whole(a));
+            c.px
+        };
+        // Sideways: a paper of round marks, a pinch's fast frames, a pinch in past 100% and one out under half
+        // (a page from a much larger screen) are sampled from the page as ever, and so is a page whose paper alone
+        // cannot be made now (a stroke is being drawn).
+        let mut a = ruled_app(2480, 1860, 1860, 2480, PAPER_DOTS);
+        let r = whole(&a);
+        blit_view(&mut a, r);
+        assert!(a.screen.px == sampled(&a));
+        let mut a = ruled_app(2480, 1860, 1860, 2480, PAPER_SEYES);
+        ed(&mut a).fast_blit = true;
+        let r = whole(&a);
+        blit_view(&mut a, r);
+        let s = ed_ref(&a);
+        let mut fast = a.screen.clone();
+        blit_canvas_fast(&mut fast, &s.page_canvas, s.zoom, s.ox, s.oy, whole(&a));
+        assert!(a.screen.px == fast.px && s.paper.px.is_none());
+        ed(&mut a).fast_blit = false;
+        ed(&mut a).zoom = 1.5;
+        view_clamp(&mut a);
+        let r = whole(&a);
+        blit_view(&mut a, r);
+        assert!(a.screen.px == sampled(&a) && ed_ref(&a).paper.px.is_none());
+        let mut a = ruled_app(2480, 1860, 3720, 4960, PAPER_SEYES);
+        assert!(ed_ref(&a).zoom < RULES_MIN_ZOOM);
+        let r = whole(&a);
+        blit_view(&mut a, r);
+        assert!(a.screen.px == sampled(&a));
+        let mut a = ruled_app(2480, 1860, 1860, 2480, PAPER_SEYES);
+        ed(&mut a).cur = Some(stroke_new(TOOL_PENCIL, &ToolParams::default(), 1));
+        let r = whole(&a);
+        blit_view(&mut a, r);
+        assert!(a.screen.px == sampled(&a) && ed_ref(&a).paper.px.is_none());
+        // Once made, the paper alone serves the frames of a stroke too.
+        ed(&mut a).cur = None;
+        let r = whole(&a);
+        blit_view(&mut a, r);
+        let ruled = a.screen.px.clone();
+        assert!(ruled != sampled(&a));
+        ed(&mut a).cur = Some(stroke_new(TOOL_PENCIL, &ToolParams::default(), 1));
+        let r = whole(&a);
+        blit_view(&mut a, r);
+        assert!(a.screen.px == ruled);
     }
 
     // A drag of the panel's grip moves the panel itself where the finger takes it, drawn in black and

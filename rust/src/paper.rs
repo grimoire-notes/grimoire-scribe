@@ -373,22 +373,121 @@ fn thick(px300: f32, dpi: f32) -> i32 {
 // and `fmla(a, b, c)` here rounds it as the C build does on each target: PORTING.md, Floating point.
 // Of a sum of two products clang fuses the left one; a difference `c - a * b` is `fmla(-a, b, c)`.)
 
-fn ruled(c: &mut Canvas, pitch_mm: f32, dpi: f32, margin: bool) {
-    let w = c.w;
-    let h = c.h;
+// ---- the papers drawn of lines alone, on a page or through a view (#308) ----
+
+/// Where a view shows a page (the editor's resample of the page canvas): a page point (x, y) lands on the screen
+/// at ((x - ox) * zoom, (y - oy) * zoom), and `foot` is the screen pixels the resample takes from the page, its
+/// edge pixels included (around it is the desk).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PaperView {
+    pub zoom: f32,
+    pub ox: f32,
+    pub oy: f32,
+    pub foot: Rect,
+}
+
+/// The papers drawn of axis-aligned lines alone (no round marks, no glyphs), which a view below 100% draws at
+/// its own scale (paper_render_view).
+pub const PAPER_LINE_KINDS: [PaperKind; 10] = [
+    PAPER_NARROW,
+    PAPER_MEDIUM,
+    PAPER_WIDE,
+    PAPER_NARROW_NM,
+    PAPER_MEDIUM_NM,
+    PAPER_WIDE_NM,
+    PAPER_GRID,
+    PAPER_MUSIC,
+    PAPER_RETICLE,
+    PAPER_SEYES,
+];
+
+/// A paper paper_render_view draws (PAPER_LINE_KINDS).
+pub fn paper_view_lines(k: PaperKind) -> bool {
+    PAPER_LINE_KINDS.contains(&k)
+}
+
+// What a line paper's lines are drawn on: the page canvas at page size (no view: each line as it has always
+// been drawn, call for call), or a screen through a view, where every line lands on whole screen pixels as wide
+// and as gray as it is on the page. A view below 100% used to shrink the page, lines and all, and each line fell
+// at its own fraction of a screen pixel: Seyes's inner lines came out in four shapes at 0.75, the heaviest a
+// third darker than the lightest once the panel cut them to 16 grays.
+struct Rules<'a> {
+    c: &'a mut Canvas,
+    /// the page's size (the canvas's on the page)
+    w: i32,
+    h: i32,
+    view: Option<PaperView>,
+}
+
+impl<'a> Rules<'a> {
+    fn page(c: &'a mut Canvas) -> Self {
+        let (w, h) = (c.w, c.h);
+        Rules { c, w, h, view: None }
+    }
+    // A page coordinate on the screen, by one rounding for all of them, so lines that meet or end on one
+    // another on the page do on the screen. The page's edges are the footprint's: a line across the page
+    // reaches the desk on both sides.
+    fn at(v: i32, n: i32, o: f32, zoom: f32, lo: i32, hi: i32) -> i32 {
+        if v <= 0 {
+            lo
+        } else if v >= n {
+            hi
+        } else {
+            (((v as f64 - o as f64) * zoom as f64).round() as i32).clamp(lo, hi)
+        }
+    }
+    fn x(&self, v: i32) -> i32 {
+        self.view.map_or(v, |m| Self::at(v, self.w, m.ox, m.zoom, m.foot.x, m.foot.x + m.foot.w))
+    }
+    fn y(&self, v: i32) -> i32 {
+        self.view.map_or(v, |m| Self::at(v, self.h, m.oy, m.zoom, m.foot.y, m.foot.y + m.foot.h))
+    }
+    fn hline(&mut self, x0: i32, x1: i32, y: i32, t: i32, gray: u8) {
+        let (x0, x1, y) = (self.x(x0), self.x(x1), self.y(y));
+        canvas_hline(self.c, x0, x1, y, t, gray);
+    }
+    fn vline(&mut self, x: i32, y0: i32, y1: i32, t: i32, gray: u8) {
+        let (x, y0, y1) = (self.x(x), self.y(y0), self.y(y1));
+        canvas_vline(self.c, x, y0, y1, t, gray);
+    }
+}
+
+// The lines of a paper of PAPER_LINE_KINDS onto r; false, drawing nothing, for any other kind.
+fn lines(r: &mut Rules, k: PaperKind, dpi: f32) -> bool {
+    match k {
+        // Spread ~30% apart so the three are clearly different on screen (the stationery values,
+        // 6.35 / 7.14 / 8.73 mm, looked nearly identical between narrow and medium).
+        PAPER_NARROW => ruled(r, NARROW_MM, dpi, true),
+        PAPER_MEDIUM => ruled(r, MEDIUM_MM, dpi, true),
+        PAPER_WIDE => ruled(r, WIDE_MM, dpi, true),
+        PAPER_NARROW_NM => ruled(r, NARROW_MM, dpi, false),
+        PAPER_MEDIUM_NM => ruled(r, MEDIUM_MM, dpi, false),
+        PAPER_WIDE_NM => ruled(r, WIDE_MM, dpi, false),
+        PAPER_MUSIC => music(r, dpi),
+        PAPER_GRID => grid(r, dpi),
+        PAPER_RETICLE => reticle(r, dpi),
+        PAPER_SEYES => seyes(r, dpi),
+        _ => return false,
+    }
+    true
+}
+
+fn ruled(r: &mut Rules, pitch_mm: f32, dpi: f32, margin: bool) {
+    let w = r.w;
+    let h = r.h;
     let line_t = thick(2.0, dpi);
     let pitch = mm_to_px(pitch_mm, dpi);
     let first = mm_to_px(22.0, dpi);
     let bottom = h - px_mm(10.0, dpi);
     // Header rule: slightly heavier.
-    canvas_hline(c, 0, w, lrintf(first), thick(3.0, dpi), 150);
+    r.hline(0, w, lrintf(first), thick(3.0, dpi), 150);
     let mut i = 1;
     loop {
         let y = lrintf(fmla(pitch, i as f32, first));
         if y > bottom {
             break;
         }
-        canvas_hline(c, 0, w, y, line_t, 175);
+        r.hline(0, w, y, line_t, 175);
         i += 1;
     }
     if !margin {
@@ -396,17 +495,17 @@ fn ruled(c: &mut Canvas, pitch_mm: f32, dpi: f32, margin: bool) {
     }
     // Double hairline margin.
     let mx = px_mm(25.0, dpi);
-    canvas_vline(c, mx, 0, h, line_t, 140);
-    canvas_vline(c, mx + thick(7.0, dpi), 0, h, line_t, 140);
+    r.vline(mx, 0, h, line_t, 140);
+    r.vline(mx + thick(7.0, dpi), 0, h, line_t, 140);
 }
 
-fn music(c: &mut Canvas, dpi: f32) {
+fn music(r: &mut Rules, dpi: f32) {
     // 8 staves with roomy 2.7 mm staff spaces: written notes need far more room than printed.
     const STAVES: i32 = 8;
     // blank space between staves, in staff spaces
     const GAP_SPACES: f32 = 5.0;
-    let w = c.w;
-    let h = c.h;
+    let w = r.w;
+    let h = r.h;
     let top = mm_to_px(14.0, dpi);
     let bot = mm_to_px(12.0, dpi);
     let space = (h as f32 - top - bot) / fmla(STAVES as f32, 4.0, ((STAVES - 1) as f32) * GAP_SPACES);
@@ -418,10 +517,10 @@ fn music(c: &mut Canvas, dpi: f32) {
         let ytop = lrintf(y0);
         let ybot = lrintf(fmla(4.0f32, space, y0));
         for l in 0..5 {
-            canvas_hline(c, x0, x1, lrintf(fmla(l as f32, space, y0)), lt, 90);
+            r.hline(x0, x1, lrintf(fmla(l as f32, space, y0)), lt, 90);
         }
-        canvas_vline(c, x0, ytop, ybot + lt, lt, 90);
-        canvas_vline(c, x1 - lt, ytop, ybot + lt, lt, 90);
+        r.vline(x0, ytop, ybot + lt, lt, 90);
+        r.vline(x1 - lt, ytop, ybot + lt, lt, 90);
     }
 }
 
@@ -643,40 +742,40 @@ fn dots(c: &mut Canvas, dpi: f32) {
 }
 
 // 5 mm graph paper, every fifth line a little stronger.
-fn grid(c: &mut Canvas, dpi: f32) {
+fn grid(r: &mut Rules, dpi: f32) {
     let pitch = mm_to_px(5.0, dpi);
     let lt = thick(1.0, dpi);
     let lt5 = thick(2.0, dpi);
     let mut i = 0;
     loop {
         let x = lrintf(pitch * i as f32);
-        if x >= c.w {
+        if x >= r.w {
             break;
         }
-        let h = c.h;
-        canvas_vline(c, x, 0, h, if i % 5 != 0 { lt } else { lt5 }, if i % 5 != 0 { 200 } else { 170 });
+        let h = r.h;
+        r.vline(x, 0, h, if i % 5 != 0 { lt } else { lt5 }, if i % 5 != 0 { 200 } else { 170 });
         i += 1;
     }
     let mut j = 0;
     loop {
         let y = lrintf(pitch * j as f32);
-        if y >= c.h {
+        if y >= r.h {
             break;
         }
-        let w = c.w;
-        canvas_hline(c, 0, w, y, if j % 5 != 0 { lt } else { lt5 }, if j % 5 != 0 { 200 } else { 170 });
+        let w = r.w;
+        r.hline(0, w, y, if j % 5 != 0 { lt } else { lt5 }, if j % 5 != 0 { 200 } else { 170 });
         j += 1;
     }
 }
 
 // 5 mm cross grid (a reticle): a small cross at every crossing, placed as the dot grid's dots.
-fn reticle(c: &mut Canvas, dpi: f32) {
+fn reticle(r: &mut Rules, dpi: f32) {
     let pitch = mm_to_px(5.0, dpi);
     let arm = px_mm(0.9, dpi);
     let t = thick(2.0, dpi);
-    let ox = (c.w as f32 % pitch) / 2.0 + pitch / 2.0;
+    let ox = (r.w as f32 % pitch) / 2.0 + pitch / 2.0;
     let oy = mm_to_px(10.0, dpi);
-    let bottom = c.h as f32 - mm_to_px(8.0, dpi);
+    let bottom = r.h as f32 - mm_to_px(8.0, dpi);
     let mut j = 0;
     loop {
         let y = lrintf(fmla(j as f32, pitch, oy));
@@ -686,12 +785,12 @@ fn reticle(c: &mut Canvas, dpi: f32) {
         let mut i = 0;
         loop {
             let x = fmla(i as f32, pitch, ox);
-            if x > c.w as f32 - pitch / 2.0 {
+            if x > r.w as f32 - pitch / 2.0 {
                 break;
             }
             let xi = lrintf(x);
-            canvas_hline(c, xi - arm, xi + arm + 1, y, t, 140);
-            canvas_vline(c, xi, y - arm, y + arm + 1, t, 140);
+            r.hline(xi - arm, xi + arm + 1, y, t, 140);
+            r.vline(xi, y - arm, y + arm + 1, t, 140);
             i += 1;
         }
         j += 1;
@@ -781,9 +880,9 @@ const SEYES_VERTICAL: u8 = 119;
 // the margin line, darkest of all (it was 120, shown as 119: as dark as the strong lines now are)
 const SEYES_MARGIN: u8 = 34;
 
-fn seyes(c: &mut Canvas, dpi: f32) {
+fn seyes(r: &mut Rules, dpi: f32) {
     let dpi = dpi * seyes_scale();
-    let (w, h) = (c.w, c.h);
+    let (w, h) = (r.w, r.h);
     let step = mm_to_px(2.0, dpi);
     let first = mm_to_px(20.0, dpi);
     let bottom = h - px_mm(10.0, dpi);
@@ -798,10 +897,10 @@ fn seyes(c: &mut Canvas, dpi: f32) {
             break;
         }
         if i % 4 == 0 {
-            canvas_hline(c, 0, w, y, strong, SEYES_STRONG);
+            r.hline(0, w, y, strong, SEYES_STRONG);
             last = y;
         } else {
-            canvas_hline(c, 0, w, y, faint, SEYES_FAINT);
+            r.hline(0, w, y, faint, SEYES_FAINT);
         }
         i += 1;
     }
@@ -813,15 +912,15 @@ fn seyes(c: &mut Canvas, dpi: f32) {
         if x >= w {
             break;
         }
-        canvas_vline(c, x, top, last + 1, faint, SEYES_VERTICAL);
+        r.vline(x, top, last + 1, faint, SEYES_VERTICAL);
         k += 1;
     }
-    canvas_vline(c, margin, 0, h, strong, SEYES_MARGIN);
+    r.vline(margin, 0, h, strong, SEYES_MARGIN);
 }
 
 // Cornell notes: medium rule, a cue column on the left, a summary block at the bottom.
 fn cornell(c: &mut Canvas, dpi: f32) {
-    ruled(c, MEDIUM_MM, dpi, false);
+    ruled(&mut Rules::page(c), MEDIUM_MM, dpi, false);
     let lt = thick(3.0, dpi);
     let head = lrintf(mm_to_px(22.0, dpi));
     let sum = c.h - px_mm(52.0, dpi);
@@ -868,33 +967,24 @@ pub fn paper_render(c: &mut Canvas, k: PaperKind, region: Rect, dpi: f32) {
             qlog!("paper: an image paper drawn as blank paper, without its notebook's picture (page_paper_render draws it)");
         }
     }
-    match k {
-        // Spread ~30% apart so the three are clearly different on screen (the stationery values,
-        // 6.35 / 7.14 / 8.73 mm, looked nearly identical between narrow and medium).
-        PAPER_NARROW => ruled(c, NARROW_MM, dpi, true),
-        PAPER_MEDIUM => ruled(c, MEDIUM_MM, dpi, true),
-        PAPER_WIDE => ruled(c, WIDE_MM, dpi, true),
-        PAPER_NARROW_NM => ruled(c, NARROW_MM, dpi, false),
-        PAPER_MEDIUM_NM => ruled(c, MEDIUM_MM, dpi, false),
-        PAPER_WIDE_NM => ruled(c, WIDE_MM, dpi, false),
-        PAPER_MUSIC => music(c, dpi),
-        PAPER_GRAND => grand(c, dpi),
-        PAPER_TAB => tab(c, dpi),
-        PAPER_DOTS => dots(c, dpi),
-        PAPER_GRID => grid(c, dpi),
-        PAPER_CORNELL => cornell(c, dpi),
-        PAPER_BASS4 => bass_tab(c, 4, dpi),
-        PAPER_BASS5 => bass_tab(c, 5, dpi),
-        PAPER_BASS6 => bass_tab(c, 6, dpi),
-        PAPER_BASS7 => bass_tab(c, 7, dpi),
-        PAPER_RETICLE => reticle(c, dpi),
-        PAPER_ISO => iso(c, dpi),
-        PAPER_HEX => hex(c, dpi),
-        PAPER_SEYES => seyes(c, dpi),
-        _ => {
-            // anything else (a newer version's paper) stays blank
-            if let Some(m) = decode(k) {
-                music_custom(c, &m, dpi);
+    // (the papers of lines alone first: the ruled kinds, sheet music, graph, the cross grid and Seyes)
+    if !lines(&mut Rules::page(c), k, dpi) {
+        match k {
+            PAPER_GRAND => grand(c, dpi),
+            PAPER_TAB => tab(c, dpi),
+            PAPER_DOTS => dots(c, dpi),
+            PAPER_CORNELL => cornell(c, dpi),
+            PAPER_BASS4 => bass_tab(c, 4, dpi),
+            PAPER_BASS5 => bass_tab(c, 5, dpi),
+            PAPER_BASS6 => bass_tab(c, 6, dpi),
+            PAPER_BASS7 => bass_tab(c, 7, dpi),
+            PAPER_ISO => iso(c, dpi),
+            PAPER_HEX => hex(c, dpi),
+            _ => {
+                // anything else (a newer version's paper) stays blank
+                if let Some(m) = decode(k) {
+                    music_custom(c, &m, dpi);
+                }
             }
         }
     }
@@ -902,6 +992,28 @@ pub fn paper_render(c: &mut Canvas, k: PaperKind, region: Rect, dpi: f32) {
     // A whole page of paper is 10-40 ms on the Kindle, and the Paper sheet draws a dozen: the pens
     // are read after each (work_pump, common.h).
     work_pump();
+}
+
+/// paper_render through a view (PaperView, #308): the paper of kind k for a pgw x pgh page drawn onto the
+/// screen canvas c over region, inside view.foot, at the screen's scale. It is white there, and each line lands
+/// on whole screen pixels, as wide and as gray as on the page, placed by one rounding of its page coordinates.
+/// A pure function of (kind, page size, dpi, view, screen pixel), as paper_render is of the page's pixel, so a
+/// region drawn again matches the whole. It draws the papers of lines alone (paper_view_lines) and returns
+/// true; for any other kind it draws nothing and returns false. It draws inside c's bounds whatever c's clip,
+/// as the view's resample does, and leaves the clip as it was.
+pub fn paper_render_view(c: &mut Canvas, k: PaperKind, pgw: i32, pgh: i32, dpi: f32, view: PaperView, region: Rect) -> bool {
+    if !paper_view_lines(k) || pgw <= 0 || pgh <= 0 || view.zoom.is_nan() || view.zoom <= 0.0 {
+        return false;
+    }
+    let saved = c.clip;
+    canvas_set_clip(c, rect_intersect(region, view.foot));
+    if !rect_is_empty(c.clip) {
+        let clip = c.clip;
+        canvas_fill(c, clip, 255);
+        lines(&mut Rules { c, w: pgw, h: pgh, view: Some(view) }, k, dpi);
+    }
+    c.clip = saved;
+    true
 }
 
 #[cfg(test)]
@@ -1021,7 +1133,7 @@ mod tests {
         let mut c = Canvas::default();
         assert_eq!(canvas_init(&mut c, w, h), 0);
         canvas_fill(&mut c, Rect::new(0, 0, w, h), 255);
-        seyes(&mut c, dpi);
+        seyes(&mut Rules::page(&mut c), dpi);
         // the darkest value down a column between the verticals, in each 2 mm row band from the first line
         let x = (px_mm(30.0, dpi) + lrintf(mm_to_px(4.0, dpi))) as usize;
         let first = mm_to_px(20.0, dpi);
@@ -1035,6 +1147,79 @@ mod tests {
         assert!(SEYES_FAINT <= 136 && SEYES_STRONG < SEYES_VERTICAL && SEYES_VERTICAL < SEYES_FAINT);
         // (each one of the panel's 16 grays, so none is shown as a neighbour's)
         assert!([SEYES_FAINT, SEYES_VERTICAL, SEYES_STRONG, SEYES_MARGIN].iter().all(|g| g % 17 == 0) && SEYES_MARGIN < SEYES_STRONG);
+    }
+
+    // FNV-1a over a canvas's pixels
+    fn fnv(c: &Canvas) -> u64 {
+        c.px.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
+    }
+
+    #[test]
+    fn the_line_papers_draw_a_page_as_they_always_did() {
+        // A page's paper at page size, whole, as 2.2.0 drew it (#308 drew the lines through Rules): pages,
+        // exports, previews and kept drawings are made from it. Cornell is drawn on the ruled kinds' lines.
+        paper_set_panel_ppi(0.0, 300.0);
+        let kinds = [PAPER_NARROW, PAPER_MEDIUM, PAPER_WIDE, PAPER_MUSIC, PAPER_NARROW_NM, PAPER_MEDIUM_NM, PAPER_WIDE_NM, PAPER_GRID, PAPER_CORNELL, PAPER_RETICLE, PAPER_SEYES];
+        let want: [[u64; 11]; 2] = [
+            [0x61820c65941b09fd, 0x09e1522351ad0d9d, 0xf50f6f1eb6b2f75d, 0x7d0a1f88d05a335d, 0xe2dd71a8fc1eb551, 0x32b5eba3d7de0111, 0x26bf5e5641b3e911, 0x025b38ab74786992, 0xc2e6d68d19c5011a, 0x151f5fb79935c49f, 0x9dbffd4321094236],
+            [0x360d2d5e7e396091, 0x4c5430f05a4c7ad1, 0x9a4ababfda5a40f1, 0xd1b520db89e101c1, 0xa220e4fbb76059a5, 0x4cac312cfc1d19a5, 0xb2b56511baac99a5, 0x60318fe850e25375, 0x0c04f3a5309a1e5a, 0x2650ca8be8936b25, 0xacab7d54913cdda5],
+        ];
+        for (n, (w, h)) in [(1860, 2480), (1920, 2560)].into_iter().enumerate() {
+            for (i, k) in kinds.into_iter().enumerate() {
+                let mut c = Canvas::default();
+                assert_eq!(canvas_init(&mut c, w, h), 0);
+                paper_render(&mut c, k, Rect::new(0, 0, w, h), 300.0);
+                assert_eq!(fnv(&c), want[n][i], "kind {} at {w}x{h}", k.0);
+            }
+        }
+    }
+
+    #[test]
+    fn a_view_draws_the_line_papers_crisp_and_in_parts_as_whole() {
+        paper_set_panel_ppi(0.0, 300.0);
+        let (sw, sh) = (2560, 1920);
+        let view = PaperView { zoom: 1920.0 / 2480.0, ox: -723.333_3, oy: 0.0, foot: Rect::new(560, 0, 1440, 1920) };
+        for v in 0..PAPER_COUNT as u32 + 2 {
+            let k = if v < PAPER_COUNT as u32 { PaperKind(v) } else if v == PAPER_COUNT as u32 { music_default() } else { paper_image(PAPER_ROLE_TEMPLATE, 1) };
+            let mut c = Canvas::default();
+            assert_eq!(canvas_init(&mut c, sw, sh), 0);
+            canvas_fill(&mut c, Rect::new(0, 0, sw, sh), 7);
+            c.clip = Rect::new(0, 0, 10, 10);
+            let drew = paper_render_view(&mut c, k, 1860, 2480, 300.0, view, Rect::new(0, 0, sw, sh));
+            assert_eq!(c.clip, Rect::new(0, 0, 10, 10), "the clip is left as it was");
+            assert_eq!(drew, paper_view_lines(k), "kind {v:#x}");
+            assert_eq!(drew, PAPER_LINE_KINDS.contains(&k));
+            if !drew {
+                assert!(c.px.iter().all(|&g| g == 7), "kind {v:#x} drew nothing");
+                continue;
+            }
+            // nothing outside the footprint, and inside it only the grays the page's paper has: no gray between
+            let mut page = Canvas::default();
+            assert_eq!(canvas_init(&mut page, 1860, 2480), 0);
+            paper_render(&mut page, k, Rect::new(0, 0, 1860, 2480), 300.0);
+            let mut grays = [false; 256];
+            page.px.iter().for_each(|&g| grays[g as usize] = true);
+            for y in 0..sh {
+                for x in 0..sw {
+                    let g = c.px[(y * sw + x) as usize];
+                    if rect_contains(view.foot, x, y) {
+                        assert!(grays[g as usize], "kind {v} gray {g} at {x},{y}");
+                    } else {
+                        assert_eq!(g, 7);
+                    }
+                }
+            }
+            // drawn again in parts of odd sizes, it is the same
+            let mut parts = Canvas::default();
+            assert_eq!(canvas_init(&mut parts, sw, sh), 0);
+            canvas_fill(&mut parts, Rect::new(0, 0, sw, sh), 7);
+            for y in (0..sh).step_by(301) {
+                for x in (0..sw).step_by(277) {
+                    assert!(paper_render_view(&mut parts, k, 1860, 2480, 300.0, view, Rect::new(x, y, 277, 301)));
+                }
+            }
+            assert!(parts.px == c.px, "kind {v} in parts");
+        }
     }
 
     #[test]
@@ -1051,7 +1236,7 @@ mod tests {
             let mut c = Canvas::default();
             assert_eq!(canvas_init(&mut c, 1860, 2480), 0);
             canvas_fill(&mut c, Rect::new(0, 0, 1860, 2480), 255);
-            seyes(&mut c, 300.0);
+            seyes(&mut Rules::page(&mut c), 300.0);
             c
         };
         let plain = first_strong(&render());
