@@ -1200,9 +1200,21 @@ fn missing_box(st: &State, px: f32) -> (f32, Rect, i32) {
     (adv, Rect { x: inset, y: -h, w: (adv.round_ties_even() as i32 - 2 * inset).max(1), h }, t)
 }
 
+/// One character of a text as `layout` measures it: what it adds to the pen, so that a part of the text can be
+/// measured again by adding the same numbers in the same order (`Word`), without laying it out again.
+#[derive(Clone, Copy, Debug)]
+enum Step {
+    /// a character that takes no room: the kerning goes on from the character before it
+    Unseen,
+    /// the box drawn for a character no face has: its advance; nothing is kerned against it
+    Boxed(f32),
+    /// a glyph: the kerning added before it when it follows a character of its face, and its advance
+    Glyph(Option<f32>, f32),
+}
+
 /// Lays out (and with a canvas, draws) the text from s[from] up to s[end] (None: its terminator).
 /// Measuring (no canvas) reads the advances straight from the font: no glyph is rendered or cached
-/// for it.
+/// for it. With `steps`, each character's end and what it adds to the pen are kept there.
 #[allow(clippy::too_many_arguments)]
 fn layout(
     st: &mut State,
@@ -1215,6 +1227,7 @@ fn layout(
     from: usize,
     end: Option<usize>,
     gray: u8,
+    mut steps: Option<&mut Vec<(usize, Step)>>,
 ) -> i32 {
     if !st.ready {
         return 0;
@@ -1242,7 +1255,12 @@ fn layout(
         // as it is drawn.
         if !has {
             match missing_as(cp) {
-                Missing::Nothing => continue,
+                Missing::Nothing => {
+                    if let Some(v) = steps.as_deref_mut() {
+                        v.push((i, Step::Unseen));
+                    }
+                    continue;
+                }
                 Missing::Space => {
                     cp = 0x20;
                     (ttf, gpx, _) = pick_face(st, m, px, fpx, cp);
@@ -1254,6 +1272,9 @@ fn layout(
                         canvas_rect_outline(cv, r, t, gray);
                     }
                     pen += adv;
+                    if let Some(v) = steps.as_deref_mut() {
+                        v.push((i, Step::Boxed(adv)));
+                    }
                     prev = 0;
                     prev_ttf = -1;
                     continue;
@@ -1261,8 +1282,11 @@ fn layout(
             }
         }
         // (kerning is stb's, inside one embedded face; a custom font has none)
+        let mut kern = None;
         if prev != 0 && prev_ttf == ttf as i32 && ttf < TTF_COUNT {
-            pen += units_to_px(st, ttf, gpx, kern_advance(&st.font[ttf], prev, cp));
+            let k = units_to_px(st, ttf, gpx, kern_advance(&st.font[ttf], prev, cp));
+            pen += k;
+            kern = Some(k);
         }
         let advance;
         if let Some(cv) = c.as_deref_mut() {
@@ -1287,7 +1311,11 @@ fn layout(
         } else {
             advance = face_advance(st, ttf, cp);
         }
-        pen += units_to_px(st, ttf, gpx, advance) + bold as f32;
+        let step = units_to_px(st, ttf, gpx, advance) + bold as f32;
+        pen += step;
+        if let Some(v) = steps.as_deref_mut() {
+            v.push((i, Step::Glyph(kern, step)));
+        }
         prev = cp;
         prev_ttf = ttf as i32;
     }
@@ -1296,7 +1324,7 @@ fn layout(
 
 /// The width of s[from..end] (end: None, its terminator) at px, drawing nothing.
 fn measure_n(f: FontFace, px: f32, s: &[u8], from: usize, end: Option<usize>) -> i32 {
-    with(|st| layout(st, None, f, px, 0, 0, s, from, end, 0))
+    with(|st| layout(st, None, f, px, 0, 0, s, from, end, 0, None))
 }
 
 fn measure(f: FontFace, px: f32, s: &[u8]) -> i32 {
@@ -1305,7 +1333,7 @@ fn measure(f: FontFace, px: f32, s: &[u8]) -> i32 {
 
 #[allow(clippy::too_many_arguments)]
 fn draw(c: &mut Canvas, f: FontFace, px: f32, x: i32, baseline_y: i32, s: &[u8], from: usize, end: Option<usize>, gray: u8) -> i32 {
-    with(|st| layout(st, Some(c), f, px, x, baseline_y, s, from, end, gray))
+    with(|st| layout(st, Some(c), f, px, x, baseline_y, s, from, end, gray, None))
 }
 
 /// Draws UTF-8 text with its baseline at y. Returns advance width in px.
@@ -1536,13 +1564,111 @@ pub(crate) fn cjk(cp: u32) -> bool {
     (0x2E80..=0x9FFF).contains(&cp) || (0xF900..=0xFAFF).contains(&cp) || (0xFE30..=0xFE4F).contains(&cp) || (0xFF00..=0xFFEF).contains(&cp)
 }
 
-fn has_cjk(t: &[u8], mut s: usize, e: usize) -> bool {
+/// Where the last CJK character of t[s..e] starts, if it has one: a part of it from a character at or before
+/// there has a CJK character, a part from after it has none.
+fn last_cjk(t: &[u8], mut s: usize, e: usize) -> Option<usize> {
+    let mut last = None;
     while s < e {
+        let at = s;
         if cjk(utf8_next(t, &mut s)) {
-            return true;
+            last = Some(at);
         }
     }
-    false
+    last
+}
+
+/// A word wider than its line, laid out once: each of its characters' steps (`Step`), from which where each of its
+/// lines ends and how wide the rest of it is from a line are summed as `layout` sums them, the same numbers in the
+/// same order, so the widths are the ones measuring the text again gives.
+struct Word {
+    steps: Vec<(usize, Step)>,
+    /// every kerning and advance in it is 0 or more: a part of the word is never narrower than a part of that part
+    rising: bool,
+}
+
+impl Word {
+    /// t[s..e], a word of at least one character.
+    fn new(f: FontFace, px: f32, t: &[u8], s: usize, e: usize) -> Word {
+        let mut steps = Vec::new();
+        with(|st| layout(st, None, f, px, 0, 0, t, s, Some(e), 0, Some(&mut steps)));
+        if steps.is_empty() {
+            // (no font is ready: everything measures 0)
+            let mut i = s;
+            while i < e {
+                utf8_next(t, &mut i);
+                steps.push((i, Step::Glyph(None, 0.0)));
+            }
+        }
+        let rising = steps.iter().all(|&(_, step)| match step {
+            Step::Unseen => true,
+            Step::Boxed(a) => a >= 0.0,
+            Step::Glyph(k, a) => k.unwrap_or(0.0) >= 0.0 && a >= 0.0,
+        });
+        Word { steps, rising }
+    }
+
+    /// The pen after a character's step, as `layout` moves it; `first` while no character that takes room has come
+    /// yet in the part measured (the first is kerned against nothing).
+    fn on(pen: f32, first: &mut bool, step: Step) -> f32 {
+        match step {
+            Step::Unseen => pen,
+            Step::Boxed(a) => {
+                *first = false;
+                pen + a
+            }
+            Step::Glyph(k, a) => {
+                let pen = match k {
+                    Some(k) if !*first => pen + k,
+                    _ => pen,
+                };
+                *first = false;
+                pen + a
+            }
+        }
+    }
+
+    /// The width of the word from its character `k` to its end.
+    fn width(&self, k: usize) -> i32 {
+        let (mut pen, mut first) = (0.0f32, true);
+        for &(_, step) in &self.steps[k..] {
+            pen = Self::on(pen, &mut first, step);
+        }
+        pen.round_ties_even() as i32
+    }
+
+    /// Whether the word from its character `k` to its end is wider than `w`. In a rising word the sum stops at the
+    /// first character that takes it past `w`, since nothing after can bring it back.
+    fn wider(&self, k: usize, w: i32) -> bool {
+        if !self.rising {
+            return self.width(k) > w;
+        }
+        let (mut pen, mut first) = (0.0f32, true);
+        for &(_, step) in &self.steps[k..] {
+            pen = Self::on(pen, &mut first, step);
+            if pen.round_ties_even() as i32 > w {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Where a line of the word from its character `k` ends: after as many characters as fit `w`, one at least (the
+    /// character after the last on it).
+    fn line_end(&self, k: usize, w: i32) -> usize {
+        let mut first = true;
+        let mut pen = Self::on(0.0, &mut first, self.steps[k].1);
+        let mut j = k + 1;
+        while j < self.steps.len() {
+            let mut then = first;
+            let next = Self::on(pen, &mut then, self.steps[j].1);
+            if next.round_ties_even() as i32 > w {
+                break;
+            }
+            (pen, first) = (next, then);
+            j += 1;
+        }
+        j
+    }
 }
 
 /// As many whole words on each line as fit w; a word wider than w on its own is broken between its
@@ -1555,41 +1681,65 @@ fn wrap_greedy(f: FontFace, px: f32, t: &[u8], w: i32, out: &mut [Span], max: us
     let mut s = skip_spaces(t, 0);
     while at(t, s) != 0 {
         let mut fits: Option<usize> = None; // the end of the longest run of words that fits
+        let mut first_w = 0; // the width of the line's first word, when it alone does not fit
         let mut e = s;
         while at(t, skip_spaces(t, e)) != 0 {
             let mut we = skip_spaces(t, e);
             while at(t, we) != 0 && at(t, we) != b' ' {
                 we += 1;
             }
-            if measure_n(f, px, t, s, Some(we)) > w {
+            let lw = measure_n(f, px, t, s, Some(we));
+            if lw > w {
+                first_w = lw;
                 break;
             }
             fits = Some(we);
             e = we;
         }
-        let fits = match fits {
-            Some(x) => x,
-            None => {
-                let mut we = s;
-                while at(t, we) != 0 && at(t, we) != b' ' {
-                    we += 1;
-                }
-                let ww = measure_n(f, px, t, s, Some(we));
-                if ww > *broken && !has_cjk(t, s, we) {
+        if let Some(fits) = fits {
+            if n < max {
+                out[n] = Span { s, e: fits };
+            }
+            n += 1;
+            s = skip_spaces(t, fits);
+            continue;
+        }
+        // A word wider than the line on its own is laid out once (`Word`) and broken between its characters into
+        // lines of as many as fit, one at least, until the rest of it fits a line, where the words after it go on.
+        // *broken takes the width of the word, or of the rest of it from one of its lines, without a CJK character.
+        let mut we = s;
+        while at(t, we) != 0 && at(t, we) != b' ' {
+            we += 1;
+        }
+        let word = Word::new(f, px, t, s, we);
+        let cjk_at = last_cjk(t, s, we);
+        let (mut k, mut ls, mut rest_w) = (0, s, Some(first_w));
+        // (in a rising word the rest from a later line is never wider: the first rest without CJK is the widest)
+        let mut reported = false;
+        loop {
+            if !cjk_at.is_some_and(|c| c >= ls) && !(word.rising && reported) {
+                let ww = rest_w.unwrap_or_else(|| word.width(k));
+                if ww > *broken {
                     *broken = ww;
                 }
-                let mut fits = next_char(t, s);
-                while at(t, fits) != 0 && at(t, fits) != b' ' && measure_n(f, px, t, s, Some(next_char(t, fits))) <= w {
-                    fits = next_char(t, fits);
-                }
-                fits
+                reported = true;
             }
-        };
-        if n < max {
-            out[n] = Span { s, e: fits };
+            let j = word.line_end(k, w);
+            let le = word.steps[j - 1].0;
+            if n < max {
+                out[n] = Span { s: ls, e: le };
+            }
+            n += 1;
+            if j == word.steps.len() {
+                s = skip_spaces(t, le);
+                break;
+            }
+            (k, ls, rest_w) = (j, le, None);
+            if !word.wider(k, w) {
+                s = ls;
+                break;
+            }
         }
-        n += 1;
-        s = skip_spaces(t, fits);
     }
     n
 }
@@ -2377,6 +2527,110 @@ mod tests {
         // text that fits is one line; nothing but spaces is none
         assert_eq!(font_wrap_lines(FontFace::Regular, 34.0, text, 10000, Some(&mut widest)), 1);
         assert_eq!(font_wrap_lines(FontFace::Regular, 34.0, "   ", 10000, None), 0);
+    }
+
+    /// The lines of wrap_greedy as measuring each line from its start gives them: a word wider than the line
+    /// measured again from each of its lines, and the characters of each line measured one more at a time.
+    fn wrap_greedy_measuring_each_line(f: FontFace, px: f32, t: &[u8], w: i32, out: &mut [Span], max: usize, broken: &mut i32) -> usize {
+        let has_cjk = |mut s: usize, e: usize| {
+            while s < e {
+                if cjk(utf8_next(t, &mut s)) {
+                    return true;
+                }
+            }
+            false
+        };
+        let mut n = 0;
+        *broken = 0;
+        let mut s = skip_spaces(t, 0);
+        while at(t, s) != 0 {
+            let mut fits: Option<usize> = None;
+            let mut e = s;
+            while at(t, skip_spaces(t, e)) != 0 {
+                let mut we = skip_spaces(t, e);
+                while at(t, we) != 0 && at(t, we) != b' ' {
+                    we += 1;
+                }
+                if measure_n(f, px, t, s, Some(we)) > w {
+                    break;
+                }
+                fits = Some(we);
+                e = we;
+            }
+            let fits = match fits {
+                Some(x) => x,
+                None => {
+                    let mut we = s;
+                    while at(t, we) != 0 && at(t, we) != b' ' {
+                        we += 1;
+                    }
+                    let ww = measure_n(f, px, t, s, Some(we));
+                    if ww > *broken && !has_cjk(s, we) {
+                        *broken = ww;
+                    }
+                    let mut fits = next_char(t, s);
+                    while at(t, fits) != 0 && at(t, fits) != b' ' && measure_n(f, px, t, s, Some(next_char(t, fits))) <= w {
+                        fits = next_char(t, fits);
+                    }
+                    fits
+                }
+            };
+            if n < max {
+                out[n] = Span { s, e: fits };
+            }
+            n += 1;
+            s = skip_spaces(t, fits);
+        }
+        n
+    }
+
+    // A word wider than its line is laid out once and its lines summed from that: the lines, their count and the
+    // width the overflow report hears are the ones measuring each line again gives, in every face and size, both
+    // themes and each family, for words of kerned pairs, CJK, marks, controls, boxes and spaces of every kind.
+    #[test]
+    fn a_long_word_is_broken_where_measuring_each_line_again_breaks_it() {
+        up();
+        let words = [
+            "i".repeat(300),
+            "W".repeat(120),
+            "AVAVAWAYATAVTo".repeat(12),
+            format!("\u{6f22}\u{5b57}{}", "abcdefghij".repeat(12)),
+            format!("{}\u{3072}\u{3089}", "abcdefghij".repeat(12)),
+            "e\u{301}\u{200b}\u{200d}x\u{202e}".repeat(30),
+            "a\u{10fffd}b\u{e000}\t\u{3000}\u{a0}c".repeat(20),
+            "\u{1f600}\u{fffd}\u{0}z".repeat(25),
+            "\u{3072}\u{3089}\u{304c}\u{306a}\u{30ab}\u{30bf}".repeat(20),
+        ];
+        let texts: Vec<String> = words
+            .iter()
+            .flat_map(|wd| [wd.clone(), format!("a {wd} b c"), format!("one two {wd}  {wd} three"), format!(" {wd} ")])
+            .chain(["Wide, no margin".to_string(), "x".to_string(), String::new()])
+            .collect();
+        let looks = [(UiTheme::Gothic, 0), (UiTheme::Classic, 0), (UiTheme::Classic, 1), (UiTheme::Classic, 2), (UiTheme::Classic, 3)];
+        let faces = [(FontFace::Regular, 34.0), (FontFace::Bold, 44.0), (FontFace::Title, 70.0), (FontFace::Fixed, 34.0), (FontFace::Caps, 30.0)];
+        let mut cases = 0;
+        for (theme, family) in looks {
+            ui_set_theme(theme);
+            font_set_family(family);
+            for (f, px) in faces {
+                for text in &texts {
+                    let t = cstr(text).as_bytes();
+                    for w in [-3, 0, 1, 5, 17, 40, 77, 150, 301, 1000] {
+                        let (mut a, mut b) = ([Span::default(); WRAP_MAX], [Span::default(); WRAP_MAX]);
+                        let (mut ba, mut bb) = (-1, -1);
+                        let na = wrap_greedy(f, px, t, w, &mut a, WRAP_MAX, &mut ba);
+                        let nb = wrap_greedy_measuring_each_line(f, px, t, w, &mut b, WRAP_MAX, &mut bb);
+                        assert_eq!((na, ba), (nb, bb), "{theme:?} {family} {f:?} {px} w {w}: {text:?}");
+                        let kept = na.min(WRAP_MAX);
+                        assert!(a[..kept].iter().zip(&b[..kept]).all(|(x, y)| (x.s, x.e) == (y.s, y.e)), "{theme:?} {family} {f:?} w {w}: {text:?}");
+                        cases += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(cases, 5 * 5 * 39 * 10);
+        font_set_family(0);
+        ui_set_theme(UiTheme::Classic);
     }
 
     #[test]
