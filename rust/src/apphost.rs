@@ -481,6 +481,9 @@ pub struct AppRun {
     /// what the passes' fast refreshes covered once no contact is down, and when the last of them was owed: owed one
     /// Clean refresh after a pause (apphost_wear_tick)
     worn: Option<(Rect, u32)>,
+    /// when the app last had a pass it asked for, or last sent a fast refresh, by the app's clock: a pass it asks for
+    /// within the pause of this is back to back (apphost_tick)
+    quick_at: Option<u32>,
 }
 
 impl AppRun {
@@ -553,6 +556,15 @@ impl AppRun {
         }
     }
 
+    /// A pass went out as a refresh of `r` in `mode` at `now`: a fast one joins what the clean owes (KitInput) and is
+    /// the app's latest fast refresh.
+    fn refreshed(&mut self, r: Rect, mode: RefreshMode, now: u32) {
+        self.input.refreshed(r, mode);
+        if mode == RefreshMode::Fast && !rect_is_empty(r) {
+            self.quick_at = Some(now);
+        }
+    }
+
     fn last_error(&self) -> Option<String> {
         self.runtime.as_ref().and_then(|r| r.error.clone())
     }
@@ -602,6 +614,7 @@ pub fn apphost_launch(a: &mut App, id: &str) -> bool {
                 launched_at: Some(Instant::now()),
                 input: KitInput::default(),
                 worn: None,
+                quick_at: None,
             };
             // An app may override the manifest preference once, before its first frame.
             if let Some(want) = a.app_view.runtime.as_mut().and_then(|r| r.export_status_bar()) {
@@ -805,18 +818,27 @@ fn apphost_pass(a: &mut App, mode: RefreshMode) -> Rect {
     changed
 }
 
-/// What an app's passes refreshed fast (input's while a contact was down, and those its redraw requests brought) is
+/// The editor's pause (SETTLE_LEFT_MS with the pen away, SETTLE_NEAR_MS with it near): what the clean of an app's fast
+/// refreshes waits, and what tells a pass the app asks for back to back from one after a rest.
+fn apphost_pause(a: &App) -> u32 {
+    if crate::status::status_busy(a) {
+        crate::editor::SETTLE_NEAR_MS
+    } else {
+        crate::editor::SETTLE_LEFT_MS
+    }
+}
+
+/// What an app's passes refreshed fast (input's while a contact was down, and those it asked for back to back) is
 /// cleaned as the editor cleans a notebook's (editor.rs du_wear_tick; the Library has no cleaning of its own): a fast
 /// refresh shows grays dithered to black and white, and a later refresh drives only the pixels that change. Once no
-/// contact is down and the last pass is drawn, after the editor's pause (SETTLE_LEFT_MS since the lift or the last
-/// such pass with the pen away, SETTLE_NEAR_MS with it near), one Clean refresh of all they covered.
+/// contact is down and the last pass is drawn, after the pause (apphost_pause, since the lift or the last such pass),
+/// one Clean refresh of all they covered.
 fn apphost_wear_tick(a: &mut App, now: u32) {
     let Some((worn, at)) = a.app_view.worn else { return };
     if a.app_view.input.pointer.is_down() || a.app_view.input.owed() || a.pen_action_down || !a.input_drained {
         return;
     }
-    let pause = if crate::status::status_busy(a) { crate::editor::SETTLE_NEAR_MS } else { crate::editor::SETTLE_LEFT_MS };
-    if now.wrapping_sub(at) < pause {
+    if now.wrapping_sub(at) < apphost_pause(a) {
         return;
     }
     a.app_view.worn = None;
@@ -869,18 +891,26 @@ pub fn apphost_tick(a: &mut App, now: u32) {
     }
     if let Some(mode) = a.app_view.input.pass_now(turn, fast_busy) {
         let changed = apphost_pass(a, mode);
-        a.app_view.input.refreshed(changed, mode);
+        a.app_view.refreshed(changed, mode, now);
         if apphost_failed(a) {
             return;
         }
     }
     // A request that is due is taken, and the app is drawn once for it: only the part of the screen the pass changed
-    // is refreshed, fast (nothing, when it changed nothing), and what that covered joins what input passes refreshed
-    // fast, owed the same clean. A pass that wants another asks again, and gets it no sooner than APP_REDRAW_MIN_MS
-    // later; while no request is due nothing is drawn and nothing is refreshed.
+    // is refreshed (nothing, when it changed nothing). After a rest (nothing owed a clean, and no pass asked for and no
+    // fast refresh within the pause, apphost_pause, counted across the clock's wrap) it is refreshed as the UI is, at
+    // full depth, and owes nothing: a clock's tick. Back to back it is refreshed fast, and what that covered joins what
+    // input passes refreshed fast, owed the same clean once the passes stop: an animation's. A pass that wants another
+    // asks again, and gets it no sooner than APP_REDRAW_MIN_MS later; while no request is due nothing is drawn and
+    // nothing is refreshed.
     if a.app_view.runtime.as_mut().is_some_and(|r| r.redraw_taken(now)) {
-        let changed = apphost_pass(a, RefreshMode::Fast);
-        a.app_view.input.refreshed(changed, RefreshMode::Fast);
+        let pause = apphost_pause(a);
+        let v = &a.app_view;
+        let rested = v.worn.is_none() && !v.input.fast_refreshed() && v.quick_at.map_or(true, |at| now.wrapping_sub(at) >= pause);
+        let mode = if rested { RefreshMode::Ui } else { RefreshMode::Fast };
+        let changed = apphost_pass(a, mode);
+        a.app_view.refreshed(changed, mode, now);
+        a.app_view.quick_at = Some(now);
     }
     // (once no contact is down, what the fast refreshes covered is owed one Clean refresh, after a pause from the last
     // of them: an app that asks for passes back to back is cleaned once it has stopped asking for that long)
