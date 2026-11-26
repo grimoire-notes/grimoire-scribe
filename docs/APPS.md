@@ -115,6 +115,9 @@ manifest that breaks one is refused when it is read, before anything is asked or
   (`system`, `extensions` and the like): the module is read through the walk Grimoire reads the
   Kindle's storage with, which takes no such name.
 
+The package page and the Package Store say why a package was refused or could not be fetched: each
+error they show is at most 256 bytes, cut between characters, as an app's toast is.
+
 `spec.icon` may name one of Grimoire's built-in icons, or a `.ico` bundled beside `package.yaml`.
 A bundled icon is a second package file: the installer fetches it from the manifest's folder, checks
 its `spec.icon_sha256` and `spec.icon_size` (at most 256 KiB), and saves it with the artifact. Its

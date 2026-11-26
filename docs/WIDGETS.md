@@ -139,7 +139,8 @@ spec:
 Unknown top-level keys are ignored, so a newer manifest can carry fields an older Grimoire does not
 know; unknown keys inside `spec` are ignored too. Values of the known fields are checked where
 they affect the install: a missing name, a bad id, version, path, digest or size, an unknown
-platform, capability or runtime is refused. An unknown icon falls back to the widget grid.
+platform, capability or runtime is refused. The package page says why: each error it shows is at
+most 256 bytes, cut between characters. An unknown icon falls back to the widget grid.
 
 Limits: the manifest may be at most 256 KiB, the artifact at most 32 MiB, at most 64 packages may
 be installed, and at most 8 widget frames may be open at once. A `wasm` artifact is one file; a
@@ -430,8 +431,8 @@ Each time a frame opens, before the module is loaded, its file is checked again:
 A file that fails a check is not loaded: the frame says "The widget's artifact could not be read."
 in place of its body, and Grimoire's log says which check it was. (A frame whose module failed says
 the reason first, in as many lines as its body holds, and under it, where lines are left, the
-package's name, version and author; a body with room for one line shows the start of the reason. Each of the
-two is at most 256 bytes, cut between two characters, whatever the reason was.) The file is read and hashed once
+package's name, version and author; a body with room for one line shows the start of the reason. Each
+text a widget's frame shows there is at most 256 bytes, cut between characters.) The file is read and hashed once
 for each load, which is once for a frame that opens; drawing does not read it again.
 
 `tests/fixtures/widgetcalc/` holds a compiled calculator package used by the scenarios;

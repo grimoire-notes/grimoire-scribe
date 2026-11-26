@@ -1595,4 +1595,52 @@ mod tests {
         assert_eq!(labeled("Timer", "1.0.0"), "Timer (1.0.0)");
         assert_eq!(labeled("Timer", ""), "Timer");
     }
+
+    // The Error view shows at most MESSAGE_SHOWN_MAX bytes of its text, cut between two characters: of a manifest's
+    // error that quotes a line of 99,000 bytes, its start; an ordinary error, whole.
+    #[test]
+    fn the_error_view_shows_at_most_256_bytes_of_its_text() {
+        assert_eq!(MESSAGE_SHOWN_MAX, 256);
+        assert_eq!(font_init(), 0);
+        ui_init(300.0);
+        let mut a = App { w: 1860, h: 2480, dpi: 300.0, ..Default::default() };
+        assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+        // The page as a fetched manifest that does not read leaves it, in its Error view, and the error it holds.
+        let fetched = |a: &mut App, yaml: &str| -> String {
+            let mut ui = std::mem::take(&mut a.pkg);
+            ui.open = true;
+            after_manifest(&mut ui, yaml.as_bytes(), a, "https://example.org/w/package.yaml");
+            assert_eq!(ui.view, PkgView::Error);
+            let error = ui.error.clone();
+            a.pkg = ui;
+            error
+        };
+        // The page drawn in its Error view with this text, in both themes.
+        let drawn = |a: &mut App, error: &str| -> Vec<Vec<u8>> {
+            a.pkg.open = true;
+            a.pkg.view = PkgView::Error;
+            a.pkg.error = error.to_string();
+            let pages = [UiTheme::Gothic, UiTheme::Classic].map(|theme| {
+                ui_set_theme(theme);
+                packages_ui_draw(a);
+                a.screen.px.clone()
+            });
+            ui_set_theme(UiTheme::Gothic);
+            pages.to_vec()
+        };
+        // An ordinary error is shown whole: the page without its last character is another.
+        let ordinary = fetched(&mut a, "name: Test\nhello\n");
+        assert_eq!(ordinary, "`hello` is not a key and a value");
+        assert!(drawn(&mut a, &ordinary) != drawn(&mut a, &ordinary[..ordinary.len() - 1]), "an ordinary error");
+        // A line of 99,000 bytes, of characters of one, two, three and four bytes: the error quotes it whole, and the
+        // view shows the error's first `n` bytes, the most that are at most 256 and end between two characters.
+        for (ch, n) in [("a", 256), ("\u{e9}", 255), ("\u{20ac}", 256), ("\u{1d11e}", 253)] {
+            let line = ch.repeat(99_000 / ch.len());
+            let error = fetched(&mut a, &format!("name: Test\n{line}\n"));
+            assert!(error == format!("`{line}` is not a key and a value"), "{ch}: {} bytes", error.len());
+            let shown = drawn(&mut a, &error);
+            assert!(shown == drawn(&mut a, &error[..n]), "{ch}: the first {n} bytes");
+            assert!(shown != drawn(&mut a, &error[..n - ch.len()]), "{ch}: the last of them too");
+        }
+    }
 }
