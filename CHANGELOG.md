@@ -40,7 +40,7 @@
   written. An installed package's page has Uninstall, and Update to when the catalog has a newer version; the
   arrow at the top installs a package from a GitHub repository (`user/repo`) or an https `.yaml` address. The last
   catalog opens without a network. Icons and screenshots are decoded by the sandboxed worker that reads PDFs and
-  pictures, not by Grimoire itself (#241). Settings > General > Updates lists, under Package Updates, each
+  pictures, never by the Store itself (#241). Settings > General > Updates lists, under Package Updates, each
   installed package the Store has a newer version of, each with its Update button.
 - **Widgets come from the Package Store** (#225, #260, nebuff). Settings > Packages is gone: widgets are installed
   from the Package Store, and Manage widgets... at the foot of a notebook's Widgets popup opens their package
@@ -58,9 +58,9 @@
   screen is drawn as Grimoire's own are, in Gothic and Classic and in each font. A module that imports a call this
   Grimoire does not have is not started, and says so: "This widget needs a newer Grimoire (...)." or, for an app,
   a toast. docs/KIT.md is the reference.
-- A notebook's PDF (over Share, or mirrored over USB) and Share's zips compress their pages in pieces of a fixed
-  size, where they used one block that doubled as it grew and could be held twice while it was moved, so a colour
-  page takes less memory at its peak. The files are the same, byte for byte (#83).
+- A notebook's PDF (over Share, or mirrored over USB) compresses its page images, and Share's zips the files they
+  deflate, in pieces of a fixed size, where they used one block that doubled as it grew and could be held twice
+  while it was moved, so a colour page takes less memory at its peak. The files are the same, byte for byte (#83).
 - Hardening (#252, nebuff): a copy into Grimoire's folders (From a file..., Add a font..., and Files' Use as
   template, Use as photo and Add to fonts) checks that the file is still the one listed by its modification time
   to the nanosecond, where it went to the second, so a file rewritten within the same second is not copied as
