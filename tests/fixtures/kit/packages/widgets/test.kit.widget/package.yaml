@@ -7,8 +7,8 @@ description: A module of the package kit's tests.
 platforms: [all]
 artifact:
   path: module.bin
-  sha256: e1336bfa52b2d7d1cfd988a1be8459835409cfecd8badcafabbee0f1eff12aff
-  size: 1233
+  sha256: cb03546625be83d9eaf8a0c6a4d665769dc438cb57fb46d9a9ab4962a3dcbf4a
+  size: 1285
 capabilities: [editor:overlay, storage:widget-local]
 spec:
   runtime: wasm

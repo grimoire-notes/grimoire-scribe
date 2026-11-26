@@ -18,7 +18,7 @@
 use crate::apphost::{
     APP_CHARGE_BOLD, APP_CHARGE_BYTE, APP_CHARGE_CALL, APP_CHARGE_CORNER, APP_CHARGE_EDGE_PX, APP_CHARGE_FILL_PX,
     APP_CHARGE_ICON_PX, APP_CHARGE_LABEL_PX, APP_CHARGE_LINE_ROW, APP_CHARGE_MEASURE, APP_CHARGE_SMALL_ICON_PX,
-    APP_CHARGE_SQUARE, APP_CHARGE_SQUARE_BYTES, APP_CHARGE_SWITCH, APP_CHARGE_TALL_PX, APP_CHARGE_TEXT,
+    APP_CHARGE_COPY_BYTES, APP_CHARGE_SQUARE, APP_CHARGE_SQUARE_BYTES, APP_CHARGE_SWITCH, APP_CHARGE_TALL_PX, APP_CHARGE_TEXT,
     APP_ICON_NAME_MAX, APP_ICON_PX_MAX, APP_LINE_WIDTH_MAX, APP_TEXT_PX_MAX,
 };
 use crate::globalui::{
@@ -37,7 +37,7 @@ pub const KIT_LEVEL: i32 = 1;
 /// The calls of level 1, every one a module may import from `grimoire_kit`: the name, the types of the parameters
 /// (`i` an i32, `f` an f32) and of the result (`v` none, `i` an i32, `l` an i64). `dispatch` takes them by their
 /// place here.
-pub const KIT_CALLS: [(&str, &str, char); 26] = [
+pub const KIT_CALLS: [(&str, &str, char); 28] = [
     ("level", "", 'i'),
     ("version", "ii", 'i'),
     ("metric", "i", 'i'),
@@ -64,6 +64,8 @@ pub const KIT_CALLS: [(&str, &str, char); 26] = [
     ("hit", "iiiii", 'v'),
     ("list_page", "iiiii", 'l'),
     ("pager", "iiiiiii", 'i'),
+    ("event_points", "ii", 'i'),
+    ("key_char", "ii", 'i'),
 ];
 
 // ---- the limits of the kit's own (the rest are each host's: docs/KIT.md, Limits) ----
@@ -629,6 +631,8 @@ pub trait KitHost {
     fn kit_read(&mut self, n: usize);
     /// The height of the status bar over the package: the notebook's for a widget, 0 for an app that hides it.
     fn kit_status_bar_h(&self) -> i32;
+    /// The points of the DRAG_MOVE the module is being told of (`kit_event`), oldest first; none in another call.
+    fn kit_points(&self) -> &[(i32, i32)];
 }
 
 /// A call of the kit as its work sees it: the call's budget, the module's memory and the host.
@@ -730,6 +734,8 @@ fn dispatch(cx: &mut dyn Call, at: usize, args: &[Val], out: &mut [Val]) -> Resu
         23 => hit(cx, first(&a)).map(|_| None)?,
         24 => Some(Val::I64(list_page(cx, first(&a))?)),
         25 => i(pager(cx, first(&a))?),
+        26 => i(event_points(cx, first(&a))?),
+        27 => i(key_char(cx, first(&a))?),
         _ => None,
     };
     if let (Some(v), Some(slot)) = (got, out.first_mut()) {
@@ -753,6 +759,321 @@ pub const KIT_CALL_NAME_MAX: usize = 64;
 /// `a` to `z`, `0` to `9` and `_`.
 pub fn kit_call_shaped(name: &str) -> bool {
     (1..=KIT_CALL_NAME_MAX).contains(&name.len()) && name.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'_'))
+}
+
+// ---- input: the events of `kit_event`, a contact recognised, and the pass input owes (docs/KIT.md, Events) ----
+//
+// A module may export `kit_event(kind, id, a, b, c) -> i32`. Both hosts call it for what happens in the body: a
+// contact recognised as a tap, a press or a drag (`KitPointer`, one recogniser for both), a key (an app's), a change
+// of the package's settings. Each is a call of the module with the budget and the stop rules of the host's other
+// calls. What it returns says whether its picture changed: a drawing pass is then owed, not drawn at once; the
+// host's tick draws it, once for every event since the last pass, at a pace while a contact is down (`KitInput`),
+// and refreshes only the part of the screen the pass changed.
+
+/// The export a module is told of input by.
+pub const KIT_EVENT: &str = "kit_event";
+/// The kinds of event this level sends (`kind`). A module ignores a kind it does not know, and returns 0.
+pub const EV_TAP: i32 = 1;
+pub const EV_PRESS: i32 = 2;
+pub const EV_DRAG_START: i32 = 3;
+pub const EV_DRAG_MOVE: i32 = 4;
+pub const EV_DRAG_END: i32 = 5;
+pub const EV_KEY: i32 = 6;
+pub const EV_SETTINGS: i32 = 9;
+/// The points a DRAG_MOVE holds at most: the newest this many samples gathered since the one before.
+pub const KIT_POINTS_MAX: usize = 256;
+/// The bytes of one point `event_points` writes: its x and its y, each an i32.
+pub const KIT_POINT_BYTES: usize = 8;
+/// While a contact is down, a pass input owes is drawn at most once in this many milliseconds: the pace a
+/// selection's drag shows itself at (editor/select.rs, DRAG_SHOW_MS).
+pub const KIT_PASS_MS: u32 = 120;
+
+/// One event for `kit_event`: its kind and its four numbers (docs/KIT.md, Events), and for a DRAG_MOVE the points it
+/// gathered, oldest first, which `event_points` copies during the call.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct KitEvent {
+    pub kind: i32,
+    pub id: i32,
+    pub a: i32,
+    pub b: i32,
+    pub c: i32,
+    pub points: Vec<(i32, i32)>,
+}
+
+impl KitEvent {
+    pub fn new(kind: i32, id: i32, a: i32, b: i32, c: i32) -> KitEvent {
+        KitEvent { kind, id, a, b, c, points: Vec::new() }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Contact {
+    /// no contact
+    #[default]
+    Up,
+    /// down, within the slop, not yet held: a tap if it lifts so
+    Down,
+    /// held HOLD_MS within the slop: a press; its lift is no tap
+    Pressed,
+    /// moved past the slop
+    Dragging,
+    /// cancelled (a palm, or the platform took it for a gesture): nothing more until its lift
+    Cancelled,
+}
+
+/// One contact on a body, recognised as a tap, a press or a drag, for widgets and apps alike. The host gives it the
+/// contact's samples, body-local, and its tick; each answers the events to send. A contact that comes down is
+/// nothing yet; one that lifts within the slop of where it came down, before HOLD_MS, is a TAP; one held HOLD_MS
+/// within the slop is a PRESS, and its lift is nothing; one that moves past the slop (a press too) is a drag:
+/// DRAG_START, then its samples gathered (the newest KIT_POINTS_MAX) for a DRAG_MOVE the host asks for at the pace of
+/// its passes (`take_moves`), then at the lift a last DRAG_MOVE with the samples left and DRAG_END. A contact the
+/// platform cancels (a gesture took it, the pen came), or one the panel calls palm-sized, is no tap and no press, and
+/// a drag it was ends with DRAG_END marked cancelled.
+#[derive(Clone, Debug, Default)]
+pub struct KitPointer {
+    contact: Contact,
+    /// the hit region under the contact's start, -1 for none
+    id: i32,
+    /// 0 touch, 1 pen
+    source: i32,
+    /// where it came down, and its newest sample
+    x0: i32,
+    y0: i32,
+    x: i32,
+    y: i32,
+    /// when it came down (the app's clock, `now_ms`)
+    t0: u32,
+    /// how far it may move from where it came down and still be a tap or a press, in pixels
+    slop: i32,
+    /// the samples gathered since the last DRAG_MOVE, at most KIT_POINTS_MAX
+    points: std::collections::VecDeque<(i32, i32)>,
+}
+
+impl KitPointer {
+    /// A contact came down at (x, y) on hit region `id` (-1 none), from `source` (0 touch, 1 pen), at `now`. A
+    /// contact may move `slop` pixels each way and stay a tap or a press. A palm-sized one is cancelled at once. A
+    /// contact that was still down (its lift was never seen) ends first.
+    pub fn down(&mut self, x: i32, y: i32, source: i32, id: i32, now: u32, slop: i32, palm: bool) -> Vec<KitEvent> {
+        let out = self.cancel();
+        let points = std::mem::take(&mut self.points);
+        *self = KitPointer { contact: if palm { Contact::Cancelled } else { Contact::Down }, id, source, x0: x, y0: y, x, y, t0: now, slop: slop.max(0), points };
+        out
+    }
+
+    /// A sample of the contact at (x, y): DRAG_START when it first goes past the slop; while it drags, the sample
+    /// is gathered. A palm-sized sample cancels the contact.
+    pub fn moved(&mut self, x: i32, y: i32, palm: bool) -> Vec<KitEvent> {
+        if matches!(self.contact, Contact::Up | Contact::Cancelled) {
+            return Vec::new();
+        }
+        if palm {
+            return self.cancel();
+        }
+        self.x = x;
+        self.y = y;
+        let mut out = Vec::new();
+        if matches!(self.contact, Contact::Down | Contact::Pressed) && self.past_slop(x, y) {
+            self.contact = Contact::Dragging;
+            out.push(KitEvent::new(EV_DRAG_START, self.id, self.x0, self.y0, self.source));
+        }
+        if self.contact == Contact::Dragging {
+            self.gather(x, y);
+        }
+        out
+    }
+
+    /// The contact lifted at (x, y), or was cancelled: a TAP, or a drag's last DRAG_MOVE and its DRAG_END, or
+    /// nothing (a press's lift, a cancelled tap). A lift past the slop of a contact whose moves were not seen (they
+    /// left the body) is a drag's: DRAG_START, then its end.
+    pub fn up(&mut self, x: i32, y: i32, cancelled: bool) -> Vec<KitEvent> {
+        let mut out = Vec::new();
+        if !cancelled && matches!(self.contact, Contact::Down | Contact::Pressed) && self.past_slop(x, y) {
+            out = self.moved(x, y, false);
+        }
+        out.extend(match self.contact {
+            Contact::Down if !cancelled => vec![KitEvent::new(EV_TAP, self.id, self.x0, self.y0, self.source)],
+            Contact::Dragging if !cancelled => {
+                if self.points.back() != Some(&(x, y)) {
+                    self.gather(x, y);
+                }
+                self.x = x;
+                self.y = y;
+                let mut out: Vec<KitEvent> = self.take_moves().into_iter().collect();
+                out.push(KitEvent::new(EV_DRAG_END, self.id, x, y, 0));
+                out
+            }
+            _ => self.cancel(),
+        });
+        self.contact = Contact::Up;
+        self.points.clear();
+        out
+    }
+
+    /// The host's tick at `now`: a contact held HOLD_MS within the slop is a PRESS, once. (The hold is a duration on
+    /// the u32 clock, `now.wrapping_sub(t0)`: the same at any uptime, across the clock's wrap too.)
+    pub fn tick(&mut self, now: u32) -> Option<KitEvent> {
+        if self.contact != Contact::Down || now.wrapping_sub(self.t0) < HOLD_MS {
+            return None;
+        }
+        self.contact = Contact::Pressed;
+        Some(KitEvent::new(EV_PRESS, self.id, self.x0, self.y0, self.source))
+    }
+
+    /// The samples a drag gathered since the last DRAG_MOVE, as one DRAG_MOVE: at the newest, with how many there are,
+    /// oldest first. None while there are none.
+    pub fn take_moves(&mut self) -> Option<KitEvent> {
+        if self.contact != Contact::Dragging || self.points.is_empty() {
+            return None;
+        }
+        let points: Vec<(i32, i32)> = self.points.drain(..).collect();
+        let &(x, y) = points.last()?;
+        Some(KitEvent { points: points.clone(), ..KitEvent::new(EV_DRAG_MOVE, self.id, x, y, points.len() as i32) })
+    }
+
+    /// The contact is let go as cancelled: a drag it was ends so (DRAG_END marked cancelled, at its newest sample).
+    fn cancel(&mut self) -> Vec<KitEvent> {
+        let out = if self.contact == Contact::Dragging { vec![KitEvent::new(EV_DRAG_END, self.id, self.x, self.y, 1)] } else { Vec::new() };
+        if self.contact != Contact::Up {
+            self.contact = Contact::Cancelled;
+        }
+        self.points.clear();
+        out
+    }
+
+    fn past_slop(&self, x: i32, y: i32) -> bool {
+        (x as i64 - self.x0 as i64).abs() > self.slop as i64 || (y as i64 - self.y0 as i64).abs() > self.slop as i64
+    }
+
+    fn gather(&mut self, x: i32, y: i32) {
+        if self.points.len() >= KIT_POINTS_MAX {
+            self.points.pop_front();
+        }
+        self.points.push_back((x, y));
+    }
+
+    /// A contact is down (whatever it is recognised as).
+    pub fn is_down(&self) -> bool {
+        self.contact != Contact::Up
+    }
+
+    /// A contact is down and may still be a tap: within the slop, not yet held.
+    pub fn undecided(&self) -> bool {
+        self.contact == Contact::Down
+    }
+
+    /// The contact never went past the slop and was not cancelled: a tap, or a press (what a widget's own
+    /// `widget_tap` is called for at the lift).
+    pub fn still(&self) -> bool {
+        matches!(self.contact, Contact::Down | Contact::Pressed)
+    }
+
+    /// The contact drags, and has samples a DRAG_MOVE would hand over.
+    pub fn has_moves(&self) -> bool {
+        self.contact == Contact::Dragging && !self.points.is_empty()
+    }
+
+    /// Where the contact came down.
+    pub fn start(&self) -> (i32, i32) {
+        (self.x0, self.y0)
+    }
+
+    /// Whether a sample from `source` (0 touch, 1 pen) is the contact's: its moves and its lift come from the source
+    /// that began it (a finger's samples while the pen's contact is down are not the pen's).
+    pub fn is_from(&self, source: i32) -> bool {
+        self.source == source
+    }
+}
+
+/// What input owes a body's drawing: the recogniser of its contact, whether a pass is owed, the pace while a contact
+/// is down, and the part of the screen its passes refreshed fast. Every input event still calls the module at once;
+/// the pass it owes waits for the host's tick, which draws it once for all the events since the last pass
+/// (`pass_now`). A fast refresh shows grays dithered to black and white, and the lift's refresh drives only the pixels
+/// that change: so all that the fast refreshes covered is owed one full-depth refresh once the contact has lifted
+/// (`take_worn`).
+#[derive(Clone, Debug, Default)]
+pub struct KitInput {
+    pub pointer: KitPointer,
+    due: bool,
+    /// when the pace last gave a turn (the app's clock); None before the first, which is due at once
+    at: Option<u32>,
+    /// the part of the screen this body's passes refreshed fast, since it was last taken
+    worn: Rect,
+}
+
+impl KitInput {
+    /// A call of the module for input changed its picture (a `kit_event` that returned nonzero, or a host's own
+    /// export, which says nothing): a pass is owed.
+    pub fn owe(&mut self) {
+        self.due = true;
+    }
+
+    pub fn owed(&self) -> bool {
+        self.due
+    }
+
+    /// A drawing pass was drawn, for whatever reason: it answers what input owed.
+    pub fn answered(&mut self) {
+        self.due = false;
+    }
+
+    /// The pace's turn at `now`: while a contact that can no longer be a tap is down (a press, a drag), once every
+    /// KIT_PASS_MS, and never while the panel's last fast refresh is still showing (`fast_busy`). On its turn the
+    /// host hands a drag's gathered samples to the module and draws the pass owed. Taking it starts the next wait.
+    /// (The wait is a duration on the u32 clock, `now.wrapping_sub(at)`: the same at any uptime, across the clock's
+    /// wrap too.)
+    pub fn turn(&mut self, now: u32, fast_busy: bool) -> bool {
+        if !self.pointer.is_down() || self.pointer.undecided() || fast_busy || self.at.is_some_and(|at| now.wrapping_sub(at) < KIT_PASS_MS) {
+            return false;
+        }
+        self.at = Some(now);
+        true
+    }
+
+    /// A pass input owed went out as a refresh of `r` in `mode`: a fast one is kept in the part the fast refreshes
+    /// covered.
+    pub fn refreshed(&mut self, r: Rect, mode: RefreshMode) {
+        if mode == RefreshMode::Fast {
+            self.worn = rect_union(self.worn, r);
+        }
+    }
+
+    /// Once no contact is down: the part of the screen the passes refreshed fast, owed one full-depth refresh whatever
+    /// the lift's pass changed, taken once. None while a contact is down, or when nothing was refreshed fast.
+    pub fn take_worn(&mut self) -> Option<Rect> {
+        if self.pointer.is_down() || rect_is_empty(self.worn) {
+            return None;
+        }
+        Some(std::mem::replace(&mut self.worn, RECT_EMPTY))
+    }
+
+    /// Whether the pass input owes is drawn now (`turn`: this tick took the pace's turn), and the refresh it takes:
+    /// none while the panel's last fast refresh is still showing; while a contact is down, on the pace's turn alone,
+    /// refreshed fast (none while it may still be a tap: one pass for a tap, at its lift); with no contact down, at
+    /// once, refreshed as the screen's UI is.
+    pub fn pass_now(&self, turn: bool, fast_busy: bool) -> Option<RefreshMode> {
+        if !self.due || fast_busy {
+            return None;
+        }
+        if !self.pointer.is_down() {
+            return Some(RefreshMode::Ui);
+        }
+        turn.then_some(RefreshMode::Fast)
+    }
+}
+
+/// A copy of `at` of the screen (cut to it), to see what a pass changes there (canvas.rs `canvas_changed_rect` of the
+/// copy, the screen and the part returned). None when there is no memory for it (or nothing of `at` is on the screen).
+pub fn kit_keep(screen: &Canvas, at: Rect) -> Option<(Canvas, Rect)> {
+    let at = rect_intersect(at, Rect { x: 0, y: 0, w: screen.w, h: screen.h });
+    if rect_is_empty(at) {
+        return None;
+    }
+    let mut kept = Canvas::default();
+    if canvas_init(&mut kept, at.w, at.h) != 0 {
+        return None;
+    }
+    canvas_blit(&mut kept, screen, at, 0, 0);
+    Some((kept, at))
 }
 
 // ---- the work of each call ----
@@ -1175,4 +1496,29 @@ fn pager(cx: &mut dyn Call, [prev_id, next_id, x, y, w, page, pages]: [i32; 7]) 
         cx.host().kit_push(None, next_hit);
     }
     Ok(r.h)
+}
+
+/// The points of the DRAG_MOVE being handled, as (x, y) pairs of i32 (little-endian, as the module's memory holds
+/// numbers), oldest first: as many whole points as `cap` bytes hold, the event has (at most KIT_POINTS_MAX) and the
+/// memory takes; 0 in a call that is not a DRAG_MOVE's. Returns how many it wrote whole.
+fn event_points(cx: &mut dyn Call, [ptr, cap]: [i32; 2]) -> Res<i32> {
+    cx.charge(KIT_CHARGE_CALL)?;
+    let n = cx.host().kit_points().len().min(cap.max(0) as usize / KIT_POINT_BYTES);
+    if n == 0 {
+        return Ok(0);
+    }
+    cx.charge((n * KIT_POINT_BYTES) as u64 / APP_CHARGE_COPY_BYTES)?;
+    let mut bytes = Vec::with_capacity(n * KIT_POINT_BYTES);
+    for &(x, y) in &cx.host().kit_points()[..n] {
+        bytes.extend_from_slice(&x.to_le_bytes());
+        bytes.extend_from_slice(&y.to_le_bytes());
+    }
+    Ok(cx.write(ptr, bytes.len() as i32, &bytes) / KIT_POINT_BYTES as i32)
+}
+
+/// The character a key types with these modifiers, as a hardware keyboard types into Grimoire's own keyboards
+/// (`keyboard_hw_char`: the US layout with Shift), or 0 for a key that types none.
+fn key_char(cx: &mut dyn Call, [code, mods]: [i32; 2]) -> Res<i32> {
+    cx.charge(KIT_CHARGE_CALL)?;
+    Ok(crate::keyboard::keyboard_hw_char(code, mods as u32).map_or(0, |c| c as i32))
 }

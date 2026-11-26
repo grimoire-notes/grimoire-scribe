@@ -14,7 +14,7 @@ use grimoire::sha256::sha256_of;
 
 /// The calls of `grimoire_kit` in the order a module here imports them (a function's index): the name, the types
 /// of the parameters (`i` an i32, `f` an f32) and of the result (`v` none, `i` an i32, `l` an i64).
-pub const KIT: [(&str, &str, char); 26] = [
+pub const KIT: [(&str, &str, char); 28] = [
     ("level", "", 'i'),
     ("version", "ii", 'i'),
     ("metric", "i", 'i'),
@@ -41,6 +41,8 @@ pub const KIT: [(&str, &str, char); 26] = [
     ("hit", "iiiii", 'v'),
     ("list_page", "iiiii", 'l'),
     ("pager", "iiiiiii", 'i'),
+    ("event_points", "ii", 'i'),
+    ("key_char", "ii", 'i'),
 ];
 
 /// The calls of `grimoire` a module here imports after the kit's: the ones both hosts have alike.
@@ -254,12 +256,33 @@ pub struct Kit {
     /// imports after the kit's and HOST: module, name, parameters, result
     pub imports: Vec<(&'static str, &'static str, &'static str, char)>,
     pub data: Vec<(u32, Vec<u8>)>,
+    /// the body of an export `kit_event(kind, id, a, b, c) -> i32` after the host's (none: no such export); the
+    /// code leaves the i32 it returns
+    pub event: Option<Vec<u8>>,
+    /// exports of the host's left out (`app_pointer`, `widget_tap`, ...)
+    pub without: Vec<&'static str>,
+    /// the body of a start function, which instantiating the module runs (none: no start section)
+    pub start: Option<Vec<u8>>,
 }
 
 impl Kit {
     /// A module whose drawing pass (`widget_draw` or `app_draw`) is `draw`.
     pub fn new(host: Host, draw: Vec<u8>) -> Kit {
-        Kit { host, pages: 1, code: vec![draw], imports: Vec::new(), data: Vec::new() }
+        Kit { host, pages: 1, code: vec![draw], imports: Vec::new(), data: Vec::new(), event: None, without: Vec::new(), start: None }
+    }
+
+    /// The module's exports after `memory`: each one's name, parameters, result and body.
+    fn exports(&self) -> Vec<(&'static str, &'static str, char, &[u8])> {
+        let mut out: Vec<(&'static str, &'static str, char, &[u8])> = Vec::new();
+        for (at, &(name, params)) in self.host.exports().iter().enumerate() {
+            if !self.without.contains(&name) {
+                out.push((name, params, 'v', self.code.get(at).map_or(&[][..], |c| &c[..])));
+            }
+        }
+        if let Some(event) = &self.event {
+            out.push(("kit_event", "iiiii", 'i', &event[..]));
+        }
+        out
     }
 
     /// The export after the drawing pass: `widget_tap`, or `app_pointer`.
@@ -292,8 +315,12 @@ impl Kit {
         for (m, n, p, r) in &self.imports {
             imports.push((m, n, type_of(p, *r)));
         }
-        let exports = self.host.exports();
-        let funcs: Vec<u32> = exports.iter().map(|(_, p)| type_of(p, 'v')).collect();
+        let exports = self.exports();
+        let mut funcs: Vec<u32> = exports.iter().map(|(_, p, r, _)| type_of(p, *r)).collect();
+        // (a start function after the exports' functions, exported as nothing)
+        if self.start.is_some() {
+            funcs.push(type_of("", 'v'));
+        }
 
         let mut out = b"\0asm\x01\0\0\0".to_vec();
         let mut s = Vec::new();
@@ -332,17 +359,23 @@ impl Kit {
         uleb(&mut s, exports.len() as u32 + 1);
         name(&mut s, "memory");
         s.extend_from_slice(&[0x02, 0]);
-        for (at, (export, _)) in exports.iter().enumerate() {
+        for (at, (export, _, _, _)) in exports.iter().enumerate() {
             name(&mut s, export);
             s.push(0x00);
             uleb(&mut s, (imports.len() + at) as u32);
         }
         section(&mut out, 7, &s);
+        if self.start.is_some() {
+            s.clear();
+            uleb(&mut s, (imports.len() + exports.len()) as u32);
+            section(&mut out, 8, &s);
+        }
         s.clear();
         uleb(&mut s, funcs.len() as u32);
-        for at in 0..funcs.len() {
+        let bodies: Vec<&[u8]> = exports.iter().map(|e| e.3).chain(self.start.as_deref()).collect();
+        for code in bodies {
             let mut b = vec![1, 8, 0x7f]; // eight i32 locals
-            b.extend_from_slice(self.code.get(at).map_or(&[][..], |c| &c[..]));
+            b.extend_from_slice(code);
             b.push(0x0b);
             uleb(&mut s, b.len() as u32);
             s.extend_from_slice(&b);
@@ -702,6 +735,241 @@ pub fn later(host: Host) -> Kit {
     let mut k = Kit::new(host, Vec::new());
     k.imports.push(("grimoire_kit", "later_call", "", 'v'));
     k
+}
+
+// ---- the input modules: what a touch, a key and a change of settings bring, counted ----
+
+/// Where an input module counts the `kit_event` calls of each kind: a word for each kind, 0 to 15.
+pub const KINDS_AT: i32 = 256;
+/// Where it keeps its other numbers, a word each (VALUES_AT + 4 x the number's place below).
+pub const VALUES_AT: i32 = 320;
+/// its drawing passes
+pub const V_PASSES: i32 = 0;
+/// the points DRAG_MOVE said it gathered, all together
+pub const V_POINTS: i32 = 1;
+/// the DRAG_END events of a contact that was cancelled
+pub const V_CANCELLED: i32 = 2;
+/// the calls of the host's own touch export (`widget_tap`, `app_pointer`)
+pub const V_TOUCHES: i32 = 3;
+/// the calls of `app_key`
+pub const V_KEYS: i32 = 4;
+/// the hit region of the last touch, plus one (0: none)
+pub const V_HIT: i32 = 5;
+/// the place of the last touch, body-local
+pub const V_X: i32 = 6;
+pub const V_Y: i32 = 7;
+/// Where its status line is laid out before it is said.
+pub const SAYS_AT: i32 = 400;
+/// The fields of its status line: a letter, the digits, and where the number is (KINDS_AT + 4 x kind, or a value).
+pub const SAYS: [(&str, usize, i32); 13] = [
+    ("p", 3, VALUES_AT + 4 * V_PASSES),
+    ("n", 3, VALUES_AT + 4 * V_TOUCHES),
+    ("t", 2, KINDS_AT + 4),
+    ("r", 2, KINDS_AT + 8),
+    ("s", 2, KINDS_AT + 12),
+    ("m", 2, KINDS_AT + 16),
+    ("e", 2, KINDS_AT + 20),
+    ("c", 2, VALUES_AT + 4 * V_CANCELLED),
+    ("q", 3, VALUES_AT + 4 * V_POINTS),
+    ("k", 2, KINDS_AT + 24),
+    ("a", 2, VALUES_AT + 4 * V_KEYS),
+    ("g", 2, KINDS_AT + 36),
+    ("h", 1, VALUES_AT + 4 * V_HIT),
+];
+
+/// i32.load of the word at `at`.
+pub fn load(at: i32) -> Vec<u8> {
+    seq(&[i(at), vec![0x28, 0x02, 0x00]])
+}
+
+/// i32.store of what `value` leaves at `at`.
+pub fn store(at: i32, value: Vec<u8>) -> Vec<u8> {
+    seq(&[i(at), value, vec![0x36, 0x02, 0x00]])
+}
+
+/// The word at `at`, and what `by` leaves added to it.
+pub fn bump(at: i32, by: Vec<u8>) -> Vec<u8> {
+    store(at, seq(&[load(at), by, vec![ADD]]))
+}
+
+/// The address of a value.
+pub fn value(v: i32) -> i32 {
+    VALUES_AT + 4 * v
+}
+
+/// `body` when what `cond` leaves is not 0 (an `if` block).
+pub fn when(cond: Vec<u8>, body: Vec<u8>) -> Vec<u8> {
+    seq(&[cond, vec![0x04, 0x40], body, vec![0x0b]])
+}
+
+/// i32.sub, i32.mul, i32.and, i32.eq, i32.lt_u
+pub const SUB: u8 = 0x6b;
+pub const MUL: u8 = 0x6c;
+pub const AND: u8 = 0x71;
+pub const EQ: u8 = 0x46;
+pub const LT_U: u8 = 0x49;
+
+/// The status line's words as laid out at SAYS_AT, its digits all 0: `p000 n000 t00 ...`.
+pub fn says_template() -> String {
+    SAYS.iter().map(|(l, n, _)| format!("{l}{}", "0".repeat(*n))).collect::<Vec<_>>().join(" ")
+}
+
+/// An input module of a host. Its drawing pass counts itself, makes hit regions 1 (0, 0, 400 x 400) and 2 (400, 0,
+/// 400 x 400), fills a black square 100 px a side about the place of the last touch (200, 200 at first), and says
+/// its counts in its status line (`says_template`'s words). With `touch`, it exports the host's own touch call
+/// (`widget_tap`, which keeps the hit id; `app_pointer`, which keeps the place) and, in an app, `app_key`, each
+/// counted; with `events`, `kit_event`, which counts each kind, keeps a touch's hit id and place, adds up the points
+/// a DRAG_MOVE says it gathered and counts the cancelled DRAG_END, and returns 1 for every event (`events` true) or
+/// for a TAP alone (false).
+pub fn input(on: Host, touch: bool, events: Option<bool>) -> Kit {
+    let mut say = Vec::new();
+    let mut at = SAYS_AT;
+    for (letter, n, from) in SAYS {
+        at += letter.len() as i32;
+        say.extend(seq(&[load(from), digits_of(at, n)]));
+        at += n as i32 + 1;
+    }
+    let template = says_template();
+    let draw = seq(&[
+        bump(value(V_PASSES), i(1)),
+        call("hit", &[1, 0, 0, 400, 400]),
+        call("hit", &[2, 400, 0, 400, 400]),
+        load(value(V_X)),
+        i(50),
+        vec![SUB],
+        load(value(V_Y)),
+        i(50),
+        vec![SUB],
+        i(100),
+        i(100),
+        i(0),
+        invoke("fill"),
+        say,
+        host("status", &[SAYS_AT, template.len() as i32]),
+    ]);
+    let mut k = Kit::new(on, draw);
+    k.data = vec![(value(V_X) as u32, [200i32.to_le_bytes(), 200i32.to_le_bytes()].concat()), (SAYS_AT as u32, template.into_bytes())];
+    match on {
+        Host::Widget => {
+            k = k.touch(seq(&[bump(value(V_TOUCHES), i(1)), store(value(V_HIT), seq(&[arg(0), i(1), vec![ADD]]))]));
+        }
+        Host::App => {
+            k = k.touch(seq(&[bump(value(V_TOUCHES), i(1)), store(value(V_X), arg(1)), store(value(V_Y), arg(2))]));
+            k.code.push(bump(value(V_KEYS), i(1)));
+        }
+    }
+    if !touch {
+        k.without = match on {
+            Host::Widget => vec!["widget_tap"],
+            Host::App => vec!["app_pointer", "app_key"],
+        };
+    }
+    if let Some(every) = events {
+        k.event = Some(seq(&[
+            // (the kind's count: KINDS_AT + 4 x (kind & 15))
+            arg(0),
+            i(15),
+            vec![AND],
+            i(4),
+            vec![MUL],
+            i(KINDS_AT),
+            vec![ADD],
+            set(T),
+            arg(T),
+            arg(T),
+            vec![0x28, 0x02, 0x00],
+            i(1),
+            vec![ADD],
+            vec![0x36, 0x02, 0x00],
+            // (a touch's kind, 1 to 5: its hit id and place)
+            when(
+                seq(&[arg(0), i(1), vec![SUB], i(5), vec![LT_U]]),
+                seq(&[store(value(V_HIT), seq(&[arg(1), i(1), vec![ADD]])), store(value(V_X), arg(2)), store(value(V_Y), arg(3))]),
+            ),
+            when(seq(&[arg(0), i(4), vec![EQ]]), bump(value(V_POINTS), arg(4))),
+            when(seq(&[arg(0), i(5), vec![EQ]]), when(arg(4), bump(value(V_CANCELLED), i(1)))),
+            if every { i(1) } else { seq(&[arg(0), i(1), vec![EQ]]) },
+        ]));
+    }
+    k
+}
+
+/// The settings page of the input packages: one switch, so that a change of settings can be made and told.
+pub const INPUT_SETTINGS: &str = "settings:\n  - key: mode\n    label: Mode\n    type: toggle\n    default: true\n";
+
+/// The packages of tests/fixtures/kitinput: the input modules (`input`) as widgets, then as apps, each with a
+/// settings page (INPUT_SETTINGS).
+pub fn input_packages() -> Vec<Package> {
+    let with_settings = |mut p: Package| {
+        p.manifest.push_str(INPUT_SETTINGS);
+        p
+    };
+    vec![
+        widget("test.kit.inputw", "Input widget", &WIDGET_BOTH, input(Host::Widget, true, Some(true)).bytes()),
+        widget("test.kit.quietw", "Quiet widget", &WIDGET_BOTH, input(Host::Widget, false, Some(false)).bytes()),
+        widget("test.kit.tapw", "Tap widget", &WIDGET_BOTH, input(Host::Widget, true, None).bytes()),
+        app("test.kit.input", "Input app", input(Host::App, true, Some(true)).bytes()),
+        app("test.kit.pointer", "Pointer app", input(Host::App, true, None).bytes()),
+        app("test.kit.quiet", "Quiet app", input(Host::App, false, Some(false)).bytes()),
+    ]
+    .into_iter()
+    .map(with_settings)
+    .collect()
+}
+
+/// An input module (`input` with the host's touch export and every event answered) whose drawing pass fills a square
+/// `side` px a side of `gray` about the place of its last touch in place of the black one, and, given `ask`, asks for a
+/// pass that many ms after each (`request_redraw`).
+pub fn input_square(on: Host, side: i32, gray: i32, ask: Option<i32>) -> Kit {
+    let mut k = input(on, true, Some(true));
+    if ask.is_some() {
+        k.imports.push(("grimoire", "request_redraw", "i", 'v'));
+    }
+    let mut say = Vec::new();
+    let mut at = SAYS_AT;
+    for (letter, n, from) in SAYS {
+        at += letter.len() as i32;
+        say.extend(seq(&[load(from), digits_of(at, n)]));
+        at += n as i32 + 1;
+    }
+    let mut draw = seq(&[
+        bump(value(V_PASSES), i(1)),
+        call("hit", &[1, 0, 0, 400, 400]),
+        call("hit", &[2, 400, 0, 400, 400]),
+        load(value(V_X)),
+        i(side / 2),
+        vec![SUB],
+        load(value(V_Y)),
+        i(side / 2),
+        vec![SUB],
+        i(side),
+        i(side),
+        i(gray),
+        invoke("fill"),
+        say,
+        host("status", &[SAYS_AT, says_template().len() as i32]),
+    ]);
+    if let Some(ms) = ask {
+        draw.extend(extra(&k, 0, &[ms]));
+    }
+    k.code[0] = draw;
+    k
+}
+
+/// The packages of tests/fixtures/kitpanel, for the scenarios that hold what the panel shows after input
+/// (z_kit_input_overlap.qs, z_kit_input_minute.qs, z_kit_input_clean_app.qs, z_kit_input_clean_widget.qs): the
+/// input modules with a black square of 100 px (as test.kit.inputw and test.kit.input), a gray (128) one of 200 px,
+/// whose fast refreshes leave it dithered until a full-depth one, and a widget that asks for a pass a second after
+/// each and draws its square black, each a widget and the first two apps too, with the status bar.
+pub fn panel_packages() -> Vec<Package> {
+    vec![
+        widget("test.kit.blackw", "Black widget", &WIDGET_BOTH, input(Host::Widget, true, Some(true)).bytes()),
+        widget("test.kit.grayw", "Gray widget", &WIDGET_BOTH, input_square(Host::Widget, 200, 128, None).bytes()),
+        widget("test.kit.askw", "Ask widget", &WIDGET_BOTH, input_square(Host::Widget, 200, 0, Some(1000)).bytes()),
+        widget("test.kit.tapw", "Tap widget", &WIDGET_BOTH, input(Host::Widget, true, None).bytes()),
+        app("test.kit.black", "Black app", input(Host::App, true, Some(true)).bytes()),
+        app("test.kit.gray", "Gray app", input_square(Host::App, 200, 128, None).bytes()),
+    ]
 }
 
 /// A package of the scenarios' data root.

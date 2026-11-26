@@ -805,22 +805,26 @@ pub fn canvas_downsample_keep_lines(dst: &mut Canvas, src: &Canvas, weight: f32)
     }
 }
 
-/// The smallest rect that holds every pixel in which `b` differs from `a`: empty when they are the same picture, the
-/// whole of `b` when they are not the same size. (What a frame drawn again changed of the one before it.)
-pub fn canvas_changed_rect(a: &Canvas, b: &Canvas) -> Rect {
-    let (w, h, stride) = (b.w.max(0) as usize, b.h.max(0) as usize, b.stride.max(0) as usize);
-    if (a.w, a.h, a.stride) != (b.w, b.h, b.stride) || a.px.len() != b.px.len() || stride < w || b.px.len() < stride * h {
-        return Rect { x: 0, y: 0, w: b.w, h: b.h };
+/// The smallest rect that holds every pixel of `at` in which `now` differs from `was`, in `now`'s pixels: `was` is what
+/// that part of `now` held before (a copy of the part, as kithost.rs kit_keep makes one, or of the whole canvas when
+/// `at` is all of it). Empty when nothing differs; the whole of `at` when `was` is not the part's size or the part is
+/// not inside `now`. (What a frame drawn again changed of the one before it, or of a part of it.)
+pub fn canvas_changed_rect(was: &Canvas, now: &Canvas, at: Rect) -> Rect {
+    let (w, h) = (at.w.max(0) as usize, at.h.max(0) as usize);
+    let (ws, ns) = (was.stride.max(0) as usize, now.stride.max(0) as usize);
+    let inside = at.x >= 0 && at.y >= 0 && at.x as i64 + at.w as i64 <= now.w as i64 && at.y as i64 + at.h as i64 <= now.h as i64;
+    if (was.w, was.h) != (at.w, at.h) || !inside || ws < w || ns < at.x as usize + w || was.px.len() < ws * h || now.px.len() < ns * (at.y as usize + h) {
+        return at;
     }
-    fn row(c: &Canvas, y: usize, stride: usize, w: usize) -> &[u8] {
-        &c.px[y * stride..y * stride + w]
-    }
-    let differs = |y: &usize| row(a, *y, stride, w) != row(b, *y, stride, w);
+    let (ax, ay) = (at.x as usize, at.y as usize);
+    let before = |y: usize| &was.px[y * ws..y * ws + w];
+    let after = |y: usize| &now.px[(ay + y) * ns + ax..(ay + y) * ns + ax + w];
+    let differs = |y: &usize| before(*y) != after(*y);
     let Some(y0) = (0..h).find(differs) else { return RECT_EMPTY };
     let y1 = (y0..h).rev().find(differs).unwrap_or(y0);
     let (mut x0, mut x1) = (w, 0);
     for y in y0..=y1 {
-        let (ra, rb) = (row(a, y, stride, w), row(b, y, stride, w));
+        let (ra, rb) = (before(y), after(y));
         if let Some(x) = (0..x0).find(|&x| ra[x] != rb[x]) {
             x0 = x;
         }
@@ -828,7 +832,7 @@ pub fn canvas_changed_rect(a: &Canvas, b: &Canvas) -> Rect {
             x1 = x;
         }
     }
-    Rect { x: x0 as i32, y: y0 as i32, w: (x1 + 1 - x0) as i32, h: (y1 + 1 - y0) as i32 }
+    Rect { x: at.x + x0 as i32, y: at.y + y0 as i32, w: (x1 + 1 - x0) as i32, h: (y1 + 1 - y0) as i32 }
 }
 
 /// Scales src into box keeping its aspect (box filter down, nearest up), centered in box.
@@ -999,28 +1003,42 @@ mod tests {
     }
 
     // What changed between two frames: nothing; one pixel; the box around pixels far apart; the edges; and the
-    // whole of the second when the two are not the same size.
+    // whole of the second when the two are not the same size. And what changed in a part of a frame.
     #[test]
     fn the_changed_rect_holds_every_changed_pixel_and_no_more() {
         let a = canvas(40, 30);
+        let all = Rect { x: 0, y: 0, w: 40, h: 30 };
         let mut b = a.clone();
-        assert_eq!(canvas_changed_rect(&a, &b), RECT_EMPTY);
+        assert_eq!(canvas_changed_rect(&a, &b, all), RECT_EMPTY);
         b.px[(7 * b.stride + 5) as usize] = 0;
-        assert_eq!(canvas_changed_rect(&a, &b), Rect { x: 5, y: 7, w: 1, h: 1 });
+        assert_eq!(canvas_changed_rect(&a, &b, all), Rect { x: 5, y: 7, w: 1, h: 1 });
         b.px[(20 * b.stride + 31) as usize] = 9;
-        assert_eq!(canvas_changed_rect(&a, &b), Rect { x: 5, y: 7, w: 27, h: 14 });
+        assert_eq!(canvas_changed_rect(&a, &b, all), Rect { x: 5, y: 7, w: 27, h: 14 });
         b.px[(12 * b.stride + 2) as usize] = 9;
-        assert_eq!(canvas_changed_rect(&a, &b), Rect { x: 2, y: 7, w: 30, h: 14 });
-        assert_eq!(canvas_changed_rect(&b, &a), Rect { x: 2, y: 7, w: 30, h: 14 });
+        assert_eq!(canvas_changed_rect(&a, &b, all), Rect { x: 2, y: 7, w: 30, h: 14 });
+        assert_eq!(canvas_changed_rect(&b, &a, all), Rect { x: 2, y: 7, w: 30, h: 14 });
         let mut c = a.clone();
         c.px[0] = 1;
         c.px[(29 * c.stride + 39) as usize] = 1;
-        assert_eq!(canvas_changed_rect(&a, &c), Rect { x: 0, y: 0, w: 40, h: 30 });
+        assert_eq!(canvas_changed_rect(&a, &c, all), Rect { x: 0, y: 0, w: 40, h: 30 });
         canvas_fill(&mut c, Rect { x: 0, y: 0, w: 40, h: 30 }, 255);
         canvas_fill(&mut c, Rect { x: 10, y: 4, w: 6, h: 3 }, 100);
-        assert_eq!(canvas_changed_rect(&a, &c), Rect { x: 10, y: 4, w: 6, h: 3 });
-        assert_eq!(canvas_changed_rect(&canvas(40, 31), &a), Rect { x: 0, y: 0, w: 40, h: 30 });
-        assert_eq!(canvas_changed_rect(&Canvas::default(), &Canvas::default()), RECT_EMPTY);
+        assert_eq!(canvas_changed_rect(&a, &c, all), Rect { x: 10, y: 4, w: 6, h: 3 });
+        assert_eq!(canvas_changed_rect(&canvas(40, 31), &a, all), Rect { x: 0, y: 0, w: 40, h: 30 });
+        assert_eq!(canvas_changed_rect(&Canvas::default(), &Canvas::default(), RECT_EMPTY), RECT_EMPTY);
+        // a part of the canvas, at an offset: `was` a copy of that part; what changed outside it is not counted, and a
+        // part that is not inside the canvas, or a copy of another size, is the whole part
+        let part = Rect { x: 8, y: 3, w: 12, h: 9 };
+        let mut kept = canvas(12, 9);
+        canvas_blit(&mut kept, &c, part, 0, 0);
+        assert_eq!(canvas_changed_rect(&kept, &c, part), RECT_EMPTY);
+        c.px[(5 * c.stride + 19) as usize] = 7;
+        c.px[(0 * c.stride + 0) as usize] = 7;
+        assert_eq!(canvas_changed_rect(&kept, &c, part), Rect { x: 19, y: 5, w: 1, h: 1 });
+        c.px[(11 * c.stride + 8) as usize] = 7;
+        assert_eq!(canvas_changed_rect(&kept, &c, part), Rect { x: 8, y: 5, w: 12, h: 7 });
+        assert_eq!(canvas_changed_rect(&kept, &c, Rect { x: 30, y: 25, w: 12, h: 9 }), Rect { x: 30, y: 25, w: 12, h: 9 });
+        assert_eq!(canvas_changed_rect(&canvas(12, 8), &c, part), part);
     }
 
     fn at(c: &Canvas, x: i32, y: i32) -> u8 {
