@@ -976,6 +976,12 @@ impl KitPointer {
     pub fn start(&self) -> (i32, i32) {
         (self.x0, self.y0)
     }
+
+    /// Whether a sample from `source` (0 touch, 1 pen) is the contact's: its moves and its lift come from the source
+    /// that began it (a finger's samples while the pen's contact is down are not the pen's).
+    pub fn is_from(&self, source: i32) -> bool {
+        self.source == source
+    }
 }
 
 /// What input owes a body's drawing: the recogniser of its contact, whether a pass is owed, the pace while a contact

@@ -916,3 +916,45 @@ fn a_frames_due_request_is_answered_only_by_a_pass_of_its_whole_body() {
     canvas_free(&mut c);
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// In an open app the recogniser takes a contact's moves and its lift only from the source that began it, as the
+/// editor does: the pen coming down while a finger drags ends the finger's drag (cancelled) and begins the pen's
+/// contact, which the finger's later samples do not move; app_pointer is still told of every phase.
+#[test]
+fn an_apps_contact_takes_its_moves_and_lift_from_the_source_that_began_it() {
+    let root = fresh_root("source");
+    let id = "test.ki.source";
+    let module = input(Host::App, true, Some(true)).bytes();
+    app_package_install(&app_manifest(id, "Source", &[], false, &module), &module, None, "", SCREEN.0, SCREEN.1).unwrap();
+    let mut a = App { w: SCREEN.0, h: SCREEN.1, dpi: 300.0, ..Default::default() };
+    assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+    grimoire::library::library_init(&mut a);
+    assert!(grimoire::apphost::apphost_launch(&mut a, id));
+    let ev = |a: &mut App, type_: InType, x: f32, y: f32| {
+        assert!(grimoire::apphost::apphost_event(a, &InEvent { type_, x, y, t_ms: now_ms(), ..Default::default() }));
+    };
+    let tick = |a: &mut App, ms: u32| grimoire::apphost::apphost_tick(a, now_ms().wrapping_add(ms));
+    // a finger drags; the pen comes down elsewhere; the finger moves and lifts; the pen taps where it came down
+    ev(&mut a, InType::TouchDown, 300.0, 1000.0);
+    ev(&mut a, InType::TouchMove, 500.0, 1000.0);
+    tick(&mut a, 200);
+    ev(&mut a, InType::PenDown, 1200.0, 2000.0);
+    ev(&mut a, InType::TouchMove, 700.0, 1000.0);
+    ev(&mut a, InType::TouchUp, 700.0, 1000.0);
+    ev(&mut a, InType::PenMove, 1210.0, 2005.0);
+    ev(&mut a, InType::PenUp, 1210.0, 2005.0);
+    tick(&mut a, 400);
+    assert_eq!(a.app_view.status(), "p003 n007 t01 r00 s01 m01 e01 c01 q001 k00 a00 g00 h0", "the finger's drag ended cancelled, the pen's tap a TAP");
+    // a finger resting while the pen taps: the pen's TAP, and the finger's lift is nothing
+    ev(&mut a, InType::TouchDown, 300.0, 1000.0);
+    ev(&mut a, InType::PenDown, 1200.0, 2000.0);
+    ev(&mut a, InType::PenUp, 1200.0, 2000.0);
+    ev(&mut a, InType::TouchUp, 300.0, 1000.0);
+    tick(&mut a, 600);
+    assert_eq!(a.app_view.status(), "p004 n011 t02 r00 s01 m01 e01 c01 q001 k00 a00 g00 h0");
+    grimoire::apphost::apphost_close(&mut a);
+    grimoire::library::library_free(&mut a);
+    canvas_free(&mut a.screen);
+    let _ = app_package_remove(id, false);
+    let _ = std::fs::remove_dir_all(root);
+}

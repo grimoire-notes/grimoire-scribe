@@ -715,8 +715,10 @@ pub fn apphost_event(a: &mut App, ev: &InEvent) -> bool {
     // drawing pass either owes is drawn by the tick (apphost_tick).
     let mut owe = r.pointer(ph, x, y, source);
     let p = &mut a.app_view.input.pointer;
+    // (a contact's moves and its lift come from the source that began it, pen or finger, as the editor takes them)
     let events = match ph {
         0 => p.down(x, y, source, r.hit_at(x, y), now_ms(), slop, palm),
+        _ if !p.is_from(source) => Vec::new(),
         1 => p.moved(x, y, palm),
         _ => p.up(x, y, touch_cancelled(ev)),
     };
