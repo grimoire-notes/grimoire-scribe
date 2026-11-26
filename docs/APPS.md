@@ -329,12 +329,21 @@ asks the host to run `app_stop`, save and return Home. `toast` shows a short Gri
 
 One redraw request stands at a time: the soonest asked for, whichever call of the module asked (a
 drawing pass, a touch, a key, an event), so a later call does not put an earlier one off. When its time has
-come, the app is drawn once and the whole screen refreshed once, and the request is gone (a pass drawn
-then for another reason answers it): a pass that wants another asks again. An app that asks in every pass is so drawn, and the screen
-refreshed, at most ten times a second; an app that asks for nothing is drawn only when it is
-touched, a key is pressed or Grimoire itself redraws. A refresh of an e-ink panel takes a few
-hundred milliseconds and its share of the battery: ask for the next pass when there is something
-new to show (the next minute for a clock, the next poll for a request in flight).
+come, the app is drawn once, and the request is gone (a pass drawn then for another reason answers it): a
+pass that wants another asks again. Only the part of the screen the pass changed is refreshed. A pass
+that changes nothing refreshes nothing and does not count for what follows. A pass is back to back when it
+comes within the pause a touch's cleaning waits (150 ms, 1.5 s with the pen near) of the app's last pass of
+its own asking that refreshed something, or of its last fast refresh. One that is not back to back, while no
+fast refresh is owed a clean, is a pass after a rest: it is refreshed at full depth, as Grimoire's screens
+are, and owes nothing (with the pen away, a clock's tick or a poll that brought a change). Any other is
+refreshed fast, and what those fast refreshes covered gets one full-depth refresh the pause after the last
+of them, or after the last pass back to back that changed nothing: an animation's frames are cleaned once,
+after it stops, even with a frame in it that changed nothing. With the pen near, a clock that asks every
+second is back to back, so its ticks after the first are fast, cleaned once the pen has left. An app that
+asks in every pass is so drawn, and the screen refreshed, at most ten times a second; an app that asks for
+nothing is drawn only when it is touched, a key is pressed or Grimoire itself redraws. A refresh of an
+e-ink panel takes a few hundred milliseconds and its share of the battery: ask for the next pass when there
+is something new to show (the next minute for a clock, the next poll for a request in flight).
 
 `battery_percent` returns -1 when the device cannot tell. `wifi_connected` returns 1, 0 or -1.
 `wifi_ssid` returns the connected network's name, empty when there is none. `time_text` and

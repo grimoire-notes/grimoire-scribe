@@ -2,6 +2,8 @@
   "version": 1,
   "packages": [
     {"id":"test.kit.black","name":"Black app","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/apps/test.kit.black/app.wasm","sha":"bbfe787f8cd0e6878d5c55c7cfef3815ebb5a04f3d4b200dfea78d4880dc59f6","installed_at":1,"source_url":""},
-    {"id":"test.kit.gray","name":"Gray app","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/apps/test.kit.gray/app.wasm","sha":"0a41ce313d45e90c3f809be08261b26b0ba25ba607154da7b0d48c86783d5443","installed_at":1,"source_url":""}
+    {"id":"test.kit.gray","name":"Gray app","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/apps/test.kit.gray/app.wasm","sha":"0a41ce313d45e90c3f809be08261b26b0ba25ba607154da7b0d48c86783d5443","installed_at":1,"source_url":""},
+    {"id":"test.kit.graytick","name":"Gray tick app","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/apps/test.kit.graytick/app.wasm","sha":"b8d4c262a8b8dff1bac5af9c53277630011d479d5560547f78d169620d04fbe7","installed_at":1,"source_url":""},
+    {"id":"test.kit.grayrun","name":"Gray run app","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/apps/test.kit.grayrun/app.wasm","sha":"54e275e37d40b99d29560ec724461d3f97d8788eed4ba022640dabfcf23e2cea","installed_at":1,"source_url":""}
   ]
 }

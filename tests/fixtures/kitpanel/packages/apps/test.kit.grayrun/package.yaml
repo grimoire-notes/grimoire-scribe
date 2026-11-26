@@ -1,0 +1,15 @@
+name: Gray run app
+id: test.kit.grayrun
+type: app
+version: 1.0.0
+author: Grimoire tests
+description: A module of the package kit's tests.
+platforms: [all]
+artifact:
+  path: app.wasm
+  sha256: 54e275e37d40b99d29560ec724461d3f97d8788eed4ba022640dabfcf23e2cea
+  size: 1973
+capabilities: []
+spec:
+  runtime: wasm
+  status_bar: true
