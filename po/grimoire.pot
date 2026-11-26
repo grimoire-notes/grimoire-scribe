@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Grimoire 2.2.0\n"
 "Report-Msgid-Bugs-To: https://github.com/ganten1998/grimoire-scribe/issues\n"
-"POT-Creation-Date: 2026-11-25 16:25-0600\n"
+"POT-Creation-Date: 2026-11-26 13:25-0600\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -957,14 +957,14 @@ msgstr ""
 msgid "Automatic"
 msgstr ""
 
+#: rust/src/app.rs rust/src/library.rs
+msgid "Stable"
+msgstr ""
+
 #. TRANSLATORS: Settings > Updates, the branch the switch is on: Preview gets betas and releases,
 #. Stable only releases.
 #: rust/src/app.rs rust/src/library.rs
 msgid "Preview"
-msgstr ""
-
-#: rust/src/app.rs rust/src/library.rs
-msgid "Stable"
 msgstr ""
 
 #. TRANSLATORS: selected update channel, %s is its name; toast, 1700 px at 44 px bold.
