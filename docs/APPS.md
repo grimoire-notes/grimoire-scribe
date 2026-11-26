@@ -231,7 +231,9 @@ read with it off. While an app is open every key of a paired keyboard, and every
 controller, is the app's, pressed and let go (`app_key`, and a KEY event for `kit_event`), before
 Grimoire's shortcuts; no shortcut acts but the two that leave the app: a key bound to `back` (Esc, in
 the keys Grimoire writes) or to `home` closes the app as the two-finger swipe does (`app_stop` runs),
-and does nothing more. A keyboard of Grimoire's open over the app takes the keys that type.
+and does nothing more. A controller's buttons reach the app as keys too, and one leaves it only if
+the controller's own bindings bind it to `back` or `home`, which none of the bindings Grimoire writes
+does; a finger can always leave, by the two-finger swipe. A keyboard of Grimoire's open over the app takes the keys that type.
 The kit's `key_char` gives the character a key types.
 
 `app_status_bar` is called once, before the first frame. Returning 0 starts with the bar hidden and

@@ -302,10 +302,12 @@ types into it with this.
   does not gets `widget_tap(id)` for a lift within the slop, held or not, as before, and nothing for a drag. The
   title bar, the frame's buttons and its corner are the frame's. A tap's pass is drawn at its lift with the pen near
   or not; a pass the module asks for itself (`request_redraw`) waits for the pen.
-- **An app** gets them in its body, KEY and SETTINGS; `app_pointer` is still called as before, for every phase inside
-  the body and for the lift wherever it is, and `app_key` for every key, each before `kit_event`. While an app is open the keys are its own: no shortcut of Grimoire's acts but
-  `back` and `home`, which leave it ([APPS.md](APPS.md#lifecycle-and-exports)). On a Kindle a keyboard and a
-  controller are read only while Settings > Shortcuts is on: an app gets keys while it is on, and none with it off.
+- **An app** gets them in its body, KEY and SETTINGS (no screen saves an app's settings while it is open yet, so its
+  SETTINGS comes once a later level lets an app open its settings page); `app_pointer` is still called as before, for
+  every phase inside the body and for the lift wherever it is, and `app_key` for every key, each before `kit_event`.
+  While an app is open the keys are its own: no shortcut of Grimoire's acts but `back` and `home`, which leave it
+  ([APPS.md](APPS.md#lifecycle-and-exports)). On a Kindle a keyboard and a controller are read only while Settings >
+  Shortcuts is on: an app gets keys while it is on, and none with it off.
 
 ## Capabilities
 
