@@ -37,8 +37,8 @@ minute of the Display sheet's "Sleep after" last that many milliseconds, so a sc
 timer run out.
 `GRIMOIRE_STORAGE=PATH` (off the Kindle only; compiled out of the Kindle build) stands for the Kindle's
 storage, `/mnt/us`, for the storage layer (`fsview.rs`, 2.1): the root every `StoragePath` is relative to.
-An absolute path, never `/`; without it there is no storage to browse. Nothing reads it yet but the
-tests (`tests/test_fsview.rs`); the scenarios unset it.
+An absolute path, never `/`. Without it the storage is the folder around the data root
+(`pdfimport::storage_root`). The runner sets it for a scenario with `# storage: 1` and unsets it for every other.
 
 Live view's raw digitizer has stand-ins (headless runner only; tests/live_pen_stall.py uses them):
 `GRIMOIRE_SIM_RAWPEN=PATH` names a FIFO of `struct input_event` records in the host's layout (x
@@ -433,7 +433,9 @@ claim from synthetic replay establishes the owner study or the finger-shape free
 A scenario with `# storage: 1` runs on a fixture storage root: the run's root is the storage (`GRIMOIRE_STORAGE`),
 Grimoire's data root its folder `grimoire`, and `# copy: DIR DEST` and `# generate:` work on the storage root
 (tests/files_hostile.py plants links, a FIFO and odd names; tests/files_place_tree.py the tree the Files scenarios
-browse, files of known sizes and times among them). `tap library new` then `tap library new.file` opens the picker;
+browse, files of known sizes and times among them). Without it, the storage is the folder around the data root,
+so the texts that name Grimoire's own folders say `<run name>/<folder>` (`y_all_screens/trash`), not
+`grimoire/trash` (tests/scenarios/y_own_folders_named.qs). `tap library new` then `tap library new.file` opens the picker;
 `tap library files-card` opens Files (place mode) from its card in the Library (`# settings: files_card=1`), and
 `files-card-menu` that card's menu, whose rows are `files-card.open` and `files-card.hide` (Cancel is `done`).
 Taps: `tap library files.back`, `files.prev`, `files.next`, `files.row.N` (the Nth row on the screen, from 1),
