@@ -3500,6 +3500,32 @@ mod tests {
         assert_eq!(kb.text.as_str(), "349", "the finger still on del deletes nothing more");
     }
 
+    // ---- the keys of an open app ----
+
+    // While an app is open only the shortcuts that leave it act, wherever an action comes from (a key, a controller's
+    // button, Live view's keys): `back` closes the app and does no more, `home` closes it and goes to the home, and any
+    // other does nothing (the theme stays, no notebook is made).
+    #[test]
+    fn while_an_app_is_open_only_the_shortcuts_that_leave_it_act() {
+        let mut a = notice_app();
+        crate::library::library_init(&mut a);
+        a.scr = ScreenId::Library;
+        let theme = a.settings.theme;
+        for action in [SHORTCUT_THEME, SHORTCUT_NEW_NOTEBOOK, SHORTCUT_SETTINGS, SHORTCUT_INVERT] {
+            a.app_view.open = true;
+            assert!(!app_shortcut_action(&mut a, action, ActionSrc::Key), "{action}");
+            assert!(a.app_view.open, "{action}");
+        }
+        assert_eq!((a.settings.theme, a.settings.invert), (theme, false), "nothing acted under the app");
+        for action in APP_LEAVE_ACTIONS {
+            a.app_view.open = true;
+            assert!(app_shortcut_action(&mut a, action, ActionSrc::Key), "{action}");
+            assert!(!a.app_view.open, "{action} leaves the app");
+        }
+        crate::library::library_free(&mut a);
+        canvas_free(&mut a.screen);
+    }
+
     // ---- the staying notice ----
 
     fn notice_app() -> App {
