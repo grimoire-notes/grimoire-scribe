@@ -998,3 +998,69 @@ fn an_apps_drag_is_seen_whole_where_it_leaves_the_body_and_app_pointer_only_insi
     let _ = app_package_remove(id, false);
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// What a flood of input makes a module do between two screen updates (KIT.md, How a pass follows input): an input
+/// event makes at most three events for `kit_event` (a lift past the slop whose moves were not seen: DRAG_START,
+/// DRAG_MOVE and DRAG_END), whatever the contact was, and a tick at most one more (a PRESS or a DRAG_MOVE); the main
+/// loop's batch ends at INPUT_BATCH_MAX events. In an app, the review's case: a batch of downs and lifts past the slop.
+#[test]
+fn an_input_event_makes_at_most_three_events_and_a_tick_one_more() {
+    // the recogniser in each of its states, given each kind of sample
+    let states: [(&str, fn() -> KitPointer); 6] = [
+        ("up", KitPointer::default),
+        ("down", || { let mut p = KitPointer::default(); p.down(0, 0, 0, -1, 0, slop(), false); p }),
+        ("pressed", || { let mut p = KitPointer::default(); p.down(0, 0, 0, -1, 0, slop(), false); p.tick(HOLD_MS); p }),
+        ("dragging", || { let mut p = KitPointer::default(); p.down(0, 0, 0, -1, 0, slop(), false); p.moved(200, 0, false); p }),
+        ("dragging, its samples handed over", || { let mut p = KitPointer::default(); p.down(0, 0, 0, -1, 0, slop(), false); p.moved(200, 0, false); p.take_moves(); p }),
+        ("cancelled", || { let mut p = KitPointer::default(); p.down(0, 0, 0, -1, 0, slop(), true); p }),
+    ];
+    let samples: [(&str, fn(&mut KitPointer) -> usize); 8] = [
+        ("a down", |p| p.down(500, 500, 0, -1, 0, slop(), false).len()),
+        ("a palm's down", |p| p.down(500, 500, 0, -1, 0, slop(), true).len()),
+        ("a move within the slop", |p| p.moved(1, 1, false).len()),
+        ("a move past it", |p| p.moved(900, 900, false).len()),
+        ("a palm's move", |p| p.moved(900, 900, true).len()),
+        ("a lift within the slop", |p| p.up(1, 1, false).len()),
+        ("a lift past it", |p| p.up(900, 900, false).len()),
+        ("a cancel", |p| p.up(-10000, -10000, true).len()),
+    ];
+    let mut most = 0;
+    for (state, make) in states {
+        for (sample, give) in samples {
+            let n = give(&mut make());
+            assert!(n <= 3, "{sample} on a contact {state}: {n} events");
+            most = most.max(n);
+        }
+        let mut p = make();
+        let n = p.tick(HOLD_MS * 2).into_iter().count() + p.take_moves().into_iter().count();
+        assert!(n <= 1, "a tick of a contact {state}: {n} events");
+    }
+    assert_eq!(most, 3, "a lift past the slop of a contact not yet a drag makes three");
+    // an app given a batch of INPUT_BATCH_MAX events, each lift past the slop, and its tick
+    let root = fresh_root("batch");
+    let id = "test.ki.batch";
+    let module = input(Host::App, true, Some(true)).bytes();
+    app_package_install(&app_manifest(id, "Batch", &[], false, &module), &module, None, "", SCREEN.0, SCREEN.1).unwrap();
+    let mut a = App { w: SCREEN.0, h: SCREEN.1, dpi: 300.0, ..Default::default() };
+    assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+    grimoire::library::library_init(&mut a);
+    assert!(grimoire::apphost::apphost_launch(&mut a, id));
+    let batch = grimoire::mainloop::INPUT_BATCH_MAX as i32;
+    assert_eq!((batch, grimoire::mainloop::INPUT_BATCH_MS), (64, 8));
+    for k in 0..batch / 2 {
+        for (type_, x) in [(InType::TouchDown, 300.0), (InType::TouchUp, 900.0)] {
+            assert!(grimoire::apphost::apphost_event(&mut a, &InEvent { type_, x, y: 1000.0 + k as f32, t_ms: now_ms(), ..Default::default() }));
+        }
+    }
+    grimoire::apphost::apphost_tick(&mut a, now_ms());
+    let s = a.app_view.status().to_string();
+    let events: i32 = ['t', 'r', 's', 'm', 'e'].iter().map(|&l| said(&s, l)).sum();
+    assert_eq!((said(&s, 'n'), said(&s, 's'), said(&s, 'm'), said(&s, 'e'), events), (64, 32, 32, 32, 96), "{s}");
+    assert!(events <= 3 * batch + 1, "{events} calls of kit_event for {batch} events and a tick");
+    assert_eq!(said(&s, 'p'), 2, "one pass for the batch");
+    grimoire::apphost::apphost_close(&mut a);
+    grimoire::library::library_free(&mut a);
+    canvas_free(&mut a.screen);
+    let _ = app_package_remove(id, false);
+    let _ = std::fs::remove_dir_all(root);
+}

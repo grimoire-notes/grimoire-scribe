@@ -286,10 +286,14 @@ types into it with this.
   answers what input owed, and a redraw request whose time has come. A widget's pass of part of its body (Grimoire
   drawing a region that holds part of the frame) answers neither: the pass input owes follows, whole. A redraw request
   stands across calls in both hosts, the soonest asked for.
-- Between two of its ticks the main loop reads at most 64 input events (`INPUT_BATCH_MAX`), so between two screen
-  updates a module is called for input at most that many times (and the host's own export as many); a drag's
-  samples reach it only on the pace's turn and at the lift, at most 256 to a DRAG_MOVE; and it is drawn once at
-  most. What the host does for each sample is constant: the recogniser keeps the newest 256.
+- A flood of input meets these bounds between two screen updates. The main loop reads at most 64 input events
+  (`INPUT_BATCH_MAX`) before its tick, and fewer once it has spent 8 ms handling them (`INPUT_BATCH_MS`, checked
+  after each event; on a Kindle, where a package's calls take longer, this is the bound that holds). An input event
+  calls `kit_event` at most three times (a lift past the slop whose moves were not seen: DRAG_START, DRAG_MOVE and
+  DRAG_END) and the host's own export at most once, and the tick calls `kit_event` once more (a PRESS or a
+  DRAG_MOVE); the module is drawn once at most. A drag's samples reach it only on the pace's turn and at the lift,
+  at most 256 to a DRAG_MOVE, and what the host does for each sample is constant: the recogniser keeps the newest
+  256.
 
 ### In each host
 
@@ -337,7 +341,7 @@ and to the kit's own:
 | the slop of a tap or a press | 5 mm each way (`TAP_SLOP_MM`) |
 | a press | a contact held 600 ms (`HOLD_MS`) |
 | the passes input owes while a contact is down | one every 120 ms at most (`KIT_PASS_MS`) |
-| the input events between two ticks of the main loop | 64 (`INPUT_BATCH_MAX`): a module is called for input at most this many times between two screen updates |
+| the input events between two ticks of the main loop | 64 (`INPUT_BATCH_MAX`), or as many as 8 ms of handling reach (`INPUT_BATCH_MS`); what they call: [How a pass follows input](#how-a-pass-follows-input) |
 
 A length is compared with its limit before the module's memory is read. A call past the command, hit region or
 text limit is stopped the way a call that runs past its instruction budget is, and Grimoire's log names the
