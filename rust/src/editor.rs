@@ -13056,6 +13056,12 @@ pub fn editor_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32
         csnprintf!(out, cap, "%d", a.pkg.open as i32);
         return 0;
     }
+    // packages.error: what the page's error view says while it is up (why an install failed), else empty.
+    if key == "packages.error" {
+        let up = a.pkg.view == crate::widgetpkgui::PkgView::Error;
+        csnprintf!(out, cap, "%s", if up { a.pkg.error.as_str() } else { "" });
+        return 0;
+    }
     if let Some(rest) = key.strip_prefix("package.") {
         // package.ID.settings.KEY: a package setting's saved value (the default while there is no file).
         if let Some((id, setting)) = rest.split_once(".settings.") {

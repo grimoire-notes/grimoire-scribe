@@ -1436,15 +1436,27 @@ impl WidgetFetch {
         argv.push(curl.as_ptr());
         argv.extend(c_args.iter().map(|arg| arg.as_ptr()));
         argv.push(std::ptr::null());
+        // The fetcher's input is /dev/null, as a worker's is (sandbox.rs): Grimoire's own input can be
+        // a stream of its events (a platform kept in another crate, rust/PORTING.md, may hand them over
+        // there), and a fetcher that read it would take them. Opened here, before the pipes, so the
+        // child opens nothing.
+        // SAFETY: open reads a NUL-terminated literal.
+        let null = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+        if null < 0 {
+            return Err("Could not start the fetcher.".into());
+        }
         let mut p = [0i32; 2];
         // SAFETY: pipe writes the two descriptors into our array.
         if unsafe { libc::pipe(p.as_mut_ptr()) } != 0 {
+            // SAFETY: closing the descriptor just opened.
+            unsafe { libc::close(null) };
             return Err("Could not make the fetcher's pipe.".into());
         }
         let mut e = [0i32; 2];
         // SAFETY: as above, a second pipe for curl's own error text.
         if unsafe { libc::pipe(e.as_mut_ptr()) } != 0 {
             unsafe {
+                libc::close(null);
                 libc::close(p[0]);
                 libc::close(p[1]);
             }
@@ -1453,8 +1465,9 @@ impl WidgetFetch {
         // SAFETY: fork has no preconditions; the child only sets up descriptors and execs, or _exits.
         let pid = unsafe { libc::fork() };
         if pid < 0 {
-            // SAFETY: closing the descriptors the pipes just made.
+            // SAFETY: closing the descriptors /dev/null and the pipes just made.
             unsafe {
+                libc::close(null);
                 libc::close(p[0]);
                 libc::close(p[1]);
                 libc::close(e[0]);
@@ -1466,16 +1479,18 @@ impl WidgetFetch {
             // SAFETY: in the child, dup2/close/fcntl on descriptors it owns, execvp with
             // NUL-terminated strings and a NULL-terminated list, _exit if it fails.
             unsafe {
+                libc::dup2(null, 0);
                 libc::dup2(p[1], 1);
                 libc::dup2(e[1], 2);
                 libc::close(p[0]);
                 libc::close(p[1]);
                 libc::close(e[0]);
                 libc::close(e[1]);
+                libc::fcntl(0, libc::F_SETFD, 0);
                 libc::fcntl(1, libc::F_SETFD, 0);
                 libc::fcntl(2, libc::F_SETFD, 0);
                 // (nothing else of Grimoire's: an inherited descriptor is no use to curl and can be
-                // a terminal, a notebook or another child's pipe)
+                // a terminal, a notebook or another child's pipe; /dev/null's own number goes here too)
                 for fd in 3..1024 {
                     libc::close(fd);
                 }
@@ -1485,8 +1500,10 @@ impl WidgetFetch {
                 libc::_exit(127);
             }
         }
-        // SAFETY: closing the write ends the parent does not use; fcntl on the read ends we own.
+        // SAFETY: closing /dev/null and the write ends the parent does not use; fcntl on the read ends
+        // we own.
         unsafe {
+            libc::close(null);
             libc::close(p[1]);
             libc::close(e[1]);
             libc::fcntl(p[0], libc::F_SETFL, libc::fcntl(p[0], libc::F_GETFL, 0) | libc::O_NONBLOCK);
@@ -1554,7 +1571,10 @@ impl WidgetFetch {
             }
             if self.started.elapsed() >= FETCH_TIMEOUT {
                 self.stop();
-                return Some(Err("The repository did not answer in time.".into()));
+                // TRANSLATORS: (Packages, an install's error) the repository's server sent no answer before the
+                // fetch's time ran out. After a failed curl run, " (curl exited N)." and curl's own error text
+                // follow it, in English.
+                return Some(Err(tr("The repository did not answer in time.").into()));
             }
             return None;
         }
@@ -1568,11 +1588,20 @@ impl WidgetFetch {
         if code != 0 {
             let detail = self.err_text();
             let base = if code == 28 {
-                "The repository did not answer in time."
+                // TRANSLATORS: (Packages, an install's error) the repository's server sent no answer before the
+                // fetch's time ran out. After a failed curl run, " (curl exited N)." and curl's own error text
+                // follow it, in English.
+                tr("The repository did not answer in time.")
             } else if code == 127 {
-                "The Kindle has no curl to fetch packages with."
+                // TRANSLATORS: (Packages, an install's error) the device has no curl program, the fetcher packages
+                // are downloaded with. "curl" is a program's name, never translated. " (curl exited 127)."
+                // follows it, in English.
+                tr("The Kindle has no curl to fetch packages with.")
             } else {
-                "Could not fetch the repository"
+                // TRANSLATORS: (Packages, an install's error) a download from a package's repository failed. No
+                // full stop: " (curl exited N)." or " (curl exited N): " and curl's own error text follow it,
+                // in English.
+                tr("Could not fetch the repository")
             };
             return Some(Err(if detail.is_empty() { format!("{base} (curl exited {code}).") } else { format!("{base} (curl exited {code}): {detail}") }));
         }
@@ -1999,35 +2028,105 @@ spec:
         assert_eq!(FETCH_REDIRECTS_MAX, 5);
     }
 
-    // The fetcher starts curl with that list: a stand-in named curl, first on PATH for the start,
-    // answers with the arguments it was given, one a line.
-    #[test]
-    fn the_fetcher_starts_curl_with_that_list() {
+    // PATH is the process's: one test at a time puts its stand-in curl first on it.
+    static STAND_IN_CURL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Runs `start` with a stand-in named curl, the shell script `script`, first on PATH. The stand-in's
+    /// folder is returned with what `start` gave, for the test to remove.
+    fn with_stand_in_curl<T>(name: &str, script: &str, start: impl FnOnce() -> T) -> (T, std::path::PathBuf) {
         use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("grimoire-widget-fetch-{}", std::process::id()));
+        let _one = STAND_IN_CURL.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("grimoire-widget-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let stand_in = dir.join("curl");
-        std::fs::write(&stand_in, "#!/bin/sh\nfor arg in \"$@\"; do printf '%s\\n' \"$arg\"; done\n").unwrap();
+        std::fs::write(&stand_in, script).unwrap();
         std::fs::set_permissions(&stand_in, std::fs::Permissions::from_mode(0o755)).unwrap();
         let path = std::env::var_os("PATH").unwrap_or_default();
         let mut first = std::ffi::OsString::from(&dir);
         first.push(":");
         first.push(&path);
-        let url = "https://example.org/w/package.yaml?a=[1-3]&b={x,y}";
         std::env::set_var("PATH", &first);
-        let started = WidgetFetch::start(url, 4096);
+        let started = start();
         std::env::set_var("PATH", &path);
+        (started, dir)
+    }
+
+    /// The fetch's answer, ticked for until it comes.
+    fn fetch_answer(started: Result<WidgetFetch, String>) -> Result<Vec<u8>, String> {
         let mut fetch = started.unwrap_or_else(|e| panic!("{e}"));
-        let answer = loop {
+        loop {
             if let Some(answer) = fetch.tick() {
-                break answer;
+                return answer;
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
-        };
-        let answer = String::from_utf8(answer.unwrap()).unwrap();
+        }
+    }
+
+    // The fetcher starts curl with that list: a stand-in named curl, first on PATH for the start,
+    // answers with the arguments it was given, one a line.
+    #[test]
+    fn the_fetcher_starts_curl_with_that_list() {
+        let url = "https://example.org/w/package.yaml?a=[1-3]&b={x,y}";
+        let script = "#!/bin/sh\nfor arg in \"$@\"; do printf '%s\\n' \"$arg\"; done\n";
+        let (started, dir) = with_stand_in_curl("fetch", script, || WidgetFetch::start(url, 4096));
+        let answer = String::from_utf8(fetch_answer(started).unwrap()).unwrap();
         assert_eq!(answer.lines().collect::<Vec<_>>(), fetch_args(url));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The fetcher's input is /dev/null, not Grimoire's own: a stand-in curl that answers with its input,
+    // started while the test's own input has a line waiting, answers nothing.
+    #[test]
+    fn the_fetcher_reads_nothing_of_grimoires_input() {
+        let (started, dir) = with_stand_in_curl("fetch-input", "#!/bin/sh\ncat\n", || {
+            // SAFETY: descriptors this test makes; fd 0 is a pipe holding the line for the start only,
+            // then the one it was again.
+            unsafe {
+                let saved = libc::fcntl(0, libc::F_DUPFD_CLOEXEC, 3);
+                assert!(saved >= 0, "the test has an input");
+                let mut p = [0i32; 2];
+                assert_eq!(libc::pipe(p.as_mut_ptr()), 0);
+                libc::fcntl(p[0], libc::F_SETFD, libc::FD_CLOEXEC);
+                libc::fcntl(p[1], libc::F_SETFD, libc::FD_CLOEXEC);
+                let line = b"an event\n";
+                assert_eq!(libc::write(p[1], line.as_ptr() as *const libc::c_void, line.len()), line.len() as isize);
+                // (the write end closed: a reader of the pipe gets the line, then its end, and never waits)
+                libc::close(p[1]);
+                libc::dup2(p[0], 0);
+                libc::close(p[0]);
+                let started = WidgetFetch::start("https://example.org/package.yaml", 4096);
+                libc::dup2(saved, 0);
+                libc::close(saved);
+                started
+            }
+        });
+        assert_eq!(fetch_answer(started), Ok(Vec::new()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A failed fetch's text is looked up, so the device's name stands in for "Kindle" where a platform
+    // gives one, and the English reads as before where none is given. Curl's exit status and its own
+    // error text follow it as they are.
+    #[test]
+    fn a_failed_fetch_says_why_in_the_devices_words() {
+        let url = "https://example.org/package.yaml";
+        let failed = |name: &str, script: &str| {
+            let (started, dir) = with_stand_in_curl(name, script, || WidgetFetch::start(url, 4096));
+            let answer = fetch_answer(started);
+            let _ = std::fs::remove_dir_all(&dir);
+            answer.unwrap_err()
+        };
+        assert_eq!(failed("fetch-127", "#!/bin/sh\nexit 127\n"), "The Kindle has no curl to fetch packages with. (curl exited 127).");
+        assert_eq!(failed("fetch-28", "#!/bin/sh\nexit 28\n"), "The repository did not answer in time. (curl exited 28).");
+        assert_eq!(
+            failed("fetch-22", "#!/bin/sh\necho 'curl: (22) The requested URL returned error: 404' >&2\nexit 22\n"),
+            "Could not fetch the repository (curl exited 22): curl: (22) The requested URL returned error: 404"
+        );
+        crate::i18n::i18n_set_device_name("Slate");
+        let named = failed("fetch-127-named", "#!/bin/sh\nexit 127\n");
+        crate::i18n::i18n_set_device_name("Kindle");
+        assert_eq!(named, "The Slate has no curl to fetch packages with. (curl exited 127).");
     }
 
     // An address is https, no longer than WIDGET_PKG_URL_MAX, and has no space or control character:
