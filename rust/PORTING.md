@@ -71,7 +71,7 @@ The C build's `-D` switches are cargo features:
 | `GRIMOIRE_SIM` (headless) | `--features sim` | sim_sdl (the headless runner) |
 | neither (host tools, unit tests) | no feature | platform_none |
 | none: Rust only | `--features external-platform` | another crate's (not with `kindle` or `sim`) |
-| none: Rust only, a Linux kernel under another system's name | `--features external-platform,linux-kernel` | another crate's, with the sandbox's worker steps (below) |
+| none: Rust only, a Linux kernel under another system's name | `--features external-platform,linux-kernel` | another crate's, with the sandbox's worker steps and the rest of what needs a Linux kernel (below) |
 
 `#ifdef GRIMOIRE_SIM` becomes `#[cfg(feature = "sim")]`, `#ifdef GRIMOIRE_KINDLE` becomes
 `#[cfg(feature = "kindle")]`. display.rs, input.rs and light.rs hold their headers' types and
@@ -122,6 +122,16 @@ and prctl answers ENOSYS (an allocator that names its regions with prctl goes on
 architecture sandbox.rs has no system-call table for.
 Where no worker can be had, its writer never parses untrusted bytes itself: pictures wait, as on the Kindle
 (`writer_never_parses`). grimoire.log says `work: sandboxed without root (...)`.
+
+The feature also builds the rest of what needs only a Linux kernel, which then works as on Linux: a PDF page's
+watchdog that runs out right after a wake costs no strike (CLOCK_BOOTTIME, pdfwork.rs); the background children
+carry their caps (`oom_score_adj` 500 and `RLIMIT_AS`: childcaps.rs, the decode's own in bgwork_template.rs),
+names and parent-death signals; and Live view's viewers tune their sockets (keepalive, `TCP_USER_TIMEOUT`,
+`TCP_NOTSENT_LOWAT`, and the unacknowledged bytes read with SIOCOUTQ, live.rs; a viewer whose kernel refuses that
+says so once in grimoire.log). The address-space cap differs there as the worker's limit does: memory an allocator
+hands out from the regions it reserved at start is not counted, and a child that cannot read its own size
+(`/proc/self/statm`) goes without that cap instead of Linux's 1 GiB guess, which can be less than such an allocator
+holds already (`child_vm_base`).
 
 The rules of this file hold for it as they do for the in-tree platforms: the platform's methods are
 called from that one thread and from the forked children; `input_poll` is the loop's one place to

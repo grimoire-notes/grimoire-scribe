@@ -2,9 +2,12 @@
 //! kernel takes background work before the UI, and `RLIMIT_AS` at the child's address space as it was
 //! forked (the UI's, copy-on-write) plus a margin for its kind, so a child that grows without bound
 //! fails by itself instead of taking the Kindle with it. The bgjob children, the detached child and
-//! the share server's render children and Live view's viewer children all take them. They are Linux's:
-//! elsewhere (the host build) nothing is applied, and the plan says so (`child_caps_plan`'s `as_bytes`
-//! is None). A child that cannot read its own size is capped at CHILD_VM_UNREAD plus its margin.
+//! the share server's render children and Live view's viewer children all take them. They are a Linux
+//! kernel's: on Linux, and in a build with the `linux-kernel` feature (a Linux kernel under another
+//! system's name, PORTING.md); elsewhere (the host build on macOS) nothing is applied, and the plan says
+//! so (`child_caps_plan`'s `as_bytes` is None). A child that cannot read its own size is capped on Linux
+//! at CHILD_VM_UNREAD plus its margin, and left without the address-space cap in a `linux-kernel` build
+//! (`child_vm_base`).
 
 use crate::prelude::*;
 
@@ -48,7 +51,8 @@ pub const VIEWER_CHILD_MARGIN: u64 = 64 << 20;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChildCaps {
     pub oom_adj: i32,
-    /// the `RLIMIT_AS` soft limit; None where the address space is not known (not Linux)
+    /// the `RLIMIT_AS` soft limit; None where the address space is not known (not a Linux kernel, or a
+    /// `linux-kernel` build whose child cannot read its own size)
     pub as_bytes: Option<u64>,
 }
 
@@ -63,7 +67,11 @@ pub fn child_caps_plan(vm: Option<u64>, margin: u64) -> ChildCaps {
 pub const CHILD_VM_UNREAD: u64 = 1 << 30;
 
 /// The size a child's cap is taken from: its own address space, or on Linux CHILD_VM_UNREAD when that
-/// cannot be read (`read` is child_vm_bytes's answer). None elsewhere: nothing is applied there.
+/// cannot be read (`read` is child_vm_bytes's answer). Elsewhere `read` as it is: None where nothing is
+/// applied, and None in a build with the `linux-kernel` feature whose child cannot read its size, which then
+/// goes without the address-space cap. A guess is no good there: an allocator may reserve gigabytes when a
+/// program starts (PORTING.md), more than CHILD_VM_UNREAD, and a cap below what the child already holds would
+/// starve it.
 pub fn child_vm_base(read: Option<u64>) -> Option<u64> {
     if cfg!(target_os = "linux") {
         Some(read.unwrap_or(CHILD_VM_UNREAD))
@@ -72,9 +80,9 @@ pub fn child_vm_base(read: Option<u64>) -> Option<u64> {
     }
 }
 
-/// This process's address space in bytes (the first number of /proc/self/statm), Linux only.
+/// This process's address space in bytes (the first number of /proc/self/statm), a Linux kernel's only.
 pub fn child_vm_bytes() -> Option<u64> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", feature = "linux-kernel"))]
     {
         let statm = std::fs::read("/proc/self/statm").ok()?;
         let digits: Vec<u8> = statm.iter().skip_while(|c| c.is_ascii_whitespace()).take_while(|c| c.is_ascii_digit()).copied().collect();
@@ -86,7 +94,7 @@ pub fn child_vm_bytes() -> Option<u64> {
         }
         Some(pages * psz as u64)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", feature = "linux-kernel")))]
     {
         None
     }
@@ -100,9 +108,9 @@ pub fn child_caps_apply(margin: u64) -> ChildCaps {
     #[cfg(not(feature = "sim"))]
     let read = child_vm_bytes();
     let plan = child_caps_plan(child_vm_base(read), margin);
-    #[allow(unused_mut)] // (only Linux takes any)
+    #[allow(unused_mut)] // (only a Linux kernel takes any)
     let mut took = ChildCaps { oom_adj: 0, as_bytes: None };
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", feature = "linux-kernel"))]
     {
         if std::fs::write("/proc/self/oom_score_adj", plan.oom_adj.to_string()).is_ok() {
             took.oom_adj = plan.oom_adj;
@@ -126,7 +134,7 @@ pub fn child_caps_apply(margin: u64) -> ChildCaps {
             }
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", feature = "linux-kernel")))]
     {
         let _ = plan;
     }

@@ -1287,8 +1287,8 @@ announcements: goingToScreenSaver draws the sleep screen, outOfScreenSaver is th
    came out corrupt (its WebM changed size mid-file). Viewers end with a bye when Live view stops
    (Stop on the card, 10 minutes without a viewer, Grimoire leaving: `app_shutdown` stops them
    before anything else, so no export child inherits a socket and the headless runner never waits
-   for one); on Linux they also have PR_SET_PDEATHSIG, and everywhere they end once their parent
-   has gone.
+   for one); on Linux (and in a build with the `linux-kernel` feature, PORTING.md) they also have
+   PR_SET_PDEATHSIG, and everywhere they end once their parent has gone.
    An icon-only chip says Live view is on: in the top right corner (inside the 50 px margin) on the Library,
    Share and the other screens, and beside the editor's panel on a notebook page (and none while a menu is
    in front of it); it is overlaid at the present like the toast, and the screen guard skips it
@@ -1589,7 +1589,10 @@ from the colour page measured above with about 60 MiB of headroom; previews and 
 writer 128, two copies of a 24 MB font; a file's preview 128, a picture or a font read whole; a file copy 64;
 compaction and the default 256; a picture job 512, above its own tighter cap), applied after `child_setup` for each bgjob child, the detached child, the share server's render children
 (128 MiB) and Live view's viewer children (64 MiB). A child that cannot read its own size (`/proc/self/statm`) is
-capped at 1 GiB plus its margin, never left without one. Both caps are Linux's; the host build applies nothing.
+capped at 1 GiB plus its margin, never left without one. Both caps are a Linux kernel's: a build with the
+`linux-kernel` feature (PORTING.md) applies them too, except that a child there that cannot read its size gets no
+address-space cap (an allocator there may hold more than 1 GiB from the start); the host build on macOS applies
+nothing.
 The CI job `sandbox` mirrors a Scribe-sized colour page under the real cap. The mirror logs its pages, how many it
 drew, its time and `VmHWM` ("bg: export of ...: N pages, D drawn, T ms, VmHWM K kB").
 
