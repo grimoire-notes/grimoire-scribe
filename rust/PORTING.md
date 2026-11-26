@@ -140,8 +140,9 @@ the scenarios.
 
 And it says what the device is called (`sys_device_name`). The English and the translations say
 Kindle; on a platform with another name every looked-up text has that name in its place, "Kindle
-Scribe" as a whole (i18n.rs, the device's name). No string changes for it. The simulator's
-`GRIMOIRE_SIM_DEVICE_NAME` is that name for the scenarios.
+Scribe" as a whole, and "Kindle" with any ending a translation gives it (Polish declines it:
+"Kindla", "Kindlem"; i18n.rs, the device's name). No string changes for it, whether a language
+declines the name or not. The simulator's `GRIMOIRE_SIM_DEVICE_NAME` is that name for the scenarios.
 
 A platform reads its own system files (under /proc or /sys, a locale file) with
 `util::read_system_file`, which follows links as any read does. `util::read_file` is for the data

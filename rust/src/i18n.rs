@@ -340,8 +340,9 @@ fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
 // The English and every translation call the device a Kindle. On a platform that gives another name
 // (sys_device_name, light.rs) a text that is looked up has that name in its place: "Kindle Scribe" as
 // a whole first, so the product's name does not come out as the new name with "Scribe" behind it,
-// then "Kindle". The catalogs do not change, and a translator has nothing to do. A text is made
-// once and kept for the run, as a catalog's are.
+// then "Kindle" with whatever ending a translation gives it (Polish declines the word: "Kindla",
+// "Kindlem"). The catalogs do not change, and a translator has nothing to do, whether the language
+// declines the name or not. A text is made once and kept for the run, as a catalog's are.
 
 thread_local! {
     /// The name in place of "Kindle", None on the Kindle itself. (The app's one thread's, as the
@@ -362,9 +363,29 @@ pub fn i18n_set_device_name(name: &str) {
     NAMED.with(|made| made.borrow_mut().clear());
 }
 
-/// `text` with `name` where it says Kindle: None when it does not say it.
+/// `text` with `name` where it says Kindle, None where it has no "Kindl": "Kindle Scribe" as a whole,
+/// and elsewhere "Kindl" with the lowercase Latin letters after it ("Kindle", or a declined form such
+/// as "Kindla"). The text is read once, so a name that says Kindle itself stays as it is.
 pub fn i18n_with_device_name(text: &str, name: &str) -> Option<String> {
-    text.contains("Kindle").then(|| text.replace("Kindle Scribe", name).replace("Kindle", name))
+    if !text.contains("Kindl") {
+        return None;
+    }
+    // (a letter of the word's ending: ASCII's lowercase, or a lowercase one of Latin-1 and Latin
+    // Extended-A and B, which Polish's endings are written in)
+    let ending = |c: char| c.is_ascii_lowercase() || (('\u{df}'..='\u{24f}').contains(&c) && c.is_lowercase());
+    let mut named = String::with_capacity(text.len() + name.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("Kindl") {
+        named.push_str(&rest[..at]);
+        named.push_str(name);
+        let word = &rest[at..];
+        rest = match word.strip_prefix("Kindle Scribe") {
+            Some(after) => after,
+            None => word["Kindl".len()..].trim_start_matches(ending),
+        };
+    }
+    named.push_str(rest);
+    Some(named)
 }
 
 /// A text that lives as long as the program, as it reads on this device.
@@ -818,6 +839,20 @@ mod tests {
             Some("No pen found. %s is made for Slate; writing needs its pen.")
         );
         assert_eq!(i18n_with_device_name("Kindle storage nearly full. Wake the Kindle.", "Slate").as_deref(), Some("Slate storage nearly full. Wake the Slate."));
+        // A translation that declines the word (Polish: "Kindla", "Kindlem"): each form is the name,
+        // and what follows the word stays.
+        assert_eq!(i18n_with_device_name("Pami\u{119}\u{107} Kindla prawie pe\u{142}na.", "Slate").as_deref(), Some("Pami\u{119}\u{107} Slate prawie pe\u{142}na."));
+        assert_eq!(i18n_with_device_name("Obr\u{f3}t zgodny z Kindlem.", "Slate").as_deref(), Some("Obr\u{f3}t zgodny z Slate."));
+        assert_eq!(
+            i18n_with_device_name("Ekran u\u{15b}pienia: wygaszacz Kindla (dotknij, aby zmieni\u{107})", "Slate").as_deref(),
+            Some("Ekran u\u{15b}pienia: wygaszacz Slate (dotknij, aby zmieni\u{107})")
+        );
+        assert_eq!(i18n_with_device_name("Brak Kindl\u{f3}w, Kindli i Kindle'a.", "Slate").as_deref(), Some("Brak Slate, Slate i Slate'a."));
+        // An ending is lowercase Latin: not another script, nor a capital (the next word).
+        assert_eq!(i18n_with_device_name("Kindle\u{306e}\u{30da}\u{30fc}\u{30b8}", "Slate").as_deref(), Some("Slate\u{306e}\u{30da}\u{30fc}\u{30b8}"));
+        assert_eq!(i18n_with_device_name("KindleScribe", "Slate").as_deref(), Some("SlateScribe"));
+        // (each place is named once: a name that says Kindle itself is not named again)
+        assert_eq!(i18n_with_device_name("Kindle Scribe and Kindle", "Kindle Slate").as_deref(), Some("Kindle Slate and Kindle Slate"));
 
         // Looked up: in English, which has no catalog, and in a translation, which keeps the word.
         i18n_set("en");
@@ -831,6 +866,10 @@ mod tests {
         assert!(i18n_set("es"));
         let es = tr("Rotation follows Kindle.");
         assert!(es.contains("Slate") && !es.contains("Kindle") && es != "Rotation follows Slate.", "{es}");
+        assert!(i18n_set("pl"));
+        let pl = tr("Kindle storage nearly full.");
+        assert!(pl.contains("Slate") && !pl.contains("Kindl") && pl != "Slate storage nearly full.", "{pl}");
+        assert!(i18n_set("es")); // (Spanish again for what follows)
         // A name that cannot stand in a format, and the Kindle's own, leave every text alone.
         i18n_set_device_name("50% off");
         assert_eq!(tr("Rotation follows Kindle."), "La rotaci\u{f3}n sigue al Kindle.");
@@ -838,6 +877,27 @@ mod tests {
         i18n_set_device_name("Kindle");
         i18n_set("en");
         assert_eq!(tr("Rotation follows Kindle."), "Rotation follows Kindle.");
+    }
+
+    #[test]
+    fn no_catalog_text_says_kindle_on_a_device_with_another_name() {
+        // Every form of every entry of every embedded catalog, and its English, as a device with a
+        // name of its own reads it: no ending a language gives the word leaves "Kindl" behind.
+        let mut said = 0;
+        for k in i18n_catalogs.iter() {
+            let entries = i18n_walk(k.code, &mut |e| {
+                let forms = e.str.split('\0').take(e.nforms as usize);
+                for text in forms.chain(std::iter::once(e.id)).chain(e.id_plural) {
+                    // (None is the text as it is)
+                    let named = i18n_with_device_name(text, "Slate").unwrap_or_else(|| text.to_string());
+                    said += text.contains("Kindl") as i32;
+                    assert!(!named.contains("Kindl"), "{}: {text:?} reads {named:?}", k.code);
+                }
+            });
+            assert!(entries > 0, "{}", k.code);
+        }
+        // (the catalogs do say it: the walk saw them)
+        assert!(said > 0);
     }
 
     #[test]
