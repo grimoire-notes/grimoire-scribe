@@ -617,7 +617,8 @@ fn render_from(c: &mut Canvas, p: &Page, region: Rect, dpi: f32, layers: i32, sk
 /// every paper this build draws (paper_every_drawing), drawn and hashed once per process. A drawing kept
 /// from an earlier render (store_load_page_render) is trusted only under the same fingerprint, so any
 /// change to how ink or paper is drawn (a new build, a pen redrawn, a paper's lines darkened, another
-/// processor's floating point) retires every one of them by itself. Until 2.3.0 it hashed the ink page
+/// processor's floating point) retires every one of them by itself; the Pages previews and Library cards
+/// drawn before it go out of date too, as the app starts (store_previews_follow_renderer). Until 2.3.0 it hashed the ink page
 /// alone, whose paper (Narrow rule at 240 x 160 px) has no line on it: a paper drawn differently kept its
 /// old drawings (#314). Seyes is drawn at the panel's density, which the display sets as it opens, and
 /// Cornell's headings and the clefs in the fonts app_init loads: both before any page is drawn or this is

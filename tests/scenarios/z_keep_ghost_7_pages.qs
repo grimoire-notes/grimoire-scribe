@@ -1,5 +1,8 @@
 # rust-only
 # generate: tests/previews_fixture.py ghosts
+# env: GRIMOIRE_SIM_PREVIEWS_CURRENT=1
+# (The fixture's previews and card are as 2.0.0 or 2.0.1 left them, current for their page files: the knob keeps
+# them so as the app starts, where 2.3.0 puts every preview an earlier renderer drew out of date, #314.)
 # A cleared page's old picture that 2.0.0 or 2.0.1 kept (their drawing current for the page file, the Pages preview
 # and the Library card made from it: "ghost"), seen in the Pages view before the page is opened. Opened, the page is
 # drawn from its strokes, the old drawing goes and the preview is made again from the page drawn, its page file as it

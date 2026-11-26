@@ -299,6 +299,55 @@ fn cut_short_preview_made_again() {
     check!(store_page_preview_ok(&nb, pid) && preview_of(&nb, pid).is_some());
 }
 
+// Previews and cards drawn by another renderer (a version before 2.3.0, whose papers' lines were lighter, #314) go
+// out of date at once as the app starts (store_previews_follow_renderer, from app_init): the job draws the previews
+// again, and a card noted as drawn from its page's file is no longer of it (editor.rs card_page_source). Once this
+// renderer is noted it leaves them alone; a later one puts them out of date again. A notebook with no previews and
+// no card is left as it is, and so is one whose previews folder is a link (nothing is written behind it).
+fn previews_of_another_renderer_drawn_again() {
+    let root = fresh_root("renderer");
+    let nb = notebook("Renderer", 2);
+    let (p1, p2) = (nb.page_ids[0], nb.page_ids[1]);
+    for i in 0..2 {
+        check!(store_save_page(&nb, i, &page_of(2, 40, 50 + i as u32)) == 0);
+    }
+    // as an earlier version left them: the previews made, a card drawn from page 1, no renderer noted
+    check!(store_build_page_previews(nb.id.as_str(), "0:2", 300.0) == 0);
+    check!(store_page_preview_ok(&nb, p1) && store_page_preview_ok(&nb, p2));
+    let mut card = Canvas::default();
+    check!(canvas_init(&mut card, W / 3, H / 3) == 0);
+    canvas_fill(&mut card, Rect::new(0, 0, W / 3, H / 3), 255);
+    check!(store_save_thumb(nb.id.as_str(), &card) == 0);
+    let source = store_page_source_identity(&nb, p1);
+    check!(source.is_some());
+    let bare = notebook("Bare", 1);
+    let linked = notebook("Linked", 1);
+    check!(store_save_page(&linked, 0, &page_of(2, 40, 60)) == 0);
+    let outside = format!("{root}-outside");
+    let _ = std::fs::remove_dir_all(&outside);
+    std::fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, format!("{}/.page-previews", dir_of(&linked))).unwrap();
+    let noted = format!("{root}/.previews-renderer");
+    let exists = |p: &str| std::fs::symlink_metadata(p).is_ok();
+    check!(!exists(&noted) && !exists(&format!("{}/thumb.pgm", dir_of(&bare))));
+    let fp = page_render_fingerprint();
+    check!(store_previews_follow_renderer(fp) == 1);
+    check!(!store_page_preview_ok(&nb, p1) && !store_page_preview_ok(&nb, p2) && preview_of(&nb, p1).is_none());
+    check!(store_page_source_identity(&nb, p1).is_some_and(|s| Some(s) != source));
+    check!(std::fs::read_to_string(&noted).ok() == Some(format!("{fp:016x}\n")));
+    check!(std::fs::read_dir(&outside).unwrap().count() == 0 && !exists(&format!("{}/.page-previews", dir_of(&bare))));
+    // drawn again by the job, then left alone by the same renderer
+    check!(store_build_page_previews(nb.id.as_str(), "0:2", 300.0) == 0);
+    check!(store_page_preview_ok(&nb, p1) && store_page_preview_ok(&nb, p2));
+    let again = store_page_source_identity(&nb, p1);
+    check!(store_previews_follow_renderer(fp) == 0);
+    check!(store_page_preview_ok(&nb, p1) && store_page_preview_ok(&nb, p2) && store_page_source_identity(&nb, p1) == again);
+    // a later renderer: out of date again
+    check!(store_previews_follow_renderer(fp ^ 1) == 1);
+    check!(!store_page_preview_ok(&nb, p1) && !store_page_preview_ok(&nb, p2));
+    let _ = std::fs::remove_dir_all(&outside);
+}
+
 #[test]
 fn test_page_previews() {
     run!(light_pages_first);
@@ -309,5 +358,6 @@ fn test_page_previews() {
     run!(foreign_kept_drawing_not_first);
     run!(missing_picture_keeps_nothing);
     run!(cut_short_preview_made_again);
+    run!(previews_of_another_renderer_drawn_again);
     done();
 }

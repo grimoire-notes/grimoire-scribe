@@ -1,5 +1,8 @@
 # rust-only
 # generate: tests/previews_fixture.py ghosts
+# env: GRIMOIRE_SIM_PREVIEWS_CURRENT=1
+# (The fixture's previews and card are as 2.0.0 or 2.0.1 left them, current for their page files: the knob keeps
+# them so as the app starts, where 2.3.0 puts every preview an earlier renderer drew out of date, #314.)
 # A Library card that is stale as the notebook opens (the ghost notebook's: the old ink of a page 1 that was cleared,
 # made by 2.0.0 or 2.0.1, nothing noting what it was drawn from) stays stale if the close trusts the card of the
 # open for page 1's as it is: the close from another page left it alone. It is drawn again from page 1 as it is, once

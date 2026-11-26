@@ -60,6 +60,7 @@ root/touch-trace                        an empty file the owner makes: asks for 
 root/touch-trace.txt                    the touch trace (docs/KINDLE.md), never exported (2.0)
 root/bluetooth/                         the Bluetooth helper, unpacked by the owner, and its own data (2.0)
 root/.update-failed                     an update KPM could not install: told at the next start, then removed (2.0)
+root/.previews-renderer                 the renderer the previews and cards were last drawn by (2.3.0; Disposable page previews)
 root/templates/                         pictures the owner copies in to use as paper, and PDFs, a template a page (Templates; Template PDFs, 2.2)
 root/photos/                            photos the owner copies in, each to be a page's paper (2.0; Photos)
 root/fonts/                             font files the owner copies in, for Classic's text (2.1.0-beta.2; Your own fonts)
@@ -2600,13 +2601,22 @@ The folder holds three more kinds of file, all disposable too:
   makes the page's preview and, for page 1, the notebook's `thumb.pgm` again from what it drew.
 - `updated`: a token rewritten each time a preview is written (since 2.0.0-beta.2 the job writes it after
   each preview, not once per batch), which tells an open view that new previews are there.
-- `generation`: rewritten to invalidate every preview at once (a template's picture made again).
+- `generation`: rewritten to invalidate every preview at once (a template's picture made again, or since
+  2.3.0 a new renderer: below).
 
 Since 2.0.0-beta.2 a batch makes its missing previews cheapest first: pages with a current kept drawing
 (its whole stamp: page file, size and renderer), then the others by the size of their page files, so a dense
 page comes last. A preview counts as made when its stamp is current and its image as long as its header says
 (one cut short is made again). Previews written by an older version are used as they are, and older versions
-use these.
+use these, but for one case since 2.3.0: `root/.previews-renderer` holds the renderer's fingerprint (16 hex
+digits and a newline, as in a kept drawing's stamp) that the previews and the Library cards were last drawn by.
+A start that finds another fingerprint there, or none (a store an earlier version used), rewrites every
+notebook's `generation` (a notebook with neither previews nor a card is left as it is, and so is one whose
+folder or `.page-previews` is a link), then writes its own fingerprint: each Pages view draws its previews
+again as it opens, and a card is drawn again as its notebook is next left, since what a card was drawn from
+(`thumb.src`) names the page file and the generation. So 2.3.0's darker papers reach the previews and cards an
+earlier version drew, once. An older version reads none of it: the previews stay usable to it, with the new
+lines.
 
 ## The notebook PDF and its page streams: `.cache/pdf/<id>/` (2.1.0-beta.2)
 

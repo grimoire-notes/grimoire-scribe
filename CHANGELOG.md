@@ -103,9 +103,9 @@
   own grays, as Seyes rule does, so they read as sharply on the Scribe: the rules 119 (were 175, where 0 is black
   and 255 white), the header 85 and the margin 102, Cornell's cue and summary lines 68 and its headings 85, graph
   paper 136 with every fifth line 85 (now whole where the lighter lines cross it), the dots 51, the crosses 85,
-  Isometric 136 and Hexagon 119. Seyes rule, Blank and the music papers are unchanged. A page kept drawn to open
-  quickly is drawn once more after the update, so it shows the new lines; the Pages view's previews and the
-  Library's cards keep the lines they were made with until their page changes.
+  Isometric 136 and Hexagon 119. Seyes rule, Blank and the music papers are unchanged. After the update a page kept
+  drawn to open quickly is drawn once more, so it shows the new lines, and so are a notebook's previews in the
+  Pages view as the view opens and its card in the Library as the notebook is next opened and left.
 
 ## 2.2.0 (2026-11-26)
 
