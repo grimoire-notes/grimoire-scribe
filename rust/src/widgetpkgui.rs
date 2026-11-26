@@ -1196,7 +1196,7 @@ pub fn packages_ui_pointer(a: &mut App, ph: i32, ev: &InEvent) {
 }
 
 fn draw_actions(c: &mut Canvas, ui: &mut WidgetPkgUi, area: Rect, start_y: i32, labels: &[(&str, IconKind, i32)]) {
-    let bh = crate::globalui::gui_button_h();
+    let bh = ui_px(112.0);
     let gap = ui_px(18.0);
     let mut y = start_y;
     for (label, icon, id) in labels {

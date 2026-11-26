@@ -480,7 +480,7 @@ fn metric_answers_the_sizes_grimoires_screens_use_and_minus_one_for_an_id_it_doe
                 line_of(5) as i64,
                 118,
                 90,
-                112,
+                96,
                 88,
                 112,
                 60,
@@ -517,7 +517,7 @@ fn metric_answers_the_sizes_grimoires_screens_use_and_minus_one_for_an_id_it_doe
     ui_set_theme(UiTheme::Gothic);
     assert_eq!(
         (gui_row_h(), gui_row_min_h(), gui_button_h(), gui_chip_h(), gui_field_h(), gui_select_h(), gui_top_button_h(), gui_head_h(), gui_margin(), gui_gap()),
-        (118, 90, 112, 88, 112, 88, 96, 150, 50, 24)
+        (118, 90, 96, 88, 112, 88, 96, 150, 50, 24)
     );
     assert_eq!((ui_row_space(), ui_row_pad(), ui_row_icon(), ui_card_radius(), ui_line(), gui_page_title_px()), (16, 30, 60, 16, 3, 112.0));
     ui_set_theme(UiTheme::Classic);
@@ -580,7 +580,7 @@ fn the_calls_return_the_level_the_version_and_the_extent_each_element_took() {
                 0,
                 118,
                 200,
-                need(112, false, "Button"),
+                need(96, false, "Button"),
                 60,
                 333,
                 96,

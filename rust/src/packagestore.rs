@@ -13,7 +13,7 @@
 //! until then, and when the worker refuses it or none can be had, a card or a page shows what it
 //! shows for a picture that is missing.
 
-use crate::globalui::{gui_button, gui_button_row, gui_chip, gui_chip_h, gui_chip_w, gui_gap, gui_header, gui_icon_button, gui_margin, gui_radius};
+use crate::globalui::{gui_button, gui_button_h, gui_button_row, gui_chip, gui_chip_h, gui_chip_w, gui_gap, gui_header, gui_icon_button, gui_margin, gui_radius};
 use crate::pkgpics::{picture_cached, picture_request, Ask, Cached, PicForm, PicSrc};
 use crate::prelude::*;
 use crate::sha256::sha256_of;
@@ -2832,7 +2832,7 @@ fn draw_detail(c: &mut Canvas, ui: &mut PackageStoreUi, aw: i32, ah: i32) {
     if !installed_license(&p).is_empty() || !p.license.is_empty() {
         actions.push((tr("License").to_string(), IconKind::Paper, H_LICENSE, ButtonStyle::Plain));
     }
-    let action_h = ui_px(96.0);
+    let action_h = gui_button_h();
     let action_gap = ui_px(12.0);
     let action_w = if wide { area.w * 43 / 100 } else { area.w };
     let mut widths: Vec<i32> = actions

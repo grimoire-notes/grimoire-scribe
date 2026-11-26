@@ -56,13 +56,15 @@ pub fn gui_row_h() -> i32 {
 pub fn gui_row_min_h() -> i32 {
     ui_px(90.0)
 }
-/// An action button: the package manager's actions.
+/// An action button: the Package Store's actions (`gui_button_row`, which is `gui_button` in Classic and in Gothic the
+/// carved frame with its label beside its icon).
 pub fn gui_button_h() -> i32 {
-    ui_px(112.0)
+    ui_px(96.0)
 }
-/// A text field: as tall as a button, so that a field and its button line up.
+/// A text field: no screen of Grimoire draws one yet (the app host's `text_field` and the package kit's `field`
+/// draw `gui_text_field`); 112, the height of the package manager's action rows, as the kit's design gives it.
 pub fn gui_field_h() -> i32 {
-    gui_button_h()
+    ui_px(112.0)
 }
 /// A filter chip: the home's and the Package Store's.
 pub fn gui_chip_h() -> i32 {
@@ -912,12 +914,12 @@ mod tests {
     }
 
     // The standard sizes the screens lay their elements out at (and the package kit gives a package): Settings' rows
-    // and their tightest, the package manager's actions, the home's and the Store's chips, the home's Sort, a field.
+    // and their tightest, the Package Store's action buttons, a field, the home's and the Store's chips, the home's Sort.
     #[test]
     fn the_standard_sizes_are_the_ones_the_screens_use() {
         ui_init(300.0);
         assert_eq!(font_init(), 0);
-        assert_eq!((gui_row_h(), gui_row_min_h(), gui_button_h(), gui_field_h(), gui_chip_h(), gui_select_h()), (118, 90, 112, 112, 88, 88));
+        assert_eq!((gui_row_h(), gui_row_min_h(), gui_button_h(), gui_field_h(), gui_chip_h(), gui_select_h()), (118, 90, 96, 112, 88, 88));
         assert_eq!((ui_row_icon(), ui_line(), crate::ui::ui_row_pager_button()), (60, 3, (130, 90)));
         for (theme, radius, title) in [(UiTheme::Gothic, 16, 112.0), (UiTheme::Classic, 22, 70.4)] {
             ui_set_theme(theme);

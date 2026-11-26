@@ -107,9 +107,9 @@ the screen it comes from reads (`globalui.rs`, `ui.rs`), so the two cannot diffe
 | 5 to 9 | LINE_BODY, LINE_SMALL, LINE_TITLE, LINE_DISPLAY, LINE_MONO | a line of that role: the face's ascent and descent in the font in use | |
 | 10 | ROW_H | 118 | Settings' rows |
 | 11 | ROW_MIN_H | 90 | Settings' rows when a list is tight |
-| 12 | BUTTON_H | 112 | the package manager's actions |
+| 12 | BUTTON_H | 96 | the Package Store's action buttons (`gui_button_row`, which is the kit's button in Classic) |
 | 13 | CHIP_H | 88 | the home's and the Package Store's filter chips |
-| 14 | FIELD_H | 112 | a field is as tall as a button |
+| 14 | FIELD_H | 112 | no screen of Grimoire draws a text field yet: the height of the package manager's action rows, as the kit's design gives it |
 | 15 | ICON | 60 | a row's icon |
 | 16 | ICON_BUTTON | 96 | the header's round buttons |
 | 17 | TOUCH_MIN | 90 | the smallest control Grimoire draws |
@@ -181,7 +181,7 @@ as a text's.
 | `button` | the kit's button (Gothic's carved one, Classic's pill), its label and icon | BUTTON_H | what its label and icon need, at least its height | the width |
 | `icon_button` | the header's round button (Gothic: carved) | ICON_BUTTON | its height | the width |
 | `row` | Settings' row: its card, icon, label (two lines at most) and switch | ROW_H | the rest of the body | the height |
-| `chip` | a filter chip; `selected` fills it | CHIP_H | its label in the bold face and 78 px, at least 170 | the width |
+| `chip` | a filter chip; `selected` fills it | CHIP_H | the Package Store's chip: its label in the bold face and 78 px, at least 170 | the width |
 | `field` | a text field: icon, text or its hint, the mark that clears it; `flags` 1 draws the text as a star for each character | FIELD_H | the rest of the body | the height |
 | `select` | a select: `caption: value` and its chevron | SELECT_H | the rest of the body | the height |
 | `checkbox` | a checkbox and its label (two lines at most); its rectangle is filled white first | TOUCH_MIN | the rest of the body | the height |
