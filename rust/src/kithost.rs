@@ -726,10 +726,21 @@ fn dispatch(cx: &mut dyn Call, at: usize, args: &[Val], out: &mut [Val]) -> Resu
     Ok(())
 }
 
-/// The first call of `grimoire_kit` a module imports that this Grimoire does not have, as `grimoire_kit.<name>`:
-/// a call of a later level. None when it has every one the module imports.
+/// The first call of `grimoire_kit` a module imports that this Grimoire does not have (a call of a later level), as
+/// the refusal names it: `grimoire_kit.<name>` for a name of a call's shape (`kit_call_shaped`), `grimoire_kit` alone
+/// for any other. None when it has every one the module imports.
 pub fn kit_missing_import(module: &wasmi::Module) -> Option<String> {
-    module.imports().find(|i| i.module() == KIT && !KIT_CALLS.iter().any(|c| c.0 == i.name())).map(|i| format!("{KIT}.{}", i.name()))
+    let name = module.imports().find(|i| i.module() == KIT && !KIT_CALLS.iter().any(|c| c.0 == i.name()))?.name();
+    Some(if kit_call_shaped(name) { format!("{KIT}.{name}") } else { KIT.to_string() })
+}
+
+/// The bytes of a kit call's name at most.
+pub const KIT_CALL_NAME_MAX: usize = 64;
+
+/// Whether `name` has the shape of a kit call's name, at this level or a later one: 1 to KIT_CALL_NAME_MAX bytes of
+/// `a` to `z`, `0` to `9` and `_`.
+pub fn kit_call_shaped(name: &str) -> bool {
+    (1..=KIT_CALL_NAME_MAX).contains(&name.len()) && name.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'_'))
 }
 
 // ---- the work of each call ----

@@ -178,14 +178,16 @@ impl WidgetFrame {
         }
     }
 
-    /// The last runtime error, if its package or module could not start.
+    /// The last runtime error, if its package or module could not start or was stopped: the first
+    /// MESSAGE_SHOWN_MAX bytes of it at most, cut between two characters, wherever it came from.
     pub fn error(&self) -> Option<&str> {
-        self.runtime_error.as_deref().or_else(|| self.runtime.as_ref().and_then(WidgetRuntime::error))
+        self.runtime_error.as_deref().or_else(|| self.runtime.as_ref().and_then(WidgetRuntime::error)).map(message_shown)
     }
 
     /// What a frame whose module failed says in place of its body, in the order it is drawn: the reason (the
     /// frame's error), then whose widget it is (the package's name, its version and its author). None while the
-    /// module runs. The reason is first so that a body with room for little shows it.
+    /// module runs. The reason is first so that a body with room for little shows it. Each is MESSAGE_SHOWN_MAX
+    /// bytes at most.
     pub fn says(&self) -> Option<(String, String)> {
         let reason = self.error()?.to_string();
         let mut whose = self.def.name.to_string();
@@ -195,7 +197,7 @@ impl WidgetFrame {
         if !self.def.author.is_empty() {
             whose.push_str(&format!(" · {}", self.def.author));
         }
-        Some((reason, whose))
+        Some((reason, message_shown(&whose).to_string()))
     }
 
     /// The frame as drawn and hit: a minimized widget is a small square at its corner.

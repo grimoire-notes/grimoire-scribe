@@ -1539,11 +1539,11 @@ pub fn packages_ui_draw(a: &mut App) {
             ]);
         }
         PkgView::Error => {
-            body_text(c, Rect { x: content.x, y: content.y, w: content.w, h: ui_px(300.0) }, &ui.error);
+            body_text(c, Rect { x: content.x, y: content.y, w: content.w, h: ui_px(300.0) }, message_shown(&ui.error));
         }
     }
     if !ui.status.is_empty() && ui.view == PkgView::List {
-        ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), Rect { x: content.x, y: bottom - ui_px(70.0), w: content.w, h: ui_px(60.0) }, &ui.status, 1, false, 90);
+        ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), Rect { x: content.x, y: bottom - ui_px(70.0), w: content.w, h: ui_px(60.0) }, message_shown(&ui.status), 1, false, 90);
     }
     if ui.kb.open {
         let kr = keyboard_draw(&mut ui.kb, c, screen);

@@ -989,6 +989,96 @@ fn a_module_that_imports_a_call_of_a_later_level_is_not_started_and_says_which()
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A module that imports, besides every call of level 1, `name` from `module`.
+fn importing(host: Host, module: &'static str, name: &str) -> Kit {
+    let mut k = Kit::new(host, Vec::new());
+    k.imports.push((module, Box::leak(name.to_string().into_boxed_str()), "", 'v'));
+    k
+}
+
+#[test]
+fn the_refusal_names_a_call_only_when_the_name_has_a_calls_shape() {
+    let root = fresh_root("shape");
+    let long = "x".repeat(99_000);
+    let names: [(&str, bool); 9] = [
+        ("later_call", true),
+        ("level_2_call", true),
+        (&"a".repeat(64), true),
+        (&"a".repeat(65), false),
+        ("Row", false),
+        ("row.x", false),
+        ("row).\nUpdate (\u{202e}", false),
+        ("", false),
+        (&long, false),
+    ];
+    for host in HOSTS {
+        let who = match host {
+            Host::Widget => "This widget",
+            Host::App => "This app",
+        };
+        for (k, (name, shaped)) in names.iter().enumerate() {
+            let e = load(&format!("test.kit.shape.{}.{k}", tag(host)), &importing(host, "grimoire_kit", name), true).err();
+            let call = if *shaped { format!("grimoire_kit.{name}") } else { "grimoire_kit".to_string() };
+            assert_eq!(e, Some(format!("{who} needs a newer Grimoire ({call}).")), "{host:?}: a name of {} bytes", name.len());
+        }
+    }
+    assert_eq!(KIT_CALL_NAME_MAX, 64);
+    assert!(KIT_CALLS.iter().all(|c| kit_call_shaped(c.0)), "every call of level 1 has a call's shape");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_text_a_widgets_frame_shows_and_an_apps_toast_are_at_most_256_bytes() {
+    let root = fresh_root("shown");
+    assert_eq!(MESSAGE_SHOWN_MAX, 256);
+    let long = "x".repeat(99_000);
+    for module in ["grimoire_kit", "grimoire"] {
+        // A widget's frame: what it says in place of its body, through the frame as the editor draws it.
+        let id = format!("test.kit.shown.w.{}", module.len());
+        let bytes = importing(Host::Widget, module, &long).bytes();
+        widget_package_install(&widget_manifest(&id, "Test", &WIDGET_BOTH, 400, 300, &bytes), &bytes, "", SCREEN.0, SCREEN.1).unwrap();
+        widget_catalog_invalidate();
+        let mut frame = WidgetFrame::new(widget_def(&id).unwrap());
+        frame.ensure_runtime();
+        let (reason, whose) = frame.says().unwrap();
+        assert!(reason.len() <= 256 && frame.error().unwrap().len() <= 256, "{module}: {} bytes", reason.len());
+        assert_eq!(whose, "Test v1.0.0 · Grimoire tests");
+        if module == "grimoire_kit" {
+            assert_eq!(reason, "This widget needs a newer Grimoire (grimoire_kit).");
+        } else {
+            assert!(reason.starts_with("The widget could not start: ") && reason.len() > 200, "{module}: {reason}");
+        }
+        widget_package_remove(&id, false).unwrap();
+        // An app: the toast that says why it did not open.
+        let id = format!("test.kit.shown.a.{}", module.len());
+        let bytes = importing(Host::App, module, &long).bytes();
+        app_package_install(&app_manifest(&id, "Test", &[], true, &bytes), &bytes, None, "", SCREEN.0, SCREEN.1).unwrap();
+        let mut a = App { w: SCREEN.0, h: SCREEN.1, ..App::default() };
+        assert!(!apphost_launch(&mut a, &id), "{module}");
+        let toast = a.toast.as_str().to_string();
+        assert!(toast.len() <= 256, "{module}: {} bytes", toast.len());
+        if module == "grimoire_kit" {
+            assert_eq!(toast, "This app needs a newer Grimoire (grimoire_kit).");
+        } else {
+            assert!(toast.starts_with("The app could not start: ") && toast.len() > 200, "{module}: {toast}");
+        }
+        app_package_remove(&id, false).unwrap();
+    }
+    // Any reason a frame keeps is cut between two characters, and so is whose widget it is.
+    let id = "test.kit.shown.name";
+    let bytes = Kit::new(Host::Widget, Vec::new()).bytes();
+    widget_package_install(&widget_manifest(id, &"N".repeat(1000), &WIDGET_BOTH, 400, 300, &bytes), &bytes, "", SCREEN.0, SCREEN.1).unwrap();
+    widget_catalog_invalidate();
+    let mut frame = WidgetFrame::new(widget_def(id).unwrap());
+    frame.runtime_error = Some("\u{20ac}".repeat(200));
+    let (reason, whose) = frame.says().unwrap();
+    assert_eq!(reason, "\u{20ac}".repeat(85), "the most whole characters in 256 bytes");
+    assert_eq!(whose, "N".repeat(256));
+    widget_package_remove(id, false).unwrap();
+    widget_catalog_invalidate();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn the_kits_commands_and_the_hosts_own_are_drawn_in_the_order_called() {
     let root = fresh_root("order");

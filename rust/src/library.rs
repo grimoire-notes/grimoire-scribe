@@ -4089,7 +4089,7 @@ fn draw_updates(a: &mut App) {
     if !status.is_empty() {
         let sr = Rect::new(in_.x, y, in_.w, status_h);
         let text_w = if retry { (sr.w - ui_px(220.0)).max(0) } else { sr.w };
-        ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), Rect::new(sr.x, sr.y, text_w, sr.h), &status, 2, false, if store.update_error.is_empty() { 100 } else { 0 });
+        ui_text(c, FontFace::Regular, ui_small_size(), ui_small_size(), Rect::new(sr.x, sr.y, text_w, sr.h), message_shown(&status), 2, false, if store.update_error.is_empty() { 100 } else { 0 });
         if retry {
             let rb = Rect::new(sr.x + sr.w - ui_px(190.0), sr.y + (sr.h - ui_px(62.0)) / 2, ui_px(190.0), ui_px(62.0));
             gui_button(c, rb, IconKind::Update, tr("Retry"), ButtonStyle::Plain);
