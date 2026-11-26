@@ -648,7 +648,7 @@ fn near(charged: u64, expected: u64, what: &str) {
 #[test]
 fn each_call_takes_its_charge_from_the_calls_budget_the_same_in_both_hosts() {
     let root = fresh_root("charges");
-    assert_eq!((KIT_CHARGE_CALL, KIT_CHARGE_WRAP), (500, 384));
+    assert_eq!((KIT_CHARGE_CALL, KIT_CHARGE_WRAP, KIT_CHARGE_MEASURE_LINES), (500, 384, 1024));
     let letters: Vec<u8> = (0..2048).map(|k| b'a' + (k % 26) as u8).collect();
     let frame = |w: u64, h: u64, edge: u64| w * h / 32 + h * w.min(2 * edge) * 2;
     for host in HOSTS {
@@ -664,9 +664,9 @@ fn each_call_takes_its_charge_from_the_calls_budget_the_same_in_both_hosts() {
         let v = GRIMOIRE_VERSION.len().min(32) as u64;
         near(charged(host, &h("version"), times(10, &call("version", &[8000, 64])), times(10, &call("version", &[8000, 0])), &letters), 10 * 4 * v, "version");
         near(charged(host, &h("version.3"), times(10, &call("version", &[8000, 3])), times(10, &call("version", &[8000, 0])), &letters), 10 * 12, "version, three bytes");
-        // measure_width: 32 for each byte; measure_height: 384 for each byte (the text broken into lines).
+        // measure_width: 32 for each byte; measure_height: 1,024 for each byte (the text broken into lines, not drawn).
         near(charged(host, &h("width"), call("measure_width", &[0, 100, 0]), call("measure_width", &[0, 0, 0]), &letters), 3200, "measure_width");
-        near(charged(host, &h("height"), call("measure_height", &[0, 100, 0, 300]), call("measure_height", &[0, 0, 0, 300]), &letters), 38_400, "measure_height");
+        near(charged(host, &h("height"), call("measure_height", &[0, 100, 0, 300]), call("measure_height", &[0, 0, 0, 300]), &letters), 102_400, "measure_height");
         // text: its letters as the app host's `text` (32 a byte a pixel of height to 64 px, the bold, title and caps
         // faces the cube of the height more); cut short: the square of its bytes to 256; WRAP: 384 a byte more;
         // FIT: the square of all its bytes more.

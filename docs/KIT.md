@@ -248,7 +248,7 @@ A kit call is paid from the budget of the host's call it is made in (a widget's 
 | `level`, `metric`, `clock_ms`, `list_page`, `clip`, `clip_clear`, `hit` | nothing more |
 | `version` | and 4 for each byte written |
 | `measure_width` | and 32 for each byte measured |
-| `measure_height` | and 384 for each byte: the text broken into lines, each word measured once and a word wider than the line broken between its letters by doubling and halving |
+| `measure_height` | and 1,024 for each byte: the text broken into lines, each word measured once and a word wider than the line broken between its letters by doubling and halving |
 | `text` | and its letters as an app's `text`: for each byte, 32 for each pixel of the role's height up to 64 px, half the square of the height above that, and in the bold and title faces the cube of the height over 128 more; cut short: 16 times the square of its bytes, to 256 bytes; with WRAP: 384 for each byte more; with FIT: 16 times the square of all its bytes more |
 | `text_lines` | and its letters as `text`'s, and 384 for each byte |
 | `button`, `icon_button`, `row`, `card` | as an app's `button` (three frames), `button` (the icon button: three frames and its icon), `row` and `card`: each frame 1 for every 32 pixels and 2 for each pixel within 32 px of its left and right sides; labels as a text 48 px high fitted to their room (a button's and a row's label on up to two lines: all its bytes in the square); icons by the square of their side |

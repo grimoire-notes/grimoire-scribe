@@ -81,9 +81,13 @@ pub const KIT_THICKNESS_MAX: i32 = 4096;
 
 /// Every call of the kit, whatever it is given and whether or not the package may draw.
 pub const KIT_CHARGE_CALL: u64 = APP_CHARGE_CALL;
-/// A text broken into lines (`text` with WRAP, `text_lines`, `measure_height`): this for each byte. Each word is
-/// measured once, and a word wider than the line is broken between its letters by doubling and halving (`kit_lines`).
+/// A text broken into lines that is drawn (`text` with WRAP, `text_lines`): this for each byte, beside its letters.
+/// Each word is measured once, and a word wider than the line is broken between its letters by doubling and halving
+/// (`kit_lines`).
 pub const KIT_CHARGE_WRAP: u64 = 384;
+/// A text broken into lines that is not drawn (`measure_height`): this for each byte, the work of breaking it with
+/// no letters' charge beside it (measured: its worst case takes about the budget's own time for what it pays).
+pub const KIT_CHARGE_MEASURE_LINES: u64 = 1024;
 
 // ---- metric ids (docs/KIT.md, Metrics) ----
 pub const M_TEXT_BODY: i32 = 1;
@@ -843,7 +847,7 @@ fn measure_width(cx: &mut dyn Call, [ptr, len, role]: [i32; 3]) -> Res<i32> {
 fn measure_height(cx: &mut dyn Call, [ptr, len, role, w]: [i32; 4]) -> Res<i32> {
     cx.charge(KIT_CHARGE_CALL)?;
     let w = rest_w(cx, 0, w);
-    let text = text_of(cx, ptr, len, |n| n as u64 * KIT_CHARGE_WRAP)?;
+    let text = text_of(cx, ptr, len, |n| n as u64 * KIT_CHARGE_MEASURE_LINES)?;
     let (f, px) = role_face(role);
     Ok(kit_lines(f, px, &text, w).len() as i32 * line_h(f, px))
 }
