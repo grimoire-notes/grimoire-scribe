@@ -8,9 +8,10 @@
 //! (browser.rs, issue #144).
 //!
 //! - One root: /mnt/us on the Kindle (when Grimoire's own folder is inside it); elsewhere GRIMOIRE_STORAGE,
-//!   a hook compiled out of the Kindle build. Never "/". Off the Kindle two more hooks say what that storage
-//!   names otherwise: the folders of Files' places at its root (GRIMOIRE_PLACE_*, `fsview_place_folder`) and
-//!   more of the system's folders (GRIMOIRE_STORAGE_SYSTEM, `is_system`).
+//!   a hook compiled out of the Kindle build. Never "/". Off the Kindle four more hooks say what that storage
+//!   names otherwise: the folders of Files' three places at its root (GRIMOIRE_PLACE_DOCUMENTS,
+//!   GRIMOIRE_PLACE_DOWNLOADS, GRIMOIRE_PLACE_FONTS: `fsview_place_folder`) and more of the system's folders
+//!   (GRIMOIRE_STORAGE_SYSTEM, `is_system`).
 //! - One walk, no links: each component opened with openat(O_DIRECTORY|O_NOFOLLOW) from the one before, the
 //!   file with O_NOFOLLOW, so a link anywhere fails (O_NOFOLLOW covers the last component only; the Scribe's
 //!   kernel, 4.9, has no openat2). Each directory must be on the root's device, and none may be Grimoire's

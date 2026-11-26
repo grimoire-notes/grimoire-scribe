@@ -5924,4 +5924,48 @@ mod tests {
         assert!(b.go(sp("Shelf/Grimoire/import")));
         assert_eq!(b.crumbs(), "Files > Import");
     }
+
+    // Both at once, the layout of a platform whose data root sits inside a larger storage: the Documents place's
+    // folder holds Grimoire's (GRIMOIRE_PLACE_DOCUMENTS=Document, Grimoire's folder Document/Grimoire). Go to lists
+    // that folder once, as the Documents place, and neither it nor Grimoire's folder as a top row, in Files and in a
+    // pick; Grimoire's places are in its folder there, and the Documents place lists Grimoire's folder as a folder.
+    // Without a Documents place the folder that holds Grimoire's is in Go to by its name.
+    #[test]
+    fn the_documents_place_may_hold_grimoires_folder() {
+        let (base, _g) = storage("docholds");
+        let root = format!("{base}/Document/Grimoire");
+        std::fs::create_dir_all(format!("{root}/import")).unwrap();
+        assert_eq!(store_init(&root), 0);
+        std::fs::remove_dir_all(format!("{base}/grimoire")).unwrap();
+        for d in ["Document/Books", "Notes"] {
+            std::fs::create_dir_all(format!("{base}/{d}")).unwrap();
+        }
+        i18n_set("en");
+        let _vars = PlaceVars::set(&[("GRIMOIRE_PLACE_DOCUMENTS", "Document")]);
+        let prefs = FilesPrefs { card: true, ..Default::default() };
+        let mut b = Browser::default();
+        assert!(b.open(PickSpec::place(), prefs));
+        assert_eq!(row_names(&b), ["Import", "documents", "Trash", "All storage"]);
+        assert_eq!(b.rows[0].path, sp("Document/Grimoire/import"));
+        assert_eq!(b.rows[1].path, sp("Document"));
+        assert!(b.go(sp("Notes")));
+        assert_eq!(goto_rows(&mut b), ["Home: Notebooks", "Import", "Documents", "Trash", "All storage", "Notes", "Set as home", "Cancel"]);
+        assert!(b.goto[1].1 == sp("Document") && b.goto[1].3);
+        assert!(b.go(sp("Document")));
+        assert_eq!(b.crumbs(), "Files > Documents");
+        assert_eq!(row_names(&b), ["Books", "Grimoire"]);
+        assert!(b.go(sp("Document/Grimoire/import")));
+        assert_eq!(b.crumbs(), "Files > Import");
+        // a pick's Go to: the same, with the pick's places
+        let mut p = Browser::default();
+        assert!(p.open(PickSpec::import(), prefs));
+        p.open_goto();
+        let names: Vec<&str> = p.goto.iter().map(|g| g.0.as_str()).collect();
+        assert_eq!(names, ["Import", "Documents", "All storage", "Notes"]);
+        // no Documents place (set empty): the folder that holds Grimoire's is a top folder by its name
+        std::env::set_var("GRIMOIRE_PLACE_DOCUMENTS", "");
+        assert!(b.open(PickSpec::place(), prefs));
+        assert!(b.go(sp("Notes")));
+        assert_eq!(goto_rows(&mut b), ["Home: Notebooks", "Import", "Trash", "All storage", "Document", "Notes", "Set as home", "Cancel"]);
+    }
 }

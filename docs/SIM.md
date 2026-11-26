@@ -39,7 +39,7 @@ timer run out.
 storage, `/mnt/us`, for the storage layer (`fsview.rs`, 2.1): the root every `StoragePath` is relative to.
 An absolute path, never `/`; without it there is no storage to browse. Nothing reads it yet but the
 tests (`tests/test_fsview.rs`); the scenarios unset it.
-Three more hooks of the same kind (off the Kindle only; compiled out of the Kindle build) say what such a storage
+Four more hooks of the same kind (off the Kindle only; compiled out of the Kindle build) say what such a storage
 names otherwise, for a platform whose data root sits inside a larger storage (rust/PORTING.md).
 `GRIMOIRE_PLACE_DOCUMENTS=NAME`, `GRIMOIRE_PLACE_DOWNLOADS=NAME` and `GRIMOIRE_PLACE_FONTS=NAME` are the folders
 at the storage root of Files' Documents, Downloads and Kindle fonts places (unset: the Kindle's `documents`,
