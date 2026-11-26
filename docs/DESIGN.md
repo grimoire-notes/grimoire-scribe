@@ -79,21 +79,29 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   (floating panel, modals). Overlays are re-drawn on top of the page whenever a region is
   recomposed.
 - Off 100% the view samples the page canvas with a two-tap bilinear (`blit_canvas`), and the panel
-  then cuts each gray to its 16. Below 100% (to half), a paper of lines alone (the six ruled kinds,
-  sheet music, graph, the cross grid and Seyes: `PAPER_LINE_KINDS`) is drawn at the screen's scale
-  instead (issue #308, `blit_canvas_ruled`). `paper_render_view` draws the paper over the rect, every
-  line on whole screen pixels as wide and as gray as on the page, placed by one rounding of its page
-  coordinates, and the page's ink is sampled over it (`blit_over_paper`). A screen pixel whose taps
-  hold the paper alone (the page canvas equal to `s.paper`, the paper alone at page size, which the
-  first such frame makes: `view_rules`) keeps the drawn paper. One with ink takes each tap as that ink
-  would show over the drawn paper (ink darkens toward its gray: a tap darker than its paper is ink of
-  the darkest gray among the taps over part of the pixel), mixed with the bilinear's weights and
-  rounding, so ink over paper that is white in both comes out exactly as before. Sampled with the
+  then cuts each gray to its 16. Below 100% (to half), a paper of rulings is drawn at the screen's
+  scale instead (issue #308, `blit_canvas_ruled`): the six ruled kinds, sheet music, graph, the cross
+  grid, Seyes, Cornell, the grand staff, the guitar and bass tabs and the custom music layouts
+  (`paper_view_draws`). `paper_render_view` draws the paper over the rect, every line on whole screen
+  pixels as wide and as gray as on the page, placed by one rounding of its page coordinates (a
+  barline's end and a cross's arms placed from the line they meet, so they still meet it), and the
+  marks some carry (Cornell's labels, the clefs, "TAB", the braces) at the view's scale. The page's
+  ink is sampled over it (`blit_over_paper`). A screen pixel whose taps hold the paper alone (the page
+  canvas equal to `s.paper`, the paper alone at page size, which the first such frame makes:
+  `view_rules`) keeps the drawn paper. One with ink takes each tap as that ink would show over the
+  drawn paper (ink darkens toward its gray: a tap darker than its paper is ink of the darkest gray
+  among the taps over part of the pixel), mixed with the bilinear's weights and rounding, so ink over
+  paper that is white in both comes out exactly as before. Each page row is compared with its paper
+  32 bytes at a time, so the paper costs next to nothing; ink over white paper is `blit_canvas`'s
+  pixel straight away (in a row with ink over a quarter of it, from its rows interpolated as
+  `blit_canvas` does), and only the pixels near a ruling are worked out one by one. Sampled with the
   page, each line fell at its own fraction of a pixel: at 0.75 (the whole page sideways) Seyes's inner
   lines came out in four shapes, the heaviest a third darker than the lightest on the 16 grays. The
-  100% view, zooms of 100% and more, a pinch's fast frames, the Links bar's preview of another page
-  and the other papers are sampled from the page as before, and nothing drawn at page size (pages,
-  exports, previews, kept drawings) changes.
+  Links bar's preview of another page on the open page's paper is drawn the same way
+  (`peek_rules`). The 100% view, zooms of 100% and more, a pinch's fast frames, the dots, isometric,
+  hex and image papers (round marks, slanted lines and pictures, at fractions of a pixel on the page
+  itself) are sampled from the page as before, and nothing drawn at page size (pages, exports,
+  previews, kept drawings) changes.
 - Screens never call display directly. They call `app_invalidate(app, rect, mode)` and the
   main loop calls `app_flush(app)` after draining all pending input events, so a burst of
   pen samples becomes one refresh.
