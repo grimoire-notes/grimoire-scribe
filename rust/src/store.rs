@@ -2528,7 +2528,7 @@ pub fn store_list_folders_from(nbs: &[NotebookInfo], out: &mut Vec<String>) -> i
     0
 }
 
-// ---- folder looks (root/folder-looks.ini, 2.2, issue #230) ----
+// ---- folder looks (root/folder-looks.ini, 2.3, issue #230) ----
 //
 // # Grimoire: folder icons and pictures
 // folder=School
@@ -6093,7 +6093,7 @@ mod tests {
             .collect()
     }
 
-    // A folder's icon and picture are kept apart from folders.ini (2.2, issue #230): read back as written, a folder
+    // A folder's icon and picture are kept apart from folders.ini (2.3, issue #230): read back as written, a folder
     // with neither has no block, a rename or merge carries the subtree's looks, and one gone takes its look.
     #[test]
     fn folder_looks_read_write_and_follow_renames() {

@@ -14,8 +14,8 @@ expect library.sheet is about
 expect library.about.view is browser
 expect library.about.full is 1
 expect library.about.rows is 6
-expect library.about.note is 2.1.0
-expect library.about.marked is 2
+expect library.about.note is 2.2.0
+expect library.about.marked is 1
 expect settings.whatsnew_hide is 1
 shot 01-after-update
 tap library about.close
