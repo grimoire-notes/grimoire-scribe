@@ -365,7 +365,9 @@ pub fn i18n_set_device_name(name: &str) {
 
 /// `text` with `name` where it says Kindle, None where it has no "Kindl": "Kindle Scribe" as a whole,
 /// and elsewhere "Kindl" with the lowercase Latin letters after it ("Kindle", or a declined form such
-/// as "Kindla"). The text is read once, so a name that says Kindle itself stays as it is.
+/// as "Kindla"). The text is read once, so a name that says Kindle itself stays as it is. The whole
+/// ending goes, an English plural's "s" with it ("Kindles" is the name alone), so an English text
+/// does not say "Kindles".
 pub fn i18n_with_device_name(text: &str, name: &str) -> Option<String> {
     if !text.contains("Kindl") {
         return None;
@@ -851,6 +853,8 @@ mod tests {
         // An ending is lowercase Latin: not another script, nor a capital (the next word).
         assert_eq!(i18n_with_device_name("Kindle\u{306e}\u{30da}\u{30fc}\u{30b8}", "Slate").as_deref(), Some("Slate\u{306e}\u{30da}\u{30fc}\u{30b8}"));
         assert_eq!(i18n_with_device_name("KindleScribe", "Slate").as_deref(), Some("SlateScribe"));
+        // The whole ending goes, an English plural's "s" too: an English text does not say "Kindles".
+        assert_eq!(i18n_with_device_name("Other Kindles", "Slate").as_deref(), Some("Other Slate"));
         // (each place is named once: a name that says Kindle itself is not named again)
         assert_eq!(i18n_with_device_name("Kindle Scribe and Kindle", "Kindle Slate").as_deref(), Some("Kindle Slate and Kindle Slate"));
 
