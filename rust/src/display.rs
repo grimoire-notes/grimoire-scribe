@@ -111,11 +111,10 @@ pub fn display_present(screen: &Canvas, r: Rect, mode: RefreshMode) {
 }
 /// Whether the next display_present is a refresh nobody asked for: a part of the screen that fills in by itself
 /// (Files' Covers tiles as their previews arrive) or redraws when its time comes (a widget frame's timed redraw),
-/// with nothing that anything asked for in it. It holds for that one present:
-/// app_flush says it before each of its presents, on or off, and every other present is one something asked
-/// for. Only a Ui is ever one; the cleaning Full (every 30th Ui) never is. A platform that adds a cleaning flash
-/// of its own to large refreshes can leave it out for such a one. Nothing on the Kindle, whose refreshes flash
-/// only where the app asks for a flash.
+/// with nothing that anything asked for in it. It holds for that one present: app_flush says it before each of
+/// its presents, on or off; every other present goes without it. Only a Ui is ever one; the cleaning Full
+/// (every 30th Ui) never is. A platform that adds a cleaning flash of its own to large refreshes can leave it
+/// out for such a one. Nothing on the Kindle, whose refreshes flash only where the app asks for a flash.
 #[inline]
 pub fn display_unasked(on: bool) {
     active().display_unasked(on)
