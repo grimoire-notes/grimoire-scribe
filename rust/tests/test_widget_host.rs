@@ -1083,7 +1083,7 @@ fn the_text_a_widgets_frame_shows_is_at_most_256_bytes() {
     let install = |id: &str, import: &str| {
         let module = module_importing(&[], &[], &[], &[import]);
         widget_package_install(&manifest(id, "Test", &BOTH, FIXED_400_300, &module), &module, "", 1860, 2480).unwrap();
-        WidgetRuntime::new(id).err().unwrap()
+        WidgetRuntime::new(id, (BODY.w, BODY.h)).err().unwrap()
     };
     let whose = "Test v1.0.0 · Grimoire tests";
     // An ordinary reason is shown whole.
