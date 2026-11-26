@@ -978,15 +978,20 @@ impl KitPointer {
     }
 }
 
-/// What input owes a body's drawing: the recogniser of its contact, whether a pass is owed, and the pace while a
-/// contact is down. Every input event still calls the module at once; the pass it owes waits for the host's tick,
-/// which draws it once for all the events since the last pass (`pass_now`).
+/// What input owes a body's drawing: the recogniser of its contact, whether a pass is owed, the pace while a contact
+/// is down, and the part of the screen its passes refreshed fast. Every input event still calls the module at once;
+/// the pass it owes waits for the host's tick, which draws it once for all the events since the last pass
+/// (`pass_now`). A fast refresh shows grays dithered to black and white, and the lift's refresh drives only the pixels
+/// that change: so all that the fast refreshes covered is owed one full-depth refresh once the contact has lifted
+/// (`take_worn`).
 #[derive(Clone, Debug, Default)]
 pub struct KitInput {
     pub pointer: KitPointer,
     due: bool,
     /// when the pace last gave a turn (the app's clock); None before the first, which is due at once
     at: Option<u32>,
+    /// the part of the screen this body's passes refreshed fast, since it was last taken
+    worn: Rect,
 }
 
 impl KitInput {
@@ -1016,6 +1021,23 @@ impl KitInput {
         }
         self.at = Some(now);
         true
+    }
+
+    /// A pass input owed went out as a refresh of `r` in `mode`: a fast one is kept in the part the fast refreshes
+    /// covered.
+    pub fn refreshed(&mut self, r: Rect, mode: RefreshMode) {
+        if mode == RefreshMode::Fast {
+            self.worn = rect_union(self.worn, r);
+        }
+    }
+
+    /// Once no contact is down: the part of the screen the passes refreshed fast, owed one full-depth refresh whatever
+    /// the lift's pass changed, taken once. None while a contact is down, or when nothing was refreshed fast.
+    pub fn take_worn(&mut self) -> Option<Rect> {
+        if self.pointer.is_down() || rect_is_empty(self.worn) {
+            return None;
+        }
+        Some(std::mem::replace(&mut self.worn, RECT_EMPTY))
     }
 
     /// Whether the pass input owes is drawn now (`turn`: this tick took the pace's turn), and the refresh it takes:

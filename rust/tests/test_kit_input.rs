@@ -243,6 +243,24 @@ fn the_hold_the_pace_and_a_redraw_request_are_durations_the_same_at_any_uptime_a
     }
 }
 
+#[test]
+fn what_fast_refreshes_covered_while_a_contact_was_down_is_owed_one_full_depth_refresh_after_its_lift() {
+    let mut k = KitInput::default();
+    k.pointer.down(0, 0, 0, -1, 0, slop(), false);
+    k.refreshed(Rect::new(10, 10, 100, 50), RefreshMode::Fast);
+    k.refreshed(Rect::new(300, 200, 20, 20), RefreshMode::Fast);
+    k.refreshed(Rect::new(0, 0, 5, 5), RefreshMode::Ui);
+    assert_eq!(k.take_worn(), None, "not while the contact is down");
+    k.pointer.up(0, 0, false);
+    assert_eq!(k.take_worn(), Some(Rect::new(10, 10, 310, 210)), "all the fast refreshes covered, whatever the lift's pass changed");
+    assert_eq!(k.take_worn(), None, "taken once");
+    // a contact whose passes were refreshed as the UI alone (a tap's) owes nothing
+    k.pointer.down(0, 0, 0, -1, 0, slop(), false);
+    k.pointer.up(0, 0, false);
+    k.refreshed(Rect::new(10, 10, 100, 50), RefreshMode::Ui);
+    assert_eq!(k.take_worn(), None);
+}
+
 // ---- what a pass changed ----
 
 #[test]

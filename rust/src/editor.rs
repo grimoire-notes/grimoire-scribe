@@ -16,8 +16,8 @@ use std::rc::Rc;
 
 // The grayscale settle (see EditorState.settle): this long after a stroke with the pen still near,
 // or once the pen has been gone this long.
-const SETTLE_NEAR_MS: u32 = 1500;
-const SETTLE_LEFT_MS: u32 = 150;
+pub(crate) const SETTLE_NEAR_MS: u32 = 1500;
+pub(crate) const SETTLE_LEFT_MS: u32 = 150;
 // The band of the page an erased stroke counts as toward DU wear (stroke_wear_area): its ink and the
 // paper right around it, about the height of a small handwritten letter.
 const WEAR_BAND_MM: f32 = 4.0;
@@ -8531,8 +8531,9 @@ fn widget_events(f: &mut WidgetFrame, events: &[KitEvent]) {
 /// editor_tick: the package kit's input in the frames (kithost.rs KitInput). A contact held still on a body is a
 /// press; on the pace's turn a drag's gathered samples go to its module; and the drawing pass that input owes a
 /// frame is drawn once for all its input since the last, and only the part of its body the pass changed is
-/// refreshed: fast while the contact is down, as the screen's UI after it. A tap's pass is drawn at its lift, the pen
-/// near or not, as a tap's always was; the passes a module asks for itself wait for the pen (widget_runtime_tick).
+/// refreshed: fast while the contact is down, as the screen's UI after it, and what the fast refreshes covered cleaned
+/// once after the lift (du_wear_owe). A tap's pass is drawn at its lift, the pen near or not, as a tap's always was;
+/// the passes a module asks for itself wait for the pen (widget_runtime_tick).
 /// Nothing while a sheet, the peek or Settings is over the frames. A minimized frame draws no body: what was owed
 /// is dropped.
 fn widget_input_tick(a: &mut App, now: u32) {
@@ -8551,20 +8552,24 @@ fn widget_input_tick(a: &mut App, now: u32) {
         widget_events(f, &events);
         if f.layout.minimized {
             f.input.answered();
+            let _ = f.input.take_worn();
             continue;
         }
-        let Some(mode) = f.input.pass_now(turn, fast_busy) else { continue };
-        let body = widget_body(f);
-        let kept = kit_keep(&a.screen, body);
-        compose(a, body);
-        ed(a).widgets.frames[i].input.answered();
-        let changed = kept.map_or(body, |(k, at)| canvas_changed_rect(&k, &a.screen, at));
-        if !rect_is_empty(changed) {
-            app_invalidate(a, changed, mode);
-            if mode == RefreshMode::Fast {
-                // (what fast refreshes left is cleaned after a pause, as a selection's drag's is: du_wear_tick)
-                du_wear_add(&mut a.du_wear, changed, changed.w as i64 * changed.h as i64, now);
+        if let Some(mode) = f.input.pass_now(turn, fast_busy) {
+            let body = widget_body(f);
+            let kept = kit_keep(&a.screen, body);
+            compose(a, body);
+            ed(a).widgets.frames[i].input.answered();
+            let changed = kept.map_or(body, |(k, at)| canvas_changed_rect(&k, &a.screen, at));
+            if !rect_is_empty(changed) {
+                app_invalidate(a, changed, mode);
+                ed(a).widgets.frames[i].input.refreshed(changed, mode);
             }
+        }
+        // (once the contact has lifted, all its fast refreshes covered is owed one Clean refresh, whatever its size,
+        // after the pause du_wear_tick waits, as a toolbar drag's is)
+        if let Some(worn) = ed(a).widgets.frames[i].input.take_worn() {
+            du_wear_owe(&mut a.du_wear, worn, now);
         }
     }
 }

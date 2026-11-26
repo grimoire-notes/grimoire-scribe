@@ -478,6 +478,9 @@ pub struct AppRun {
     launched_at: Option<Instant>,
     /// the body's contact recognised (the kit's events) and the drawing pass input owes (kithost.rs)
     input: KitInput,
+    /// what the input passes' fast refreshes covered, once the contact lifted, and when: owed one Clean refresh after
+    /// a pause (apphost_wear_tick)
+    worn: Option<(Rect, u32)>,
 }
 
 impl AppRun {
@@ -598,6 +601,7 @@ pub fn apphost_launch(a: &mut App, id: &str) -> bool {
                 last_draw: Some(now_ms()),
                 launched_at: Some(Instant::now()),
                 input: KitInput::default(),
+                worn: None,
             };
             // An app may override the manifest preference once, before its first frame.
             if let Some(want) = a.app_view.runtime.as_mut().and_then(|r| r.export_status_bar()) {
@@ -784,14 +788,36 @@ fn apphost_after_input(a: &mut App) -> bool {
 }
 
 /// A drawing pass of the app (the one input owed, or the status bar's minute): the app drawn once, and only the part
-/// of the screen the pass changed refreshed, in `mode` (nothing, when it changed nothing).
-fn apphost_pass(a: &mut App, mode: RefreshMode) {
+/// of the screen the pass changed refreshed, in `mode` (nothing, when it changed nothing). Returns that part.
+fn apphost_pass(a: &mut App, mode: RefreshMode) -> Rect {
     let screen = Rect::new(0, 0, a.w, a.h);
     let kept = kit_keep(&a.screen, screen);
     apphost_draw(a);
     let changed = kept.map_or(screen, |(k, at)| canvas_changed_rect(&k, &a.screen, at));
     if !rect_is_empty(changed) {
         app_invalidate(a, changed, mode);
+    }
+    changed
+}
+
+/// What an app's input passes refreshed fast is cleaned as the editor cleans a notebook's (editor.rs du_wear_tick;
+/// the Library has no cleaning of its own): a fast refresh shows grays dithered to black and white, and the lift's
+/// refresh drives only the pixels that change. Once the contact has lifted and its last pass is drawn, after the
+/// editor's pause (SETTLE_LEFT_MS since the lift with the pen away, SETTLE_NEAR_MS with it near), one Clean refresh
+/// of all they covered.
+fn apphost_wear_tick(a: &mut App, now: u32) {
+    let Some((worn, at)) = a.app_view.worn else { return };
+    if a.app_view.input.pointer.is_down() || a.app_view.input.owed() || a.pen_action_down || !a.input_drained {
+        return;
+    }
+    let pause = if crate::status::status_busy(a) { crate::editor::SETTLE_NEAR_MS } else { crate::editor::SETTLE_LEFT_MS };
+    if now.wrapping_sub(at) < pause {
+        return;
+    }
+    a.app_view.worn = None;
+    let r = rect_intersect(worn, Rect::new(0, 0, a.w, a.h));
+    if !rect_is_empty(r) {
+        app_invalidate(a, r, RefreshMode::Clean);
     }
 }
 
@@ -837,11 +863,18 @@ pub fn apphost_tick(a: &mut App, now: u32) {
         }
     }
     if let Some(mode) = a.app_view.input.pass_now(turn, fast_busy) {
-        apphost_pass(a, mode);
+        let changed = apphost_pass(a, mode);
+        a.app_view.input.refreshed(changed, mode);
         if apphost_failed(a) {
             return;
         }
     }
+    // (once the contact has lifted, what its fast refreshes covered is owed one Clean refresh, after a pause)
+    if let Some(r) = a.app_view.input.take_worn() {
+        let was = a.app_view.worn.map_or(RECT_EMPTY, |(w, _)| w);
+        a.app_view.worn = Some((rect_union(was, r), now));
+    }
+    apphost_wear_tick(a, now);
     // A request that is due is taken, and the app is drawn and the screen refreshed once for it. A pass that
     // wants another asks again, and gets it no sooner than APP_REDRAW_MIN_MS later; while no request is due
     // nothing is drawn and nothing is refreshed.
