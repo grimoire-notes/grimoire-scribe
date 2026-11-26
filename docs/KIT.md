@@ -278,8 +278,10 @@ types into it with this.
   contact has lifted, all that its fast refreshes covered gets one full-depth refresh (a clean of that part alone),
   whatever the lift's pass changed, after a pause: 150 ms after the lift with the pen away, 1.5 s with it near (in a
   frame, the notebook's cleaning of fast refreshes sends it, and draws the frame's part again for it). In an app a
-  pass it asks for (`request_redraw`) is refreshed fast too, and what it covered is cleaned the same way, the pause
-  counted from the last such pass; a widget's is refreshed as Grimoire's screens are, its frame at full depth.
+  pass it asks for (`request_redraw`) after a rest (nothing owed a clean, and the pause since its last such pass and
+  its last fast refresh) is refreshed as Grimoire's screens are, at full depth; one that comes sooner, back to back,
+  is refreshed fast, and what it covered is cleaned the same way, the pause counted from the last such pass. A
+  widget's is refreshed as Grimoire's screens are, its frame at full depth.
 - A `kit_event` that returns 0 owes no pass. A call of a host's own export (`app_pointer`, `app_key`,
   `widget_tap`) says nothing of the picture, so it owes one.
 - Only the part of the screen the pass changed is refreshed, none when it changed nothing; a widget's pass refreshes
