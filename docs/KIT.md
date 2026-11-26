@@ -263,6 +263,15 @@ A kit call is paid from the budget of the host's call it is made in (a widget's 
 
 A call whose budget cannot pay a charge ends exactly as a call that ran out of instructions.
 
+The charges were measured in a release build of the tests on a desktop machine. There, the longest pass of kit calls
+a budget pays for takes about four times as long as the same budget spent on instructions alone in a widget (4.1)
+and about two and a half times in an app (2.7): one FIT text, row or checkbox whose label is 512 one-letter words
+that the label rule balances on two lines, in Literata (2.6 and 1.7 in Gothic, about 1.2 and 0.8 in Terminess). A
+label or a FIT text of one word wider than its line takes at most 0.3; `measure_height` of 1,024 narrow letters
+about the budget's own time for what it pays (1.0, in an app in Literata); `text` with WRAP and `text_lines` at
+most 1.0 a pass; a pass of nothing but `chip`, `field` or `pager` calls at most 1.5. They have not been measured on
+a Kindle.
+
 ## Testing
 
 `rust/tests/kitfix` writes the modules of the kit's tests byte by byte, and the installed packages of

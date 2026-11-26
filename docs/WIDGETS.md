@@ -384,9 +384,12 @@ shows the same error, and nothing of the pass is drawn. A call of an import the 
 capability for pays the fixed charge and returns.
 
 The charges were set by measuring, in a release build on a desktop machine, what each import's work
-costs beside a module's own instructions. There, the longest drawing a budget pays for takes about
-three times as long as the same budget spent on instructions alone. They have not been measured on a
-Kindle.
+costs beside a module's own instructions. There, the longest drawing measured that a budget pays for
+takes about four times as long as the same budget spent on instructions alone (4.1): one label of 512
+one-letter words that Grimoire's label rule balances on two lines, a FIT text, a row or a checkbox of
+the package kit, in Literata; about two and a half times in Gothic, and about once in Terminess. The
+widget's own `button` with such a label, or with one word of 1,023 letters, takes about once at most.
+They have not been measured on a Kindle.
 
 Some sums, for a sense of scale:
 
