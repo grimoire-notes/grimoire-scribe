@@ -996,9 +996,24 @@ fn app_text_key(a: &mut App, ev: &InEvent) -> bool {
     }
 }
 
+/// The shortcuts that still act while an app is open: the ways out of it. A key bound to `back` (Esc, in the keys
+/// Grimoire writes) or to `home` closes the app, as the two-finger swipe does, and `home` then goes to the home; every
+/// other key goes to the app (apphost_key), and no other shortcut acts.
+pub const APP_LEAVE_ACTIONS: [i32; 2] = [SHORTCUT_BACK, SHORTCUT_HOME];
+
 /// Shared keyboard/controller/Live view dispatch. Callers own enablement, wake gating and
 /// press/release identity; the editor owns modal/stroke guards. Status actions work on every screen.
+/// While an app is open only the shortcuts that leave it act (APP_LEAVE_ACTIONS).
 fn app_shortcut_action(a: &mut App, action: i32, src: ActionSrc) -> bool {
+    if crate::apphost::apphost_open(a) {
+        if !APP_LEAVE_ACTIONS.contains(&action) {
+            return false;
+        }
+        crate::apphost::apphost_close(a);
+        if action != SHORTCUT_HOME {
+            return true;
+        }
+    }
     if action == SHORTCUT_STATUS {
         status_toggle(a);
         return true;
@@ -1054,6 +1069,17 @@ fn live_keys_tick(a: &mut App) {
     live_block(false);
 }
 
+/// A key that, with the shortcuts on, is bound in the open app's place to one of the shortcuts that leave an app
+/// (APP_LEAVE_ACTIONS): it acts (app_shortcut_action closes the app). False for every other key, which is the app's.
+fn app_leave_key(a: &mut App, ev: &InEvent) -> bool {
+    if !app_shortcuts_on(a) {
+        return false;
+    }
+    let src = if ev.gamepad { ActionSrc::Pad } else { ActionSrc::Key };
+    let action = shortcuts_lookup_at(app_key_map(a, ev), src, ev.value, ev.key_mods as i32, app_place(a));
+    APP_LEAVE_ACTIONS.contains(&action) && app_shortcut_action(a, action, src)
+}
+
 fn app_event_screens(a: &mut App, ev: &InEvent) {
     // Keys, the power button, sleep and wake do work that pumps the pens too (a shortcut turns the
     // page): no quick ink from what it reads before that work is done, as for a screen's own UI
@@ -1081,6 +1107,17 @@ fn app_event_screens(a: &mut App, ev: &InEvent) {
         // (On the Kindle a keyboard is read only while Settings > Shortcuts is on.)
         if !a.asleep && !ev.gamepad && app_text_key(a, ev) {
             note_input(a);
+            return;
+        }
+        // An open app takes the keys before Grimoire's shortcuts and the Library under it, shortcuts on or off (a
+        // controller's buttons too): `app_key` and the package kit's KEY event (apphost.rs). Only a key bound to one of
+        // the shortcuts that leave the app (APP_LEAVE_ACTIONS) acts, and leaves it. (A keyboard of Grimoire's open over
+        // the app took the keys that type, above.)
+        if !a.asleep && crate::apphost::apphost_open(a) {
+            note_input(a);
+            if !app_leave_key(a, ev) {
+                crate::apphost::apphost_key(a, ev.value, ev.key_mods as i32, true);
+            }
             return;
         }
         // A Library dialog with keys of its own (Exit Grimoire?, New notebook's Enter) takes them before any shortcut.
@@ -1126,6 +1163,10 @@ fn app_event_screens(a: &mut App, ev: &InEvent) {
         if a.hold_code != 0 && ev.value == a.hold_code && ev.gamepad == a.hold_pad {
             a.hold_code = 0;
             editor_hold_eraser(a, !a.live_holds.is_empty());
+        }
+        // (an open app is told a key was let go, as it is told one was pressed)
+        if !a.asleep && crate::apphost::apphost_open(a) {
+            crate::apphost::apphost_key(a, ev.value, ev.key_mods as i32, false);
         }
         return;
     }
