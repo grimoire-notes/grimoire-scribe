@@ -3179,10 +3179,10 @@ may cost is held to a few seconds a file, behind every other job.
   one Ui refresh of the union of those tiles, the mode a list's rows fill in with, as a refresh that fills in by
   itself (`app_invalidate_filling`): counted toward the cleaning Full like any Ui, and never itself promoted to
   it, so no whole-panel flash lands in the middle of a screen that is arriving; the next refresh a tap asks for
-  is the Full instead. The platform hears that nobody asked for it (`display_unasked`). A screen of previews costs one refresh when they come within 2 s, and one more for every
-  2 s they take. Nothing is drawn under an open card: its close (and its opening) refreshes the tiles that
-  changed meanwhile together with the card's rect, whichever row closes it (Cancel, or a picture's Use as
-  template or Use as photo, `copy_in`).
+  is the Full instead. The platform hears that nobody asked for it (`display_unasked`). A screen of previews
+  costs one refresh when they come within 2 s, and one more for every 2 s they take. Nothing is drawn under an
+  open card: its close (and its opening) refreshes the tiles that changed meanwhile together with the card's
+  rect, whichever row closes it (Cancel, or a picture's Use as template or Use as photo, `copy_in`).
 - **The notice** "Making previews..." (`NoticeKey::Previews`, on the Library's screen that asked) stays while a
   preview the screen asked for is being made, from its first second on, as "Loading..." does; not while the
   screen's jobs only wait behind other work, whose own notice shows.

@@ -48,8 +48,9 @@ pub trait Platform: Sync {
         false
     }
     /// display_unasked: whether the next display_present is a refresh nobody asked for (a part of the screen
-    /// that fills in by itself). A platform that adds a cleaning flash of its own to large refreshes can leave it
-    /// out for this one. Nothing where a platform adds no flash of its own.
+    /// that fills in by itself, or redraws when its time comes, nobody having touched anything). It holds for
+    /// that one present. A platform that adds a cleaning flash of its own to large refreshes can leave it out
+    /// for this one. Nothing where a platform adds no flash of its own.
     fn display_unasked(&self, _on: bool) {}
     /// display_last_fast_waiting: false where no refresh waits on the driver.
     fn display_last_fast_waiting(&self) -> bool {

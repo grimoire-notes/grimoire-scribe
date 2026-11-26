@@ -3680,6 +3680,14 @@ mod tests {
         assert!(!a.dirty_unasked, "anything asked for takes it away");
         app_flush(&mut a);
         sent("0");
+        // the app's own repaint (a toast shown or hidden, self_dirty) flushed with it: no hint
+        a.ui_refreshes_since_full = 0;
+        app_invalidate_filling(&mut a, r);
+        with(|s| s.self_dirty = other);
+        app_flush(&mut a);
+        assert!(!a.dirty_unasked && rect_is_empty(with(|s| s.self_dirty)));
+        assert_eq!(a.ui_refreshes_since_full, 1, "a Ui");
+        sent("0");
         // nothing of it off the screen
         app_invalidate_unasked(&mut a, Rect { x: -500, y: 0, w: 100, h: 100 });
         assert!(!a.dirty_unasked && rect_is_empty(a.dirty));
