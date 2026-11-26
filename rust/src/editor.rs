@@ -17,7 +17,7 @@ use std::rc::Rc;
 // The grayscale settle (see EditorState.settle): this long after a stroke with the pen still near,
 // or once the pen has been gone this long.
 const SETTLE_NEAR_MS: u32 = 1500;
-const SETTLE_LEFT_MS: i32 = 150;
+const SETTLE_LEFT_MS: u32 = 150;
 // The band of the page an erased stroke counts as toward DU wear (stroke_wear_area): its ink and the
 // paper right around it, about the height of a small handwritten letter.
 const WEAR_BAND_MM: f32 = 4.0;
@@ -439,7 +439,9 @@ pub struct EditorState {
     // panel (a stroke that does keeps plain DU instead of the pen mode, display_fbink.c).
     /// page rect still showing dithered live ink
     settle: Rect,
-    settle_at: u32,
+    /// when the settle's wait began (a stroke ended): with the pen still near, the settle comes SETTLE_NEAR_MS after
+    /// it (a duration on the u32 clock, so the same at any uptime)
+    settle_from: u32,
     /// the pen is near the page (hovering or touching)
     pen_near: bool,
     /// when it last left
@@ -4510,7 +4512,7 @@ fn draw_end_stroke(a: &mut App) {
     }
     // Settle later, once the writer stops (see settle_now).
     s.settle = rect_union(s.settle, st.bbox);
-    s.settle_at = now_ms().wrapping_add(SETTLE_NEAR_MS);
+    s.settle_from = now_ms();
     if stroke_is_erase(&st) && !s.bs.restored {
         // An erase stroke that changed no pixel of the page (over blank paper, or ink the eraser
         // had taken already): not kept, and no undo step that would do nothing. Its fast frames
@@ -11453,7 +11455,7 @@ fn fs_abort_view(a: &mut App, view: FsAbortView) {
                 let page = fs_screen_to_page(a, r);
                 let s = ed(a);
                 s.settle = rect_union(s.settle, page);
-                s.settle_at = now_ms().wrapping_add(SETTLE_NEAR_MS);
+                s.settle_from = now_ms();
                 app_flush(a);
             }
             ed(a).fs_trail = RECT_EMPTY;
@@ -12534,9 +12536,11 @@ fn du_wear_tick(a: &mut App, now: u32) {
     let s = ed_ref(a);
     // (with the pen near: nothing added, and no stroke ended, for SETTLE_NEAR_MS; with it gone, SETTLE_LEFT_MS
     // since then and since the last was added, which gives a pen that is arriving the time to say so)
-    let since_added = now.wrapping_sub(a.du_wear.at) as i32;
-    let paused = (since_added >= SETTLE_NEAR_MS as i32 && (now.wrapping_sub(s.settle_at) as i32) >= 0)
-        || (!s.pen_near && (now.wrapping_sub(s.pen_left) as i32) >= SETTLE_LEFT_MS && since_added >= SETTLE_LEFT_MS);
+    // (each a duration on the u32 clock, `now.wrapping_sub(then)`, so the pause is the same at any uptime, also
+    // before the pen first came near or wrote, when pen_left and settle_from are 0)
+    let since_added = now.wrapping_sub(a.du_wear.at);
+    let paused = (since_added >= SETTLE_NEAR_MS && now.wrapping_sub(s.settle_from) >= SETTLE_NEAR_MS)
+        || (!s.pen_near && now.wrapping_sub(s.pen_left) >= SETTLE_LEFT_MS && since_added >= SETTLE_LEFT_MS);
     if !s.open || s.owner != Owner::None || s.pinching || s.pv.open || s.map.open || s.destination.open || !paused {
         return;
     }
@@ -12718,7 +12722,7 @@ pub fn editor_tick(a: &mut App, now: u32) {
     pb_drag_tick(a, now);
     let s = ed(a);
     // The pen gone for SETTLE_LEFT_MS (not just lifted high for a moment), or near for too long.
-    let stopped = (now.wrapping_sub(s.settle_at) as i32) >= 0 || (!s.pen_near && (now.wrapping_sub(s.pen_left) as i32) >= SETTLE_LEFT_MS);
+    let stopped = now.wrapping_sub(s.settle_from) >= SETTLE_NEAR_MS || (!s.pen_near && now.wrapping_sub(s.pen_left) >= SETTLE_LEFT_MS);
     if s.open && s.owner == Owner::None && !s.pinching && (!rect_is_empty(s.settle) || s.panel_stale) && stopped {
         settle_now(a);
     }

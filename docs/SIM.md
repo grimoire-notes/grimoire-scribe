@@ -79,7 +79,9 @@ checks a single click's wait for a second one so). `waitbg` keeps a real deadlin
 opt-in for exact toast and refresh checks; other scenarios keep the real monotonic clock. `clock
 SECONDS` still sets only the displayed wall time. With it, `GRIMOIRE_SIM_UPTIME_MS=N` starts app
 time at N ms in place of the host's time since it started, as on a machine up that long
-(tests/scenarios/v_shortcuts_awake_boot.qs sends the first key one second after a boot).
+(tests/scenarios/v_shortcuts_awake_boot.qs sends the first key one second after a boot). N is
+anywhere from 0 to 4294967295, the range of app time, which wraps to 0 after it, as the Kindle's does
+after 49.7 days awake (tests/scenarios/z_kit_input_app_wrap.qs crosses the wrap mid-scenario).
 
 Four more:
 

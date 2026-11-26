@@ -56,7 +56,7 @@ use crate::kithost::{
     KitInput, EV_KEY, EV_SETTINGS, KIT_EVENT,
 };
 use crate::prelude::*;
-use crate::wasmhost::{charge, in_body, line_in_reach, on_screen};
+use crate::wasmhost::{charge, in_body, line_in_reach, on_screen, Redraw};
 use std::time::Instant;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
@@ -244,9 +244,10 @@ struct HostState {
     toast: Option<(String, u32)>,
     dirty: bool,
     limits: StoreLimits,
-    /// when the module asked to be drawn again, by the app's clock (`now_ms`); None while no request stands.
-    /// One request stands at a time, the soonest asked for, until the host's tick takes it (`redraw_taken`).
-    redraw_at: Option<u32>,
+    /// the module's request to be drawn again (when it asked, by the app's clock, and how long after); None while
+    /// no request stands. One request stands at a time, the soonest asked for, until the host's tick takes it
+    /// (`redraw_taken`).
+    redraw_at: Option<Redraw>,
     screen_w: i32,
     screen_h: i32,
     clock_12h: bool,
@@ -1211,10 +1212,11 @@ impl AppRuntime {
         }
     }
 
-    /// Whether the module asked for a drawing pass that is due at `now`, by the app's clock (`now_ms`, which
-    /// wraps: the longest delay is far under half its range). Nothing is due for a module that has stopped.
+    /// Whether the module asked for a drawing pass that is due at `now`, by the app's clock (`now_ms`: the time
+    /// since it asked, counted across the clock's wrap, wasmhost.rs Redraw). Nothing is due for a module that has
+    /// stopped.
     pub fn redraw_due(&self, now: u32) -> bool {
-        self.error.is_none() && self.store.data().redraw_at.is_some_and(|at| now.wrapping_sub(at) as i32 >= 0)
+        self.error.is_none() && self.store.data().redraw_at.is_some_and(|r| r.due(now))
     }
 
     /// `redraw_due`, and the request is taken: the host's tick asks this once and then draws the app, so one
@@ -1534,13 +1536,10 @@ fn install_imports(linker: &mut Linker<HostState>) -> Result<(), String> {
     }).map_err(e)?;
     linker.func_wrap(ABI, "request_redraw", |mut caller: Caller<'_, HostState>, after_ms: i32| -> Result<(), wasmi::Error> {
         called(&mut caller)?;
-        let at = now_ms().wrapping_add(after_ms.clamp(APP_REDRAW_MIN_MS, APP_REDRAW_MAX_MS) as u32);
+        let after = after_ms.clamp(APP_REDRAW_MIN_MS, APP_REDRAW_MAX_MS) as u32;
         let st = caller.data_mut();
         // (one request stands, the soonest asked for: a later call does not put an earlier one off)
-        st.redraw_at = Some(match st.redraw_at {
-            Some(was) if was.wrapping_sub(at) as i32 <= 0 => was,
-            _ => at,
-        });
+        st.redraw_at = Some(Redraw::asked(st.redraw_at, now_ms(), after));
         Ok(())
     }).map_err(e)?;
     linker.func_wrap(ABI, "close", |mut caller: Caller<'_, HostState>| -> Result<(), wasmi::Error> {

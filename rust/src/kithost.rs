@@ -909,9 +909,10 @@ impl KitPointer {
         out
     }
 
-    /// The host's tick at `now`: a contact held HOLD_MS within the slop is a PRESS, once.
+    /// The host's tick at `now`: a contact held HOLD_MS within the slop is a PRESS, once. (The hold is a duration on
+    /// the u32 clock, `now.wrapping_sub(t0)`: the same at any uptime, across the clock's wrap too.)
     pub fn tick(&mut self, now: u32) -> Option<KitEvent> {
-        if self.contact != Contact::Down || (now.wrapping_sub(self.t0) as i32) < HOLD_MS as i32 {
+        if self.contact != Contact::Down || now.wrapping_sub(self.t0) < HOLD_MS {
             return None;
         }
         self.contact = Contact::Pressed;
@@ -984,8 +985,8 @@ impl KitPointer {
 pub struct KitInput {
     pub pointer: KitPointer,
     due: bool,
-    /// when the pace last gave a turn (the app's clock)
-    at: u32,
+    /// when the pace last gave a turn (the app's clock); None before the first, which is due at once
+    at: Option<u32>,
 }
 
 impl KitInput {
@@ -1007,11 +1008,13 @@ impl KitInput {
     /// The pace's turn at `now`: while a contact that can no longer be a tap is down (a press, a drag), once every
     /// KIT_PASS_MS, and never while the panel's last fast refresh is still showing (`fast_busy`). On its turn the
     /// host hands a drag's gathered samples to the module and draws the pass owed. Taking it starts the next wait.
+    /// (The wait is a duration on the u32 clock, `now.wrapping_sub(at)`: the same at any uptime, across the clock's
+    /// wrap too.)
     pub fn turn(&mut self, now: u32, fast_busy: bool) -> bool {
-        if !self.pointer.is_down() || self.pointer.undecided() || fast_busy || (now.wrapping_sub(self.at) as i32) < KIT_PASS_MS as i32 {
+        if !self.pointer.is_down() || self.pointer.undecided() || fast_busy || self.at.is_some_and(|at| now.wrapping_sub(at) < KIT_PASS_MS) {
             return false;
         }
-        self.at = now;
+        self.at = Some(now);
         true
     }
 

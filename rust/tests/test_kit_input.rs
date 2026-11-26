@@ -211,6 +211,38 @@ fn a_pass_input_owes_waits_while_a_tap_may_come_is_paced_while_a_contact_is_down
     assert!(!k.turn(HOLD_MS + 1000, false), "no contact, no turn");
 }
 
+/// Where the app's clock (`now_ms`, a u32 of milliseconds) may stand when a contact begins: soon after a start, 256 ms
+/// before 2^31 ms (24.8 days awake), at it and past it, and near the clock's wrap at 2^32 (49.7 days), 451 ms before
+/// it, so that a hold or a pace runs across it.
+const UPTIMES: [u32; 6] = [1_000_000, 0x7fff_ff00, 0x8000_0000, 0x8000_0000 + 1_000_000, 0xf000_0000, u32::MAX - 450];
+
+#[test]
+fn the_hold_the_pace_and_a_redraw_request_are_durations_the_same_at_any_uptime_and_across_the_wrap() {
+    for base in UPTIMES {
+        let t = |dt: u32| base.wrapping_add(dt);
+        // the hold: a PRESS at HOLD_MS after the down, not before
+        let mut p = KitPointer::default();
+        p.down(50, 60, 0, -1, t(0), slop(), false);
+        assert_eq!(p.tick(t(HOLD_MS - 1)), None, "{base:#x}");
+        assert_eq!(p.tick(t(HOLD_MS)).map(|e| e.kind), Some(EV_PRESS), "{base:#x}");
+        // the pace: a contact that drags has its first turn at once, then one every KIT_PASS_MS
+        let mut k = KitInput::default();
+        k.pointer.down(0, 0, 0, -1, t(0), slop(), false);
+        k.pointer.moved(200, 0, false);
+        assert!(k.turn(t(10), false), "{base:#x}: the first turn at once");
+        for n in 1..=5u32 {
+            assert!(!k.turn(t(10 + n * KIT_PASS_MS - 1), false), "{base:#x}: turn {n} not before its time");
+            assert!(k.turn(t(10 + n * KIT_PASS_MS), false), "{base:#x}: turn {n}");
+        }
+        // a redraw request asked for 300 ms later: due then, not before; the soonest of two stands
+        let r = grimoire::wasmhost::Redraw::asked(None, t(0), 300);
+        assert!(!r.due(t(299)) && r.due(t(300)) && r.due(t(5000)), "{base:#x}");
+        assert_eq!(grimoire::wasmhost::Redraw::asked(Some(r), t(100), 500), r, "{base:#x}: a later ask does not put it off");
+        let sooner = grimoire::wasmhost::Redraw::asked(Some(r), t(100), 100);
+        assert!(!sooner.due(t(199)) && sooner.due(t(200)), "{base:#x}: a sooner ask stands in its place");
+    }
+}
+
 // ---- what a pass changed ----
 
 #[test]
@@ -747,4 +779,88 @@ fn a_widgets_redraw_request_stands_across_its_other_calls_the_soonest_kept() {
         canvas_free(&mut c);
     }
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// An app's passes while a finger drags and while it is held are the same whatever the app's clock reads when the
+/// contact begins (UPTIMES: past 2^31 ms too, and across its wrap at 2^32): a drag's first turn at once and its
+/// DRAG_MOVEs at the pace, a press at HOLD_MS, a pass on each.
+#[cfg(feature = "sim")]
+#[test]
+fn an_apps_passes_while_a_finger_drags_or_is_held_are_the_same_at_any_uptime() {
+    let root = fresh_root("uptime");
+    let id = "test.ki.uptime";
+    let module = input(Host::App, true, Some(true)).bytes();
+    app_package_install(&app_manifest(id, "Uptime", &[], false, &module), &module, None, "", SCREEN.0, SCREEN.1).unwrap();
+    let mut seen = Vec::new();
+    for base in UPTIMES {
+        sim_clock_set(Some(base));
+        let mut a = App { w: SCREEN.0, h: SCREEN.1, dpi: 300.0, ..Default::default() };
+        assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+        grimoire::library::library_init(&mut a);
+        assert!(grimoire::apphost::apphost_launch(&mut a, id));
+        // (each touch at the app's clock as it stands; each tick `dt` ms after the first touch)
+        let touch = |a: &mut App, type_: InType, x: f32, y: f32| {
+            assert!(grimoire::apphost::apphost_event(a, &InEvent { type_, x, y, t_ms: now_ms(), ..Default::default() }));
+        };
+        let tick = |a: &mut App, dt: u32| {
+            sim_clock_set(Some(base.wrapping_add(dt)));
+            grimoire::apphost::apphost_tick(a, base.wrapping_add(dt));
+        };
+        touch(&mut a, InType::TouchDown, 300.0, 1000.0);
+        tick(&mut a, 100);
+        touch(&mut a, InType::TouchMove, 500.0, 1000.0);
+        tick(&mut a, 200);
+        touch(&mut a, InType::TouchMove, 600.0, 1000.0);
+        tick(&mut a, 400);
+        touch(&mut a, InType::TouchMove, 700.0, 1000.0);
+        tick(&mut a, 600);
+        let during = a.app_view.status().to_string();
+        touch(&mut a, InType::TouchUp, 700.0, 1000.0);
+        tick(&mut a, 700);
+        let after = a.app_view.status().to_string();
+        touch(&mut a, InType::TouchDown, 900.0, 1500.0);
+        tick(&mut a, 800);
+        tick(&mut a, 700 + HOLD_MS - 1);
+        let not_yet = a.app_view.status().to_string();
+        tick(&mut a, 700 + HOLD_MS);
+        let held = a.app_view.status().to_string();
+        touch(&mut a, InType::TouchUp, 900.0, 1500.0);
+        tick(&mut a, 1500);
+        grimoire::apphost::apphost_close(&mut a);
+        grimoire::library::library_free(&mut a);
+        canvas_free(&mut a.screen);
+        seen.push((base, [during, after, not_yet, held]));
+    }
+    sim_clock_set(None);
+    // (a pass on each of the three turns; at the lift a DRAG_MOVE of its place and DRAG_END, and a pass; held under
+    // HOLD_MS no pass, the status line still the last pass's; at HOLD_MS a PRESS and a pass)
+    let want = [
+        "p004 n004 t00 r00 s01 m03 e00 c00 q003 k00 a00 g00 h0",
+        "p005 n005 t00 r00 s01 m04 e01 c00 q004 k00 a00 g00 h0",
+        "p005 n005 t00 r00 s01 m04 e01 c00 q004 k00 a00 g00 h0",
+        "p006 n006 t00 r01 s01 m04 e01 c00 q004 k00 a00 g00 h0",
+    ];
+    for (base, got) in seen {
+        assert_eq!(got, want, "the clock from {base:#x}: during the drag, after its lift, held under HOLD_MS, held HOLD_MS");
+    }
+    let _ = app_package_remove(id, false);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// The scenarios of the kit's input run again with app time started past 2^31 ms and across its wrap at 2^32
+/// (z_kit_input_app_half.qs and _wrap.qs, z_kit_input_widget_half.qs and _wrap.qs) are their bases line for line
+/// but for the start (GRIMOIRE_SIM_UPTIME_MS) and a note: they expect the same passes and refreshes.
+#[test]
+fn the_kit_input_scenarios_at_other_uptimes_are_their_bases_but_for_the_start() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/scenarios");
+    for (base, tag, ms) in [("z_kit_input_app", "half", 2147480000u32), ("z_kit_input_app", "wrap", 4294961000), ("z_kit_input_widget", "half", 2147480000), ("z_kit_input_widget", "wrap", 4294961000)] {
+        let b = std::fs::read_to_string(dir.join(format!("{base}.qs"))).unwrap();
+        let c = std::fs::read_to_string(dir.join(format!("{base}_{tag}.qs"))).unwrap();
+        let (b, c): (Vec<&str>, Vec<&str>) = (b.lines().collect(), c.lines().collect());
+        let env = format!("{} GRIMOIRE_SIM_UPTIME_MS={ms}", b[2]);
+        assert_eq!((c[0], c[1], c[2], c[3]), (b[0], b[1], env.as_str(), b[3]), "{base}_{tag}.qs: its first lines");
+        let rest = &c[c.len() - (b.len() - 4)..];
+        assert_eq!(rest, &b[4..], "{base}_{tag}.qs: the lines after its note are {base}.qs's from its fifth on");
+        assert!(c[4..c.len() - rest.len()].iter().all(|l| l.starts_with("# ")), "{base}_{tag}.qs: a note of comment lines");
+    }
 }

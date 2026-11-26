@@ -51,7 +51,7 @@
 
 use crate::kithost::{kit_link, kit_missing_import, kit_render, KitCmd, KitEvent, KitHost, KIT_EVENT};
 use crate::prelude::*;
-use crate::wasmhost::{charge, in_body as hit_in_body, on_screen, TextCharge};
+use crate::wasmhost::{charge, in_body as hit_in_body, on_screen, Redraw, TextCharge};
 use crate::widgetpkg::{WIDGET_CAP_OVERLAY, WIDGET_CAP_STORAGE};
 use wasmi::{Caller, Config, Engine, Linker, Module, Store, StoreLimits};
 
@@ -168,10 +168,10 @@ struct HostState {
     status: String,
     dirty: bool,
     limits: StoreLimits,
-    /// when the module asked to be drawn again, by the app's clock (`now_ms`); None while no request stands. One
-    /// request stands at a time, the soonest asked for, whichever call asked, until the editor's tick takes it
-    /// (`redraw_taken`)
-    redraw_at: Option<u32>,
+    /// the module's request to be drawn again (when it asked, by the app's clock, and how long after); None while no
+    /// request stands. One request stands at a time, the soonest asked for, whichever call asked, until the editor's
+    /// tick takes it (`redraw_taken`)
+    redraw_at: Option<Redraw>,
     /// the points of the DRAG_MOVE `kit_event` is being told of (`event_points`); none in another call
     points: Vec<(i32, i32)>,
 }
@@ -338,13 +338,10 @@ impl WidgetRuntime {
             charge(&mut caller, WIDGET_CHARGE_CALL)?;
             // (a pass is drawing: a package that may not draw is not drawn again for the asking)
             if caller.data().overlay {
-                let at = now_ms().wrapping_add(after_ms.clamp(WIDGET_REDRAW_MIN_MS, WIDGET_REDRAW_MAX_MS) as u32);
+                let after = after_ms.clamp(WIDGET_REDRAW_MIN_MS, WIDGET_REDRAW_MAX_MS) as u32;
                 let st = caller.data_mut();
                 // (one request stands, the soonest asked for: a later call does not put an earlier one off)
-                st.redraw_at = Some(match st.redraw_at {
-                    Some(was) if was.wrapping_sub(at) as i32 <= 0 => was,
-                    _ => at,
-                });
+                st.redraw_at = Some(Redraw::asked(st.redraw_at, now_ms(), after));
             }
             Ok(())
         }).map_err(|e| e.to_string())?;
@@ -590,10 +587,10 @@ impl WidgetRuntime {
         self.hits.len()
     }
 
-    /// Whether the module asked for a drawing pass that is due at `now`, by the app's clock (`now_ms`,
-    /// which wraps: the longest delay is far under half its range).
+    /// Whether the module asked for a drawing pass that is due at `now`, by the app's clock (`now_ms`: the
+    /// time since it asked, counted across the clock's wrap, wasmhost.rs Redraw).
     pub fn redraw_due(&self, now: u32) -> bool {
-        self.error.is_none() && self.store.data().redraw_at.is_some_and(|at| now.wrapping_sub(at) as i32 >= 0)
+        self.error.is_none() && self.store.data().redraw_at.is_some_and(|r| r.due(now))
     }
 
     /// `redraw_due`, and the request is taken: the editor's tick asks this once for a frame it then
