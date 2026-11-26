@@ -22,7 +22,7 @@ use crate::apphost::{
     APP_ICON_NAME_MAX, APP_ICON_PX_MAX, APP_LINE_WIDTH_MAX, APP_TEXT_PX_MAX,
 };
 use crate::globalui::{
-    gui_button, gui_button_h, gui_chip, gui_chip_h, gui_chip_w, gui_field_h, gui_gap, gui_gothic, gui_head_h,
+    gui_button, gui_button_h, gui_button_row, gui_button_row_need_w, gui_chip, gui_chip_h, gui_chip_w, gui_field_h, gui_gap, gui_gothic, gui_head_h,
     gui_icon_button, gui_margin, gui_page_title_px, gui_row_h, gui_row_min_h, gui_select, gui_select_h, gui_text_field,
     gui_top_button_h, GUI_GRAY_DISABLED, GUI_GRAY_MUTED, GUI_GRAY_RULE,
 };
@@ -461,7 +461,14 @@ fn render(c: &mut Canvas, body: Rect, clip: Rect, cmd: KitCmd, texts: &mut Vec<S
             texts.push(lines.join(" "));
         }
         KitCmd::Button(r, label, icon, style) => {
-            gui_button(c, at(r), icon_of(&icon), &label, style_of(style));
+            // (with an icon and a label, the Package Store's action button, the label beside the icon in both themes;
+            // with one of them, Grimoire's button)
+            let kind = icon_of(&icon);
+            if kind != IconKind::None && !label.is_empty() {
+                gui_button_row(c, at(r), kind, &label, style_of(style));
+            } else {
+                gui_button(c, at(r), kind, &label, style_of(style));
+            }
             texts.push(label);
         }
         KitCmd::IconButton(r, icon, style) => gui_icon_button(c, at(r), icon_of(&icon), style_of(style)),
@@ -896,9 +903,11 @@ fn text_lines(cx: &mut dyn Call, [x, y, w, h, ptr, len, role, flags, first]: [i3
     Ok(n as i32)
 }
 
-/// The width a button `h` high needs for its label and icon in the theme's button, at least `h` (a square).
+/// The width a button `h` high needs for its label and icon as the kit draws it, at least `h` (a square).
 pub fn button_need_w(h: i32, icon: bool, label: &str) -> i32 {
-    let need = if gui_gothic() {
+    let need = if gui_gothic() && icon && !label.is_empty() {
+        gui_button_row_need_w(h, label)
+    } else if gui_gothic() {
         ui_button_need_w(h, if icon { IconKind::Grid } else { IconKind::None }, label, ButtonStyle::Plain)
     } else if label.is_empty() {
         0

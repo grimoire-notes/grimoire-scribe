@@ -110,7 +110,7 @@ which no screen draws yet, is the kit's own.
 | 5 to 9 | LINE_BODY, LINE_SMALL, LINE_TITLE, LINE_DISPLAY, LINE_MONO | a line of that role: the face's ascent and descent in the font in use | |
 | 10 | ROW_H | 118 | Settings' rows |
 | 11 | ROW_MIN_H | 90 | Settings' rows when a list is tight |
-| 12 | BUTTON_H | 96 | the Package Store's action buttons (`gui_button_row`, which is the kit's button in Classic) |
+| 12 | BUTTON_H | 96 | the Package Store's action buttons (`gui_button_row`, which the kit's button with an icon and a label is) |
 | 13 | CHIP_H | 88 | the home's and the Package Store's filter chips |
 | 14 | FIELD_H | 112 | no screen of Grimoire draws a text field yet: the height of the package manager's action rows, as the kit's design gives it |
 | 15 | ICON | 60 | a row's icon |
@@ -182,7 +182,7 @@ above 1 is on). A tone is as a text's.
 |---|---|---|---|---|
 | `text` | text in a role | one line (FIT: one or two; WRAP: all its lines) | the rest of the body from `x` | the height |
 | `text_lines` | a page of a text | the rest of the body below `y` | the rest of the body from `x` | its lines |
-| `button` | the kit's button (Gothic's carved one, Classic's pill), its label and icon | BUTTON_H | what its label and icon need, at least its height | the width |
+| `button` | with an icon and a label, the Package Store's action button (`gui_button_row`: the label beside the icon, in Gothic's carved frame or Classic's pill); with one of them alone, Grimoire's button (Gothic's carved one, Classic's pill) | BUTTON_H | what its label and icon need, at least its height | the width |
 | `icon_button` | the header's round button (Gothic: carved) | ICON_BUTTON | its height | the width |
 | `row` | Settings' row: its card, icon, label (two lines at most) and switch | ROW_H | the rest of the body | the height |
 | `chip` | a filter chip; `selected` fills it | CHIP_H | the Package Store's chip: its label in the bold face and 78 px, at least 170 | the width |

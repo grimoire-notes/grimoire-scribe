@@ -6,7 +6,7 @@
 mod kitfix;
 
 use grimoire::globalui::{
-    gui_button, gui_button_h, gui_chip, gui_chip_h, gui_chip_w, gui_field_h, gui_gap, gui_head_h, gui_icon_button, gui_margin,
+    gui_button, gui_button_h, gui_button_row, gui_chip, gui_chip_h, gui_chip_w, gui_field_h, gui_gap, gui_head_h, gui_icon_button, gui_margin,
     gui_page_title_px, gui_row_h, gui_row_min_h, gui_select, gui_select_h, gui_status_h, gui_text_field, gui_top_button_h,
 };
 use kitfix::KIT as KIT_IMPORTS;
@@ -271,6 +271,8 @@ fn page() -> Vec<K> {
         K::Lines(940, 1730, 300, 2 * 52, "one\ntwo\nthree\nfour\nfive", 0, 0, 2),
         K::Pager(8, 9, 20, 2050, 1100, 1, 3),
         K::Hit(11, 1150, 290, 60, 60),
+        K::Button(-1, 640, 1900, 0, 0, "Install", "download", 3),
+        K::Button(-1, 640, 1610, 0, 0, "License", "paper", 0),
     ]
 }
 
@@ -351,6 +353,9 @@ fn grimoires_own(c: &mut Canvas, body: Rect) {
     }
     let (bw, ph) = ui_row_pager_button();
     ui_row_pager(c, &RowPage { rows: Vec::new(), first: 0, page: 1, pages: 3, prev: at(20, 2050, bw, ph), next: at(1120 - bw, 2050, bw, ph) });
+    // (a button with an icon and a label: the Package Store's action button, at the width it needs)
+    gui_button_row(c, at(640, 1900, button_need_w(bh, true, "Install"), bh), widget_icon("download"), "Install", ButtonStyle::Primary);
+    gui_button_row(c, at(640, 1610, button_need_w(bh, true, "License"), bh), widget_icon("paper"), "License", ButtonStyle::Plain);
     c.clip = whole;
 }
 
@@ -383,7 +388,7 @@ fn each_element_given_no_size_is_grimoires_own_pixel_for_pixel() {
             // (the probes read each element's text, in the order drawn; a password's as stars)
             assert_eq!(
                 rt2.text(),
-                "A row of the kit|A chosen row with no icon|A disabled row|Button|Primary||Chip|Recent|typed|Search|******|Password||Search|Name|A checkbox|Not ticked|Body text|Small text|A label|A caption|Muted|A title|Mono 0123|mono small|Display|First line Second line Third|A label too long for its room is fitted on two lines|three four"
+                "A row of the kit|A chosen row with no icon|A disabled row|Button|Primary||Chip|Recent|typed|Search|******|Password||Search|Name|A checkbox|Not ticked|Body text|Small text|A label|A caption|Muted|A title|Mono 0123|mono small|Display|First line Second line Third|A label too long for its room is fitted on two lines|three four|Install|License"
             );
             // (the elements given an id are its hit regions, at their places in the body)
             assert_eq!(rt2.hits(), 10, "{host:?}");
@@ -1103,6 +1108,29 @@ fn text_lines_given_no_height_takes_the_rest_of_the_body_and_a_pager_and_hit_mak
     }
     // (a line break with a carriage return before it is a line break)
     assert_eq!(kit_lines(FontFace::Regular, 44.0, "one\r\ntwo\r\n", 600), vec!["one", "two", ""]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_button_with_an_icon_or_a_label_alone_is_grimoires_own_in_gothic() {
+    let root = fresh_root("onebutton");
+    ui_set_theme(UiTheme::Gothic);
+    // An icon alone: the carved icon button of the Package Store's header and pager (gui_icon_button). A label alone:
+    // the carved button of Grimoire's dialogs (ui_button). Neither is the Store's action button, whose label is beside
+    // its icon.
+    for host in HOSTS {
+        let mut rt = loaded(&format!("test.kit.onebutton.{}", tag(host)), &pass(host, &[K::Button(-1, 20, 100, 110, 76, "", "back", 0), K::Button(-1, 20, 300, 400, 96, "Cancel", "", 0)]));
+        let got = drawn(&mut rt);
+        let body = rt.body();
+        let mut want = patterned();
+        let whole = want.clip;
+        canvas_set_clip(&mut want, rect_intersect(whole, body));
+        canvas_fill(&mut want, body, 255);
+        gui_icon_button(&mut want, Rect::new(body.x + 20, body.y + 100, 110, 76), widget_icon("back"), ButtonStyle::Plain);
+        ui_button(&mut want, Rect::new(body.x + 20, body.y + 300, 400, 96), IconKind::None, "Cancel", ButtonStyle::Plain);
+        want.clip = whole;
+        assert!(got.px == want.px, "{host:?}");
+    }
     let _ = std::fs::remove_dir_all(&root);
 }
 

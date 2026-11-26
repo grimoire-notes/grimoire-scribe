@@ -295,14 +295,25 @@ pub fn gui_button_row(c: &mut Canvas, r: Rect, icon: IconKind, label: &str, st: 
         ButtonStyle::Selected => 255,
         _ => 0,
     };
-    let pad = ui_px(24.0);
-    let inner_h = r.h - 2 * ui_px(8.0);
-    let isz = inner_h.min(ui_px(70.0)).max(ui_px(30.0));
+    let (pad, isz, gap, ts) = button_row_parts(r.h);
     ui_icon(c, icon, Rect::new(r.x + pad, r.y + (r.h - isz) / 2, isz, isz), fg);
-    let lx = r.x + pad + isz + ui_px(18.0);
+    let lx = r.x + pad + isz + gap;
     let lw = (r.x + r.w - pad - lx).max(0);
-    let ts = ui_small_size().min(inner_h as f32 * 0.34);
     ui_text(c, FontFace::Caps, ts, ui_small_size().min(ts), Rect::new(lx, r.y, lw, r.h), label, 1, false, fg);
+}
+
+/// Gothic's `gui_button_row` `h` high: the room at its ends, its icon's side, the room between the icon and the
+/// label, and the label's size.
+fn button_row_parts(h: i32) -> (i32, i32, i32, f32) {
+    let inner_h = h - 2 * ui_px(8.0);
+    (ui_px(24.0), inner_h.min(ui_px(70.0)).max(ui_px(30.0)), ui_px(18.0), ui_small_size().min(inner_h as f32 * 0.34))
+}
+
+/// The width Gothic's `gui_button_row` `h` high needs for its icon and its whole label on one line (in Classic it is
+/// `gui_button`).
+pub fn gui_button_row_need_w(h: i32, label: &str) -> i32 {
+    let (pad, isz, gap, ts) = button_row_parts(h);
+    pad + isz + gap + font_measure(FontFace::Caps, ts, label) + pad
 }
 
 /// A round icon button (Classic) or the carved square one (Gothic): the header's search, apps and
