@@ -133,10 +133,14 @@ from start to exit on a recording stand-in:
 `cargo test --features external-platform --test test_platform_external -- --test-threads=1`.
 
 A platform also says which of the device's services Grimoire looks after itself there
-(`sys_services`, light.rs: the Wi-Fi sheet, the Pair sheet, Updates, the KOReader sheet, Calibrate).
-The Kindle and the simulator answer all of them. Settings leaves out the row or button of each one
-a platform says no to; the simulator's `GRIMOIRE_SIM_NO_SERVICES` (docs/SIM.md) is that answer for
-the scenarios.
+(`sys_services`, light.rs: the Wi-Fi sheet, the Pair sheet, Updates, the KOReader sheet, Calibrate,
+sleep). The Kindle and the simulator answer all of them. Settings leaves out the row or button of each
+one a platform says no to, and the Buttons and Gestures lists leave out the actions that need it
+(actions.rs, `action_offered`; Light and Warmth go by `light_available` and the warmth read). A device
+whose system owns sleep (its own timer and sleep picture, and no sleep on request) says no to `sleep`:
+the Sleep settings page then has only Keep the screen on while Grimoire is open (`sys_prevent_sleep`),
+the sleep screen is the page, and the Sleep after timer asks nothing. The simulator's
+`GRIMOIRE_SIM_NO_SERVICES` (docs/SIM.md) is that answer for the scenarios.
 
 And it says what the device is called (`sys_device_name`). The English and the translations say
 Kindle; on a platform with another name every looked-up text has that name in its place, "Kindle

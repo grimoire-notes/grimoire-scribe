@@ -1365,13 +1365,20 @@ const GESTURES: BindKind = BindKind {
     reset: gestures_reset,
 };
 
+// A group's rows that a sheet lists: the actions its sources can do, and only those this device offers
+// (action_offered). Both functions below go by this one test, so a row's index is the same in the count, the
+// draw and the tap.
+fn binding_row_listed(kind: BindKind, r: LearnRow) -> bool {
+    action_sources(r.act[0]) & kind.sources != 0 && action_offered(r.act[0])
+}
+
 fn binding_row_count(kind: BindKind, group: usize) -> usize {
     let mut n = 0;
     for row in 0..group_row_count(group) {
         let Some(r) = learn_row_at(group, row) else {
             continue;
         };
-        if action_sources(r.act[0]) & kind.sources != 0 {
+        if binding_row_listed(kind, r) {
             n += 1;
         }
     }
@@ -1382,7 +1389,7 @@ fn binding_row_at(kind: BindKind, group: usize, wanted: usize) -> Option<LearnRo
     let mut visible = 0;
     for row in 0..group_row_count(group) {
         let r = learn_row_at(group, row)?;
-        if action_sources(r.act[0]) & kind.sources == 0 {
+        if !binding_row_listed(kind, r) {
             continue;
         }
         if visible == wanted {
@@ -11738,6 +11745,114 @@ mod tests {
         ui_init(300.0);
         ui_set_theme(UiTheme::Gothic);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Where the device's system owns sleep (Services, sleep) the Sleep settings page has one switch, Keep the
+    // screen on while Grimoire is open: on is Sleep after never, off the default minutes, each saved and applied.
+    // No sleep screen row, no Sleep after slider; the Clock settings page is as it was.
+    #[test]
+    fn sleep_settings_keep_the_screen_on_where_the_system_owns_sleep() {
+        let root = std::env::temp_dir().join(format!("grimoire-keep-on-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        assert_eq!(font_init(), 0);
+        ui_init(300.0);
+        ui_set_theme(UiTheme::Gothic);
+        i18n_set("en");
+        let mut a = App { w: 1860, h: 2480, dpi: 300.0, input_drained: true, ..Default::default() };
+        assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+        #[cfg(feature = "sim")]
+        {
+            // (a panel for the press's feedback to go to)
+            let (mut w, mut h) = (a.w, a.h);
+            crate::sim_sdl::display_set_orientation(0, &mut w, &mut h);
+        }
+        library_init(&mut a);
+        a.settings.sleep_minutes = 5;
+        a.settings.sleep_mode = 2;
+        test_services(Some(Services::without("sleep")));
+        lib(&mut a).modal = Modal::Settings;
+        lib(&mut a).settings_cat = 2;
+        hits_clear(&mut lib(&mut a).hits);
+        draw_settings(&mut a);
+        let hits = &a.lib.as_ref().unwrap().hits;
+        assert!(hits.h.iter().any(|h| h.id == H_SET_SLEEP), "the Sleep settings row");
+        assert!(hits.h.iter().any(|h| h.id == H_SET_CLOCK), "the Status bar row");
+
+        act(&mut a, &Hit { r: RECT_EMPTY, id: H_SET_SLEEP, arg: 0 });
+        assert_eq!(lib(&mut a).dm.page, crate::dispmenu::DmPage::Sleep);
+        let mut dm = std::mem::take(&mut lib(&mut a).dm);
+        dispmenu_draw(&mut dm, &mut a);
+        assert!(dispmenu_control_point(&dm, "keep_on").is_some(), "no Keep the screen on");
+        for name in ["sleep", "pin", "sleep_after", "size", "time12"] {
+            assert!(dispmenu_control_point(&dm, name).is_none(), "Sleep settings shows {name}");
+        }
+        let tap = |dm: &mut DispMenu, a: &mut App| {
+            let (x, y) = dispmenu_control_point(dm, "keep_on").unwrap();
+            let mut dirty = RECT_EMPTY;
+            dispmenu_pointer(dm, a, 0, x, y, 1000, &mut dirty);
+            dispmenu_pointer(dm, a, 2, x, y, 1050, &mut dirty)
+        };
+        assert_eq!(tap(&mut dm, &mut a), DmResult::Changed);
+        assert_eq!((a.settings.sleep_minutes, a.prevent_applied), (0, 1), "on: Sleep after never, applied");
+        assert_eq!(tap(&mut dm, &mut a), DmResult::Changed);
+        assert_eq!((a.settings.sleep_minutes, a.prevent_applied), (SLEEP_MINUTES_DEFAULT, 0), "off: the default");
+        let mut saved = Settings::default();
+        settings_load(&mut saved);
+        assert_eq!(saved.sleep_minutes, SLEEP_MINUTES_DEFAULT, "saved");
+        assert_eq!(a.settings.sleep_mode, 2, "the stored sleep screen is left as it is");
+        lib(&mut a).dm = dm;
+
+        // With sleep the page is as on the Kindle.
+        test_services(None);
+        let mut dm = std::mem::take(&mut lib(&mut a).dm);
+        dispmenu_draw(&mut dm, &mut a);
+        assert!(dispmenu_control_point(&dm, "keep_on").is_none());
+        for name in ["sleep", "sleep_after"] {
+            assert!(dispmenu_control_point(&dm, name).is_some(), "Sleep settings lost {name}");
+        }
+        lib(&mut a).dm = dm;
+
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The Buttons and Gestures lists offer only the actions the device does (actions.rs, action_offered): without
+    // sleep, pairing and updates, no Sleep screen, Sleep now, Sleep after, Bluetooth controller or Update channel
+    // row, and the rows left keep one index in the count, the lookup and the search.
+    #[test]
+    fn binding_rows_leave_out_what_the_device_does_not_offer() {
+        let lit = light_available(); // (the simulator has a front light, the host's build none)
+        let hidden = [SHORTCUT_SLEEP_SCREEN, SHORTCUT_SLEEP, SHORTCUT_SLEEP_AFTER, SHORTCUT_BLUETOOTH_CONTROLLER, SHORTCUT_UPDATE_CHANNEL];
+        let light_rows = if lit { 0 } else { 2 };
+        assert_eq!(binding_row_count(GESTURES, 5), 10 - light_rows);
+        assert_eq!((binding_row_count(GESTURES, 6), binding_row_count(BUTTONS, 6)), (6, 4));
+        test_services(Some(Services::without("sleep,pairing,updates")));
+        // Screen: no Sleep screen, no Sleep now. System: Gestures, Shortcuts and Language for gestures;
+        // Gestures and Language for buttons.
+        assert_eq!(binding_row_count(GESTURES, 5), 8 - light_rows);
+        assert_eq!(binding_row_count(BUTTONS, 5), 8 - light_rows);
+        assert_eq!((binding_row_count(GESTURES, 6), binding_row_count(BUTTONS, 6)), (3, 2));
+        assert_eq!(binding_row_at(BUTTONS, 6, 1).unwrap().act, [SHORTCUT_LANGUAGE, 0]);
+        for kind in [BUTTONS, GESTURES] {
+            for g in 0..N_GROUPS {
+                let n = binding_row_count(kind, g);
+                for i in 0..n {
+                    let r = binding_row_at(kind, g, i).unwrap();
+                    assert!(!hidden.contains(&r.act[0]), "{} listed", action_label(r.act[0]));
+                    assert_eq!(binding_row_index(kind, g, r.act[0]), Some(i));
+                }
+                assert!(binding_row_at(kind, g, n).is_none());
+            }
+            for &id in &hidden {
+                assert!((0..N_GROUPS).all(|g| binding_row_index(kind, g, id).is_none()));
+            }
+        }
+        assert_eq!(binding_row_index(GESTURES, 5, SHORTCUT_LIGHT_UP).is_some(), lit);
+        assert_eq!(binding_row_index(GESTURES, 5, SHORTCUT_MIRROR_PDF), Some(7 - light_rows));
+        test_services(None);
+        assert_eq!(binding_row_index(GESTURES, 5, SHORTCUT_SLEEP), Some(9 - light_rows));
     }
 
     // Settings > Pen (2.1): the pen button's choices and the eraser's, each opening its own list as
