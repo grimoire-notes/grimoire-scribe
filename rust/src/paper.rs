@@ -882,20 +882,26 @@ pub fn paper_take_image_blank_count() -> i32 {
 }
 
 /// Every drawing paper_render makes, for the renderer's fingerprint (page.rs page_render_fingerprint): each
-/// built-in kind, then two custom music layouts that between them have every part (an image paper is drawn
-/// from its picture, page_paper_render, and has no lines here).
+/// built-in kind, then two custom music layouts that between them have every part, and one of few systems
+/// (two of one staff), whose staff spaces take music_custom's cap and whose systems are spread down the page,
+/// as a layout of few systems is on a Scribe page (an image paper is drawn from its picture,
+/// page_paper_render, and has no lines here).
 pub fn paper_every_drawing() -> Vec<PaperKind> {
     let staves = MusicLayout { systems: 1, n: 6, part: [PART_TREBLE, PART_BASS, PART_ALTO, PART_TENOR, PART_PERC, PART_STAFF] };
     let tabs = MusicLayout { systems: 1, n: 6, part: [PART_LYRICS, PART_TAB4, PART_TAB5, PART_TAB6, PART_TAB7, PART_TAB8] };
-    (0..PAPER_COUNT as u32).map(PaperKind).chain([music_encode(&staves), music_encode(&tabs)]).collect()
+    let spread = MusicLayout { systems: 2, n: 1, part: [PART_TREBLE, PART_NONE, PART_NONE, PART_NONE, PART_NONE, PART_NONE] };
+    (0..PAPER_COUNT as u32).map(PaperKind).chain([music_encode(&staves), music_encode(&tabs), music_encode(&spread)]).collect()
 }
 /// The page (w, h) paper k is drawn on for the fingerprint, at 300 dpi: room for every kind of line it has
 /// (a ruled page's header, rules and margin, Seyes's strong and faint lines, verticals and margin, every
 /// staff of a music page), at a sixteenth of a Scribe page; Cornell's, a sixth, has its summary line below
-/// its header and its cue line 55 mm in.
+/// its header and its cue line 55 mm in; a custom layout's is 1000 px tall, room for two systems of one
+/// staff to take the staff spaces' cap.
 pub fn paper_fingerprint_page(k: PaperKind) -> (i32, i32) {
     if k == PAPER_CORNELL {
         (760, 1000)
+    } else if paper_is_custom(k) {
+        (480, 1000)
     } else {
         (480, 620)
     }
@@ -1366,9 +1372,19 @@ mod tests {
             let c = drawn(k, w, h);
             assert!(grays.iter().all(|g| c.px.contains(g)), "{}", paper_name(k));
         }
-        for k in every.into_iter().filter(|&k| k != PAPER_BLANK) {
+        for k in every.iter().copied().filter(|&k| k != PAPER_BLANK) {
             let (w, h) = paper_fingerprint_page(k);
             assert!(drawn(k, w, h).px.iter().any(|&g| g < 200), "{:x}", k.0);
         }
+        // A custom layout takes music_custom's cap on its staff spaces and spreads its systems (as two systems of a
+        // treble and a bass staff do on a Scribe page), and the others do not: both ways of laying out are drawn.
+        let capped = |k: PaperKind| {
+            let mut m = MusicLayout::default();
+            let (_, h) = paper_fingerprint_page(k);
+            let avail = h as f32 - mm_to_px(MUSIC_TOP_MM, 300.0) - mm_to_px(MUSIC_BOT_MM, 300.0);
+            music_decode(k, &mut m).then(|| avail / fmla(m.systems as f32, system_units(&m), ((m.systems - 1) as f32) * SYSTEM_GAP) > mm_to_px(MAX_SPACE_MM, 300.0) && m.systems > 1)
+        };
+        let custom: Vec<bool> = every.iter().filter_map(|&k| capped(k)).collect();
+        assert!(custom.contains(&true) && custom.contains(&false), "{custom:?}");
     }
 }
