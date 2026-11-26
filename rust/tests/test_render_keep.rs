@@ -168,6 +168,44 @@ fn every_paper_is_in_the_fingerprint() {
     check!(store_page_render_kept(&nb, pid, w, h, false) && store_load_page_render(&nb, pid, w, h, &mut back, false) && back.px == drawn.px);
 }
 
+fn every_line_of_every_paper_is_in_the_fingerprint() {
+    // Not only every paper but every line of each: a renderer that draws one paper with one of its grays a step
+    // lighter, everything else as this build, has another fingerprint. So no line of a paper is left out of what
+    // is hashed (the rules below a ruled page's header, Seyes's verticals, a staff's clef), and a later change to
+    // that line alone retires the drawings kept before it.
+    let (fp, ink) = (page_render_fingerprint(), page_ink_fingerprint());
+    let mut tried = 0;
+    for k in paper_every_drawing() {
+        let (w, h) = paper_fingerprint_page(k);
+        let mut c = Canvas::default();
+        check!(canvas_init(&mut c, w, h) == 0);
+        paper_render(&mut c, k, Rect { x: 0, y: 0, w, h }, 300.0);
+        let mut grays = [false; 256];
+        c.px[..(w * h) as usize].iter().for_each(|&g| grays[g as usize] = true);
+        for g in (0..255u8).filter(|&g| grays[g as usize]) {
+            let one_lighter = move |c: &mut Canvas, kk: PaperKind, r: Rect, dpi: f32| {
+                paper_render(c, kk, r, dpi);
+                if kk != k {
+                    return;
+                }
+                let r = rect_intersect(r, c.clip);
+                for y in r.y..r.y + r.h {
+                    let row = (y * c.stride) as usize;
+                    c.px[row + r.x as usize..row + (r.x + r.w) as usize].iter_mut().filter(|p| **p == g).for_each(|p| *p = g + 1);
+                }
+            };
+            let other = page_render_fingerprint_with(ink, &one_lighter);
+            check!(other != fp);
+            if other == fp {
+                eprintln!("  paper {:x}: gray {g} a step lighter keeps the fingerprint", k.0);
+            }
+            tried += 1;
+        }
+    }
+    // (every paper but Blank has a line: Narrow rule alone has three grays)
+    check!(tried > 3 * paper_every_drawing().len());
+}
+
 // Graph paper and Hexagon as main drew them before 2.3.0 (issue #314): lines of 200 at 1 px with every fifth 170
 // at 2 px; edges of 175 at 1.5 px anti-aliased. Every other paper as this build draws it.
 fn grid_before(c: &mut Canvas, dpi: f32) {
@@ -292,6 +330,7 @@ fn test_render_keep() {
     run!(kept_drawings_are_exact_and_only_current);
     run!(drawings_kept_by_2_0_1_are_never_read_and_retired_once);
     run!(every_paper_is_in_the_fingerprint);
+    run!(every_line_of_every_paper_is_in_the_fingerprint);
     run!(drawings_kept_under_earlier_papers_are_drawn_again);
     let _ = std::fs::remove_dir_all(&root);
     done(); // (a failed check fails the test: it did not, without this)
