@@ -12,6 +12,8 @@
 # halo: it goes as the page shows the stroke's ink across it (lasso.rs stroke_shown_runs). Before, each place in
 # the cut had the ink either side of it within the ink's radius, and the halo went across the cut.
 # (the clock corner held still: its minute's refresh would land among the counted ones)
+# (Since 2.3.0 the paper's rules are darker than mid-gray, issue #314, so display.dark counts them: a place with no
+# ink counts its rules' pixels, two rows of each rule across it, and "not N" there says ink shows beside them.)
 clock 1700000000
 wait 300
 tap library add
@@ -26,7 +28,7 @@ pen line 150 600 150 1650 40 0.6 0.6
 pen line 400 1150 1400 1150 60 0.6 0.6
 pen leave
 wait 300
-expect display.dark.826.1100.8.100 not 0
+expect display.dark.826.1100.8.100 not 32
 eraser line 830 1050 830 1250 20
 tap panel tool-picker
 wait 100
@@ -45,8 +47,8 @@ waitfor display.stale.826.1100.8.100 is 0
 waitfor display.stale.826.1400.8.100 is 0
 expect editor.strokes is 5
 expect editor.live_matches_render is 1
-expect display.dark.826.1100.8.100 is 0
-expect display.dark.826.1400.8.100 is 0
+expect display.dark.826.1100.8.100 is 32
+expect display.dark.826.1400.8.100 is 32
 # the whole page lassoed: both lines have a halo either side of their cut and none in it
 tap panel tool-picker
 wait 100
@@ -61,11 +63,11 @@ wait 300
 expect editor.select is selected
 expect editor.selected is 3
 expect editor.halo is 3
-expect display.dark.826.1100.8.100 is 0
-expect display.dark.826.1400.8.100 is 0
-expect display.dark.0.550.1650.1250 not 0
+expect display.dark.826.1100.8.100 is 32
+expect display.dark.826.1400.8.100 is 32
+expect display.dark.0.550.1650.1250 not 62700
 tap panel select.done
 wait 300
-expect display.dark.826.1100.8.100 is 0
-expect display.dark.826.1400.8.100 is 0
+expect display.dark.826.1100.8.100 is 32
+expect display.dark.826.1400.8.100 is 32
 quit

@@ -5,6 +5,8 @@
 # current, its Pages preview of the old ink; it opens on page 1). Staying on page 2 from the bar takes the old
 # drawing away and makes the preview again from the page shown, and the Pages view shows it. Before, only a page
 # that opened did: one stayed on from the bar (or through "Back to page N", the same step) kept the old preview.
+# (A tile of a page with no ink still has one pixel darker than mid-gray since 2.3.0's darker rules, issue #314:
+# Narrow rule's header crossing its margin. editor.pages.ink is 1 for such a tile, more where ink shows.)
 wait 300
 tap library notebook.barghost
 expect editor.page is 1
@@ -26,6 +28,6 @@ expect editor.live_matches_render is 1
 expect editor.preview_matches_render is 1
 tap panel pages
 expect editor.modal is pages
-expect editor.pages.ink.2 is 0
+expect editor.pages.ink.2 is 1
 shot 01-tile-2
 quit
