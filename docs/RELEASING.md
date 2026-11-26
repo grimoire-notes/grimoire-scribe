@@ -80,46 +80,71 @@ them.
    - `README.md`: the banner, `Pre-release VERSION.` (a stable release has no banner).
    - `docs/TESTING.md`: a `## VERSION` section, with what the owner checked on a Kindle and what
      still needs a device. Claim only what the owner reported.
-   - `docs/whatsnew/VERSION.md`, this version's What's new (`docs/whatsnew/2.1.0.md`): every release
+   - `docs/whatsnew/VERSION.md`, this version's What's new (`docs/whatsnew/2.2.0.md`): every release
      has one, at least a basic one (the owner's rule of 2026-11-05: "every update with changes by
      default has at least a basic what's new"), since the first start after an update opens it by
      itself. Each version's notes are a file of their own in `docs/whatsnew/` (since 2.1.0), and the
-     earlier ones stay as they were: What's new's Read all lists them all, newest first (the owner,
-     2026-11-06: "some of them are important"). Write the note while the CHANGELOG section is still
-     `(unreleased)` if you like; it is dated by the CHANGELOG, whose heading this commit dates (the
-     list shows `unreleased` until then), so the note itself has no date to write. Its title is
-     `# What's new (since PREVIOUS VERSION)` (the release before, as `2.0.0`), then the user-visible
-     changes in short bullets from the CHANGELOG, then the owner's closing and the `{signature}` line
-     as the last notes had them. The app compiles the folder in (build.rs lists it: a file there not
-     named `VERSION.md` stops the build), so the note is part of the build the owner tests. For a
-     release the owner vets the note and makes his changes to it: send it to him, and put his changes
-     in, before the gate (step 5) and his test (step 6). A change after his test is a new gate and a
-     new test, and the build he tested has already recorded the version as seen on his Scribe, so
-     changed notes would not open there by themselves. Every version released has a file of its own:
-     the preflight refuses a release without one, or with the release before's notes again, and the
-     gate's unit test (about.rs, `the_current_note_is_this_versions_else_the_newest`) fails a build
-     whose `VERSION` has none. Notes that are word for word an older release's (one that is not the
-     release before) show as one row naming each version. The card falls back to the newest notes
-     for a version without a file, which only a build made with another `VERSION` by hand can be.
-     `tests/scenarios/z_about.qs` states the notes' shape, in its comment and in
-     its checks: the card's `library.about.card_notes` and `card_blocks`, upright and sideways, and
-     the notes on the sheet, from the row `about.row.VERSION`, upright and sideways: one page
-     (`pages`; every version's notes fit one screen since 2.1.0, about.rs's
-     `every_note_fits_one_page_upright_and_sideways` fails a note that does not) at the size and the
-     leading that fit them (`body_px`, `lead`), and `tests/scenarios/z_about_classic.qs` the same in
-     Classic. `tests/scenarios/z_about_list.qs` states the list:
-     its rows (`library.about.row.N` and `row_date.N`, newest first), the row marked as this version's
-     (`library.about.marked`), and the refreshes its steps send. Set them to the new notes':
+     earlier ones stay as they were (the owner, 2026-11-06: "some of them are important").
+     **How What's new shows them** (about.rs, since 2.3.0): What's new is a full screen in the
+     Settings frame, its title and X at the top, every version's row down the left, newest first, and
+     the notes of the row selected in the reader at the right, under the version and its date. It
+     opens by itself once at the first start after an update (store.rs `whatsnew_due`, library.rs),
+     and from the Apps page's What's new button (the home's Show All); it opens on this version's
+     notes, its row selected, and the X or Esc closes it. The reader sets the notes to fit it whole:
+     their leading closer first (1.3 down to 1.15), then their type smaller, in half pixels from 44 px
+     down to the floor, 34 px (about.rs `fit_in`); notes that do not fit even there take pages, with
+     arrows under them. Write the note while the CHANGELOG section is still `(unreleased)` if you
+     like; it is dated by the CHANGELOG, whose heading this commit dates (the reader shows
+     `unreleased` until then), so the note itself has no date to write. Its title is
+     `# What's new (since PREVIOUS VERSION)` (the release before, as `2.1.0`; the reader shows the
+     version and its date in the title's place), then the user-visible changes in short bullets from
+     the CHANGELOG, then the owner's closing and the `{signature}` line as the last notes had them
+     (about.rs's `blocks_of_the_notes` fails a note that does not end with it). The app compiles the
+     folder in (build.rs lists it: a file there not named `VERSION.md` stops the build), so the note
+     is part of the build the owner tests. For a release the owner vets the note and makes his
+     changes to it: send it to him, and put his changes in, before the gate (step 5) and his test
+     (step 6). A change after his test is a new gate and a new test, and the build he tested has
+     already recorded the version as seen on his Scribe, so changed notes would not open there by
+     themselves. Every version released has a file of its own: the preflight refuses a release
+     without one, or with the release before's notes again, and the gate's unit test (about.rs,
+     `the_archive_is_newest_first_and_one_entry_a_note`) fails a build whose `VERSION` has none.
+     Notes that are word for word an older release's (one that is not the release before) show as
+     one row naming each version. What's new opens on the newest notes for a version without a file,
+     which only a build made with another `VERSION` by hand can be. about.rs's
+     `the_browser_lists_every_version_and_reads_the_selected_one` expects every row on one page of
+     the left column, and `every_versions_notes_read_whole_and_signed` the signature on the first
+     page of every version's notes, both in Gothic and Classic, upright and sideways: so every
+     version's notes fit the reader on one page.
+     **The scenarios that state the notes**, each set to the new notes in this commit (each names a
+     version or counts the rows, so every release changes them):
+     - `tests/scenarios/z_about.qs`: the rows (`library.about.entries` and `rows`, one more for each
+       release), this version's notes on opening (`note`, its row `marked` 1) on one page (`pages`) at
+       the size and leading that fit them (`body_px`, `lead`), with the signature (`signature`),
+       upright and sideways; then the row `about.row.2.0.0`, whose place (`marked`) moves down one
+       with each release, and its notes' `body_px` and `lead`.
+     - `tests/scenarios/z_about_list.qs`: every row, newest first (`library.about.row.N` and
+       `row_date.N`: this version's dated as the CHANGELOG's heading now is), this version's row
+       marked, the places (`marked`) of the rows it taps, and its comment's version and date.
+     - `tests/scenarios/z_about_1_update.qs` and `tests/scenarios/z_about_3_hidden.qs`: the first
+       start after an update opens this version's notes (`note`) among all the rows (`entries`,
+       `rows`).
+     - `tests/scenarios/z_about_classic.qs` states 2.0.0's notes in Classic, upright and sideways:
+       it changes only when the reader's width or the notes' look does, but runs with the others.
+
      `make scenarios SCENARIOS="tests/scenarios/z_about.qs tests/scenarios/z_about_list.qs
-     tests/scenarios/z_about_classic.qs" SCEN_NO_SELFTEST=1` names each check that differs, with the
-     value it found, and `build/shots/z_about/`, `build/shots/z_about_list/` and
-     `build/shots/z_about_classic/` show the card, which must end at a whole item, the list and the
-     notes. Notes too long to fit even at the floor (34 px) would take pages
-     at it: shorten them, or that test's rule is the owner's to change.
-   - `docs/screens/whatsnew.png`, the README's picture of the card, when its look or the notes
-     changed: `build/shots/z_about/01-card.png` from the gate of step 5, made 620x827 in grey
-     (`magick 01-card.png -colorspace Gray -filter Lanczos -resize '620x827!' -depth 8 whatsnew.png`).
-     The picture is not in the build, so it can come in the docs commit of step 6.
+     tests/scenarios/z_about_classic.qs tests/scenarios/z_about_1_update.qs
+     tests/scenarios/z_about_3_hidden.qs" SCEN_NO_SELFTEST=1` names each check that differs, with
+     the value it found, and `build/shots/z_about/`, `build/shots/z_about_list/` and
+     `build/shots/z_about_classic/` show the browser and the notes. Notes that would take pages even
+     at the floor (34 px) fail that unit test and z_about.qs's `pages`: shorten them, or that rule is
+     the owner's to change.
+   - `docs/screens/whatsnew.png`, the README's picture of What's new, when its look or the notes
+     changed: `build/shots/z_about/01-browser.png` (this version's notes, upright) from the gate of
+     step 5, made 620x827 in grey with no date in the file (`magick 01-browser.png -colorspace Gray
+     -filter Lanczos -resize '620x827!' -depth 8 -define png:exclude-chunks=date,time whatsnew.png`).
+     z_about.qs holds the status bar's clock still and in UTC, so the shot, and the picture made from
+     it, are the same on every run. The picture is not in the build, so it can come in the docs
+     commit of step 6.
    - `po/grimoire.pot` carries the version in its header: `make l10n` (needs GNU gettext) rewrites
      it, and the .po and .mo files with it. A stale header does no harm.
 

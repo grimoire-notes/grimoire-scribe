@@ -30,7 +30,7 @@ Free software under the GPL-3.0. Not affiliated with or endorsed by Amazon.
 <img src="docs/screens/pages.png" width="32%" alt="The Pages view of a notebook">
 </p>
 <p>
-<img src="docs/screens/whatsnew.png" width="32%" alt="The Library and What's new">
+<img src="docs/screens/whatsnew.png" width="32%" alt="What's new">
 <img src="docs/screens/graph.png" width="32%" alt="The Graph of a notebook's linked pages">
 </p>
 <p><img src="docs/screens/papers.png" width="97%" alt="The papers a notebook can have"></p>
