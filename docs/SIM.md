@@ -79,7 +79,11 @@ still delay the runner, but do not advance app time. Inside a wait, app time mov
 time by what that round idled, and what the machine took besides is made up in one step at the
 wait's end: two timers due inside one wait can then come due together in its last round, their
 refreshes in that round's order and not their own, so a check of their order gives each a wait of
-its own (tests/scenarios/files_12_covers_slow.qs, issue #169). A background job's child works by the
+its own (tests/scenarios/files_12_covers_slow.qs, issue #169). What follows from a timer in that last
+round has no round left before the next line is read: a timer set when another fires (a drawing pass
+that asks for the next one), or work the main loop does a pass after it. Each gets a wait of its own
+too, or a `waitfor` (tests/scenarios/z_kit_redraw_app.qs, y_status_bar_clock.qs, z_app_host.qs,
+issue #323). A background job's child works by the
 real clock beside the app: a preview it writes while the app is still drawing the screen that asked for it
 shows at once, before a count that starts on the next line, so a check of the job's own refresh holds the
 job back with `GRIMOIRE_BG_DELAY_MS` (tests/scenarios/z_rc8_pages_refresh.qs, issue #184).

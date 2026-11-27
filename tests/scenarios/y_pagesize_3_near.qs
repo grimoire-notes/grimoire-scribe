@@ -7,10 +7,13 @@
 # back to rest, as Fit page does. Sideways the page's width fits the screen's, as before, and upright
 # again it rests at 100%. A new page gets the notebook's size and rests the same. A notebook made here
 # gets the screen's size and shows at 100% with no offset, as a notebook does on its own Scribe.
+# The status bar's clock is held still, since editor.screen_composed composes the bar with the page,
+# and the pen leaves after its strokes, as a hand does.
 # root: b_library
 # env: GRIMOIRE_SIM_SIZE=1920x2560
 # settings: landscape_fit=0
 # rust-only
+clock 1700000000
 wait 3600
 shot 01-library
 expect size is 1920x2560
@@ -38,6 +41,7 @@ expect editor.stroke_start is 300 520
 pen line 330 1540 1530 1600 80 0.3 0.9
 expect editor.stroke_start is 300 1500
 pen curve 450 1890 40 60 0.6 3
+pen leave
 wait 700
 shot 03-written
 expect editor.strokes is 4

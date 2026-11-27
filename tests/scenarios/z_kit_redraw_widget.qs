@@ -26,8 +26,22 @@ expect editor.widget.0.status has p001
 waitfor editor.widget.0.status has p002
 expect display.presents is ui 776 106 900 1100
 expect display.stale.0.0.1860.2480 is 0
-wait 2500
+# and so on, one refresh of the frame a second, nothing else: each pass in a wait of its own (a wait's time is made
+# up in one step at its end on a slow machine, docs/SIM.md: one wait that held two passes gave the second, asked
+# for by the first, no time to come due). No pass before its second; the third runs in the 100 ms after it, so
+# the fourth is due 900 to 1,000 ms after that wait.
+wait 900
+expect editor.widget.0.status has p002
+expect display.presents is
+wait 200
+expect editor.widget.0.status has p003
+expect display.presents is ui 776 106 900 1100
+expect display.stale.0.0.1860.2480 is 0
+wait 800
+expect editor.widget.0.status has p003
+expect display.presents is
+wait 300
 expect editor.widget.0.status has p004
-expect display.presents is ui 776 106 900 1100, ui 776 106 900 1100
+expect display.presents is ui 776 106 900 1100
 expect display.stale.0.0.1860.2480 is 0
 quit

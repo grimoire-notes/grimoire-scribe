@@ -17,8 +17,10 @@ tap panel pages
 expect editor.modal is pages
 wait 600
 expect bg.children is 1
-expect editor.pages.shows is lpppppppp
+# (the light pages' previews waited for, not a time they take on a quiet machine: the dense page's 6 s keep that
+# batch on, and there is still one process)
+waitfor editor.pages.shows is lpppppppp
+expect bg.children is 1
 waitbg 30000
-wait 400
-expect editor.pages.shows is ppppppppp
+waitfor editor.pages.shows is ppppppppp
 quit

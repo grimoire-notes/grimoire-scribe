@@ -4,9 +4,11 @@
 # before (at 100% part of it would be off the screen), its ink where it was written, new ink under
 # the pen. The School notebook is at 100% with no offset again (the identity), with what was written
 # at 100% on the larger screen at the same page points: only the view moved, never the strokes.
+# The status bar's clock is held still, as in y_pagesize_3_near: its screens are the same at any minute.
 # root: y_pagesize_3_near
 # settings: landscape_fit=0
 # rust-only
+clock 1700000000
 wait 3600
 shot 01-library
 expect size is 1860x2480
