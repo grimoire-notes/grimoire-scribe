@@ -19,7 +19,7 @@ use crate::appicon::AppIcon;
 use crate::status::{battery_from_sysfs, Battery, STATUS_SIZES};
 use std::cell::{Cell, RefCell};
 use crate::ui::{
-    ui_button, ui_card, ui_frame, ui_icon, ui_slider_draw, ui_small_size, ui_text,
+    ui_button, ui_card, ui_frame, ui_icon, ui_ornament, ui_rule, ui_slider_draw, ui_small_size, ui_text,
     ui_text_size, ui_title_size, ButtonStyle, IconKind, Slider,
 };
 
@@ -152,10 +152,7 @@ pub fn gui_top_button_h() -> i32 {
 pub struct GuiHeader {
     /// The Back button at the left (empty when the screen has none).
     pub back: Rect,
-    /// The room `gui_header_lead` keeps left of the title for the caller's mark (the home's bat),
-    /// centred on the title's axis; empty for every other header.
-    pub lead: Rect,
-    /// The title, between Back (or the lead) and the actions.
+    /// The title, between Back and the actions.
     pub title: Rect,
     /// The first row under the header: a screen's content starts here.
     pub foot: i32,
@@ -170,21 +167,6 @@ pub fn gui_header(
     aw: i32,
     title: &str,
     back: bool,
-    actions: &[(IconKind, i32)],
-) -> (GuiHeader, Vec<(Rect, i32)>) {
-    gui_header_lead(c, aw, title, back, (0, 0), actions)
-}
-
-/// `gui_header` with room for a mark of the caller's, `lead` (w, h), between Back and the title: the
-/// home's top level puts Grimoire's bat there (library.rs draw_base). The room is `GuiHeader::lead`,
-/// the title starts 34 px after it, and the caller draws the mark. With no lead (0, 0) the header is
-/// `gui_header`'s, pixel for pixel.
-pub fn gui_header_lead(
-    c: &mut Canvas,
-    aw: i32,
-    title: &str,
-    back: bool,
-    lead: (i32, i32),
     actions: &[(IconKind, i32)],
 ) -> (GuiHeader, Vec<(Rect, i32)>) {
     gui_status_bar(c, aw, sys_wall_clock());
@@ -211,14 +193,9 @@ pub fn gui_header_lead(
         gui_icon_button(c, back_r, IconKind::Back, ButtonStyle::Plain);
         tx = back_r.x + bh + ui_px(22.0);
     }
-    let mut lead_r = RECT_EMPTY;
-    if lead.0 > 0 && lead.1 > 0 {
-        lead_r = Rect::new(tx, top + (th - lead.1) / 2, lead.0, lead.1);
-        tx = lead_r.x + lead_r.w + ui_px(34.0);
-    }
     let title_r = Rect::new(tx, top, (rx - tx - ui_px(20.0)).max(0), th);
     gui_page_title(c, title_r, title);
-    (GuiHeader { back: back_r, lead: lead_r, title: title_r, foot: top + th }, rects)
+    (GuiHeader { back: back_r, title: title_r, foot: top + th }, rects)
 }
 
 /// The size of a screen's title (`gui_page_title`): the title size, larger in Gothic's blackletter.
@@ -489,6 +466,179 @@ pub fn gui_app_tile(c: &mut Canvas, r: Rect, icon: &AppIcon, label: &str, select
         true,
         0,
     );
+}
+
+// ---- the home's app squares (#332): the home's row and the Apps page show their launchers as even squares, every
+// one the same size with its icon in the middle and its name under it. The screen lays them out (library.rs
+// app_row_slots) and adds the hits. ----
+
+/// The side of an app's square.
+pub fn gui_app_square_side() -> i32 {
+    ui_px(176.0)
+}
+
+/// The side of the icon's box in a square: a whole multiple of 64 px with at least 24 px of the square round it,
+/// so an app package's bundled 64 px icon is drawn at a whole number of screen pixels for each of its own (twice
+/// its size, 128 px, at 300 dpi).
+pub fn gui_app_icon_side() -> i32 {
+    let room = gui_app_square_side() - 2 * ui_px(24.0);
+    if room >= 64 {
+        room / 64 * 64
+    } else {
+        room.max(1)
+    }
+}
+
+/// The paper between a square and its name.
+pub fn gui_app_label_gap() -> i32 {
+    ui_px(8.0)
+}
+
+/// One line of an app's name: the box a name of one line is centred in, and the distance between the two lines of
+/// a name that takes two.
+pub fn gui_app_label_line_h() -> i32 {
+    ui_px(36.0)
+}
+
+/// The room under a square for its name: two lines (`gui_app_label_fit`).
+pub fn gui_app_label_h() -> i32 {
+    2 * gui_app_label_line_h()
+}
+
+/// A launcher's whole height: its square, the paper under it and its name's two lines. Its hit is that tall.
+pub fn gui_app_h() -> i32 {
+    gui_app_square_side() + gui_app_label_gap() + gui_app_label_h()
+}
+
+/// How an app's name is set in the width `w` under its square (#332), so that a name is whole: one line at the
+/// small size; when that is too wide, one line at a smaller size down to four fifths of it, where the face has one
+/// (Classic's faces do; Gothic's pixel face has no size between the small one and two thirds of it); when that is
+/// too wide too, two lines at the small size, broken at a space or between two CJK characters. Returns the size and
+/// the lines. A name that two lines do not hold either (a word wider than `w`, or a third line) is broken or cut
+/// short by font_draw_wrapped, which tells the fit check (GRIMOIRE_CHECK_FIT, make l10n-check) as it does of any
+/// text cut short.
+pub fn gui_app_label_fit(label: &str, w: i32) -> (f32, i32) {
+    let px = ui_small_size();
+    if font_measure(FontFace::Bold, px, label) <= w {
+        return (px, 1);
+    }
+    let fs = font_fit_px(FontFace::Bold, px, px * 0.8, label, w);
+    if fs > 0.0 {
+        return (fs, 1);
+    }
+    (px, 2)
+}
+
+/// An app's name under its square `sq`, centred in `label_w` (the row's step, so a long name may reach into the
+/// paper beside its square, never into the next name), set as `gui_app_label_fit` says.
+fn gui_app_label(c: &mut Canvas, sq: Rect, label_w: i32, label: &str) {
+    let lw = label_w.max(sq.w);
+    let (px, lines) = gui_app_label_fit(label, lw);
+    let lh = gui_app_label_line_h();
+    let r = Rect::new(sq.x + (sq.w - lw) / 2, sq.y + sq.h + gui_app_label_gap(), lw, lines * lh);
+    if lines == 1 {
+        font_draw_centered(c, FontFace::Bold, px, r, label, 0);
+    } else {
+        font_draw_wrapped(c, FontFace::Bold, px, r, label, 2, lh, true, 0);
+    }
+}
+
+/// An app launcher as an even square: the theme's surface `sq`, the icon in the middle of it
+/// (`gui_app_icon_side`), and the name under it (`gui_app_label`).
+pub fn gui_app_square(c: &mut Canvas, sq: Rect, label_w: i32, icon: &AppIcon, label: &str, selected: bool) {
+    gui_surface(c, sq, selected, ui_px(3.0));
+    let fg: u8 = if selected { 255 } else { 0 };
+    let isz = gui_app_icon_side().min(sq.w.min(sq.h));
+    icon.draw(c, Rect::new(sq.x + (sq.w - isz) / 2, sq.y + (sq.h - isz) / 2, isz, isz), fg);
+    gui_app_label(c, sq, label_w, label);
+}
+
+/// The home row's Show All as its last square: three rows of three of the theme's bullet where an app's icon is (a
+/// lozenge in Gothic, as What's new's lists have it, a dot in Classic), and its name under it as an app's.
+pub fn gui_app_show_all(c: &mut Canvas, sq: Rect, label_w: i32, label: &str) {
+    gui_app_square(c, sq, label_w, &AppIcon::glyph(IconKind::None), label, false);
+    let pitch = ui_px(38.0) as f32;
+    let (cx, cy) = (sq.x as f32 + sq.w as f32 / 2.0, sq.y as f32 + sq.h as f32 / 2.0);
+    for row in -1..=1 {
+        for col in -1..=1 {
+            let (x, y) = (cx + col as f32 * pitch, cy + row as f32 * pitch);
+            if gui_gothic() {
+                canvas_lozenge(c, x, y, ui_px(14.0) as f32, 0);
+            } else {
+                canvas_disc_aa(c, x, y, ui_px(11.0) as f32, 0, 1.0);
+            }
+        }
+    }
+}
+
+// ---- a page's rules (#332): the marks that part the home, themed once, as a printed page is ruled. A screen draws
+// a mark in the paper between two of its parts, never inside a control, so a press's fast refresh (black and white
+// only) never carries one. Every mark is at least 2 px, black or gray 136, one of the panel's sixteen levels. ----
+
+/// The gray of the light rule: one of the panel's sixteen levels (8 x 17), so it shows on the panel as it does in a
+/// shot.
+pub const GUI_GRAY_HAIR: u8 = 136;
+
+/// The height of `gui_title_rule` and of `gui_foot_rule`: Gothic's thick (4 px), 5 px of paper and thin (2 px);
+/// Classic's one 3 px line.
+pub fn gui_title_rule_h() -> i32 {
+    if gui_gothic() {
+        ui_px(4.0) + ui_px(5.0) + ui_px(2.0)
+    } else {
+        ui_px(3.0)
+    }
+}
+
+/// The rule under a page's title, its top at `y`: in Gothic thick over thin (ui_rule), as a printer rules a title
+/// page; in Classic one 3 px black line.
+pub fn gui_title_rule(c: &mut Canvas, x0: i32, x1: i32, y: i32) {
+    if gui_gothic() {
+        ui_rule(c, x0, x1, y, ui_px(4.0), 0);
+    } else {
+        canvas_hline(c, x0, x1, y, ui_px(3.0), 0);
+    }
+}
+
+/// The rule over a page's foot, its top at `y`: the title rule turned over (thin over thick) in Gothic, so the two
+/// close the page between them; one 3 px black line in Classic.
+pub fn gui_foot_rule(c: &mut Canvas, x0: i32, x1: i32, y: i32) {
+    if gui_gothic() {
+        canvas_hline(c, x0, x1, y, ui_px(2.0), 0);
+        canvas_hline(c, x0, x1, y + ui_px(2.0) + ui_px(5.0), ui_px(4.0), 0);
+    } else {
+        canvas_hline(c, x0, x1, y, ui_px(3.0), 0);
+    }
+}
+
+/// How far `gui_section_break` reaches above and below its centre line: Gothic's middle lozenge (16 px), Classic's
+/// 2 px line (1 px).
+pub fn gui_section_break_half() -> i32 {
+    if gui_gothic() {
+        ui_px(16.0)
+    } else {
+        ui_px(1.0)
+    }
+}
+
+/// The section break centred on `cy`, a page's main division: in Gothic the divider under a Gothic sheet's title
+/// (a 2 px black rule broken by a 16 px lozenge between two of 8, ui_ornament); in Classic one plain 2 px black
+/// line, with no dots, which a screen that pages could take for its page dots.
+pub fn gui_section_break(c: &mut Canvas, x0: i32, x1: i32, cy: i32) {
+    if gui_gothic() {
+        ui_ornament(c, x0, x1, cy, 0);
+    } else {
+        canvas_hline(c, x0, x1, cy - ui_px(1.0), ui_px(2.0), 0);
+    }
+}
+
+/// The height of `gui_hair_rule`.
+pub fn gui_hair_rule_h() -> i32 {
+    ui_px(2.0)
+}
+
+/// The light rule, its top at `y`: 2 px of gray 136 in both themes, the rule under a table's head row.
+pub fn gui_hair_rule(c: &mut Canvas, x0: i32, x1: i32, y: i32) {
+    canvas_hline(c, x0, x1, y, gui_hair_rule_h(), GUI_GRAY_HAIR);
 }
 
 /// One row of `gui_popup`: an icon, a label, whether it is the current choice, and whether it is
@@ -948,7 +1098,6 @@ mod tests {
         let (head, actions) = gui_header(&mut c, 1860, "Library", true, &[(IconKind::Gear, 1)]);
         assert_eq!(head.back.y + head.back.h / 2, head.title.y + head.title.h / 2);
         assert_eq!(actions[0].0.y + actions[0].0.h / 2, head.title.y + head.title.h / 2);
-        assert!(rect_is_empty(head.lead));
         canvas_free(&mut c);
         gui_status_style(1, false);
     }
@@ -968,45 +1117,28 @@ mod tests {
         assert_eq!(heights, [72, 78, 92]);
     }
 
-    // A header with a lead keeps its room between the margin and the title, centred on the title's axis, and is
-    // otherwise the header without one: a header with no lead draws the same pixels as gui_header, and its Back,
-    // title and actions stand where every screen's header stood before the lead, by numbers of their own.
+    // The one header's Back, title and actions stand where every screen's header has them, by numbers of their own
+    // (the home's included since its bat went, #332): at 300 dpi under the medium bar, the title at the 50 px margin,
+    // or 22 px after Back, to 20 px before the first action, over the 150 px band; the actions 96 px round, 12 px
+    // apart, at the right margin, in the order given.
     #[test]
-    fn a_headers_lead_sits_before_the_title_and_no_lead_changes_nothing() {
+    fn a_headers_back_title_and_actions_stand_where_every_screen_has_them() {
         ui_init(300.0);
         assert_eq!(font_init(), 0);
         gui_status_style(1, false);
         for theme in [UiTheme::Gothic, UiTheme::Classic] {
             ui_set_theme(theme);
             let mut plain = Canvas::default();
-            let mut none = Canvas::default();
-            let mut led = Canvas::default();
-            for c in [&mut plain, &mut none, &mut led] {
-                assert_eq!(canvas_init(c, 1860, 400), 0);
-            }
-            let acts = [(IconKind::Gear, 1), (IconKind::Search, 2)];
+            assert_eq!(canvas_init(&mut plain, 1860, 400), 0);
+            let acts = [(IconKind::Search, 1), (IconKind::Gear, 2)];
             let (h0, a0) = gui_header(&mut plain, 1860, "Library", false, &acts);
-            let (h1, a1) = gui_header_lead(&mut none, 1860, "Library", false, (0, 0), &acts);
-            assert_eq!((h0.title, h0.foot, &a0), (h1.title, h1.foot, &a1), "{theme:?}");
-            // (under the status bar, whose clock reads the machine's minute)
-            let below = (gui_status_h() * plain.stride) as usize;
-            assert!(plain.px[below..] == none.px[below..], "{theme:?}: no lead, the same pixels");
-            // (at 300 dpi under the medium bar: the title at the 50 px margin, or 22 px after Back, to 20 px before
-            // the first action, over the 150 px band; the actions 96 px round, 12 px apart, at the right margin)
-            assert!(rect_is_empty(h0.lead) && rect_is_empty(h0.back), "{theme:?}");
+            assert!(rect_is_empty(h0.back), "{theme:?}");
             assert_eq!((h0.title, h0.foot), (Rect::new(50, 78, 1524, 150), 228), "{theme:?}");
             assert_eq!(a0, [(Rect::new(1606, 105, 96, 96), 1), (Rect::new(1714, 105, 96, 96), 2)], "{theme:?}");
-            let (hb, _) = gui_header(&mut plain, 1860, "School", true, &acts);
-            assert!(rect_is_empty(hb.lead), "{theme:?}");
+            let (hb, ab) = gui_header(&mut plain, 1860, "School", true, &acts);
             assert_eq!((hb.back, hb.title), (Rect::new(50, 105, 96, 96), Rect::new(168, 78, 1406, 150)), "{theme:?}");
-            let (h2, a2) =gui_header_lead(&mut led, 1860, "Library", false, (129, 42), &acts);
-            assert_eq!(h2.lead, Rect::new(gui_margin(), gui_status_h() + (gui_head_h() - 42) / 2, 129, 42), "{theme:?}");
-            assert_eq!(h2.title.x, h2.lead.x + 129 + ui_px(34.0), "{theme:?}");
-            assert_eq!(h2.lead.y + h2.lead.h / 2, h2.title.y + h2.title.h / 2, "{theme:?}");
-            assert_eq!(a2, a0, "{theme:?}: the actions stay where they were");
-            for c in [&mut plain, &mut none, &mut led] {
-                canvas_free(c);
-            }
+            assert_eq!(ab, a0, "{theme:?}: the actions stay where they were");
+            canvas_free(&mut plain);
         }
         ui_set_theme(UiTheme::Gothic);
     }
@@ -1043,6 +1175,53 @@ mod tests {
             }
             canvas_free(&mut c);
         }
+        ui_set_theme(UiTheme::Gothic);
+    }
+
+    // An app's name under its square is whole (#332): one line at the small size when it fits, else a smaller size
+    // down to four fifths where the face has one (Classic), else two lines at the small size (Gothic's pixel face),
+    // and only a name two lines cannot hold either is cut short, which the fit check hears of.
+    #[test]
+    fn an_apps_long_name_takes_a_smaller_size_or_two_lines() {
+        ui_init(300.0);
+        assert_eq!(font_init(), 0);
+        thread_local! {
+            static CUTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+        }
+        fn hear(text: &str, _need: i32, _have: i32) {
+            CUTS.with(|c| c.borrow_mut().push(text.to_string()));
+        }
+        font_set_overflow_hook(Some(hear));
+        let small = ui_small_size();
+        let w = 210;
+        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+            ui_set_theme(theme);
+            assert_eq!(gui_app_label_fit("Files", w), (small, 1), "{theme:?}");
+            let long = "Pokaż wszystko";
+            let (px, lines) = gui_app_label_fit(long, w);
+            if theme == UiTheme::Gothic {
+                assert_eq!((px, lines), (small, 2), "{theme:?}: two lines at the small size");
+            } else {
+                assert_eq!(lines, 1, "{theme:?}");
+                assert!(px < small && px >= small * 0.8 && font_measure(FontFace::Bold, px, long) <= w, "{theme:?}: {px}");
+            }
+            let mut c = Canvas::default();
+            assert_eq!(canvas_init(&mut c, 400, 400), 0);
+            canvas_fill(&mut c, Rect::new(0, 0, 400, 400), 255);
+            let sq = Rect::new(112, 20, gui_app_square_side(), gui_app_square_side());
+            for name in ["Files", long, "Sudoku Puzzles", "パッケージストア"] {
+                gui_app_square(&mut c, sq, w, &AppIcon::glyph(IconKind::Grid), name, false);
+            }
+            assert_eq!(CUTS.with(|c| c.borrow().clone()), Vec::<String>::new(), "{theme:?}: nothing cut short");
+            // (the names stay inside their two lines' room)
+            let below = sq.y + sq.h + gui_app_label_gap() + gui_app_label_h() + ui_px(4.0);
+            assert!((below..400).all(|y| c.px[(y * c.stride) as usize..(y * c.stride + 400) as usize].iter().all(|&p| p == 255)), "{theme:?}");
+            gui_app_square(&mut c, sq, w, &AppIcon::glyph(IconKind::Grid), "Supercalifragilisticexpialidocious", false);
+            assert!(!CUTS.with(|c| c.borrow().is_empty()), "{theme:?}: a word wider than the square's step is heard of");
+            CUTS.with(|c| c.borrow_mut().clear());
+            canvas_free(&mut c);
+        }
+        font_set_overflow_hook(None);
         ui_set_theme(UiTheme::Gothic);
     }
 

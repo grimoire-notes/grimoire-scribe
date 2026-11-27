@@ -3,7 +3,7 @@
 
 use crate::prelude::*;
 use crate::appicon::AppIcon;
-use crate::globalui::{gui_app_tile, gui_button, gui_chip, gui_chip_h, gui_fab, gui_gap, gui_head_h, gui_header, gui_header_lead, gui_icon_button, gui_margin, gui_page_title_px, gui_popup, gui_radius, gui_row_h, gui_row_min_h, gui_select, gui_select_h, gui_status_bar, gui_status_h, gui_top_button_h, GuiPopupItem};
+use crate::globalui::{gui_app_h, gui_app_label_fit, gui_app_show_all, gui_app_square, gui_app_square_side, gui_button, gui_chip, gui_chip_h, gui_fab, gui_fab_radius, gui_foot_rule, gui_gap, gui_gothic, gui_hair_rule, gui_hair_rule_h, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_row_h, gui_row_min_h, gui_section_break, gui_section_break_half, gui_select, gui_select_h, gui_status_bar, gui_status_h, gui_title_rule, gui_title_rule_h, gui_top_button_h, GuiPopupItem};
 use crate::settingsmenu;
 use crate::ui::{ui_row, ui_row_page, ui_row_pager, Row as UiRow};
 use crate::browser::{BrowseMode, Browser, BrowserResult, FilesPrefs, PickSpec};
@@ -193,7 +193,7 @@ const H_RECORD_CANCEL: i32 = 66;
 const H_RECORD_DISABLE: i32 = 98;
 const H_GESTURES_RESET_CONFIRM: i32 = 67;
 const H_GESTURES_RESET_CANCEL: i32 = 68;
-const H_ABOUT: i32 = 71;
+// (71 opened What's new from the bat and the title at the home's top level, #319: gone with the bat, #332)
 const H_ABOUT_CLOSE: i32 = 72;
 // (73 was Don't show this again, gone in 2.0.0: the owner's rule of 2026-11-05)
 const H_ABOUT_PREV: i32 = 74;
@@ -596,6 +596,22 @@ pub struct LibraryState {
     /// packagestore.rs; 2.3, issue #236) and the screen that shows it has not been drawn again yet (a press was
     /// held: its lift comes first).
     pictures_due: bool,
+    /// What the home's last draw put where (#332): the library.home.* keys read it.
+    home: HomeDrawn,
+}
+
+/// What draw_base drew where, for the scenarios' library.home.* keys (docs/SIM.md, #332): the header's parts left
+/// to right by name (`back`, `title`, `search`, `settings`), the app row's squares left to right (Show All the last)
+/// and the lines each one's name took, each mark's name with its top row and height (`title`, `break`, `light`,
+/// `foot`), the + button, and the page arrows with the page line between them.
+#[derive(Default, Clone, Debug)]
+struct HomeDrawn {
+    header: Vec<(&'static str, Rect)>,
+    squares: Vec<Rect>,
+    label_lines: Vec<i32>,
+    marks: Vec<(&'static str, i32, i32)>,
+    fab: Rect,
+    pager: [Rect; 3],
 }
 
 /// The C's S (a->lib).
@@ -622,23 +638,69 @@ pub(crate) fn bottom_h() -> i32 {
 fn margin() -> i32 {
     gui_margin()
 }
-/// The size of one of the bat's blocks in the home's header (bat.rs draw_bat): 3 px, as the Library's
-/// bar drew it through 2.2, so the bat is 129 x 42 px at 300 dpi.
-fn home_bat_k() -> i32 {
-    ui_px(3.0)
-}
-/// The app row's height, and the width of one small app launcher in it.
+/// The app row's height: a launcher's square and the two lines its name may take (globalui.rs gui_app_h, #332).
 fn apps_h() -> i32 {
-    ui_px(200.0)
+    gui_app_h()
 }
-fn app_tile_w() -> i32 {
-    ui_px(240.0)
+/// The app row's places across a screen `aw` wide (#332): how many squares fit between the margins with at least
+/// 40 px of paper between two, the step from one square's left edge to the next, and the first one's left edge. The
+/// paper between every two squares is the same whole number of pixels, and the row is centred: its first square
+/// starts at the left margin and its last ends at the right one, give or take the few pixels whole steps leave over
+/// (fewer than the squares). Show All is the home row's last slot; the Apps page's columns are these slots.
+fn app_row_slots(aw: i32) -> (i32, i32, i32) {
+    let side = gui_app_square_side();
+    let room = aw - 2 * margin();
+    let min_gap = ui_px(40.0);
+    let n = ((room + min_gap) / (side + min_gap)).max(2);
+    let step = side + ((room - n * side) / (n - 1)).max(0);
+    (n, step, margin() + (room - (n - 1) * step - side) / 2)
+}
+/// The home row's squares for `apps` launchers on a screen `aw` wide, left to right: as many of the apps as fit
+/// before Show All, then Show All's in the last slot, at the right margin, however few apps there are.
+fn home_row_squares(aw: i32, apps: usize) -> Vec<Rect> {
+    let (slots, step, x0) = app_row_slots(aw);
+    let side = gui_app_square_side();
+    let at = |i: i32| Rect::new(x0 + i * step, apps_top(), side, side);
+    let shown = apps.min((slots - 1).max(0) as usize) as i32;
+    (0..shown).map(at).chain(std::iter::once(at(slots - 1))).collect()
 }
 fn filters_h() -> i32 {
     gui_chip_h()
 }
+// The home's bands under the header (#332), each from the one above it, so the drawing, the hits and the marks
+// between them come from one place: the title rule, the app row, the section break, the sorting line (the chips and
+// Sort), the light rule and the cards; at the foot the foot rule, placed from the + button. The layout is the same in
+// both themes and in a folder; the status bar's size moves everything under the header with it.
+/// The app row's top: the header, the gap and the title rule's room (24 px) under it.
+fn apps_top() -> i32 {
+    top_h() + gui_gap() + ui_px(24.0)
+}
+/// The title rule's top: halfway between the foot of the header's round buttons and the app row, as much paper over
+/// it as under it (32 px of each in Gothic at 300 dpi; 36 in Classic, whose rule is thinner).
+fn title_rule_y() -> i32 {
+    let buttons_end = gui_status_h() + (head_h() + gui_top_button_h()) / 2;
+    (buttons_end + apps_top() - gui_title_rule_h()) / 2
+}
+/// The section break's centre line: under the app row's names (their two lines' room), 8 px of paper and half the
+/// break's tallest mark, Gothic's 32 px lozenge (Classic's line takes the same place).
+fn section_break_cy() -> i32 {
+    apps_top() + apps_h() + ui_px(8.0) + ui_px(16.0)
+}
+/// The chips' and the Sort select's top: 30 px of paper under the section break's lozenge.
+fn filters_top() -> i32 {
+    section_break_cy() + ui_px(16.0) + ui_px(30.0)
+}
 fn grid_top() -> i32 {
-    top_h() + 3 * gui_gap() + apps_h() + filters_h()
+    filters_top() + filters_h() + gui_gap() + ui_px(16.0)
+}
+/// The light rule's top: halfway between the sorting line's foot and the cards.
+fn hair_rule_y() -> i32 {
+    let chips_end = filters_top() + filters_h();
+    chips_end + (grid_top() - chips_end - gui_hair_rule_h()) / 2
+}
+/// The foot rule's top: placed from the + button, so 40 px of paper stay between the rule and the button.
+fn foot_rule_y(aw: i32, ah: i32) -> i32 {
+    fab_rect(aw, ah).y - ui_px(40.0) - gui_title_rule_h()
 }
 fn card_label_h() -> i32 {
     ui_px(150.0)
@@ -713,27 +775,56 @@ fn fab_rect(aw: i32, ah: i32) -> Rect {
     Rect::new(aw - margin() - fs, ah - margin() - fs, fs, fs)
 }
 
+/// The page arrows and the "Page N of M" line between them and the + button, on the + button's centre line
+/// (#332; they were 27 px under it at 300 dpi), upright and sideways at every status bar size.
+fn pager_rects(aw: i32, ah: i32) -> (Rect, Rect, Rect) {
+    let fab = fab_rect(aw, ah);
+    let bw = ui_px(104.0);
+    let y = fab.y + (fab.h - bw) / 2;
+    let prev = Rect::new(margin(), y, bw, bw);
+    let next = Rect::new(prev.x + bw + ui_px(10.0), y, bw, bw);
+    let line = Rect::new(next.x + next.w, y, (fab.x - gui_gap() - next.x - next.w).max(0), bw);
+    (prev, next, line)
+}
+
 fn sort_rect(aw: i32) -> Rect {
     let sort_w = ui_px(400.0).min(aw / 3);
-    let fy = top_h() + 2 * gui_gap() + apps_h();
-    Rect::new(aw - margin() - sort_w, fy, sort_w, gui_select_h())
+    Rect::new(aw - margin() - sort_w, filters_top(), sort_w, gui_select_h())
+}
+
+/// The All, Notebooks and Folders chips, from the left margin, each as wide as its label and 76 px, all made as
+/// wide as one another when together they would reach the Sort select.
+fn filter_chip_rects(aw: i32) -> [Rect; 3] {
+    let labels = [tr("All"), tr("Notebooks"), tr("Folders")];
+    let gap_c = ui_px(14.0);
+    let mut w = labels.map(|label| font_measure(FontFace::Bold, ui_text_size(), label) + ui_px(76.0));
+    let total: i32 = w.iter().sum::<i32>() + gap_c * 2;
+    let available = (sort_rect(aw).x - gui_gap() - margin()).max(ui_px(240.0));
+    if total > available {
+        w = [((available - gap_c * 2) / 3).max(ui_px(80.0)); 3];
+    }
+    let mut x = margin();
+    w.map(|w| {
+        let r = Rect::new(x, filters_top(), w, filters_h());
+        x += w + gap_c;
+        r
+    })
+}
+
+/// The card in place `local` of a page (from 0, across then down).
+fn card_rect(aw: i32, ah: i32, local: i32) -> Rect {
+    let (cols, _, cw, ch) = grid_geom(aw, ah);
+    let (col, row) = (local % cols, local / cols);
+    Rect::new(margin() + col * (cw + margin()), grid_top() + row * (ch + margin()), cw, ch)
 }
 
 /// The `...` of the card at `target` on `page`: the popup menus hang from the control that opened them.
 fn card_more_rect(aw: i32, ah: i32, target: i32, page: i32) -> Rect {
-    let (cols, _, cw, ch) = grid_geom(aw, ah);
-    let pp = cols * grid_geom(aw, ah).1;
-    let local = (target - page * pp).max(0);
-    let col = local % cols;
-    let row = local / cols;
+    let (cols, rows, _, ch) = grid_geom(aw, ah);
+    let r = card_rect(aw, ah, (target - page * cols * rows).max(0));
     let th = (ch - card_label_h()).max(ui_px(120.0));
     let more = ui_px(110.0);
-    Rect::new(
-        margin() + col * (cw + margin()) + cw - more,
-        grid_top() + row * (ch + margin()) + th + ui_px(20.0),
-        more,
-        more,
-    )
+    Rect::new(r.x + r.w - more, r.y + th + ui_px(20.0), more, more)
 }
 
 fn per_page(a: &App) -> i32 {
@@ -1969,89 +2060,73 @@ fn draw_base(a: &mut App) {
     s.status_min = now / 60;
 
     let m = margin();
-    let gap = gui_gap();
     let mut title_buf = String::new();
     let title = if !s.cur_folder.is_empty() {
         ui_name_label(s.cur_folder.as_str(), &mut title_buf, LABEL_CAP)
     } else {
         tr("Library")
     };
-    // The one header: title at the left, its round actions right to left. Search opens the keyboard
-    // over the Library, and the filtered grid follows each key typed. At the top level Grimoire's bat
-    // stands left of the title, as it did in the Library's bar through 2.2 (#319), and a tap on the
-    // bat or the title opens What's new; in a folder, Back and the folder's name are there instead.
+    // The one header: title at the left, its round actions right to left: Search, then Settings at the far right
+    // (#332). Search opens the keyboard over the Library, and the filtered grid follows each key typed. In a folder
+    // Back and the folder's name are at the left. What's new opens from the Apps page (Show All), and by itself
+    // once after an update; nothing on the home opens it (#332: Grimoire's bat stood left of the title from #319).
     let top_level = s.cur_folder.is_empty();
-    let k = home_bat_k();
-    let lead = if top_level { (BAT_W * k, BAT_H * k) } else { (0, 0) };
-    let (head, actions) = gui_header_lead(
-        c,
-        aw,
-        title,
-        !top_level,
-        lead,
-        &[(IconKind::Gear, H_SETTINGS), (IconKind::Search, H_SEARCH)],
-    );
+    let (head, actions) = gui_header(c, aw, title, !top_level, &[(IconKind::Search, H_SEARCH), (IconKind::Gear, H_SETTINGS)]);
+    let mut drawn = HomeDrawn::default();
     if !rect_is_empty(head.back) {
         hits_add(&mut s.hits, head.back, H_BACK, 0);
+        drawn.header.push(("back", head.back));
     }
+    drawn.header.push(("title", head.title));
     for (r, id) in actions {
         hits_add(&mut s.hits, r, id, 0);
-    }
-    if !rect_is_empty(head.lead) {
-        draw_bat(c, head.lead.x, head.lead.y, k);
-        let title_w = font_measure(FontFace::Title, gui_page_title_px(), title).min(head.title.w);
-        hits_add(&mut s.hits, Rect::new(0, head.title.y, head.title.x + title_w + ui_px(20.0), head.title.h), H_ABOUT, 0);
+        drawn.header.push((if id == H_SEARCH { "search" } else { "settings" }, r));
     }
 
-    // The app row: small launchers with the icon in a rectangle and its name below, as a phone
-    // lays them out: Files, Package Store and Share, then the apps, most recently used first
-    // (home_apps). Show All is a plain text link at the row's right margin, opening the Apps page.
-    let ay = top_h() + gap;
-    let (ts, tw) = (apps_h(), app_tile_w());
-    let show = tr("Show All");
-    let show_w = font_measure(FontFace::Bold, ui_text_size(), show);
-    let show_r = Rect::new(aw - m - show_w, ay, show_w, ts);
-    // The row shows as many recent apps as fit before the right-aligned Show All link; the All
-    // apps page has every one of them.
-    let room = (show_r.x - gap - m).max(tw);
-    let visible = apps.len().min(((room + gap) / (tw + gap)).max(1) as usize);
-    for (i, app) in apps.iter().take(visible).enumerate() {
-        let r = Rect::new(m + i as i32 * (tw + gap), ay, tw, ts);
-        gui_app_tile(c, r, &app.icon, &app.label, false);
-        hits_add(&mut s.hits, r, H_APP, app.arg);
+    // The home is ruled as a printed page is (#332): the title rule under the header, the section break between the
+    // app row and the sorting line, the light rule between the sorting line and the cards, and the foot rule over the
+    // pager and the + button, each from margin to margin in the paper between two parts (the bands above draw_base).
+    let (rx0, rx1) = (m, aw - m);
+    gui_title_rule(c, rx0, rx1, title_rule_y());
+    drawn.marks.push(("title", title_rule_y(), gui_title_rule_h()));
+    gui_section_break(c, rx0, rx1, section_break_cy());
+    let half = gui_section_break_half();
+    drawn.marks.push(("break", section_break_cy() - half, 2 * half));
+    gui_hair_rule(c, rx0, rx1, hair_rule_y());
+    drawn.marks.push(("light", hair_rule_y(), gui_hair_rule_h()));
+    gui_foot_rule(c, rx0, rx1, foot_rule_y(aw, ah));
+    drawn.marks.push(("foot", foot_rule_y(aw, ah), gui_title_rule_h()));
+
+    // The app row (#332): even squares, every one the same size with the same paper between every two
+    // (app_row_slots), the icon in the middle of each and its name under it: Files, Package Store and Share, then
+    // the apps, most recently used first (home_apps). Show All is the row's last square, at the right margin,
+    // opening the Apps page; the row shows as many apps as fit before it. Each hit is its square and its name's
+    // two lines.
+    let step = app_row_slots(aw).1;
+    let mut squares = home_row_squares(aw, apps.len());
+    let all = squares.pop().unwrap_or_default();
+    for (app, &sq) in apps.iter().zip(squares.iter()) {
+        gui_app_square(c, sq, step, &app.icon, &app.label, false);
+        hits_add(&mut s.hits, Rect::new(sq.x, sq.y, sq.w, apps_h()), H_APP, app.arg);
+        drawn.squares.push(sq);
+        drawn.label_lines.push(gui_app_label_fit(&app.label, step.max(sq.w)).1);
     }
-    ui_text(c, FontFace::Bold, ui_text_size(), ui_small_size(), show_r, show, 1, false, 0);
-    hits_add(&mut s.hits, Rect::new(show_r.x - ui_px(20.0), show_r.y, show_r.w + ui_px(20.0), show_r.h), H_APPS, 0);
+    gui_app_show_all(c, all, step, tr("Show All"));
+    hits_add(&mut s.hits, Rect::new(all.x, all.y, all.w, apps_h()), H_APPS, 0);
+    drawn.squares.push(all);
+    drawn.label_lines.push(gui_app_label_fit(tr("Show All"), step.max(all.w)).1);
 
     // The filter chips and the Sort select: the global elements' chip and select.
-    let fy = ay + apps_h() + gap;
-    let chip_h = filters_h();
     let sort_r = sort_rect(aw);
     let labels = [tr("All"), tr("Notebooks"), tr("Folders")];
-    let gap_c = ui_px(14.0);
-    let mut chip_w: Vec<i32> = labels
-        .iter()
-        .map(|label| font_measure(FontFace::Bold, ui_text_size(), label) + ui_px(76.0))
-        .collect();
-    let total: i32 = chip_w.iter().sum::<i32>() + gap_c * (labels.len() as i32 - 1);
-    let available = (sort_r.x - gap - m).max(ui_px(240.0));
-    if total > available {
-        let each = ((available - gap_c * (labels.len() as i32 - 1)) / labels.len() as i32).max(ui_px(80.0));
-        for w in chip_w.iter_mut() {
-            *w = each;
-        }
-    }
-    let mut cx = m;
-    for (i, label) in labels.iter().enumerate() {
-        let r = Rect::new(cx, fy, chip_w[i], chip_h);
+    for (i, (label, r)) in labels.iter().zip(filter_chip_rects(aw)).enumerate() {
         gui_chip(c, r, label, s.filter == i as i32);
         hits_add(&mut s.hits, r, H_FILTER, i as i32);
-        cx += chip_w[i] + gap_c;
     }
     gui_select(c, sort_r, tr("Sort"), sort_name(s.sort));
     hits_add(&mut s.hits, sort_r, H_SORT, 0);
 
-    let (cols, rows, cw, ch) = grid_geom(aw, ah);
+    let (cols, rows, _, _) = grid_geom(aw, ah);
     let pp = cols * rows;
     if empty_hint_shown(s) {
         let mut er = Rect::new(m, grid_top() + ui_px(150.0), aw - 2 * m, ui_px(100.0));
@@ -2080,30 +2155,19 @@ fn draw_base(a: &mut App) {
         if idx >= s.items.len() as i32 {
             break;
         }
-        let col = i % cols;
-        let row = i / cols;
-        draw_card(
-            c,
-            s,
-            dpi,
-            Rect::new(m + col * (cw + m), grid_top() + row * (ch + m), cw, ch),
-            idx as usize,
-        );
+        draw_card(c, s, dpi, card_rect(aw, ah, i), idx as usize);
     }
 
-    // The pager and the + button (the issue's small add button at the bottom right).
+    // The pager and the + button (the issue's small add button at the bottom right), the page arrows and their
+    // line on the + button's centre line (pager_rects).
     let mut pages = (s.items.len() as i32 + pp - 1) / pp;
     if pages < 1 {
         pages = 1;
     }
-    let y = ah - bottom_h();
     let fab = fab_rect(aw, ah);
     gui_fab(c, fab, IconKind::Plus);
     hits_add(&mut s.hits, fab, H_ADD, 0);
-    let nav_y = y + (bottom_h() - ui_px(104.0)) / 2;
-    let bw = ui_px(104.0);
-    let pr = Rect::new(m, nav_y, bw, bw);
-    let nr = Rect::new(pr.x + bw + ui_px(10.0), nav_y, bw, bw);
+    let (pr, nr, line) = pager_rects(aw, ah);
     gui_icon_button(c, pr, IconKind::Prev, if s.page > 0 { ButtonStyle::Plain } else { ButtonStyle::Disabled });
     gui_icon_button(c, nr, IconKind::Next, if s.page < pages - 1 { ButtonStyle::Plain } else { ButtonStyle::Disabled });
     if s.page > 0 {
@@ -2115,14 +2179,10 @@ fn draw_base(a: &mut App) {
     let mut pl = String::new();
     // TRANSLATORS: between the home's page buttons, as before (1320 px at 44 px).
     csnprintf!(&mut pl, 96, tr("Page %d of %d"), s.page + 1, pages);
-    font_draw_centered(
-        c,
-        FontFace::Bold,
-        ui_text_size(),
-        Rect::new(nr.x + nr.w, nav_y, (fab.x - gap - nr.x - nr.w).max(0), bw),
-        &pl,
-        0,
-    );
+    font_draw_centered(c, FontFace::Bold, ui_text_size(), line, &pl, 0);
+    drawn.fab = fab;
+    drawn.pager = [pr, nr, line];
+    s.home = drawn;
 }
 
 /// Where a sheet `h` px tall goes on a screen (Files' Delete question is drawn in the same place: browser.rs).
@@ -6750,6 +6810,26 @@ fn home_app(a: &mut App, app: i32) {
     }
 }
 
+/// The Apps page's foot buttons (What's new, About, Manage apps... and its page arrows): their height and top.
+fn apps_page_foot(ah: i32) -> (i32, i32) {
+    let bh = ui_px(110.0);
+    (bh, ah - margin() - bh)
+}
+/// The Apps page's launchers (#332): the home row's columns (app_row_slots) and as many rows as fit between the
+/// header and the foot buttons, a launcher's height (its square and its name's two lines) and the gap apart.
+fn apps_page_grid(aw: i32, ah: i32) -> (i32, i32) {
+    let top = top_h() + gui_gap();
+    let foot = apps_page_foot(ah).1 - gui_gap();
+    (app_row_slots(aw).0, ((foot - top + gui_gap()) / (apps_h() + gui_gap())).max(1))
+}
+/// The square of the Apps page's launcher in place `local` of a page (from 0, across then down).
+fn apps_page_square(aw: i32, ah: i32, local: i32) -> Rect {
+    let cols = apps_page_grid(aw, ah).0;
+    let (_, step, x0) = app_row_slots(aw);
+    let side = gui_app_square_side();
+    Rect::new(x0 + (local % cols) * step, top_h() + gui_gap() + (local / cols) * (apps_h() + gui_gap()), side, side)
+}
+
 /// The home's All apps page (2.3, issue #209): every launcher of the home's row, in its order
 /// (home_apps: Files, Package Store and Share, then the apps, most recently used first), over as
 /// many pages as it takes, then What's new and About as the two foot buttons. Exit is in Settings'
@@ -6760,26 +6840,22 @@ fn draw_apps(a: &mut App) {
     let App { screen: c, lib, .. } = a;
     let s = lib.as_deref_mut().unwrap();
     canvas_fill(c, Rect::new(0, 0, aw, ah), 255);
-    let (head, actions) = gui_header(c, aw, tr("Apps"), false, &[(IconKind::Close, H_APPS_CLOSE)]);
+    let (_, actions) = gui_header(c, aw, tr("Apps"), false, &[(IconKind::Close, H_APPS_CLOSE)]);
     hits_add(&mut s.hits, actions[0].0, H_APPS_CLOSE, 0);
     let m = margin();
     let gap = gui_gap();
-    let (ts, tw) = (apps_h(), app_tile_w());
-    let bh = ui_px(110.0);
-    let by = ah - m - bh;
-    let top = head.foot + gap;
-    let cols = (((aw - 2 * m + gap) / (tw + gap)).max(1)) as usize;
-    let rows = (((by - gap - top + gap) / (ts + gap)).max(1)) as usize;
-    let per = (cols * rows).max(1);
+    let (bh, by) = apps_page_foot(ah);
+    // The home row's even squares (#332), in its columns: the same squares, steps and names.
+    let (cols, rows) = apps_page_grid(aw, ah);
+    let per = (cols * rows).max(1) as usize;
     let pages = ((apps.len() + per - 1) / per).max(1) as i32;
     s.apps_page = s.apps_page.clamp(0, pages - 1);
     let first = s.apps_page as usize * per;
+    let step = app_row_slots(aw).1;
     for (i, app) in apps.iter().skip(first).take(per).enumerate() {
-        let col = (i % cols) as i32;
-        let row = (i / cols) as i32;
-        let r = Rect::new(m + col * (tw + gap), top + row * (ts + gap), tw, ts);
-        gui_app_tile(c, r, &app.icon, &app.label, false);
-        hits_add(&mut s.hits, r, H_APP, app.arg);
+        let sq = apps_page_square(aw, ah, i as i32);
+        gui_app_square(c, sq, step, &app.icon, &app.label, false);
+        hits_add(&mut s.hits, Rect::new(sq.x, sq.y, sq.w, apps_h()), H_APP, app.arg);
     }
     let bw = ui_px(380.0);
     let whats = Rect::new(m, by, bw, bh);
@@ -8533,10 +8609,6 @@ fn act(a: &mut App, h: &Hit) {
             a.running = false;
         }
         H_EXIT_NO => close_modal(a),
-        H_ABOUT => {
-            about_open(lib(a));
-            open_modal(a, Modal::About);
-        }
         H_ABOUT_CLOSE => close_modal(a),
         H_ABOUT_PREV | H_ABOUT_NEXT => {
             // (the reader's neighbour, when there is one: a greyed arrow does nothing)
@@ -11093,6 +11165,51 @@ fn card_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
     0
 }
 
+/// The library.home.* keys (docs/SIM.md, #332): what the home's last draw put where (HomeDrawn). `header` its parts left
+/// to right; `squares` the app row's squares (`x y w h`, joined by `, `), `step` the steps between neighbours, a jump
+/// over empty slots before Show All counted as the steps it spans (one number when they are all the same), `labels` the lines each square's name took; `marks` each mark's name, top row
+/// and height; `marks_in_hits` how many of the screen's hits cross a mark's rows (a hit is what a press's fast refresh
+/// sends); `foot_axis` the centre rows of the + button, the two page arrows and the page line; `fab` the + button's
+/// rect and its shape as ui_frame draws it (`cut` and the corners' cut in Gothic, `round` and the radius in Classic).
+fn home_probe(s: &LibraryState, aw: i32, key: &str) -> Option<String> {
+    let h = &s.home;
+    let rect = |r: Rect| format!("{} {} {} {}", r.x, r.y, r.w, r.h);
+    let centre = |r: Rect| r.y + r.h / 2;
+    Some(match key {
+        "header" => h.header.iter().map(|p| p.0).collect::<Vec<_>>().join(" "),
+        "squares" => h.squares.iter().map(|&r| rect(r)).collect::<Vec<_>>().join(", "),
+        "step" => {
+            // (a gap of empty slots before Show All counts as the steps it spans)
+            let diffs: Vec<i32> = h.squares.windows(2).map(|p| p[1].x - p[0].x).collect();
+            let least = diffs.iter().copied().min().unwrap_or(0).max(1);
+            let mut steps: Vec<i32> = diffs.iter().map(|&d| d / ((d + least / 2) / least).max(1)).collect();
+            steps.sort_unstable();
+            steps.dedup();
+            steps.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(" ")
+        }
+        "labels" => h.label_lines.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(" "),
+        "marks" => h.marks.iter().map(|m| format!("{} {} {}", m.0, m.1, m.2)).collect::<Vec<_>>().join(", "),
+        "marks_in_hits" => {
+            let bands: Vec<Rect> = h.marks.iter().map(|m| Rect::new(margin(), m.1 - 1, aw - 2 * margin(), m.2 + 2)).collect();
+            let n = s.hits.h.iter().filter(|hit| bands.iter().any(|&b| !rect_is_empty(rect_intersect(b, hit.r)))).count();
+            n.to_string()
+        }
+        "foot_axis" => format!(
+            "{} {} {} {}",
+            centre(h.fab),
+            centre(h.pager[0]),
+            centre(h.pager[1]),
+            centre(h.pager[2])
+        ),
+        "fab" => {
+            let r = gui_fab_radius();
+            let shape = if gui_gothic() { format!("cut {}", r + r / 4) } else { format!("round {r}") };
+            format!("{} {shape}", rect(h.fab))
+        }
+        _ => return None,
+    })
+}
+
 /// The headless runner's "library.*" keys, asked without the prefix (app_probe's contract);
 /// "templates.*" keys reach it whole (docs/SIM.md).
 // The script runner's "library.*" keys (app_probe forwards them without the prefix).
@@ -11516,7 +11633,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_EXIT_YES => "exit.yes", H_EXIT_NO => "exit.no",
                 H_MERGE_INTO => "merge.into", H_MERGE_BOTH => "merge.both",
                 H_FILES_OPEN => "files-card.open", H_FILES_HIDE => "files-card.hide",
-                H_BACK => "back", H_ABOUT => "about", H_ABOUT_CLOSE => "about.close",
+                H_BACK => "back", H_ABOUT_CLOSE => "about.close",
                 H_CARD => "card.", H_CARD_MORE => "card-menu.",
                 H_ADD => "add", H_ADD_ACTION => "add.", H_APPS => "apps", H_APPS_CLOSE => "apps.close",
                 H_APPS_PREV => "apps.prev", H_APPS_NEXT => "apps.next", H_APPS_MANAGE => "apps.manage",
@@ -11777,6 +11894,11 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
         }
     } else if let Some(rest) = key.strip_prefix("card.") {
         return card_probe(a, rest, out, cap);
+    } else if let Some(k) = key.strip_prefix("home.") {
+        // (after home.pending, above)
+        let aw = a.w;
+        let Some(text) = home_probe(lib(a), aw, k) else { return -1 };
+        csnprintf!(out, cap, "%s", &text);
     } else {
         return -1;
     }
@@ -12032,12 +12154,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    // The bat (#319): at the home's top level Grimoire's bat stands left of the title, in Gothic and Classic, as
-    // bat.rs draws it, 3 px a block; a tap on it or on the title opens What's new, as Apps > What's new does. In a
-    // folder it is not there: Back and the folder's name are, and nothing there opens What's new.
+    // The home's header (#332): no bat and nothing that opens What's new, at the top level as in a folder, in Gothic
+    // and Classic; Search, then Settings at the far right. Its band is a plain header's, pixel for pixel (Back and
+    // the folder's name in a folder). What's new opens from the Apps page's foot button, on this version's notes.
     #[test]
-    fn the_bat_is_on_the_homes_top_level_and_opens_whats_new() {
-        let root = std::env::temp_dir().join(format!("grimoire-home-bat-{}", std::process::id()));
+    fn the_home_has_no_bat_and_whats_new_opens_from_the_apps_page() {
+        let root = std::env::temp_dir().join(format!("grimoire-home-head-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(store_init(root.to_str().unwrap()), 0);
         let mut nb = NotebookInfo::default();
@@ -12047,23 +12169,11 @@ mod tests {
         settings_default(&mut a.settings);
         lib(&mut a).modal = Modal::None;
         reload(&mut a);
-        let k = home_bat_k();
-        assert_eq!(k, 3);
-        let bat = Rect::new(gui_margin(), gui_status_h() + (gui_head_h() - BAT_H * k) / 2, BAT_W * k, BAT_H * k);
-        let mut want = Canvas::default();
-        assert_eq!(canvas_init(&mut want, bat.w, bat.h), 0);
-        canvas_fill(&mut want, Rect::new(0, 0, bat.w, bat.h), 255);
-        draw_bat(&mut want, 0, 0, k);
-        let is_bat = |c: &Canvas| (0..bat.h).all(|y| {
-            let at = ((bat.y + y) * c.stride + bat.x) as usize;
-            c.px[at..at + bat.w as usize] == want.px[(y * want.stride) as usize..(y * want.stride + bat.w) as usize]
-        });
         let tap = |a: &mut App, x: i32, y: i32, t_ms: u32| {
             for type_ in [InType::TouchDown, InType::TouchUp] {
                 library_event_in(a, &InEvent { type_, x: x as f32, y: y as f32, t_ms, ..Default::default() });
             }
         };
-        let about = |a: &mut App| lib(a).hits.h.iter().find(|h| h.id == H_ABOUT).map(|h| h.r);
         // (Apps > What's new: the note it opens on)
         act(&mut a, &Hit { id: H_APPS, ..Default::default() });
         act(&mut a, &Hit { id: H_APP, arg: 6, ..Default::default() });
@@ -12072,43 +12182,201 @@ mod tests {
         close_modal(&mut a);
         for theme in [UiTheme::Gothic, UiTheme::Classic] {
             ui_set_theme(theme);
+            for (folder, title, header) in [("", "Library", "title search settings"), ("School", "School", "back title search settings")] {
+                lib(&mut a).cur_folder.set(folder);
+                reload(&mut a);
+                redraw(&mut a, RefreshMode::Ui);
+                assert_eq!(probe(&mut a, "home.header"), header, "{theme:?} {folder:?}");
+                let ids = |a: &mut App| {
+                    let mut v: Vec<(i32, i32)> = lib(a).hits.h.iter().filter(|h| h.r.y < top_h()).map(|h| (h.r.x, h.id)).collect();
+                    v.sort_unstable();
+                    v.into_iter().map(|p| p.1).collect::<Vec<i32>>()
+                };
+                let want: &[i32] = if folder.is_empty() { &[H_SEARCH, H_SETTINGS] } else { &[H_BACK, H_SEARCH, H_SETTINGS] };
+                assert_eq!(ids(&mut a), want, "{theme:?} {folder:?}: the header's controls, left to right");
+                let search = lib(&mut a).hits.h.iter().find(|h| h.id == H_SEARCH).unwrap().r;
+                let settings = lib(&mut a).hits.h.iter().find(|h| h.id == H_SETTINGS).unwrap().r;
+                assert_eq!(settings.x + settings.w, a.w - gui_margin(), "{theme:?}: Settings at the far right");
+                assert!(search.x + search.w < settings.x, "{theme:?}: Search before Settings");
+                // The title (and where the bat stood, left of it) is no control: a tap there opens nothing.
+                let title_y = gui_status_h() + gui_head_h() / 2;
+                for x in [gui_margin() + ui_px(60.0), gui_margin() + ui_px(400.0)] {
+                    if !folder.is_empty() && x < gui_margin() + gui_top_button_h() {
+                        continue;
+                    }
+                    assert_eq!(probe(&mut a, &format!("ui_at.{x}.{title_y}")), "", "{theme:?} {folder:?}");
+                    tap(&mut a, x, title_y, 1000);
+                    assert_eq!(lib(&mut a).modal, Modal::None, "{theme:?} {folder:?}: a tap on the title opens nothing");
+                }
+                // The header's band is a plain header's: nothing drawn beside the title.
+                let (w, h) = (a.w, gui_status_h() + gui_head_h());
+                let mut plain = Canvas::default();
+                assert_eq!(canvas_init(&mut plain, w, h), 0);
+                canvas_fill(&mut plain, Rect::new(0, 0, w, h), 255);
+                gui_header(&mut plain, w, title, !folder.is_empty(), &[(IconKind::Search, H_SEARCH), (IconKind::Gear, H_SETTINGS)]);
+                let row = |c: &Canvas, y: i32| (y * c.stride) as usize..(y * c.stride + w) as usize;
+                let same = (gui_status_h()..gui_status_h() + gui_head_h()).all(|y| a.screen.px[row(&a.screen, y)] == plain.px[row(&plain, y)]);
+                assert!(same, "{theme:?} {folder:?}: the home's header is a plain one");
+                canvas_free(&mut plain);
+            }
+            // What's new opens from the Apps page's foot button, on the note it always opened on.
             lib(&mut a).cur_folder.clear();
             reload(&mut a);
-            redraw(&mut a, RefreshMode::Ui);
-            assert!(is_bat(&a.screen), "{theme:?}: the bat left of the title");
-            let r = about(&mut a).unwrap_or_else(|| panic!("{theme:?}: no hit on the bat and the title"));
-            assert!(rect_contains_rect(r, bat), "{theme:?}: {r:?}");
-            let title_x = bat.x + bat.w + ui_px(34.0);
-            assert!(r.x + r.w > title_x + ui_px(200.0), "{theme:?}: the title is in it: {r:?}");
-            for (i, (x, y)) in [(bat.x + bat.w / 2, bat.y + bat.h / 2), (title_x + ui_px(100.0), r.y + r.h / 2)].into_iter().enumerate() {
-                assert_eq!(probe(&mut a, &format!("ui_at.{x}.{y}")), "about", "{theme:?}");
-                tap(&mut a, x, y, 1000 + 100 * i as u32);
-                assert_eq!(lib(&mut a).modal, Modal::About, "{theme:?}: tap {i} opens What's new");
-                assert_eq!(lib(&mut a).about_note, note, "{theme:?}: on the note Apps > What's new opens on");
-                close_modal(&mut a);
-                assert_eq!(lib(&mut a).modal, Modal::None);
-            }
-            // In a folder: Back and the folder's name, no bat and nothing that opens What's new.
-            lib(&mut a).cur_folder.set("School");
-            reload(&mut a);
-            redraw(&mut a, RefreshMode::Ui);
-            assert!(about(&mut a).is_none(), "{theme:?}: no What's new in a folder");
-            assert!(lib(&mut a).hits.h.iter().any(|h| h.id == H_BACK), "{theme:?}: Back");
-            assert!(!is_bat(&a.screen), "{theme:?}: no bat in a folder");
-            // (nowhere in the header: its band is the plain header's, Back and then the folder's name where
-            // gui_header puts it)
-            let (w, h) = (a.w, gui_status_h() + gui_head_h());
-            let mut plain = Canvas::default();
-            assert_eq!(canvas_init(&mut plain, w, h), 0);
-            canvas_fill(&mut plain, Rect::new(0, 0, w, h), 255);
-            gui_header(&mut plain, w, "School", true, &[(IconKind::Gear, H_SETTINGS), (IconKind::Search, H_SEARCH)]);
-            let row = |c: &Canvas, y: i32| (y * c.stride) as usize..(y * c.stride + w) as usize;
-            let same = (gui_status_h()..gui_status_h() + gui_head_h()).all(|y| a.screen.px[row(&a.screen, y)] == plain.px[row(&plain, y)]);
-            assert!(same, "{theme:?}: a folder's header is a plain one");
-            canvas_free(&mut plain);
+            act(&mut a, &Hit { id: H_APPS, ..Default::default() });
+            let whats = lib(&mut a).hits.h.iter().find(|h| h.id == H_APP && h.arg == 6).map(|h| h.r).expect("What's new on Apps");
+            tap(&mut a, whats.x + whats.w / 2, whats.y + whats.h / 2, 2000);
+            assert_eq!(lib(&mut a).modal, Modal::About, "{theme:?}: Apps > What's new");
+            assert_eq!(lib(&mut a).about_note, note, "{theme:?}");
+            close_modal(&mut a);
         }
         ui_set_theme(UiTheme::Gothic);
-        canvas_free(&mut want);
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The home row's even squares (#332), for 1 to 12 apps, upright and sideways: as many apps as fit before Show
+    // All, every square the same size and every step the same, the paper between two at least 40 px, the first at
+    // the left margin and Show All, always the last, at the right margin (within the pixels whole steps leave), and
+    // the names' boxes side by side, never over one another. The Apps page takes the same columns.
+    #[test]
+    fn the_home_rows_squares_are_even_for_one_to_twelve_apps() {
+        let mut a = pen_record_app();
+        let side = gui_app_square_side();
+        for (aw, ah, slots) in [(1860, 2480, 8), (2480, 1860, 11)] {
+            let (n, step, x0) = app_row_slots(aw);
+            assert_eq!(n, slots, "{aw}");
+            assert!(step - side >= ui_px(40.0), "{aw}: {step}");
+            let last_end = x0 + (n - 1) * step + side;
+            assert!(x0 >= margin() && x0 - margin() < n, "{aw}: the first square at the left margin: {x0}");
+            assert!(last_end <= aw - margin() && aw - margin() - last_end < n, "{aw}: the last at the right margin: {last_end}");
+            assert!((x0 - margin() - (aw - margin() - last_end)).abs() <= 1, "{aw}: centred");
+            for apps in 1..=12usize {
+                let sq = home_row_squares(aw, apps);
+                assert_eq!(sq.len(), apps.min(slots as usize - 1) + 1, "{aw} {apps}");
+                assert!(sq.iter().all(|r| r.w == side && r.h == side && r.y == apps_top()), "{aw} {apps}: one size, one row");
+                assert!(sq.windows(2).take(sq.len().saturating_sub(2)).all(|p| p[1].x - p[0].x == step), "{aw} {apps}: one step");
+                assert_eq!(sq[0].x, x0, "{aw} {apps}");
+                assert_eq!(sq.last().unwrap().x + side, last_end, "{aw} {apps}: Show All in the last slot");
+                if apps + 1 >= slots as usize {
+                    assert!(sq.windows(2).all(|p| p[1].x - p[0].x == step), "{aw} {apps}: a full row has one step throughout");
+                }
+            }
+            // (the names' boxes: each square's step, centred on it, so two never overlap)
+            let boxes: Vec<(i32, i32)> = home_row_squares(aw, 12).iter().map(|r| (r.x + (side - step) / 2, r.x + (side - step) / 2 + step)).collect();
+            assert!(boxes.windows(2).all(|p| p[0].1 <= p[1].0), "{aw}: {boxes:?}");
+            // The Apps page: the row's columns, the same squares.
+            a.w = aw;
+            a.h = ah;
+            let (cols, rows) = apps_page_grid(aw, ah);
+            assert_eq!(cols, slots);
+            assert!(rows >= 2, "{aw}: {rows}");
+            for i in 0..cols {
+                let r = apps_page_square(aw, ah, i);
+                assert_eq!((r.x, r.w, r.h), (x0 + i * step, side, side), "{aw} {i}");
+            }
+            let below = apps_page_square(aw, ah, cols);
+            assert_eq!((below.x, below.y - apps_page_square(aw, ah, 0).y), (x0, apps_h() + gui_gap()), "{aw}");
+            let foot = apps_page_foot(ah).1;
+            assert!(apps_page_square(aw, ah, cols * rows - 1).y + apps_h() + gui_gap() <= foot, "{aw}: above the foot buttons");
+        }
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
+    }
+
+    // The home's bands at every status bar size, upright and sideways, in both themes (#332): the title rule has as
+    // much paper over it as under it, the foot rule leaves 40 px of paper over the + button, every mark lies outside
+    // every hit (a press's fast refresh sends a hit's rect, black and white), the cards end above the foot rule, and
+    // upright the cards are two rows at every size.
+    #[test]
+    fn the_homes_marks_stand_between_its_parts_at_every_status_bar_size() {
+        let root = std::env::temp_dir().join(format!("grimoire-home-marks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        for i in 0..12 {
+            let mut nb = NotebookInfo::default();
+            assert_eq!(store_create(&format!("N{i:02}"), "", PAPER_BLANK, &mut nb), 0);
+        }
+        let mut a = pen_record_app();
+        a.scr = ScreenId::Library;
+        settings_default(&mut a.settings);
+        lib(&mut a).modal = Modal::None;
+        reload(&mut a);
+        for size in 0..crate::status::STATUS_SIZES {
+            crate::globalui::gui_status_style(size, false);
+            for theme in [UiTheme::Gothic, UiTheme::Classic] {
+                ui_set_theme(theme);
+                for (w, h) in [(1860, 2480), (2480, 1860), (1986, 2648), (2648, 1986)] {
+                    a.w = w;
+                    a.h = h;
+                    canvas_free(&mut a.screen);
+                    assert_eq!(canvas_init(&mut a.screen, w, h), 0);
+                    redraw(&mut a, RefreshMode::Ui);
+                    let at = format!("{theme:?} size {size} {w}x{h}");
+                    let buttons_end = gui_status_h() + (gui_head_h() + gui_top_button_h()) / 2;
+                    let (over, under) = (title_rule_y() - buttons_end, apps_top() - title_rule_y() - gui_title_rule_h());
+                    assert!((over - under).abs() <= 1, "{at}: the title rule {over} {under}");
+                    assert_eq!(over.min(under), if theme == UiTheme::Gothic { ui_px(32.0) } else { ui_px(36.0) }, "{at}");
+                    let fab = fab_rect(w, h);
+                    assert_eq!(fab.y - (foot_rule_y(w, h) + gui_title_rule_h()), ui_px(40.0), "{at}: 40 px over the + button");
+                    assert_eq!(probe(&mut a, "home.marks_in_hits"), "0", "{at}: {}", probe(&mut a, "home.marks"));
+                    let marks = lib(&mut a).home.marks.clone();
+                    assert_eq!(marks.iter().map(|m| m.0).collect::<Vec<_>>(), ["title", "break", "light", "foot"], "{at}");
+                    assert!(marks.windows(2).all(|p| p[0].1 + p[0].2 < p[1].1), "{at}: top to bottom: {marks:?}");
+                    let (cols, rows, _, _) = grid_geom(w, h);
+                    let last = card_rect(w, h, cols * rows - 1);
+                    assert!(last.y + last.h + gui_gap() <= foot_rule_y(w, h), "{at}: the cards end above the foot rule: {last:?}");
+                    assert!(hair_rule_y() + gui_hair_rule_h() < grid_top() && filters_top() + filters_h() < hair_rule_y(), "{at}");
+                    if h > w {
+                        assert_eq!(rows, 2, "{at}: two rows of cards upright");
+                    }
+                }
+            }
+        }
+        crate::globalui::gui_status_style(1, false);
+        ui_set_theme(UiTheme::Gothic);
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The page arrows and "Page N of M" stand on the + button's centre line (#332; they were 27 px under it), upright
+    // and sideways at every status bar size, in the layout and in what the home drew, whose hits are those rects.
+    #[test]
+    fn the_page_arrows_are_on_the_plus_buttons_centre_line() {
+        let root = std::env::temp_dir().join(format!("grimoire-home-pager-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        for i in 0..12 {
+            let mut nb = NotebookInfo::default();
+            assert_eq!(store_create(&format!("N{i:02}"), "", PAPER_BLANK, &mut nb), 0);
+        }
+        let mut a = pen_record_app();
+        a.scr = ScreenId::Library;
+        settings_default(&mut a.settings);
+        lib(&mut a).modal = Modal::None;
+        reload(&mut a);
+        for size in 0..crate::status::STATUS_SIZES {
+            crate::globalui::gui_status_style(size, false);
+            for (w, h) in [(1860, 2480), (2480, 1860)] {
+                a.w = w;
+                a.h = h;
+                canvas_free(&mut a.screen);
+                assert_eq!(canvas_init(&mut a.screen, w, h), 0);
+                redraw(&mut a, RefreshMode::Ui);
+                let fab = fab_rect(w, h);
+                let axis = fab.y + fab.h / 2;
+                let (prev, next, line) = pager_rects(w, h);
+                for r in [prev, next, line] {
+                    assert_eq!(r.y + r.h / 2, axis, "size {size} {w}x{h}: {r:?} on {fab:?}'s centre line");
+                }
+                assert_eq!(probe(&mut a, "home.foot_axis"), format!("{axis} {axis} {axis} {axis}"), "size {size} {w}x{h}");
+                let next_hit = lib(&mut a).hits.h.iter().find(|h| h.id == H_NEXT).map(|h| h.r);
+                assert_eq!(next_hit, Some(next), "size {size} {w}x{h}: the arrow's hit is where it is drawn");
+                assert!(prev.x + prev.w < next.x && next.x + next.w <= line.x && line.x + line.w < fab.x, "size {size} {w}x{h}");
+            }
+        }
+        crate::globalui::gui_status_style(1, false);
         library_free(&mut a);
         canvas_free(&mut a.screen);
         let _ = std::fs::remove_dir_all(&root);

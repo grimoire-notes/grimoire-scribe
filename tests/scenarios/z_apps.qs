@@ -30,11 +30,12 @@ expect screen is library
 tap library apps
 wait 200
 # The Apps page lists the home row's launchers in its order (#319): Files, Package Store and Share
-# first, then the app, not used yet; Settings is not one of them (the header's gear opens it).
-expect library.ui_at.170.352 is app.files
-expect library.ui_at.434.352 is app.store
-expect library.ui_at.698.352 is app.share
-expect library.ui_at.962.352 is app.com.example.fixture
+# first, then the app, not used yet; Settings is not one of them (the header's gear opens it). Each is
+# tapped at its square's middle, in the home row's columns (#332).
+expect library.ui_at.139.352 is app.files
+expect library.ui_at.365.352 is app.store
+expect library.ui_at.591.352 is app.share
+expect library.ui_at.817.352 is app.com.example.fixture
 expect library.ui_has.app.settings is 0
 shot 04-all-apps
 # The All apps page's Manage apps... opens the app package manager over the page, as the widget
@@ -112,10 +113,10 @@ shot 07-app-system-home
 # The home row keeps Files, Package Store and Share first, in that order (#319), and the app used
 # comes after them. Settings has no launcher: the header's gear opens it.
 expect library.recent-apps is pkg:com.example.fixture,store,files,share,settings
-expect library.ui_at.170.352 is app.files
-expect library.ui_at.434.352 is app.store
-expect library.ui_at.698.352 is app.share
-expect library.ui_at.962.352 is app.com.example.fixture
+expect library.ui_at.139.352 is app.files
+expect library.ui_at.365.352 is app.store
+expect library.ui_at.591.352 is app.share
+expect library.ui_at.817.352 is app.com.example.fixture
 expect library.ui_has.app.settings is 0
 # The gear still records Settings in recent_apps, as before, so an older version reads the line as it
 # wrote it; the row does not move for it.
@@ -128,9 +129,9 @@ shot 08-settings-after-app
 tap library done
 wait 300
 expect library.sheet is none
-expect library.ui_at.170.352 is app.files
-expect library.ui_at.434.352 is app.store
-expect library.ui_at.698.352 is app.share
-expect library.ui_at.962.352 is app.com.example.fixture
+expect library.ui_at.139.352 is app.files
+expect library.ui_at.365.352 is app.store
+expect library.ui_at.591.352 is app.share
+expect library.ui_at.817.352 is app.com.example.fixture
 shot 09-home-order
 quit
