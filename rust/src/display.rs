@@ -379,7 +379,8 @@ pub enum SettleWhole {
     RefreshFailed = 1,
     /// A colour panel, whose live frames are not waited for and may be read half done.
     ColourPanel = 2,
-    /// No panel open, or no record of it kept.
+    /// No panel open, no record of it kept, or one that cannot hold every row (a framebuffer mapping that does not
+    /// cover the panel).
     NoRecord = 3,
     /// A row of the rect would lie outside the record.
     RowRange = 4,

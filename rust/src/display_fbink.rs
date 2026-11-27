@@ -1506,11 +1506,11 @@ fn settle_stamp(s: &State) -> SettleStamp {
 
 /// display.rs display_settle_area. The record is g_shown, the RAM shadow of the bytes written to the framebuffer (each
 /// with the refresh that sent it), compared with the screen row by row as copy_row writes the row (fbpack_level_span).
-/// r whole while the record may not be what the panel shows: no panel, no frame known (a refresh failed, the screen
-/// turned or inverted, an ownership change: until a whole grayscale frame goes out), or a colour panel, whose live
-/// frames are not waited for and may be read half done. An empty answer leaves pen mode, as the grayscale refresh
-/// would have (the status bar waits for it), and the live area the answer covers is one no longer: its pixels are the
-/// screen's within a level, inside the guard's tolerance.
+/// r whole while the record may not be what the panel shows: no panel, a framebuffer mapping that does not cover the
+/// panel, no frame known (a refresh failed, the screen turned or inverted, an ownership change: until a whole
+/// grayscale frame goes out), or a colour panel, whose live frames are not waited for and may be read half done. An
+/// empty answer leaves pen mode, as the grayscale refresh would have (the status bar waits for it), and the live area
+/// the answer covers is one no longer: its pixels are the screen's within a level, inside the guard's tolerance.
 ///
 /// The rect is everything written since the last pause, most of the screen after a long burst, so the scan pumps
 /// input as a full-screen copy does (copy_rect): strips of 64 rows, each under one state borrow that is released
@@ -1522,7 +1522,10 @@ fn settle_stamp(s: &State) -> SettleStamp {
 /// beside its refresh counts; only a reason's first whole answer of the session writes a line here (settle_whole).
 pub fn display_settle_area(screen: &Canvas, r: Rect) -> Rect {
     let Some((c, stamp)) = with(|s| {
-        let why = if s.g_fd < 0 || s.g_shown.px.is_empty() {
+        // (g_readback: the mapping covers the panel, set once as the display opens. Where it does not, a copy ends at
+        // the first row that would lie outside it (copy_row) and the shadow keeps older bytes from there on, while a
+        // whole present still makes the frame known.)
+        let why = if s.g_fd < 0 || s.g_shown.px.is_empty() || !s.g_readback {
             SettleWhole::NoRecord
         } else if s.g_st.has_color_panel {
             SettleWhole::ColourPanel
