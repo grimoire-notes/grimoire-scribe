@@ -1,11 +1,12 @@
 # settings: status_mode=1
 # settings: status_on=1
+# settings: status_in_notebooks=1
 # env: TZ=UTC GRIMOIRE_SIM_NO_LIGHT=1
 # rust-only
-# Quick settings on a platform without a front light (light_available() false, docs/SIM.md): the pull
-# from the top still opens the panel, with Settings and Rotation lock, and none of the light's controls
-# (no Brightness or Warmth row, no Auto brightness). The panel is only as tall as what it holds, and
-# nothing reads or sets the light.
+# Quick settings on a platform without a front light (light_available() false, docs/SIM.md): its
+# controls are mostly the light's, so there is no panel. The pull from the top opens nothing, the
+# screen under it does not see it, and nothing reads or sets the light. In a notebook a tap in the
+# top strip still hides and shows the status bar.
 wait 3800
 clock 1700000000
 battery 87
@@ -13,44 +14,62 @@ wait 100
 expect screen is library
 expect status.visible is 1
 expect quick is 0
+expect light.intensity is 12
+# On the home screen: the pull from the bar opens nothing, however far it goes.
 touch down 930 40
 touch move 930 120
 wait 150
-expect quick is 1
-touch up 930 120
+expect quick is 0
+touch move 930 600
 wait 150
-expect quick is 1
-# The title, Close and two buttons: the panel ends under the buttons (with a light it is 556 tall).
-expect quick.rect is 0 78 1860 284
-expect quick.brightness is -1
-expect quick.warmth is -1
-expect quick.auto is -1
-shot 00-quick-without-light
-# Rotation lock turns on and off from here, as with a light.
-expect settings.rotation_lock is 0
-tap panel quick.rotate
+expect quick is 0
+touch up 930 600
 wait 150
-expect settings.rotation_lock not 0
-tap panel quick.rotate
-wait 150
-expect settings.rotation_lock is 0
-expect quick is 1
-# Where the Brightness row would be is outside the panel now: a tap there closes it, and the light
-# is not touched (the sim keeps its level, 12, behind the switch).
+expect quick is 0
+expect screen is library
+expect library.sheet is none
 expect light.intensity is 12
-tap 930 420
+shot 00-home-after-pull
+# A tap on the bar on the home screen leaves it shown, as with a light.
+tap 930 40
+wait 200
+expect status.visible is 1
+expect quick is 0
+# Into a notebook: the pull opens nothing over the page and draws nothing on it.
+tap library add
+wait 100
+tap library add.new-notebook
+wait 100
+tap 510 460
+tap 1564 2254
+wait 300
+expect screen is editor
+expect status.visible is 1
+expect editor.strokes is 0
+touch down 930 40
+touch move 930 120
+wait 150
+expect quick is 0
+touch move 930 600
+wait 150
+touch up 930 600
 wait 200
 expect quick is 0
+expect screen is editor
+expect editor.modal is none
+expect editor.strokes is 0
+expect status.visible is 1
 expect light.intensity is 12
-# The Settings button closes the panel and opens Settings.
-touch down 930 40
-touch move 930 140
-wait 150
-expect quick is 1
-touch up 930 140
-wait 100
-expect quick.rect is 0 78 1860 284
-tap panel quick.settings
+shot 01-notebook-after-pull
+# A tap in the top strip still hides the notebook's bar, and another brings it back.
+tap 930 40
 wait 300
+expect settings.status_on is 0
+expect status.visible is 0
 expect quick is 0
-expect library.sheet is settings
+tap 930 40
+wait 300
+expect settings.status_on is 1
+expect status.visible is 1
+expect quick is 0
+quit

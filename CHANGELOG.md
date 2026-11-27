@@ -119,8 +119,9 @@
   drawn to open quickly is drawn once more, so it shows the new lines, and so are a notebook's previews in the
   Pages view as the view opens and its card in the Library as the notebook is next opened and left.
 - **Quick settings without a front light** (#326). Where the device has no front light, the pull from the top
-  opens a shorter panel with Settings and Rotation lock alone: no Brightness or Warmth slider and no Auto
-  brightness, which had nothing to set there.
+  opens nothing: the panel's controls are mostly the light's, which had nothing to set there. Settings is still
+  on the home screen, Rotation lock is still an action for a button or gesture, and in a notebook a tap at the
+  top still hides or shows the status bar.
 - Housekeeping: the Buttons and Gestures lists offer an action only where it acts (#282). On a platform kept in
   another crate whose system owns sleep (rust/PORTING.md), the Sleep settings page has one switch, Keep the screen
   on while Grimoire is open, the sleep screen is the page, and Sleep now, Sleep screen and Sleep after are not
