@@ -135,9 +135,10 @@ turns = ''.join('rotate %d\nwait %d\n' % ((i + 1) % 2, TURN_MS) for i in range(T
 with open(os.path.join(d, 'card.qs'), 'w') as f:
     # paired: the pairing itself takes the card away and brings the Library back (share.rs, share_tick), so
     # nothing is tapped (the Share page's X, where a tap on its name lands, is the Library's Exit); then the
-    # turns, the last screen's shot, and a hold
-    f.write(script + 'hold %s/paired\nwait 500\nhold %s/go\n%swait 500\nshot final\nhold %s/never\n'
-            % (d, d, turns, d))
+    # turns, the last screen's shot, and a hold. The status bar's clock is held still (`clock`): the Library
+    # shows the time, and a minute that changed after the shot was a screen the shot does not show.
+    f.write('clock 1700000000\n' + script
+            + 'hold %s/paired\nwait 500\nhold %s/go\n%swait 500\nshot final\nhold %s/never\n' % (d, d, turns, d))
 fifo_main, fifo_viewer = os.path.join(d, 'raw-main'), os.path.join(d, 'raw-viewer')
 os.mkfifo(fifo_main)
 os.mkfifo(fifo_viewer)
