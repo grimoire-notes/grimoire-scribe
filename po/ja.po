@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Grimoire 2.1.0-beta.1\n"
 "Report-Msgid-Bugs-To: https://github.com/ganten1998/grimoire-scribe/issues\n"
-"POT-Creation-Date: 2026-11-27 00:18-0600\n"
+"POT-Creation-Date: 2026-11-26 15:53-0600\n"
 "PO-Revision-Date: 2026-11-10 00:00+0000\n"
 "Last-Translator: nebuff\n"
 "Language-Team: Japanese\n"
@@ -3145,12 +3145,10 @@ msgstr "画像..."
 msgid "Folder picture"
 msgstr "フォルダーの画像"
 
-#. TRANSLATORS: the folder picture sheet, with no picture there: where its pictures are copied in. %s is the
-#. folder on the Kindle's storage, grimoire/photos.
+#. TRANSLATORS: the folder picture sheet, with no picture there: where its pictures are copied in.
 #: rust/src/library.rs
-#, c-format
-msgid "No pictures in %s."
-msgstr "%s に画像がありません。"
+msgid "No pictures in grimoire/photos."
+msgstr "grimoire/photos に画像がありません。"
 
 #. TRANSLATORS: the Templates sheet's button back to the papers, under its icon (348 px at
 #. 34 px).
