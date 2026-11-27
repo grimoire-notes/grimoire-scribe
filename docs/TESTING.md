@@ -227,10 +227,12 @@ is drawn, as a notebook opens on it and as the page is turned to; never for a li
 z_previews_4_picker (the destination picker does the same), z_previews_5_turn (a screen turned to while a
 batch runs gets its previews after it), z_previews_6_beside (with the cores, beside it), z_previews_7_once
 (Pages opened over the idle warm-up of its own screen waits on it: no second process draws the dense page
-again) and z_previews_8_moved (a page deleted while a batch runs, the view opened again: the page moved into
-the screen is asked for, not left with its number). The dense pages make the job slow with
-GRIMOIRE_SIM_DENSE_DRAW_MS, as a Kindle draws them; tests/pages_cache_check.py still
-holds that page turns and saves write no preview. Each batch logs `previews: nb=... pages=... cached=...
+again), z_previews_8_moved (a page deleted while a batch runs, the view opened again: the page moved into
+the screen is asked for, not left with its number) and z_previews_10_renderer (a preview an earlier version
+drew, current for its page file, is drawn again after the update, as its stamp names no renderer: 2.3.0,
+#314; the ghost fixture's scenarios keep theirs with GRIMOIRE_SIM_PREVIEWS_CURRENT=1, docs/SIM.md). The dense
+pages make the job slow with GRIMOIRE_SIM_DENSE_DRAW_MS, as a Kindle draws them; tests/pages_cache_check.py
+still holds that page turns and saves write no preview. Each batch logs `previews: nb=... pages=... cached=...
 kept=... drawn=... keep=... ms=... first=... slow=... cores=...` in grimoire.log.
 
 On the Kindle, in a notebook with dense pages (2.0-b1 DEMO: pages 1, 7, 8 and 12 are 0.6 to 2.6 MB): open
@@ -3669,6 +3671,27 @@ They check the headless runner's panel; on the Kindle, check what the screen sho
     notebook, Select, Paste: the line is scaled down to fit the page, and on the screen it looks as it did in the
     notebook it came from, its lines as thick and its gaps as wide (before 2.2 they kept their width in mm and came
     out a little thicker and wider). Undo.
+
+## 2.2.0
+
+The first release of 2.2, from `release/2.2.0`: cut from `main` at `75ec0993` on 2026-11-23, with the work merged
+into it since (#240, #244, #246, #81, #258, #256, #269, #270), everything in CHANGELOG's 2.2.0 section. Automated:
+the full gate on the release commit with the pinned toolchain. On 2026-11-25 the owner chose to release it ("let's
+fix ourselves and ship"); the published Calculator widget, whose manifest declared no capabilities and which 2.2
+refuses at install, was fixed the same day in the Package Store's own repository (Calculator 1.2.1), not in
+Grimoire. The crate-age rule (two weeks at the tag) was waived for this release by the owner on 2026-11-25:
+wasmi, wasmi_collections, wasmi_core and wasmi_ir 2.0.3 (2026-11-24) are younger: 2.0.0 to 2.0.2 were yanked that
+day and the deny check refused them. All four are two weeks old on 2026-12-08. Builds of `release/2.2.0`
+ran on the owner's Scribe (firmware 5.20.1.0.2) before the bump, each installed after a backup with the notebooks
+unchanged and KOReader left alone: `b6d78f46` (build `76611b5d45cb`) and `024f5388` (build `c5a8692967d6`, the
+release's code before this commit), both on 2026-11-25; the widget fetcher's and the app host's curl options were
+accepted by that Scribe's curl (8.15.0) the same day. This release's bundle (build `4d611cc2edf9`, from `b3f9cc22`,
+its binary byte for byte the one the gate tested) was installed on the owner's Scribe on 2026-11-25, after a
+backup, with the notebooks unchanged and KOReader left alone. The owner was asked to look at What's new on the
+first start, the notebooks and settings after the update, a template preview, a PDF import and Files' Covers view,
+a font of their own being checked, KOReader's Open this book in Grimoire after the plugin's update, and a widget
+from the Package Store. The owner's verdict, 2026-11-25: "this is good." The device checks listed in #100 were not
+reported one by one.
 
 ## 2.3, packages' pictures decoded by the worker (issue #236): device checks
 

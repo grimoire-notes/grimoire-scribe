@@ -5,7 +5,11 @@
 // later version: if one of these fails, old pages changed. Never re-record the table to make a
 // change pass; fix the change. (1.2.0's vertical highlighter tip drew old strokes with the new tip
 // until 2.0.0-beta.5 recorded the tip on each stroke, issue #5: old strokes match this table
-// again, and the vertical tip's own renders are listed separately below.)
+// again, and the vertical tip's own renders are listed separately below. 2.3.0 draws the ruled
+// papers, Cornell, Graph paper and Dot grid darker, on the owner's ask, issue #314: their renders
+// are listed separately below too, and every render of the ink alone still matches this table.
+// The papers that came after 1.0.0-beta, Cross grid, Isometric, Hexagon and Seyes rule, are
+// recorded from 2.3.0 in a table of their own below: Seyes's render is 2.2.0's, unchanged.)
 //
 // GRIMOIRE_GOLDEN_PRINT=1 prints the table instead of checking it (that is how it was made).
 // The values hold for the host build this suite runs on (clang on arm64 macOS): another
@@ -170,6 +174,67 @@ const K_VERTICAL_TIP: [(&str, u32); 6] = [
     ("grand staff, highlighter, vertical tip, paper", 0x0531cc67),
 ];
 
+// The papers 2.3.0 draws darker (issue #314; the owner, 2026-11-26: "can we darken all the layouts except
+// seyes?"): Narrow, Medium and Wide rule with and without margin, Cornell, Dot grid and Graph paper (Cross
+// grid, Isometric and Hexagon came after 1.0.0-beta and have no render here), and so the renders of ink on
+// Medium rule as a whole and of Medium rule alone. These replace the table's values for these names only:
+// the ink alone (", ink"), the music papers, Blank and the page files are still the table's.
+const K_DARKER_PAPERS: [(&str, u32); 34] = [
+    ("paper 0", 0x796efd0f),
+    ("paper 1", 0xb72d0f4f),
+    ("paper 2", 0x2a39dbfe),
+    ("paper 5", 0x45c9e336),
+    ("paper 6", 0xc6039fa5),
+    ("paper 7", 0x3fa9a116),
+    ("paper 10", 0x6acef115),
+    ("paper 11", 0x4f0073dd),
+    ("paper 12", 0x1fbc57e1),
+    ("medium rule, pencil", 0x87e6fc8f),
+    ("medium rule, pencil, paper", 0xb72d0f4f),
+    ("medium rule, mechanical pencil", 0xc2e1145f),
+    ("medium rule, mechanical pencil, paper", 0xb72d0f4f),
+    ("medium rule, ballpoint", 0x163d1d28),
+    ("medium rule, ballpoint, paper", 0xb72d0f4f),
+    ("medium rule, eraser", 0xb72d0f4f),
+    ("medium rule, eraser, paper", 0xb72d0f4f),
+    ("medium rule, highlighter", 0x35389423),
+    ("medium rule, highlighter, paper", 0xb72d0f4f),
+    ("medium rule, highlighter, vertical tip", 0x7ab8ce7a),
+    ("medium rule, highlighter, vertical tip, paper", 0xb72d0f4f),
+    ("medium rule, fountain pen", 0xfea47a49),
+    ("medium rule, fountain pen, paper", 0xb72d0f4f),
+    ("medium rule, fineliner", 0xfaae563f),
+    ("medium rule, fineliner, paper", 0xb72d0f4f),
+    ("medium rule, marker", 0xab568557),
+    ("medium rule, marker, paper", 0xb72d0f4f),
+    ("medium rule, charcoal", 0x4a05a78c),
+    ("medium rule, charcoal, paper", 0xb72d0f4f),
+    ("medium rule, calligraphy pen", 0x6b2b9d00),
+    ("medium rule, calligraphy pen, paper", 0xb72d0f4f),
+    ("medium rule, every tool", 0xb85616e9),
+    ("medium rule, every tool, paper", 0xb72d0f4f),
+    ("medium rule, every tool, read back", 0xca81475f),
+];
+
+// The papers that came after 1.0.0-beta (PAPER_RETICLE..PAPER_SEYES), recorded from 2.3.0 on 2026-11-26 (issue
+// #314) at Seyes's panel scale 1 (paper_set_panel_ppi: the simulator's, the tests' and the host exporter's), so
+// that they hold from then on as the papers above do: Seyes rule as the owner tuned it in 2.0.0-beta.2 and 2.1.0
+// (its render here is 2.2.0's, byte for byte), Cross grid, Isometric and Hexagon as #314 drew them darker.
+const K_LATER_PAPERS: [(&str, u32); 4] = [
+    ("paper 17", 0x585397f1),
+    ("paper 18", 0x936f8509),
+    ("paper 19", 0x58706660),
+    ("paper 20", 0x8746ab47),
+];
+
+// The renderer's whole fingerprint (page.rs page_render_fingerprint: the ink page, then every paper on a page of its
+// own), with the fonts loaded and Seyes at scale 1, recorded from 2.3.0 on 2026-11-26 (issue #314). Every kept
+// drawing, Pages preview and Library card is stamped with it, so a fingerprint that changed though nothing draws
+// otherwise (one that took in the version, say) would have every one of them drawn again at each update, and only a
+// recorded value shows it. Recorded again only with a change that draws ink or a paper otherwise, which draws them
+// all again once.
+const K_RENDER_FINGERPRINT: u64 = 0x3583_e261_89a3_8730;
+
 fn crc32_bytes(crc: u32, p: &[u8]) -> u32 {
     static CRC_TABLE: OnceLock<[u32; 256]> = OnceLock::new();
     let table = CRC_TABLE.get_or_init(|| {
@@ -211,7 +276,7 @@ fn golden(name: &str, crc: u32) {
     if !GOLDEN_HOST {
         return;
     }
-    for &(n, expected) in K_GOLDEN.iter().chain(K_VERTICAL_TIP.iter()) {
+    for &(n, expected) in K_DARKER_PAPERS.iter().chain(K_GOLDEN.iter()).chain(K_VERTICAL_TIP.iter()).chain(K_LATER_PAPERS.iter()) {
         if n != name {
             continue;
         }
@@ -278,14 +343,28 @@ fn golden_page(c: &mut Canvas, pg: &Page, name: &str) {
     golden(&cformat!("%s, paper", name), crc_canvas(c));
 }
 
+// Every name the darker papers list is one the tables recorded, with another value, and none is a render of
+// ink alone: what a page's strokes draw is unchanged.
+fn darker_papers_replace_paper_renders_only() {
+    for &(name, crc) in &K_DARKER_PAPERS {
+        let before = K_GOLDEN.iter().chain(K_VERTICAL_TIP.iter()).find(|&&(n, _)| n == name);
+        check!(before.is_some_and(|&(_, was)| was != crc) && !name.ends_with(", ink") && !name.contains("file of"));
+        check!(name.starts_with("medium rule") || ["paper 0", "paper 1", "paper 2", "paper 5", "paper 6", "paper 7", "paper 10", "paper 11", "paper 12"].contains(&name));
+    }
+}
+
 fn papers() {
     let mut c = Canvas::default();
     check!(canvas_init(&mut c, W, H) == 0);
     let full = Rect { x: 0, y: 0, w: W, h: H };
+    // (Seyes at the layout's own millimetres, as with no panel: K_LATER_PAPERS)
+    paper_set_panel_ppi(0.0, DPI);
     for gothic in 0..2 {
         // Paper labels and clefs come from Terminess in both themes: the theme never shows on a page.
         font_set_gothic(gothic != 0);
-        for k in 0..BETA_PAPER_COUNT {
+        // (every fixed kind: those 1.0.0-beta knows, then K_LATER_PAPERS; a kind added later has no value
+        // recorded, and fails until it has one)
+        for k in 0..PAPER_COUNT {
             canvas_fill(&mut c, full, 0);
             paper_render(&mut c, PaperKind(k as u32), full, DPI);
             let key = cformat!("paper %d", k);
@@ -306,6 +385,23 @@ fn papers() {
     }
     font_set_gothic(false);
     canvas_free(&mut c);
+}
+
+fn renderers_fingerprint() {
+    paper_set_panel_ppi(0.0, DPI);
+    font_set_gothic(false);
+    let fp = page_render_fingerprint();
+    if g_print() {
+        println!("    // K_RENDER_FINGERPRINT: 0x{fp:016x}");
+        return;
+    }
+    if !GOLDEN_HOST {
+        return;
+    }
+    check!(fp == K_RENDER_FINGERPRINT);
+    if fp != K_RENDER_FINGERPRINT {
+        eprintln!("  the renderer's fingerprint: 0x{fp:016x}, recorded 0x{K_RENDER_FINGERPRINT:016x}");
+    }
 }
 
 fn one_stroke_of_every_tool() {
@@ -378,7 +474,9 @@ fn test_golden() {
     if g_print() {
         println!("const K_GOLDEN: [(&str, u32); N] = [");
     }
+    run!(darker_papers_replace_paper_renders_only);
     run!(papers);
+    run!(renderers_fingerprint);
     run!(one_stroke_of_every_tool);
     run!(all_tools_on_one_page);
     if g_print() {

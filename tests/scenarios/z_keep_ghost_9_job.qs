@@ -1,5 +1,8 @@
 # rust-only
 # generate: tests/previews_fixture.py ghosts
+# env: GRIMOIRE_SIM_PREVIEWS_CURRENT=1
+# (The fixture's previews and card are as 2.0.0 or 2.0.1 left them, current for their page files: the knob makes
+# stamps as before 2.3.0, with no renderer at their end, so they stay current here, #314.)
 # The same with page 1 dense, its preview not current ("stale2", opens on page 2): the previews job draws page 1 and
 # makes its preview, but keeps no drawing over the one 2.0.0 or 2.0.1 kept, so page 1, opened, is drawn from its
 # strokes, the old drawing goes and the Library card is made again as page 1 is left. Before, the job kept its own

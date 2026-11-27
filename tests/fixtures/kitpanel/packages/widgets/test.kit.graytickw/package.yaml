@@ -1,0 +1,17 @@
+name: Gray tick widget
+id: test.kit.graytickw
+type: widget
+version: 1.0.0
+author: Grimoire tests
+description: A module of the package kit's tests.
+platforms: [all]
+artifact:
+  path: module.bin
+  sha256: be6c2ac86bdb2bc60611542ae0fbf484cfa1657700fa4349bdf897aeef4e1436
+  size: 1910
+capabilities: [editor:overlay, storage:widget-local]
+spec:
+  runtime: wasm
+  size:
+    mode: fixed
+    default: [900, 1100]

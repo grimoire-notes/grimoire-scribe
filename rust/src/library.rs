@@ -71,9 +71,9 @@ enum Modal {
     Sort = 303,
     /// The Package Store (Rust only): the GitHub catalog of apps and widgets, over the Library.
     Store = 304,
-    /// A folder's icon and picture (2.2, issue #230, Rust only; a number of its own as the others past the C's)
+    /// A folder's icon and picture (2.3, issue #230, Rust only; a number of its own as the others past the C's)
     FolderLook = 310,
-    /// The pictures a folder's card can show (2.2, issue #230): a grid of grimoire/photos/
+    /// The pictures a folder's card can show (2.3, issue #230): a grid of grimoire/photos/
     FolderPicture = 311,
 }
 
@@ -250,7 +250,7 @@ const H_FILES_HIDE: i32 = 198;
 // A folder's menu's home row (2.2, issue #160): Set as home, or on the folder that is home, Reset home to Notebooks
 // (arg: 1 for the reset). Numbered apart from the ids above, which other work adds after.
 const H_FMORE_HOME: i32 = 210;
-// A folder's icon and picture (2.2, issue #230): its menu's row, the icon grid's tiles (arg: its index in
+// A folder's icon and picture (2.3, issue #230): its menu's row, the icon grid's tiles (arg: its index in
 // FOLDER_ICONS), the picture sheet's photos (arg: an index of look_photos) and pages, and its buttons.
 const H_FMORE_LOOK: i32 = 291;
 const H_LOOK_ICON: i32 = 292;
@@ -261,7 +261,7 @@ const H_LOOK_FROM_FILE: i32 = 296;
 const H_LOOK_BACK: i32 = 297;
 const H_LOOK_PAGE: i32 = 298;
 const H_LOOK_DONE: i32 = 299;
-// The folder icon sheet's page arrows (2.2, issue #230; arg: -1 for the page before, 1 for the one after).
+// The folder icon sheet's page arrows (2.3, issue #230; arg: -1 for the page before, 1 for the one after).
 const H_LOOK_ICON_PAGE: i32 = 300;
 // Settings > System's Darker lines in imported PDFs row (2.2, issue #173), its list's choices (arg: the level, 0 Off,
 // 1 Medium, 2 Strong: pdfwork::Gamma's index) and its Back. (Numbered in 250 to 259, apart from other work's ids.)
@@ -390,7 +390,7 @@ pub struct LibraryState {
     reopen_settings: bool,
     books: Vec<NotebookInfo>,
     folders: Vec<String>,
-    /// Every folder's look (folder-looks.ini, 2.2, issue #230), read as the Library reloads; the card of a folder
+    /// Every folder's look (folder-looks.ini, 2.3, issue #230), read as the Library reloads; the card of a folder
     /// with a picture shows it from look_photos
     looks: Vec<(String, FolderLook)>,
     /// The folder whose icon and picture are being picked (H_FMORE_LOOK), its icon's name and picture's file name as
@@ -1016,7 +1016,7 @@ fn thumb_for(s: &mut LibraryState, dpi: f32, nb: usize) -> Option<&Canvas> {
 
 // ---- drawing ----
 
-/// The icons a folder's card can be given (2.2, issue #230), by the name folder-looks.ini keeps. The first is the
+/// The icons a folder's card can be given (2.3, issue #230), by the name folder-looks.ini keeps. The first is the
 /// plain folder icon, which no line names. Two pages of six by four, each page a group of ordinary uses.
 const FOLDER_ICON_COLS: i32 = 6;
 const FOLDER_ICON_ROWS: i32 = 4;
@@ -1687,7 +1687,7 @@ fn draw_files_card(c: &mut Canvas, s: &mut LibraryState, r: Rect, idx: usize) {
     hits_add(&mut s.hits, mr, H_CARD_MORE, idx as i32);
 }
 
-// The folder icon sheet (2.2, issue #230): a grid of FOLDER_ICONS, the folder's picture line, and the way to its
+// The folder icon sheet (2.3, issue #230): a grid of FOLDER_ICONS, the folder's picture line, and the way to its
 // pictures. A tile picked saves the icon at once in place of any picture; Done closes.
 fn draw_folder_look(a: &mut App) {
     let (aw, ah) = (a.w, a.h);
@@ -1772,7 +1772,7 @@ fn draw_folder_look(a: &mut App) {
     hits_add(&mut s.hits, done, H_LOOK_DONE, 0);
 }
 
-// The folder picture sheet (2.2, issue #230): the pictures in grimoire/photos/, their previews, a page at a time; a
+// The folder picture sheet (2.3, issue #230): the pictures in grimoire/photos/, their previews, a page at a time; a
 // tap gives the folder that picture at once. From a file... copies one in, as the Photos sheet's does.
 const FOLDER_PHOTO_COLS: i32 = 4;
 const FOLDER_PHOTO_ROWS: i32 = 2;
@@ -4017,8 +4017,9 @@ fn draw_updates(a: &mut App) {
         action_style = ButtonStyle::Disabled;
     } else if upd == UPD_DONE && newer {
         // TRANSLATORS: Settings > Updates, the system update's version change (%s is the version
-        // installed, %s the one the update branch offers).
-        csnprintf!(&mut detail, 300, tr("Version %s → %s"), GRIMOIRE_VERSION, &latest);
+        // installed, %s the one the update branch offers). No arrow: Atkinson Hyperlegible Next and
+        // Noto Sans have none, and every character of a text must be in every face (test_i18n).
+        csnprintf!(&mut detail, 300, tr("Version %s to %s"), GRIMOIRE_VERSION, &latest);
         action = tr("Update");
         action_icon = IconKind::Download;
         action_style = ButtonStyle::Primary;
@@ -7596,7 +7597,7 @@ pub(crate) fn redraw_filling(a: &mut App) {
     }
     before.px.extend_from_slice(&a.screen.px);
     draw_front(a);
-    let changed = canvas_changed_rect(&before, &a.screen);
+    let changed = canvas_changed_rect(&before, &a.screen, Rect { x: 0, y: 0, w: a.screen.w, h: a.screen.h });
     if !rect_is_empty(changed) {
         app_invalidate_filling(a, changed);
     }
@@ -9207,7 +9208,7 @@ fn act(a: &mut App, h: &Hit) {
             redraw(a, RefreshMode::Ui);
             app_toast_dismiss(a);
         }
-        // The folder's icon and picture (2.2, issue #230): the icon grid, and the pictures of grimoire/photos/
+        // The folder's icon and picture (2.3, issue #230): the icon grid, and the pictures of grimoire/photos/
         H_FMORE_LOOK => {
             if let Some(it) = it.filter(|it| it.is_folder) {
                 folder_look_open(a, it.folder.as_str());
@@ -10107,7 +10108,7 @@ pub fn library_back(a: &mut App) -> bool {
             lib(a).modal = Modal::DeviceInfo;
             redraw(a, RefreshMode::Ui);
         }
-        // The folder look's two sheets (2.2, issue #230): one step back, then the Library.
+        // The folder look's two sheets (2.3, issue #230): one step back, then the Library.
         Modal::FolderPicture => tap(a, H_LOOK_BACK),
         Modal::FolderLook => tap(a, H_LOOK_DONE),
         Modal::Language | Modal::Koreader | Modal::Shortcuts | Modal::PairMenu | Modal::Updates | Modal::Wifi
@@ -10394,7 +10395,9 @@ pub fn library_event(a: &mut App, ev: &InEvent) {
 }
 
 fn library_event_in(a: &mut App, ev: &InEvent) {
-    if a.app_view.open {
+    // (the input a hardware key brings to an open keyboard of the Library's, app_type_text, is that keyboard's, never a
+    // touch of an open app's)
+    if a.app_view.open && !(a.kb_inject.is_some() && library_keyboard_area(a).is_some()) {
         crate::apphost::apphost_event(a, ev);
         return;
     }
@@ -10942,7 +10945,7 @@ fn card_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
             csnprintf!(out, cap, "none");
             return 0;
         }
-        // (2.2, issue #230: its picture's preview when the folder has one and it is drawn, else its icon)
+        // (2.3, issue #230: its picture's preview when the folder has one and it is drawn, else its icon)
         let look = s.looks.iter().find(|(f, _)| f == it.folder.as_str()).map(|(_, l)| l.clone()).unwrap_or_default();
         let mut picture = false;
         if !look.picture.is_empty() {
@@ -11455,7 +11458,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 name.push_str(i18n_language_code(hit.arg).unwrap_or("auto"));
             }
             if matches!(hit.id, H_SIDE_PICK | H_ERASER_PICK | H_DARKER_PICK) { name.push_str(&hit.arg.to_string()); }
-            // A folder look's tiles by name (2.2, issue #230): the icon's, or the picture's file name.
+            // A folder look's tiles by name (2.3, issue #230): the icon's, or the picture's file name.
             if hit.id == H_LOOK_ICON {
                 name.push_str(FOLDER_ICONS.get(hit.arg as usize).map_or("", |def| def.name));
             }
@@ -11701,7 +11704,7 @@ mod tests {
         assert!(seen.len() > 50);
     }
 
-    // The folder icons a card can be given (2.2, issue #230) are named for folder-looks.ini: lowercase, one
+    // The folder icons a card can be given (2.3, issue #230) are named for folder-looks.ini: lowercase, one
     // meaning each, and the plain folder icon for an unknown name.
     #[test]
     fn folder_icons_are_named_and_unique() {
@@ -11724,7 +11727,7 @@ mod tests {
     }
 
     // A folder's menu's Icon & picture... picks one of FOLDER_ICONS for its card and opens its pictures' sheet
-    // (2.2, issue #230): what is picked is saved in folder-looks.ini and read back, Done closes, and the plain
+    // (2.3, issue #230): what is picked is saved in folder-looks.ini and read back, Done closes, and the plain
     // folder icon is no line in the file.
     #[test]
     fn a_folders_icon_and_picture_are_picked_from_its_menu() {
@@ -11923,6 +11926,38 @@ mod tests {
         s.gestures_group = 0;
         s.gestures_file_readable = true;
         a
+    }
+
+    // A keyboard of the Library's open while an app is open takes the keys that type, as every keyboard of
+    // Grimoire's does (#268): the character goes into its text, and neither the key nor the input it brings reaches
+    // the app (as a key, or as a touch where the keyboard is). No screen opens a keyboard over an app in this
+    // version; this holds the order of app_event_screens and library_event_in for one that will.
+    #[test]
+    fn a_keyboard_open_over_an_app_takes_the_keys_that_type() {
+        let mut a = pen_record_app();
+        a.scr = ScreenId::Library;
+        lib(&mut a).modal = Modal::None;
+        open_kb(&mut a, KbPurpose::NewName, "Name", b"ab");
+        assert!(library_keyboard_area(&a).is_some(), "the keyboard is open, and drawn");
+        // (an app on the screen: it has no module here, so nothing of it runs)
+        a.app_view.open = true;
+        let key = |a: &mut App, code: i32| {
+            for type_ in [InType::Key, InType::KeyUp] {
+                app_event(a, &InEvent { type_, value: code, t_ms: now_ms(), ..Default::default() });
+            }
+        };
+        key(&mut a, 46); // c
+        key(&mut a, 57); // Space
+        assert_eq!(lib(&mut a).kb.text.as_str(), "abc ", "the keys typed into the keyboard");
+        assert!(a.app_view.open && lib(&mut a).kb.open);
+        // its Cancel (Esc) closes the keyboard, and the app stays: the next key is the app's, and types nothing
+        key(&mut a, 1);
+        assert!(!lib(&mut a).kb.open && a.app_view.open);
+        key(&mut a, 46);
+        assert_eq!(lib(&mut a).kb.text.as_str(), "abc ", "nothing more typed with no keyboard open");
+        a.app_view.open = false;
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
     }
 
     fn record_side(a: &mut App, t_ms: u32, down: bool) {

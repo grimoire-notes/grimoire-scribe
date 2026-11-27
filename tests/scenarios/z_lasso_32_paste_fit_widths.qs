@@ -9,6 +9,8 @@
 # 1860 px one, 0.9366 times: the factor the larger page is shown at on this panel, so with the widths scaled the
 # pasted group looks on the screen as it did there. editor.stroke_screen_mm reads the newest stroke's width as the
 # screen shows it (the precise eraser's: its setting, drawn on the larger page at 8.00).
+# (Since 2.3.0 the paper's rules are darker than mid-gray, issue #314, so display.dark counts them: a place with no
+# ink counts its rules' pixels, two rows of each rule across it, and "not N" there says ink shows beside them.)
 wait 300
 tap library notebook.lasso-big
 wait 1000
@@ -199,10 +201,10 @@ wait 300
 waitfor display.stale.1000.1150.400.150 is 0
 # the cut is 0.9366 times as wide as it was: the line shows up to 2 px from where the cut would end with the
 # eraser's width kept (columns 1154 and 1155, 1244 and 1245: erased with the width kept), and nothing in the cut
-expect display.dark.1160.1222.80.35 is 0
-expect display.dark.1154.1222.2.35 not 0
-expect display.dark.1244.1222.2.35 not 0
-expect display.dark.1100.1222.40.35 not 0
-expect display.dark.1270.1222.40.35 not 0
+expect display.dark.1160.1222.80.35 is 160
+expect display.dark.1154.1222.2.35 not 4
+expect display.dark.1244.1222.2.35 not 4
+expect display.dark.1100.1222.40.35 not 80
+expect display.dark.1270.1222.40.35 not 80
 shot 01-pasted
 quit

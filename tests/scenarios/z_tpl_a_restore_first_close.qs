@@ -16,5 +16,6 @@ expect editor.unsaved is 0
 pentap panel library
 wait 600
 expect screen is library
-expect library.card.1.luma is 252
+# (page 2's Medium rule, its lines darker since 2.3.0, issue #314: 252 before)
+expect library.card.1.luma is 251
 quit
