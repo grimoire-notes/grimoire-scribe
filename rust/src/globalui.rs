@@ -962,7 +962,8 @@ mod tests {
     }
 
     // A header with a lead keeps its room between the margin and the title, centred on the title's axis, and is
-    // otherwise the header without one: a header with no lead draws the same pixels as gui_header.
+    // otherwise the header without one: a header with no lead draws the same pixels as gui_header, and its Back,
+    // title and actions stand where every screen's header stood before the lead, by numbers of their own.
     #[test]
     fn a_headers_lead_sits_before_the_title_and_no_lead_changes_nothing() {
         ui_init(300.0);
@@ -983,7 +984,15 @@ mod tests {
             // (under the status bar, whose clock reads the machine's minute)
             let below = (gui_status_h() * plain.stride) as usize;
             assert!(plain.px[below..] == none.px[below..], "{theme:?}: no lead, the same pixels");
-            let (h2, a2) = gui_header_lead(&mut led, 1860, "Library", false, (129, 42), &acts);
+            // (at 300 dpi under the medium bar: the title at the 50 px margin, or 22 px after Back, to 20 px before
+            // the first action, over the 150 px band; the actions 96 px round, 12 px apart, at the right margin)
+            assert!(rect_is_empty(h0.lead) && rect_is_empty(h0.back), "{theme:?}");
+            assert_eq!((h0.title, h0.foot), (Rect::new(50, 78, 1524, 150), 228), "{theme:?}");
+            assert_eq!(a0, [(Rect::new(1606, 105, 96, 96), 1), (Rect::new(1714, 105, 96, 96), 2)], "{theme:?}");
+            let (hb, _) = gui_header(&mut plain, 1860, "School", true, &acts);
+            assert!(rect_is_empty(hb.lead), "{theme:?}");
+            assert_eq!((hb.back, hb.title), (Rect::new(50, 105, 96, 96), Rect::new(168, 78, 1406, 150)), "{theme:?}");
+            let (h2, a2) =gui_header_lead(&mut led, 1860, "Library", false, (129, 42), &acts);
             assert_eq!(h2.lead, Rect::new(gui_margin(), gui_status_h() + (gui_head_h() - 42) / 2, 129, 42), "{theme:?}");
             assert_eq!(h2.title.x, h2.lead.x + 129 + ui_px(34.0), "{theme:?}");
             assert_eq!(h2.lead.y + h2.lead.h / 2, h2.title.y + h2.title.h / 2, "{theme:?}");
