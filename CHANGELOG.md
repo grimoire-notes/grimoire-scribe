@@ -106,6 +106,13 @@
   Isometric 136 and Hexagon 119. Seyes rule, Blank and the music papers are unchanged. After the update a page kept
   drawn to open quickly is drawn once more, so it shows the new lines, and so are a notebook's previews in the
   Pages view as the view opens and its card in the Library as the notebook is next opened and left.
+- Housekeeping: the Buttons and Gestures lists offer an action only where it acts (#282). On a platform kept in
+  another crate whose system owns sleep (rust/PORTING.md), the Sleep settings page has one switch, Keep the screen
+  on while Grimoire is open, the sleep screen is the page, and Sleep now, Sleep screen and Sleep after are not
+  offered (nor Bluetooth controller or Update channel where the platform leaves pairing or updates to its system,
+  nor Light and Warmth without a front light). The Kindle keeps its lists and its Sleep settings page; the one
+  change there is that Warmth down / up on a Kindle whose light has no warmth says "This Kindle has no warmth
+  control." instead of "Light not ready.".
 
 ## 2.2.0 (2026-11-26)
 

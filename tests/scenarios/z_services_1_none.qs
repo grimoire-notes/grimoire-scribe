@@ -1,5 +1,5 @@
 # settings: status_mode=1
-# env: GRIMOIRE_SIM_NO_SERVICES=wifi,pairing,updates,koreader,calibration GRIMOIRE_SIM_NO_LIGHT=1 GRIMOIRE_CHECK_FIT=1
+# env: GRIMOIRE_SIM_NO_SERVICES=wifi,pairing,updates,koreader,calibration,sleep GRIMOIRE_SIM_NO_LIGHT=1 GRIMOIRE_CHECK_FIT=1
 # Settings on a platform that leaves every device service to its system (light.rs, Services) and has
 # no front light: no Calibrate row and no KOReader, Pair, Wi-Fi or Updates row, and the Display row
 # is called Display; the rest is there and works. The Display sheet says there is no light to set.
