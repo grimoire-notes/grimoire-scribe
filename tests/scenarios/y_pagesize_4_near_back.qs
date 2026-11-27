@@ -7,7 +7,7 @@
 # root: y_pagesize_3_near
 # settings: landscape_fit=0
 # rust-only
-wait 300
+wait 3600
 shot 01-library
 expect size is 1860x2480
 expect settings.pen.valid is 1

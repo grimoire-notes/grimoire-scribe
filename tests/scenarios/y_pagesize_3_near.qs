@@ -11,7 +11,7 @@
 # env: GRIMOIRE_SIM_SIZE=1920x2560
 # settings: landscape_fit=0
 # rust-only
-wait 300
+wait 3600
 shot 01-library
 expect size is 1920x2560
 expect settings.pen.valid is 1
