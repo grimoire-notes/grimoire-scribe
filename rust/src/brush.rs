@@ -436,19 +436,24 @@ pub fn ink_edges_as<R>(e: InkEdges, f: impl FnOnce() -> R) -> R {
 pub const SOLID_STEP: i32 = 16;
 /// The lightest a solid stroke's darkest ink may be (out of 255) and still be drawn Solid: black or a dark gray.
 pub const SOLID_INK_DARKEST: f32 = 64.0;
+/// The most grain (Pen feel's Grain) a pen may have and still be drawn Solid: the marker's own, whose tooth changes no
+/// pixel a solid stroke draws. A pen given more is a textured one.
+pub const SOLID_GRAIN_MOST: f32 = 0.15;
 
 /// The rule, written once: whether a stroke of tool t, tip variant `tip`, settings p and colour byte (a stroke's
 /// ext[0]) is drawn Solid when Ink edges is Solid. Ink of an opaque, untextured pen (not the pencils' or
-/// charcoal's graphite), no colour of a palette, and a darkest ink of black or a dark gray: at the defaults the
-/// ballpoint, fineliner, fountain pen, marker and calligraphy pen, never the pencils, charcoal, the highlighter
-/// or the eraser, nor a pen whose darkness was turned down to a light gray.
+/// charcoal's graphite, no more grain than SOLID_GRAIN_MOST, no shading by tilt), no colour of a palette, and a
+/// darkest ink of black or a dark gray: at the defaults the ballpoint, fineliner, fountain pen, marker and
+/// calligraphy pen, never the pencils, charcoal, the highlighter or the eraser, nor a pen whose darkness was turned
+/// down to a light gray or that was given grain or Tilt lightens.
 pub fn brush_ink_solid(t: ToolKind, tip: u8, p: &ToolParams, colour: u8) -> bool {
     if t == TOOL_ERASER || (t.0 as u32) >= TOOL_COUNT as u32 || colour != 0 {
         return false;
     }
     let lk = look_of(t, tip);
     let dark = sane(p.opacity_min, 0.0, 1.0, 0.5).max(sane(p.opacity_max, 0.0, 1.0, 1.0));
-    !lk.graphite && 255.0 - (255.0 - lk.ink as f32) * dark <= SOLID_INK_DARKEST
+    let untextured = sane(p.grain, 0.0, 1.0, 0.0) <= SOLID_GRAIN_MOST && sane(p.tilt_opacity, 0.0, 1.0, 0.0) <= 0.0;
+    !lk.graphite && untextured && 255.0 - (255.0 - lk.ink as f32) * dark <= SOLID_INK_DARKEST
 }
 
 // A solid stroke's shadow: its Smooth values over the pixels it has touched, in tiles of SHADOW_TILE square

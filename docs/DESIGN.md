@@ -216,10 +216,11 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
 - Blend: "deposit" darkens only: dst = dst - (dst - ink) * a, applied per dab.
 - Ink edges (2.3, #320; Settings > Pen, settings.ini `ink_edges`): Smooth draws as above. Solid draws the solid
   pens' strokes in pure black with hard edges. The rule is one function, brush.rs `brush_ink_solid`: ink with no
-  graphite (not the pencils or charcoal), no colour of a palette (a stroke's ext[0] 0), and a darkest ink of
+  graphite (not the pencils or charcoal), untextured (no more grain than the marker's own 0.15,
+  `SOLID_GRAIN_MOST`, and no Tilt lightens), no colour of a palette (a stroke's ext[0] 0), and a darkest ink of
   black or a dark gray (`255 - (255 - ink) * max(opacity_min, opacity_max) <= 64`): at the defaults the
   ballpoint, fineliner, fountain pen, marker and calligraphy pen, never the highlighter, the eraser or an erase
-  stroke. A solid stroke keeps its Smooth deposit in a shadow of the pixels it touches (`SolidShadow`, tiles of
+  stroke, nor a pen given grain or tilt shading in Pen feel (it draws as with Smooth). A solid stroke keeps its Smooth deposit in a shadow of the pixels it touches (`SolidShadow`, tiles of
   64 px copied from the canvas as the stroke first reaches them), by the deposit's very arithmetic, and a pixel
   of the canvas becomes 0 once that is 16 (`SOLID_STEP`) or more below what the pixel was before the stroke;
   every other pixel keeps its value, so nothing is lightened and a pencil line or a highlight beside the stroke

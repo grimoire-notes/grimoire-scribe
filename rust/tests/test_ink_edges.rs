@@ -169,14 +169,26 @@ fn the_rule_takes_the_solid_pens() {
     check!(!brush_ink_solid(TOOL_BALLPOINT, TIP_FIRST, &light, 0));
     light.opacity_max = 0.8;
     check!(brush_ink_solid(TOOL_BALLPOINT, TIP_FIRST, &light, 0));
+    // a pen given grain past the marker's own, or Tilt lightens, is a textured or shaded one: never Solid
+    for t in SOLID_PENS {
+        let mut grainy = params(t);
+        grainy.grain = SOLID_GRAIN_MOST;
+        check!(brush_ink_solid(t, TIP_FIRST, &grainy, 0));
+        grainy.grain = 0.2;
+        check!(!brush_ink_solid(t, TIP_FIRST, &grainy, 0));
+        let mut shaded = params(t);
+        shaded.tilt_opacity = 0.05;
+        check!(!brush_ink_solid(t, TIP_FIRST, &shaded, 0));
+    }
+    check!(params(TOOL_MARKER).grain == SOLID_GRAIN_MOST);
     check!(!brush_ink_solid(ToolKind(TOOL_COUNT as i32), TIP_FIRST, &params(TOOL_BALLPOINT), 0));
     check!(InkEdges::from_index(1) == InkEdges::Solid && InkEdges::from_index(0) == InkEdges::Smooth && InkEdges::from_index(7) == InkEdges::Smooth);
     check!(InkEdges::NAMES == ["smooth", "solid"] && InkEdges::Solid.name() == "solid");
 }
 
 // With Solid, every stroke the rule leaves out draws exactly as with Smooth, over ink, pencil and gray: the pencils,
-// charcoal, the highlighter (both tips), a ballpoint in a colour of a palette and a ballpoint turned down to a light
-// gray. White ink of every texture and the precise eraser too, but over a solid stroke's black: there a pixel takes
+// charcoal, the highlighter (both tips), a ballpoint in a colour of a palette, a ballpoint turned down to a light
+// gray, a grainy marker and a ballpoint shaded by tilt. White ink of every texture and the precise eraser too, but over a solid stroke's black: there a pixel takes
 // its paper whole where the Smooth restore lightens it by SOLID_STEP or more, and stays 0 where it does not (never a
 // gray between), the mirror of the solid deposit.
 fn the_other_tools_draw_as_smooth() {
@@ -208,6 +220,12 @@ fn the_other_tools_draw_as_smooth() {
     light.opacity_min = 0.5;
     light.opacity_max = 0.5;
     strokes.push(wave(TOOL_BALLPOINT, &light, 51, w, h, h as f32 * 0.5, 0.6, 0.6, 0.0, 0.0));
+    let mut grainy = params(TOOL_MARKER);
+    grainy.grain = 1.0;
+    strokes.push(wave(TOOL_MARKER, &grainy, 52, w, h, h as f32 * 0.5, 0.6, 0.6, 0.0, 0.0));
+    let mut shaded = params(TOOL_BALLPOINT);
+    shaded.tilt_opacity = 1.0;
+    strokes.push(wave(TOOL_BALLPOINT, &shaded, 53, w, h, h as f32 * 0.5, 0.6, 0.6, 50.0, 50.0));
     let mut paper = paper;
     for (i, v) in paper.px.iter_mut().enumerate() {
         if (i as i32 / w) % 23 == 7 {
