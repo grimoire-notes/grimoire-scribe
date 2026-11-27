@@ -18,10 +18,6 @@ fn params(t: ToolKind) -> ToolParams {
     p
 }
 
-fn whole(c: &Canvas) -> Rect {
-    Rect { x: 0, y: 0, w: c.w, h: c.h }
-}
-
 fn canvas(w: i32, h: i32) -> Canvas {
     let mut c = Canvas::default();
     check!(canvas_init(&mut c, w, h) == 0);
