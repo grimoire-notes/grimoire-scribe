@@ -9,4 +9,15 @@ key 19 0
 wait 100
 key 19 0
 expect toast is La rotación sigue al Slate.
+# Settings > System > About: its title is the name as it is, in every language.
+tap library settings
+wait 300
+expect library.sheet is settings
+tap library settings.cat.5
+wait 300
+tap library about-device
+wait 300
+expect library.sheet is about-device
+expect library.device.name is Slate
+shot 01-about-in-spanish
 quit
