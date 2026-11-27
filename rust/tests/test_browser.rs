@@ -564,8 +564,8 @@ fn covers_reads_a_tile_that_comes_back_from_the_cache_in_slices() {
 // The batching rule, by the tick's own clock: previews that arrive are never drawn one refresh a file. While the
 // screen's set is not complete, the tiles that changed wait and are drawn together once COVERS_REFRESH_MS (2 s) have
 // passed since the tiles were last drawn; when the set is complete, what is left is drawn at once. Each is one Ui of
-// the union of its tiles, as a refresh that fills in by itself (never promoted to the cleaning Full). Here nine
-// previews, each held back, cost two refreshes.
+// the union of its tiles, as a refresh that fills in by itself (never promoted to the cleaning Full, and one nobody
+// asked for to the platform: display_unasked). Here nine previews, each held back, cost two refreshes.
 #[test]
 fn covers_draws_the_tiles_that_changed_together() {
     use grimoire::browser::COVERS_REFRESH_MS;
@@ -584,6 +584,7 @@ fn covers_draws_the_tiles_that_changed_together() {
         b.tick(a, t);
         if !rect_is_empty(a.dirty) {
             assert!(a.dirty_filling && a.dirty_mode == RefreshMode::Ui, "a tile refresh fills in: {:?}", a.dirty_mode);
+            assert!(a.dirty_unasked, "and nobody asked for it (display_unasked)");
             refreshes.push((t, files_probe(b, "tiles")));
             app_flush(a);
         }

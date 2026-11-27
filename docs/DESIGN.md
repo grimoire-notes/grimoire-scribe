@@ -87,6 +87,13 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   every 30 UI refreshes), and in the Rust build `RefreshMode::Clean` (GC16 flashing over the given
   rect alone).
   Accumulating different modes keeps the strongest (FULL > CLEAN > UI > FAST).
+- Refreshes nobody asked for (issue #280): a part of the screen that fills in by itself (`app_invalidate_filling`:
+  Files' Covers tiles, a package's picture) or redraws when its time comes (`app_invalidate_unasked`: a widget
+  frame's timed redraw) is a UI refresh like any other, and `app_flush` tells the platform so just before its
+  present (`display_unasked`) when nothing that anything asked for is flushed with it and it was not promoted to
+  the every-30th FULL. A platform that adds a cleaning flash of its own to large grayscale refreshes can leave it
+  out for these, which arrive while nobody touches anything. The Kindle does nothing with it (its UI refreshes
+  never flash), and the timed redraw counts toward the every-30th FULL, and becomes it, as any UI refresh.
 - DU wear (issue #11, display.rs `DuWear`): DU turning a pixel from black to white leaves a faint trace
   of the black, and the GL16 settle after it does not reach that pixel (a partial update drives only the
   pixels whose value changed, and DU already wrote its final white). The toolbar drag's release cleans
@@ -3181,10 +3188,10 @@ may cost is held to a few seconds a file, behind every other job.
   one Ui refresh of the union of those tiles, the mode a list's rows fill in with, as a refresh that fills in by
   itself (`app_invalidate_filling`): counted toward the cleaning Full like any Ui, and never itself promoted to
   it, so no whole-panel flash lands in the middle of a screen that is arriving; the next refresh a tap asks for
-  is the Full instead. A screen of previews costs one refresh when they come within 2 s, and one more for every
-  2 s they take. Nothing is drawn under an open card: its close (and its opening) refreshes the tiles that
-  changed meanwhile together with the card's rect, whichever row closes it (Cancel, or a picture's Use as
-  template or Use as photo, `copy_in`).
+  is the Full instead. The platform hears that nobody asked for it (`display_unasked`). A screen of previews
+  costs one refresh when they come within 2 s, and one more for every 2 s they take. Nothing is drawn under an
+  open card: its close (and its opening) refreshes the tiles that changed meanwhile together with the card's
+  rect, whichever row closes it (Cancel, or a picture's Use as template or Use as photo, `copy_in`).
 - **The notice** "Making previews..." (`NoticeKey::Previews`, on the Library's screen that asked) stays while a
   preview the screen asked for is being made, from its first second on, as "Loading..." does; not while the
   screen's jobs only wait behind other work, whose own notice shows.

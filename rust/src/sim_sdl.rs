@@ -146,6 +146,10 @@ struct State {
     pen_mode: bool,
     presents: [SimPresent; SIM_PRESENTS_KEPT],
     npresents: i32,
+    /// display_unasked: the next refresh is one nobody asked for
+    unasked_next: bool,
+    /// the refreshes sent that way since the script last checked "display.unasked"
+    unasked_presents: i32,
 
     // Simulated front light (the simulator has no light to drive).
     light_i: i32,
@@ -280,6 +284,8 @@ impl Default for State {
             pen_mode: false,
             presents: [SimPresent::default(); SIM_PRESENTS_KEPT],
             npresents: 0,
+            unasked_next: false,
+            unasked_presents: 0,
             light_i: 12,
             light_w: 8,
             light_auto: 0,
@@ -984,6 +990,7 @@ fn sim_dither(v: u8, x: i32, y: i32) -> u8 {
 pub fn display_present(screen: &Canvas, r: Rect, mode: RefreshMode) {
     with(|st| {
         st.presented = true;
+        let unasked = std::mem::take(&mut st.unasked_next); // (it holds for this one present)
         let r = rect_intersect(r, Rect { x: 0, y: 0, w: st.w, h: st.h });
         // (the C also leaves for a mode outside 0..2, which a RefreshMode cannot be)
         if rect_is_empty(r) {
@@ -999,6 +1006,9 @@ pub fn display_present(screen: &Canvas, r: Rect, mode: RefreshMode) {
             st.presents[st.npresents as usize] = SimPresent { mode, r };
         }
         st.npresents += 1;
+        if unasked {
+            st.unasked_presents += 1;
+        }
         st.stats[mode as usize] += 1;
         if mode == RefreshMode::Fast && st.ink.on {
             st.ink_frames += 1;
@@ -1017,6 +1027,19 @@ pub fn display_present(screen: &Canvas, r: Rect, mode: RefreshMode) {
             }
         }
     });
+}
+
+/// The next present is a refresh nobody asked for (display.rs): counted in "display.unasked" when it goes out.
+pub fn display_unasked(on: bool) {
+    with(|st| st.unasked_next = on);
+}
+
+/// A display.* key as a script's check reads it (display_probe), for the other modules' unit tests; None for a
+/// key it does not know.
+#[cfg(test)]
+pub(crate) fn display_probe_read(key: &str) -> Option<String> {
+    let mut got = String::new();
+    with(|st| st.display_probe(key.as_bytes(), &mut got, GOT_CAP)).then_some(got)
 }
 
 pub fn display_wait() {}
@@ -1305,6 +1328,8 @@ impl State {
     // the refreshes sent since this key was last checked, each "fast", "ui", "full" or "clean" and its "x y w h",
     // joined by ", " ("fast 50 1510 1760 120, fast 138 1970 167 150"), with ", and N more" past the
     // eighth, empty for none; the check starts the count again, so a first one only clears it.
+    // "display.unasked" how many of the refreshes sent since this key was last checked went with
+    // display_unasked (a refresh nobody asked for), the count started again the same way.
     fn display_probe(&mut self, key: &[u8], out: &mut String, cap: usize) -> bool {
         if key == b"display.presents" {
             const NAMES: [&str; 4] = ["fast", "ui", "full", "clean"];
@@ -1333,6 +1358,9 @@ impl State {
                 out.push_str(&piece);
             }
             self.npresents = 0;
+        } else if key == b"display.unasked" {
+            csnprintf!(out, cap, "%d", self.unasked_presents);
+            self.unasked_presents = 0;
         } else if key == b"display.last_fast_rect" {
             let r = self.last_fast_rect;
             if self.last_fast < 0 {
@@ -1633,11 +1661,12 @@ fn probe_app(a: Option<&mut App>, key: &[u8], out: &mut String, cap: usize) -> i
 }
 
 /// The keys whose check starts their count again (docs/SIM.md says so of each): display.presents,
-/// main.longest_unpumped_ms, pump.calls and keyboard.draws (here) and fshape.fired (editor_probe, under
-/// both its names). waitfor refuses them: it tries its check again and again, and each try would clear
-/// what it waits for. (sim_reset_on_read_keys_are_the_docs checks the list against docs/SIM.md.)
-const RESET_ON_READ: [&[u8]; 6] = [
+/// display.unasked, main.longest_unpumped_ms, pump.calls and keyboard.draws (here) and fshape.fired
+/// (editor_probe, under both its names). waitfor refuses them: it tries its check again and again, and each
+/// try would clear what it waits for. (sim_reset_on_read_keys_are_the_docs checks the list against docs/SIM.md.)
+const RESET_ON_READ: [&[u8]; 7] = [
     b"display.presents",
+    b"display.unasked",
     b"main.longest_unpumped_ms",
     b"pump.calls",
     b"keyboard.draws",
@@ -4088,11 +4117,11 @@ mod tests {
                 assert!(!with(|st| st.expect.pending), "{}", String::from_utf8_lossy(key));
             }
         }
-        assert_eq!(with(|st| (st.expect_total, st.expect_failed)), (14, 13));
+        assert_eq!(with(|st| (st.expect_total, st.expect_failed)), (16, 15));
         // An expect still reads them (the count starts again).
         with(|st| st.expect_read(b"expect display.presents is "));
         expect_check(None);
-        assert_eq!(with(|st| (st.expect_total, st.expect_failed)), (15, 13));
+        assert_eq!(with(|st| (st.expect_total, st.expect_failed)), (17, 15));
     }
 
     #[test]
@@ -4198,6 +4227,34 @@ mod tests {
         assert!(with(|st| st.display_probe(b"display.presents", &mut got, GOT_CAP)));
         assert_eq!(got, "clean 5 6 7 8");
         assert_eq!(with(|st| (st.stats[3], st.area[3])), (1, 56));
+    }
+
+    /// A present that display_unasked was said for is counted in display.unasked; the word holds for that one
+    /// present alone, and the check starts the count again.
+    #[test]
+    fn display_unasked_counts_the_present_it_was_said_for() {
+        fresh();
+        with(|st| st.eink = white_panel(st.w, st.h).unwrap());
+        let mut c = Canvas::default();
+        assert_eq!(canvas_init(&mut c, 1860, 2480), 0);
+        let r = Rect { x: 10, y: 20, w: 300, h: 200 };
+        display_unasked(true);
+        display_present(&c, r, RefreshMode::Ui);
+        display_present(&c, r, RefreshMode::Ui); // (nothing said for this one)
+        display_unasked(false);
+        display_present(&c, r, RefreshMode::Ui);
+        let mut got = String::new();
+        assert!(with(|st| st.display_probe(b"display.unasked", &mut got, GOT_CAP)));
+        assert_eq!(got, "1");
+        assert!(with(|st| st.display_probe(b"display.unasked", &mut got, GOT_CAP)));
+        assert_eq!(got, "0");
+        assert!(with(|st| st.display_probe(b"display.presents", &mut got, GOT_CAP)));
+        assert_eq!(got, "ui 10 20 300 200, ui 10 20 300 200, ui 10 20 300 200");
+        // said for a present that shows nothing (off the panel): taken by it all the same
+        display_unasked(true);
+        display_present(&c, Rect { x: -500, y: 0, w: 100, h: 100 }, RefreshMode::Ui);
+        display_present(&c, r, RefreshMode::Ui);
+        assert_eq!(display_probe_read("display.unasked").as_deref(), Some("0"));
     }
 
     #[test]
