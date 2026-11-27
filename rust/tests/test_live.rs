@@ -293,6 +293,11 @@ fn nothing_is_sent_while_the_pairing_card_is_up() {
     canvas_fill(&mut c, Rect { x: 100, y: 100, w: 10, h: 10 }, 0);
     live_push(&c, Rect { x: 100, y: 100, w: 10, h: 10 });
     check!(read_batch(sv[1], &mut seen, w, h, &mut hellos) == 1);
+    if seen[105 * w as usize + 105] != 0 {
+        // The viewer, looking at every tile again, read this one while live_push was still copying it: it is
+        // marked after the copy, so it comes again whole, in a batch of its own (live.rs live_push).
+        check!(read_batch(sv[1], &mut seen, w, h, &mut hellos) == 1);
+    }
     check!(seen[0] == 200 && seen[105 * w as usize + 105] == 0 && hellos == 1);
     live_stop();
     close(sv[1]);
