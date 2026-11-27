@@ -2081,7 +2081,8 @@ fn draw_base(a: &mut App) {
         hits_add(&mut s.hits, nr, H_NEXT, 0);
     }
     let mut pl = String::new();
-    if look().library_pager(c, pr, nr, s.page, pages) {
+    let room = Rect::new(nr.x + nr.w, nav_y, (fab.x - gap - nr.x - nr.w).max(0), bw);
+    if look().library_pager(c, room, s.page, pages) {
         return;
     }
     // TRANSLATORS: between the home's page buttons, as before (1320 px at 44 px).
@@ -2090,7 +2091,7 @@ fn draw_base(a: &mut App) {
         c,
         FontFace::Bold,
         ui_text_size(),
-        Rect::new(nr.x + nr.w, nav_y, (fab.x - gap - nr.x - nr.w).max(0), bw),
+        room,
         &pl,
         0,
     );

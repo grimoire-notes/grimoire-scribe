@@ -429,8 +429,8 @@ pub trait Look: Sync {
 
     // ---- the Library's screens ----
 
-    /// The Library's page count between its arrows (pr, nr). true: drawn.
-    fn library_pager(&self, _c: &mut Canvas, _pr: Rect, _nr: Rect, _page: i32, _pages: i32) -> bool {
+    /// The Library's page count in r (the room between its arrows and the + button). true: drawn.
+    fn library_pager(&self, _c: &mut Canvas, _r: Rect, _page: i32, _pages: i32) -> bool {
         false
     }
     /// A screen framed on a whole redraw, over everything (ScreenInfo says which).

@@ -421,15 +421,15 @@ impl Look for Cassette {
         true
     }
 
-    // PAGE 1 / 1: the word as a caption (the translation's, before its number), the count in figures
-    fn library_pager(&self, c: &mut Canvas, pr: Rect, nr: Rect, page: i32, pages: i32) -> bool {
+    // PAGE 1 / 1: the word as a caption (the translation's, before its number), the count in figures,
+    // centred where the other themes centre their "Page 1 of 1"
+    fn library_pager(&self, c: &mut Canvas, mid: Rect, page: i32, pages: i32) -> bool {
         let fmt = tr("Page %d of %d");
         let word = fmt.split("%d").next().unwrap_or("").trim();
         let count = format!("{} / {}", page + 1, pages);
         let px = ui_text_size();
         let cw = font_measure(FontFace::Fixed, px, &count);
         let ww = font_measure(FontFace::Caps, ui_small_size() * 0.8, &word.to_uppercase()) + word.chars().count() as i32 * ui_px(6.0);
-        let mid = Rect::new(pr.x + pr.w, pr.y, nr.x - pr.x - pr.w, pr.h);
         let x = mid.x + (mid.w - ww - ui_px(24.0) - cw) / 2;
         caption(c, Rect::new(x, mid.y, ww, mid.h), word);
         font_draw_left(c, FontFace::Fixed, px, Rect::new(x + ww + ui_px(24.0), mid.y, cw + 2, mid.h), &count, CS_INK);
