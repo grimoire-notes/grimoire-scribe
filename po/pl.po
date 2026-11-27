@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Grimoire 2.1.0\n"
 "Report-Msgid-Bugs-To: https://github.com/ganten1998/grimoire-scribe/issues\n"
-"POT-Creation-Date: 2026-11-26 15:53-0600\n"
+"POT-Creation-Date: 2026-11-27 18:04+0100\n"
 "PO-Revision-Date: 2026-11-16 00:00+0000\n"
 "Last-Translator: draft\n"
 "Language-Team: Polish\n"
@@ -845,6 +845,19 @@ msgstr "Uszkodzoną stronę zastąpiono pustą (zob. %s)"
 #: rust/src/app.rs rust/src/library.rs
 msgid "Couldn't save shortcuts.ini"
 msgstr "Nie można zapisać shortcuts.ini"
+
+#. TRANSLATORS: also a toast, when a light or warmth action bound by hand is used on a
+#. device without a front light; 1700 px at 44 px.
+#. TRANSLATORS: in the Display page where the sliders would be (1420 px at 44 px).
+#: rust/src/app.rs rust/src/dispmenu.rs
+msgid "Front light controls are not available here."
+msgstr "Sterowanie podświetleniem jest tu niedostępne."
+
+#. TRANSLATORS: also a toast, when Warmth down or up (a key or gesture) is used on a front
+#. light without warmth; 1700 px at 44 px.
+#: rust/src/app.rs rust/src/dispmenu.rs
+msgid "This Kindle has no warmth control."
+msgstr "Ten Kindle nie ma regulacji ciepła."
 
 #. TRANSLATORS: light action before its cached level is known; toast, 1700 px at 44 px.
 #: rust/src/app.rs
@@ -1765,22 +1778,20 @@ msgstr "Ustawienia uśpienia"
 msgid "Status bar"
 msgstr "Pasek stanu"
 
-#. TRANSLATORS: in the Display page where the sliders would be (1420 px at 44 px).
-#: rust/src/dispmenu.rs
-msgid "Front light controls are not available here."
-msgstr "Sterowanie podświetleniem jest tu niedostępne."
-
 #: rust/src/dispmenu.rs
 msgid "Auto brightness (follow the room's light)"
 msgstr "Automatyczna jasność (światło w pokoju)"
 
 #: rust/src/dispmenu.rs
-msgid "This Kindle has no warmth control."
-msgstr "Ten Kindle nie ma regulacji ciepła."
-
-#: rust/src/dispmenu.rs
 msgid "Sideways, show the whole page"
 msgstr "W poziomie pokazuj całą stronę"
+
+#. TRANSLATORS: the Sleep settings page's one row on a device whose system owns sleep (its
+#. own timer and sleep picture): on keeps the screen from sleeping while Grimoire is open
+#. (Sleep after: never), off leaves it to the device. About 1500 px at 44 px, beside its switch.
+#: rust/src/dispmenu.rs
+msgid "Keep the screen on while Grimoire is open"
+msgstr ""
 
 #: rust/src/dispmenu.rs
 msgid "Sleep screen: Kindle PIN (native unlock)"
@@ -4437,6 +4448,12 @@ msgstr "Przycisk rysika"
 msgid "Eraser"
 msgstr "Gumka"
 
+#. TRANSLATORS: the title of the list of the app's styles (Settings > Display > Style): Gothic,
+#. Classic and any other.
+#: rust/src/library.rs
+msgid "Style"
+msgstr "Styl"
+
 #. TRANSLATORS: the title of the list of how dark the gray pages of a PDF imported from now on are drawn
 #. (Settings > System): Off, Medium, Strong.
 #: rust/src/library.rs
@@ -4775,6 +4792,25 @@ msgstr "Usuń odnośnik"
 #: rust/src/linkcard.rs
 msgid "To change one, hold it on the page."
 msgstr "Aby zmienić jeden, przytrzymaj go na stronie."
+
+#: rust/src/looks/classic.rs
+msgid "Style (Classic)"
+msgstr "Styl (Classic)"
+
+#. TRANSLATORS: a style in Settings > Display > Style: Terminess (or the font Settings > Font picks),
+#. rounded corners.
+#: rust/src/looks/classic.rs
+msgid "Classic"
+msgstr "Classic"
+
+#: rust/src/looks/gothic.rs
+msgid "Style (Gothic)"
+msgstr "Styl (Gothic)"
+
+#. TRANSLATORS: a style in Settings > Display > Style: book and blackletter type, pointed arches.
+#: rust/src/looks/gothic.rs
+msgid "Gothic"
+msgstr "Gothic"
 
 #. TRANSLATORS: the Graph's view button says which view it shows, "View: All" or "View: Adjacent" (with
 #. "View: %s"): every page, or the pages adjacent to one (linked to it, and theirs). Also the selected page's
@@ -5891,31 +5927,6 @@ msgstr "Średnie"
 msgctxt "darker lines"
 msgid "Strong"
 msgstr "Mocne"
-
-#: rust/src/settingsmenu.rs
-msgid "Style (Gothic)"
-msgstr "Styl (Gothic)"
-
-#: rust/src/settingsmenu.rs
-msgid "Style (Classic)"
-msgstr "Styl (Classic)"
-
-#. TRANSLATORS: the title of the list of the app's styles (Settings > Display > Style): Gothic,
-#. Classic and any other.
-#: rust/src/library.rs
-msgid "Style"
-msgstr "Styl"
-
-#. TRANSLATORS: a style in Settings > Display > Style: book and blackletter type, pointed arches.
-#: rust/src/looks/gothic.rs
-msgid "Gothic"
-msgstr "Gothic"
-
-#. TRANSLATORS: a style in Settings > Display > Style: Terminess (or the font Settings > Font picks),
-#. rounded corners.
-#: rust/src/looks/classic.rs
-msgid "Classic"
-msgstr "Classic"
 
 #: rust/src/settingsmenu.rs
 msgid "Display: brightness, warmth"
