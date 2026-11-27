@@ -227,6 +227,14 @@ const K_LATER_PAPERS: [(&str, u32); 4] = [
     ("paper 20", 0x8746ab47),
 ];
 
+// The renderer's whole fingerprint (page.rs page_render_fingerprint: the ink page, then every paper on a page of its
+// own), with the fonts loaded and Seyes at scale 1, recorded from 2.3.0 on 2026-11-26 (issue #314). Every kept
+// drawing, Pages preview and Library card is stamped with it, so a fingerprint that changed though nothing draws
+// otherwise (one that took in the version, say) would have every one of them drawn again at each update, and only a
+// recorded value shows it. Recorded again only with a change that draws ink or a paper otherwise, which draws them
+// all again once.
+const K_RENDER_FINGERPRINT: u64 = 0x4f14_a03b_5176_c2e5;
+
 fn crc32_bytes(crc: u32, p: &[u8]) -> u32 {
     static CRC_TABLE: OnceLock<[u32; 256]> = OnceLock::new();
     let table = CRC_TABLE.get_or_init(|| {
@@ -379,6 +387,23 @@ fn papers() {
     canvas_free(&mut c);
 }
 
+fn renderers_fingerprint() {
+    paper_set_panel_ppi(0.0, DPI);
+    font_set_gothic(false);
+    let fp = page_render_fingerprint();
+    if g_print() {
+        println!("    // K_RENDER_FINGERPRINT: 0x{fp:016x}");
+        return;
+    }
+    if !GOLDEN_HOST {
+        return;
+    }
+    check!(fp == K_RENDER_FINGERPRINT);
+    if fp != K_RENDER_FINGERPRINT {
+        eprintln!("  the renderer's fingerprint: 0x{fp:016x}, recorded 0x{K_RENDER_FINGERPRINT:016x}");
+    }
+}
+
 fn one_stroke_of_every_tool() {
     const PAPERS: [PaperKind; 2] = [PAPER_MEDIUM, PAPER_GRAND];
     let mut c = Canvas::default();
@@ -451,6 +476,7 @@ fn test_golden() {
     }
     run!(darker_papers_replace_paper_renders_only);
     run!(papers);
+    run!(renderers_fingerprint);
     run!(one_stroke_of_every_tool);
     run!(all_tools_on_one_page);
     if g_print() {
