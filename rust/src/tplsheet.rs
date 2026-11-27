@@ -532,11 +532,11 @@ fn draw_empty(s: &TplSheet, a: &mut App, r: Rect) {
     if s.photos {
         // TRANSLATORS: under it, what to do, centred (up to 4 lines of 1560 px at 44 px, sideways
         // 2180); %s is the folder on the Kindle's storage.
-        csnprintf!(&mut text, 640, tr("Copy JPG or PNG photos into the %s folder over USB while Grimoire is closed."), "grimoire/photos");
+        csnprintf!(&mut text, 640, tr("Copy JPG or PNG photos into the %s folder over USB while Grimoire is closed."), crate::pdfimport::own_folder_shown("photos").as_str());
     } else {
         // TRANSLATORS: under it, what to do, centred (up to 4 lines of 1560 px at 44 px, sideways
         // 2180); %s is the folder on the Kindle's storage.
-        csnprintf!(&mut text, 640, tr("Copy PNG or JPG pictures into the %s folder over USB while Grimoire is closed."), "grimoire/templates");
+        csnprintf!(&mut text, 640, tr("Copy PNG or JPG pictures into the %s folder over USB while Grimoire is closed."), crate::pdfimport::own_folder_shown("templates").as_str());
     }
     let ts = ui_text_size();
     let line = ui_px(62.0);

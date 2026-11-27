@@ -70,14 +70,42 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
 
 - The editor's `page_canvas` holds the rendered page (paper + ink) at the notebook's page size,
   not the device's: `use_page_size`, as a notebook opens, makes it and the paper previews again
-  when the size changes, and every page the editor reads comes through `load_page`, at that
-  size. The view maps page to screen (zoom + pan): `view_reset` fits the page's width to the
-  screen's (`zoom_default` = screen width / page width, 1.00 upright for a notebook made on this
-  screen, 1.07 for an 1860x2480 notebook on a 1986x2648 screen), `zoom_min` shows the whole page,
-  and a pinch zooms up to 4x the fit. The sleep screen fits the page to the screen the same way
-  (`canvas_blit_fit`). `App.screen` is what the panel shows: the viewed page plus overlays
-  (floating panel, modals). Overlays are re-drawn on top of the page whenever a region is
-  recomposed.
+  when the size changes, and every page the editor reads comes through `load_page`, at that size.
+  The view maps page to screen (zoom + pan): `view_reset` fits the page's width to the screen's
+  (`zoom_default` = screen width / page width, 1.00 upright for a notebook made on this screen,
+  1.07 for an 1860x2480 notebook on a 1986x2648 screen), `zoom_min` shows the whole page, and a
+  pinch zooms up to 4x the fit. A page a little smaller than the screen (`page_near_view`: no
+  larger on either axis, within 4% on both, not its size, such as an 1860x2480 page on a 1920x2560
+  screen) rests at 100% instead, centred on whole pixels with the desk around it, which is its
+  `zoom_min` too: a fit of a few percent would resample every stroke and the live ink, softer and
+  a few percent larger than written, and at 100% `blit_canvas` copies the page 1:1. The sleep
+  screen fits the page to the screen (`canvas_blit_fit`), whatever its size. `App.screen` is what
+  the panel shows: the viewed page plus overlays (floating panel, modals). Overlays are re-drawn
+  on top of the page whenever a region is recomposed.
+- Off 100% the view samples the page canvas with a two-tap bilinear (`blit_canvas`), and the panel
+  then cuts each gray to its 16. Below 100% (to half), a paper of rulings is drawn at the screen's
+  scale instead (issue #308, `blit_canvas_ruled`): the six ruled kinds, sheet music, graph, the cross
+  grid, Seyes, Cornell, the grand staff, the guitar and bass tabs and the custom music layouts
+  (`paper_view_draws`). `paper_render_view` draws the paper over the rect, every line on whole screen
+  pixels as wide and as gray as on the page, placed by one rounding of its page coordinates (a
+  barline's end and a cross's arms placed from the line they meet, so they still meet it), and the
+  marks some carry (Cornell's labels, the clefs, "TAB", the braces) at the view's scale. The page's
+  ink is sampled over it (`blit_over_paper`). A screen pixel whose taps hold the paper alone (the page
+  canvas equal to `s.paper`, the paper alone at page size, which the first such frame makes:
+  `view_rules`) keeps the drawn paper. One with ink takes each tap as that ink would show over the
+  drawn paper (ink darkens toward its gray: a tap darker than its paper is ink of the darkest gray
+  among the taps over part of the pixel), mixed with the bilinear's weights and rounding, so ink over
+  paper that is white in both comes out exactly as before. Each page row is compared with its paper
+  32 bytes at a time, so the paper costs next to nothing; ink over white paper is `blit_canvas`'s
+  pixel straight away (in a row with ink over a quarter of it, from its rows interpolated as
+  `blit_canvas` does), and only the pixels near a ruling are worked out one by one. Sampled with the
+  page, each line fell at its own fraction of a pixel: at 0.75 (the whole page sideways) Seyes's inner
+  lines came out in four shapes, the heaviest a third darker than the lightest on the 16 grays. The
+  Links bar's preview of another page on the open page's paper is drawn the same way
+  (`peek_rules`). The 100% view, zooms of 100% and more, a pinch's fast frames, the dots, isometric,
+  hex and image papers (round marks, slanted lines and pictures, at fractions of a pixel on the page
+  itself) are sampled from the page as before, and nothing drawn at page size (pages, exports,
+  previews, kept drawings) changes.
 - Screens never call display directly. They call `app_invalidate(app, rect, mode)` and the
   main loop calls `app_flush(app)` after draining all pending input events, so a burst of
   pen samples becomes one refresh.
@@ -87,6 +115,13 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   every 30 UI refreshes), and in the Rust build `RefreshMode::Clean` (GC16 flashing over the given
   rect alone).
   Accumulating different modes keeps the strongest (FULL > CLEAN > UI > FAST).
+- Refreshes nobody asked for (issue #280): a part of the screen that fills in by itself (`app_invalidate_filling`:
+  Files' Covers tiles, a package's picture) or redraws when its time comes (`app_invalidate_unasked`: a widget
+  frame's timed redraw) is a UI refresh like any other, and `app_flush` tells the platform so just before its
+  present (`display_unasked`) when nothing that anything asked for is flushed with it and it was not promoted to
+  the every-30th FULL. A platform that adds a cleaning flash of its own to large grayscale refreshes can leave it
+  out for these, which arrive while nobody touches anything. The Kindle does nothing with it (its UI refreshes
+  never flash), and the timed redraw counts toward the every-30th FULL, and becomes it, as any UI refresh.
 - DU wear (issue #11, display.rs `DuWear`): DU turning a pixel from black to white leaves a faint trace
   of the black, and the GL16 settle after it does not reach that pixel (a partial update drives only the
   pixels whose value changed, and DU already wrote its final white). The toolbar drag's release cleans
@@ -761,11 +796,13 @@ announcements: goingToScreenSaver draws the sleep screen, outOfScreenSaver is th
   failed check, an unknown script line or a leftover `*.tmp` fails the build once every scenario
   has run, and a headless run waits for the PDF exports it started. A `# root: NAME` line starts a
   scenario from another scenario's data (d_persist, x_turn_calibrated and y_pagesize_1_ksc use
-  b_library's, s_passcode_once r_passcode's, y_pagesize_2_back y_pagesize_1_ksc's, z_language_kept
-  y_language's), `# env: K=V` lines set its environment (`GRIMOIRE_PASSCODE` in r_passcode,
+  b_library's, s_passcode_once r_passcode's, y_pagesize_2_back y_pagesize_1_ksc's,
+  y_rulings_2_other_size y_rulings_1_sideways's, z_language_kept y_language's), `# env: K=V` lines
+  set its environment (`GRIMOIRE_PASSCODE` in r_passcode,
   s_passcode_once, t_passcode_left_off and z_annotate_f_passcode, `GRIMOIRE_BG_DELAY_MS` in
   v_leave_from_editor, `GRIMOIRE_HOST` in y_koreader_hosted and y_koreader_not_hosted,
-  `GRIMOIRE_LANG` in y_language and z_language_kept, `GRIMOIRE_SIM_SIZE` in y_pagesize_1_ksc,
+  `GRIMOIRE_LANG` in y_language and z_language_kept, `GRIMOIRE_SIM_SIZE` in y_pagesize_1_ksc and
+  y_rulings_2_other_size,
   `GRIMOIRE_CHECK_FIT` and `GRIMOIRE_SIM_ADDRS` in y_all_screens), `# settings: key=value` lines
   go into its settings.ini, and a `# pdfs: N` line wants exactly N PDFs in its root's PDFs/ folder.
   The rule unsets the test hooks first, so nothing else of the caller's reaches them, and runs
@@ -3181,10 +3218,10 @@ may cost is held to a few seconds a file, behind every other job.
   one Ui refresh of the union of those tiles, the mode a list's rows fill in with, as a refresh that fills in by
   itself (`app_invalidate_filling`): counted toward the cleaning Full like any Ui, and never itself promoted to
   it, so no whole-panel flash lands in the middle of a screen that is arriving; the next refresh a tap asks for
-  is the Full instead. A screen of previews costs one refresh when they come within 2 s, and one more for every
-  2 s they take. Nothing is drawn under an open card: its close (and its opening) refreshes the tiles that
-  changed meanwhile together with the card's rect, whichever row closes it (Cancel, or a picture's Use as
-  template or Use as photo, `copy_in`).
+  is the Full instead. The platform hears that nobody asked for it (`display_unasked`). A screen of previews
+  costs one refresh when they come within 2 s, and one more for every 2 s they take. Nothing is drawn under an
+  open card: its close (and its opening) refreshes the tiles that changed meanwhile together with the card's
+  rect, whichever row closes it (Cancel, or a picture's Use as template or Use as photo, `copy_in`).
 - **The notice** "Making previews..." (`NoticeKey::Previews`, on the Library's screen that asked) stays while a
   preview the screen asked for is being made, from its first second on, as "Loading..." does; not while the
   screen's jobs only wait behind other work, whose own notice shows.

@@ -100,6 +100,15 @@ one with the feature on, implements `Platform` on a type of its own, and from it
 3. calls `mainloop::main(args)` on the thread that stays the app's only thread, and exits with
    what it returns.
 
+The texts that name one of Grimoire's own folders (Delete's trash, Mirror PDFs, the fonts, templates and photos
+folders, Share's import) name it as found from the storage root Files lists (`pdfimport::own_folder_shown`):
+`GRIMOIRE_STORAGE` when it is set, else the folder around `GRIMOIRE_ROOT`. On the Kindle that is
+`grimoire/trash`; where the data root sits deeper or is named otherwise, the path from that root. A data root
+that is the storage root itself, or outside it, shows the Kindle's `grimoire/trash`. A text that names the folder
+in its own words (the folder picture sheet's "No pictures in grimoire/photos.") keeps its msgid:
+`pdfimport::with_own_folder` puts the folder in place of `grimoire/photos` in the looked-up text, as the device's
+name takes the place of "Kindle", and leaves a translation that does not spell the folder so as it is.
+
 A worker (`<binary> --work ...`, sandbox.rs) is a fresh exec of that binary: its `main` hands `--work`
 to `mainloop::main` before it starts a thread or opens anything, as the in-tree binaries do. On Linux
 the worker's filter lets it wait and wake only on private futexes and map nothing executable, which one
@@ -143,15 +152,32 @@ from start to exit on a recording stand-in:
 `cargo test --features external-platform --test test_platform_external -- --test-threads=1`.
 
 A platform also says which of the device's services Grimoire looks after itself there
-(`sys_services`, light.rs: the Wi-Fi sheet, the Pair sheet, Updates, the KOReader sheet, Calibrate).
-The Kindle and the simulator answer all of them. Settings leaves out the row or button of each one
-a platform says no to; the simulator's `GRIMOIRE_SIM_NO_SERVICES` (docs/SIM.md) is that answer for
-the scenarios.
+(`sys_services`, light.rs: the Wi-Fi sheet, the Pair sheet, Updates, the KOReader sheet, Calibrate,
+sleep). The Kindle and the simulator answer all of them. Settings leaves out the row or button of each
+one a platform says no to, and the Buttons and Gestures lists leave out the actions that need it
+(actions.rs, `action_offered`; Light and Warmth go by `light_available`). A device whose system owns
+sleep (its own timer and sleep picture, and no sleep on request) says no to `sleep`: the Sleep
+settings page then has only Keep the screen on while Grimoire is open (`sys_prevent_sleep`), the
+sleep screen is the page, and the Sleep after timer asks nothing. The simulator's
+`GRIMOIRE_SIM_NO_SERVICES` (docs/SIM.md) is that answer for the scenarios.
 
 And it says what the device is called (`sys_device_name`). The English and the translations say
 Kindle; on a platform with another name every looked-up text has that name in its place, "Kindle
-Scribe" as a whole (i18n.rs, the device's name). No string changes for it. The simulator's
+Scribe" as a whole (i18n.rs, the device's name). No string changes for it. Settings > System >
+About shows the name as its title, as it is, where the host build says This computer. The simulator's
 `GRIMOIRE_SIM_DEVICE_NAME` is that name for the scenarios.
+
+A platform whose data root sits inside a larger storage, one the user's other files are in, sets
+`GRIMOIRE_STORAGE` to that storage: the root of Files' All storage and of every storage path Grimoire keeps
+(fsview.rs, docs/SIM.md). Files' places at that root have the Kindle's folder names unless the platform names its
+own: `GRIMOIRE_PLACE_DOCUMENTS`, `GRIMOIRE_PLACE_DOWNLOADS` and `GRIMOIRE_PLACE_FONTS`, one name each (set empty:
+no such place). `GRIMOIRE_STORAGE_SYSTEM` names the storage's own system folders at its root, separated by `/`;
+Files lists none of them and refuses them as it does the Kindle's. Grimoire's folder may be more than one level
+down (`Shelf/Grimoire`): the Go to sheet then lists the folder that holds it as any other top folder. These hooks
+are compiled out of the Kindle build, as `GRIMOIRE_STORAGE` is. What Grimoire keeps by a path under the storage
+root (an import's marks and its cut-off work, the keys of Files' Covers previews) does not follow a change of that
+root: a platform sets `GRIMOIRE_STORAGE` first, or changes it, while no import runs or waits, and the Covers
+previews are made again once.
 
 A platform reads its own system files (under /proc or /sys, a locale file) with
 `util::read_system_file`, which follows links as any read does. `util::read_file` is for the data

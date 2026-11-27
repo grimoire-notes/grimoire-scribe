@@ -1811,7 +1811,8 @@ fn draw_folder_picture(a: &mut App) {
     let want = s.look_picture.clone();
     if s.look_photos.is_empty() {
         // TRANSLATORS: the folder picture sheet, with no picture there: where its pictures are copied in.
-        font_draw_centered(c, FontFace::Regular, ui_text_size(), Rect::new(in_.x, top, in_.w, row_h), tr("No pictures in grimoire/photos."), 60);
+        let none = crate::pdfimport::with_own_folder(tr("No pictures in grimoire/photos."), "photos");
+        font_draw_centered(c, FontFace::Regular, ui_text_size(), Rect::new(in_.x, top, in_.w, row_h), &none, 60);
     }
     for k in 0..FOLDER_PHOTO_PER {
         let i = first + k;
@@ -2365,13 +2366,20 @@ const GESTURES: BindKind = BindKind {
     reset: gestures_reset,
 };
 
+// A group's rows that a sheet lists: the actions its sources can do, and only those this device offers
+// (action_offered). Both functions below go by this one test, so a row's index is the same in the count, the
+// draw and the tap.
+fn binding_row_listed(kind: BindKind, r: LearnRow) -> bool {
+    action_sources(r.act[0]) & kind.sources != 0 && action_offered(r.act[0])
+}
+
 fn binding_row_count(kind: BindKind, group: usize) -> usize {
     let mut n = 0;
     for row in 0..group_row_count(group) {
         let Some(r) = learn_row_at(group, row) else {
             continue;
         };
-        if action_sources(r.act[0]) & kind.sources != 0 {
+        if binding_row_listed(kind, r) {
             n += 1;
         }
     }
@@ -2382,7 +2390,7 @@ fn binding_row_at(kind: BindKind, group: usize, wanted: usize) -> Option<LearnRo
     let mut visible = 0;
     for row in 0..group_row_count(group) {
         let r = learn_row_at(group, row)?;
-        if action_sources(r.act[0]) & kind.sources == 0 {
+        if !binding_row_listed(kind, r) {
             continue;
         }
         if visible == wanted {
@@ -6153,7 +6161,7 @@ fn draw_settings(a: &mut App) {
                     &mut label_buf,
                     256,
                     tr("Mirror PDFs to %s (USB)"),
-                    "grimoire/PDFs"
+                    crate::pdfimport::own_folder_shown("PDFs").as_str()
                 );
                 &label_buf
             }
@@ -6404,7 +6412,7 @@ fn draw_font_sheet_in(a: &mut App, applied: Option<usize>) {
     let mut heading = String::new();
     // TRANSLATORS: (Settings > Font) the heading over the fonts the owner copied onto the Kindle; %s is
     // their folder there, grimoire/fonts. 34 px bold, about 800 px.
-    csnprintf!(&mut heading, 160, tr("Your fonts (%s)"), "grimoire/fonts");
+    csnprintf!(&mut heading, 160, tr("Your fonts (%s)"), crate::pdfimport::own_folder_shown("fonts").as_str());
     let pages = items.div_ceil(per_page).max(1);
     let hw = if pages > 1 { in_.w - ui_px(420.0) } else { in_.w };
     font_draw_left(c, FontFace::Bold, ui_small_size(), Rect::new(in_.x, y, hw, lh2), &heading, 0);
@@ -6430,7 +6438,7 @@ fn draw_font_sheet_in(a: &mut App, applied: Option<usize>) {
         // TRANSLATORS: (Settings > Font, under Your fonts while the folder is empty) how to add a font: %s is
         // the folder on the Kindle's storage, grimoire/fonts. ".ttf" and ".otf" are file kinds: keep them.
         // Up to two lines of about 1600 px at 44 px, or at 34 px.
-        csnprintf!(&mut line, 256, tr("Copy .ttf or .otf files into %s over USB."), "grimoire/fonts");
+        csnprintf!(&mut line, 256, tr("Copy .ttf or .otf files into %s over USB."), crate::pdfimport::own_folder_shown("fonts").as_str());
         ui_text(c, FontFace::Regular, ui_text_size(), ui_small_size(), Rect::new(in_.x, y, in_.w, rh), &line, 2, false, 0);
     }
     for k in 0..shown {
@@ -7234,7 +7242,7 @@ fn draw_modal(a: &mut App) {
             let mut pdf = String::new();
             // TRANSLATORS: a notebook's menu, rows of 1470 px at 44 px in bold. %s is the folder on the
             // Kindle's storage the PDF goes in.
-            csnprintf!(&mut pdf, 256, tr("Save PDF to %s now"), "grimoire/PDFs");
+            csnprintf!(&mut pdf, 256, tr("Save PDF to %s now"), crate::pdfimport::own_folder_shown("PDFs").as_str());
             let rows = [
                 menu_row(
                     IconKind::Notebook,
@@ -7414,7 +7422,7 @@ fn draw_modal(a: &mut App) {
                 &mut del,
                 256,
                 tr("Delete (moves it to %s)"),
-                "grimoire/trash"
+                crate::pdfimport::own_folder_shown("trash").as_str()
             );
             let rows = [
                 menu_row(IconKind::Trash, &del, H_DELETE_YES, 0, ButtonStyle::Primary),
@@ -7646,10 +7654,11 @@ fn draw_front(a: &mut App) {
 }
 
 /// The device's name for About: the Kindle's own model (its device tree, else /proc/usid's model
-/// code, its first 6 characters: never the serial number), or this computer's.
+/// code, its first 6 characters: never the serial number), or the platform's device name, or this
+/// computer's.
 fn device_name() -> String {
     // (the reads are here for the Kindle build and are type-checked by every build; a computer has
-    // neither file, so the host and the simulator show their own line)
+    // neither file)
     if cfg!(feature = "kindle") {
         if let Ok(raw) = std::fs::read("/proc/device-tree/model") {
             let name: String = raw.iter().take_while(|&&c| c != 0).map(|&c| c as char).collect();
@@ -7669,9 +7678,20 @@ fn device_name() -> String {
         }
         return tr("Kindle").to_string();
     }
+    if let Some(name) = platform_device_name(sys_device_name()) {
+        return name.to_string();
+    }
     // TRANSLATORS: Settings > System > About, the device's name on a computer (the Kindle build names
     // the Kindle's own model).
     tr("This computer").to_string()
+}
+
+/// About's name for a platform whose device has a name of its own (sys_device_name, light.rs): that
+/// name as it is, since a product's name is not translated. None where the platform says Kindle, as
+/// the host and the simulator do (the simulator says another name under GRIMOIRE_SIM_DEVICE_NAME,
+/// docs/SIM.md): About shows their own line.
+fn platform_device_name(named: &str) -> Option<&str> {
+    (!named.is_empty() && named != "Kindle").then_some(named)
 }
 
 /// One of Settings > System > About's links: the name its row shows and the address its page shows
@@ -9184,7 +9204,7 @@ fn act(a: &mut App, h: &Hit) {
             redraw(a, RefreshMode::Full);
             let mut msg = String::new();
             // TRANSLATORS: a deleted notebook went to the trash folder on the Kindle's storage (%s).
-            csnprintf!(&mut msg, 256, tr("Moved to %s"), "grimoire/trash");
+            csnprintf!(&mut msg, 256, tr("Moved to %s"), crate::pdfimport::own_folder_shown("trash").as_str());
             app_toast(a, &msg, 2500);
         }
         H_FMORE_RENAME => {
@@ -11259,6 +11279,9 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
         csnprintf!(out, cap, "darker-lines");
     } else if key == "sheet" && s.modal == Modal::DeviceInfo {
         csnprintf!(out, cap, "about-device");
+    } else if key == "device.name" {
+        // The device's name Settings > System > About shows as its title.
+        csnprintf!(out, cap, "%s", &device_name());
     } else if key == "sheet" && s.modal == Modal::LinkQr {
         csnprintf!(out, cap, "about-link");
     } else if key == "sheet" && s.modal == Modal::FilesMore {
@@ -11793,6 +11816,16 @@ mod tests {
         assert!(seen.len() >= 20 && seen.contains(&300));
     }
 
+    // The folder picture sheet's line with no picture there keeps the msgid every catalog translates, and names the
+    // photos folder as found from the storage root by putting it in the looked-up text (pdfimport::with_own_folder,
+    // whose tests hold each language's text), so a Kindle reads it as before in every language.
+    #[test]
+    fn the_folder_picture_line_keeps_its_msgid() {
+        let src = include_str!("library.rs");
+        let body = src.split_once("fn draw_folder_picture(").unwrap().1.split_once("\n}\n").unwrap().0;
+        assert!(body.contains("crate::pdfimport::with_own_folder(tr(\"No pictures in grimoire/photos.\"), \"photos\")"));
+    }
+
     // The home's view applies the filter chips, the sort and the global search from the lists it
     // already has: every folder and notebook, no storage read (2.3, issue #209).
     #[test]
@@ -12234,8 +12267,11 @@ mod tests {
     // moves nothing and answers at once, as before; a tap on its Delete after that deletes, as before.
     #[test]
     fn a_notebooks_delete_question_takes_its_delete_once_shown() {
-        let root = std::env::temp_dir().join(format!("grimoire-delete-seen-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        // (the data root is "grimoire" in the folder around it, as on the Kindle: the toast names the trash as
+        // found from there, pdfimport::own_folder_shown)
+        let base = std::env::temp_dir().join(format!("grimoire-delete-seen-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("grimoire");
         assert_eq!(store_init(root.to_str().unwrap()), 0);
         let mut nb = NotebookInfo::default();
         assert_eq!(store_create("A", "", PAPER_BLANK, &mut nb), 0);
@@ -12292,7 +12328,7 @@ mod tests {
         assert_eq!(a.toast.as_str(), "Moved to grimoire/trash");
         library_free(&mut a);
         canvas_free(&mut a.screen);
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     // A card held still for HOLD_MS (2.2) opens its menu as its "..." does: a notebook's, a folder's, the Files
@@ -13778,6 +13814,192 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // Where the device's system owns sleep (Services, sleep) the Sleep settings page has one switch, Keep the
+    // screen on while Grimoire is open: on is Sleep after never, off the default minutes, each saved and applied.
+    // No sleep screen row, no Sleep after slider; the Status bar page is as it was.
+    #[test]
+    fn sleep_settings_keep_the_screen_on_where_the_system_owns_sleep() {
+        let root = std::env::temp_dir().join(format!("grimoire-keep-on-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        assert_eq!(font_init(), 0);
+        ui_init(300.0);
+        ui_set_theme(UiTheme::Gothic);
+        i18n_set("en");
+        let mut a = App { w: 1860, h: 2480, dpi: 300.0, input_drained: true, ..Default::default() };
+        assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+        #[cfg(feature = "sim")]
+        {
+            // (a panel for the press's feedback to go to)
+            let (mut w, mut h) = (a.w, a.h);
+            crate::sim_sdl::display_set_orientation(0, &mut w, &mut h);
+        }
+        library_init(&mut a);
+        a.settings.sleep_minutes = 5;
+        a.settings.sleep_mode = 2;
+        test_services(Some(Services::without("sleep")));
+        lib(&mut a).modal = Modal::Settings;
+        lib(&mut a).settings_cat = 2;
+        hits_clear(&mut lib(&mut a).hits);
+        draw_settings(&mut a);
+        let hits = &a.lib.as_ref().unwrap().hits;
+        assert!(hits.h.iter().any(|h| h.id == H_SET_SLEEP), "the Sleep settings row");
+        assert!(hits.h.iter().any(|h| h.id == H_SET_CLOCK), "the Status bar row");
+
+        act(&mut a, &Hit { r: RECT_EMPTY, id: H_SET_SLEEP, arg: 0 });
+        assert_eq!(lib(&mut a).dm.page, crate::dispmenu::DmPage::Sleep);
+        let mut dm = std::mem::take(&mut lib(&mut a).dm);
+        dispmenu_draw(&mut dm, &mut a);
+        assert!(dispmenu_control_point(&dm, "keep_on").is_some(), "no Keep the screen on");
+        for name in ["sleep", "pin", "sleep_after", "size", "time12"] {
+            assert!(dispmenu_control_point(&dm, name).is_none(), "Sleep settings shows {name}");
+        }
+        let tap = |dm: &mut DispMenu, a: &mut App| {
+            let (x, y) = dispmenu_control_point(dm, "keep_on").unwrap();
+            let mut dirty = RECT_EMPTY;
+            dispmenu_pointer(dm, a, 0, x, y, 1000, &mut dirty);
+            dispmenu_pointer(dm, a, 2, x, y, 1050, &mut dirty)
+        };
+        assert_eq!(tap(&mut dm, &mut a), DmResult::Changed);
+        assert_eq!((a.settings.sleep_minutes, a.prevent_applied), (0, 1), "on: Sleep after never, applied");
+        assert_eq!(tap(&mut dm, &mut a), DmResult::Changed);
+        assert_eq!((a.settings.sleep_minutes, a.prevent_applied), (SLEEP_MINUTES_DEFAULT, 0), "off: the default");
+        // (what each flip leaves in settings.ini on disk: the test below)
+        assert_eq!(a.settings.sleep_mode, 2, "the stored sleep screen is left as it is");
+        lib(&mut a).dm = dm;
+
+        // With sleep the page is as on the Kindle.
+        test_services(None);
+        let mut dm = std::mem::take(&mut lib(&mut a).dm);
+        dispmenu_draw(&mut dm, &mut a);
+        assert!(dispmenu_control_point(&dm, "keep_on").is_none());
+        for name in ["sleep", "sleep_after"] {
+            assert!(dispmenu_control_point(&dm, name).is_some(), "Sleep settings lost {name}");
+        }
+        lib(&mut a).dm = dm;
+
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Each flip of Keep the screen on is in settings.ini on disk, read back from the file: on writes
+    // sleep_minutes=0 over the 15 stored, off writes the default over that 0. Each value differs from the one
+    // before it and from what a missing file gives (settings_default), so a flip that saved nothing fails here.
+    // No other line of the file changes, the stored sleep screen among them.
+    #[test]
+    fn sleep_settings_keep_the_screen_on_is_saved_each_way() {
+        let root = std::env::temp_dir().join(format!("grimoire-keep-on-saved-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        assert_eq!(font_init(), 0);
+        ui_init(300.0);
+        ui_set_theme(UiTheme::Gothic);
+        i18n_set("en");
+        let mut a = App { w: 1860, h: 2480, dpi: 300.0, input_drained: true, ..Default::default() };
+        assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+        #[cfg(feature = "sim")]
+        {
+            // (a panel for the press's feedback to go to)
+            let (mut w, mut h) = (a.w, a.h);
+            crate::sim_sdl::display_set_orientation(0, &mut w, &mut h);
+        }
+        library_init(&mut a);
+        test_services(Some(Services::without("sleep")));
+        a.settings.sleep_minutes = 15;
+        a.settings.sleep_mode = 2;
+        assert_eq!(settings_save(&a.settings), 0);
+        let on_disk = || {
+            let ini = std::fs::read_to_string(root.join("settings.ini")).unwrap_or_default();
+            let mut loaded = Settings::default();
+            settings_load(&mut loaded);
+            (ini, loaded)
+        };
+        let others = |ini: &str| ini.lines().filter(|l| !l.starts_with("sleep_minutes=")).map(str::to_owned).collect::<Vec<_>>();
+        let (before, loaded) = on_disk();
+        assert!(before.lines().any(|l| l == "sleep_minutes=15"), "before:\n{before}");
+        assert_eq!((loaded.sleep_minutes, loaded.sleep_mode), (15, 2), "before, read back");
+        assert_ne!(SLEEP_MINUTES_DEFAULT, 15);
+
+        lib(&mut a).modal = Modal::Settings;
+        lib(&mut a).settings_cat = 2;
+        act(&mut a, &Hit { r: RECT_EMPTY, id: H_SET_SLEEP, arg: 0 });
+        assert_eq!(lib(&mut a).dm.page, crate::dispmenu::DmPage::Sleep);
+        let mut dm = std::mem::take(&mut lib(&mut a).dm);
+        dispmenu_draw(&mut dm, &mut a);
+        let tap = |dm: &mut DispMenu, a: &mut App| {
+            let (x, y) = dispmenu_control_point(dm, "keep_on").expect("no Keep the screen on");
+            let mut dirty = RECT_EMPTY;
+            dispmenu_pointer(dm, a, 0, x, y, 1000, &mut dirty);
+            dispmenu_pointer(dm, a, 2, x, y, 1050, &mut dirty)
+        };
+
+        // On: Sleep after never.
+        assert_eq!(tap(&mut dm, &mut a), DmResult::Changed);
+        let (ini, loaded) = on_disk();
+        assert!(ini.lines().any(|l| l == "sleep_minutes=0"), "on, saved:\n{ini}");
+        assert_eq!((loaded.sleep_minutes, loaded.sleep_mode), (0, 2), "on, read back");
+        assert_eq!(others(&ini), others(&before), "on: another line changed");
+
+        // Off: the default minutes.
+        assert_eq!(tap(&mut dm, &mut a), DmResult::Changed);
+        let (ini, loaded) = on_disk();
+        let want = format!("sleep_minutes={SLEEP_MINUTES_DEFAULT}");
+        assert!(ini.lines().any(|l| l == want), "off, saved:\n{ini}");
+        assert_eq!((loaded.sleep_minutes, loaded.sleep_mode), (SLEEP_MINUTES_DEFAULT, 2), "off, read back");
+        assert_eq!(others(&ini), others(&before), "off: another line changed");
+
+        test_services(None);
+        lib(&mut a).dm = dm;
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The Buttons and Gestures lists offer only the actions the device does (actions.rs, action_offered): without
+    // sleep, pairing and updates, no Sleep screen, Sleep now, Sleep after, Bluetooth controller or Update channel
+    // row, and the rows left keep one index in the count, the lookup and the search.
+    #[test]
+    fn binding_rows_leave_out_what_the_device_does_not_offer() {
+        let lit = light_available(); // (the simulator has a front light, the host's build none)
+        let hidden = [SHORTCUT_SLEEP_SCREEN, SHORTCUT_SLEEP, SHORTCUT_SLEEP_AFTER, SHORTCUT_BLUETOOTH_CONTROLLER, SHORTCUT_UPDATE_CHANNEL];
+        let light_rows = if lit { 0 } else { 2 };
+        assert_eq!(binding_row_count(GESTURES, 5), 10 - light_rows);
+        if lit {
+            // A light read without warmth keeps Warmth down / up (and a binding made there in sight).
+            test_light_cached(10, -1);
+            assert_eq!(binding_row_count(GESTURES, 5), 10);
+            assert!(binding_row_index(GESTURES, 5, SHORTCUT_WARMTH_UP).is_some());
+            test_light_cached(-1, -1);
+        }
+        assert_eq!((binding_row_count(GESTURES, 6), binding_row_count(BUTTONS, 6)), (6, 4));
+        test_services(Some(Services::without("sleep,pairing,updates")));
+        // Screen: no Sleep screen, no Sleep now. System: Gestures, Shortcuts and Language for gestures;
+        // Gestures and Language for buttons.
+        assert_eq!(binding_row_count(GESTURES, 5), 8 - light_rows);
+        assert_eq!(binding_row_count(BUTTONS, 5), 8 - light_rows);
+        assert_eq!((binding_row_count(GESTURES, 6), binding_row_count(BUTTONS, 6)), (3, 2));
+        assert_eq!(binding_row_at(BUTTONS, 6, 1).unwrap().act, [SHORTCUT_LANGUAGE, 0]);
+        for kind in [BUTTONS, GESTURES] {
+            for g in 0..N_GROUPS {
+                let n = binding_row_count(kind, g);
+                for i in 0..n {
+                    let r = binding_row_at(kind, g, i).unwrap();
+                    assert!(!hidden.contains(&r.act[0]), "{} listed", action_label(r.act[0]));
+                    assert_eq!(binding_row_index(kind, g, r.act[0]), Some(i));
+                }
+                assert!(binding_row_at(kind, g, n).is_none());
+            }
+            for &id in &hidden {
+                assert!((0..N_GROUPS).all(|g| binding_row_index(kind, g, id).is_none()));
+            }
+        }
+        assert_eq!(binding_row_index(GESTURES, 5, SHORTCUT_LIGHT_UP).is_some(), lit);
+        assert_eq!(binding_row_index(GESTURES, 5, SHORTCUT_MIRROR_PDF), Some(7 - light_rows));
+        test_services(None);
+        assert_eq!(binding_row_index(GESTURES, 5, SHORTCUT_SLEEP), Some(9 - light_rows));
+    }
+
     // Settings > Pen (2.1): the pen button's choices and the eraser's, each opening its own list as
     // Language does; a pick is saved and comes back to Settings.
     #[test]
@@ -13963,6 +14185,15 @@ mod tests {
         ui_init(300.0);
         ui_set_theme(UiTheme::Gothic);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // About's title off the Kindle: a platform's own device name as it is, and this computer's line
+    // where the platform says Kindle (the host, the simulator) or says nothing.
+    #[test]
+    fn about_names_a_platforms_own_device() {
+        assert_eq!(platform_device_name("Slate"), Some("Slate"));
+        assert_eq!(platform_device_name("Kindle"), None);
+        assert_eq!(platform_device_name(""), None);
     }
 
     // Settings > Updates: a System Updates card with the branch switch, and the Store-backed package
