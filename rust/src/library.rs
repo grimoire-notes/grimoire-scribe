@@ -1305,10 +1305,13 @@ fn sh_disc(cx: f32, cy: f32, rad: f32) -> ArtShape {
     sh_oval(cx, cy, rad, rad)
 }
 /// The band between the circles of radius r_in and r_out about (cx, cy), from angle a0 to a1 in degrees (clockwise
-/// from three o'clock, as y grows down); its ends are square.
+/// from three o'clock, as y grows down); its ends are square. A full ring (a1 - a0 of 360) ends on exactly the
+/// points it starts from, so the seam where its outline turns back is two edges that always cancel.
 fn sh_band(cx: f32, cy: f32, r_out: f32, r_in: f32, a0: f32, a1: f32) -> ArtShape {
     let n = (((a1 - a0).abs() / 5.0).ceil() as usize).max(2);
+    let full = (a1 - a0).abs() >= 360.0;
     let at = |rad: f32, k: usize| {
+        let k = if full && k == n { 0 } else { k };
         let a = (a0 + (a1 - a0) * k as f32 / n as f32).to_radians();
         (cx + rad * a.cos(), cy + rad * a.sin())
     };
@@ -1334,6 +1337,27 @@ fn sh_strip(x1: f32, y1: f32, x2: f32, y2: f32, w: f32) -> ArtShape {
     let (ux, uy, _) = art_unit(x2 - x1, y2 - y1);
     let (nx, ny) = (-uy * w * 0.5, ux * w * 0.5);
     vec![(x1 + nx, y1 + ny), (x2 + nx, y2 + ny), (x2 - nx, y2 - ny), (x1 - nx, y1 - ny)]
+}
+/// A stroke w wide through the points (two or more), its ends square and its turns mitered.
+fn sh_path(pts: &[(f32, f32)], w: f32) -> ArtShape {
+    let n = pts.len();
+    let normal = |i: usize, j: usize| {
+        let (ux, uy, _) = art_unit(pts[j].0 - pts[i].0, pts[j].1 - pts[i].1);
+        (-uy, ux)
+    };
+    // each point's offset to the stroke's one side: along the mean of its segments' normals, out to w / 2 from each
+    let offs: Vec<(f32, f32)> = (0..n)
+        .map(|i| {
+            let (ax, ay) = if i > 0 { normal(i - 1, i) } else { normal(0, 1) };
+            let (bx, by) = if i + 1 < n { normal(i, i + 1) } else { (ax, ay) };
+            let (mx, my, _) = art_unit(ax + bx, ay + by);
+            let k = w * 0.5 / (mx * ax + my * ay).max(0.25);
+            (mx * k, my * k)
+        })
+        .collect();
+    let mut out: ArtShape = pts.iter().zip(&offs).map(|(&(x, y), &(dx, dy))| (x + dx, y + dy)).collect();
+    out.extend(pts.iter().zip(&offs).rev().map(|(&(x, y), &(dx, dy))| (x - dx, y - dy)));
+    out
 }
 /// A leaf from (x1, y1) to (x2, y2), w wide at its middle: two arcs that meet in points.
 fn sh_leaf(x1: f32, y1: f32, x2: f32, y2: f32, w: f32) -> ArtShape {
@@ -1379,25 +1403,32 @@ fn art_book(c: &mut Canvas, r: Rect) {
         c,
         r,
         &[
-            sh_round(&[(2.0, 4.5, 2.0), (12.5, 6.75, 0.0), (12.5, 20.75, 0.0), (2.0, 18.5, 2.0)]),
-            sh_round(&[(11.5, 6.75, 0.0), (22.0, 4.5, 2.0), (22.0, 18.5, 2.0), (11.5, 20.75, 0.0)]),
+            // the two pages meet at the spine's foot in one edge
+            sh_round(&[(2.0, 3.75, 2.0), (12.0, 6.0, 0.0), (12.0, 20.0, 0.0), (2.0, 17.75, 2.0)]),
+            sh_round(&[(12.0, 6.0, 0.0), (22.0, 3.75, 2.0), (22.0, 17.75, 2.0), (12.0, 20.0, 0.0)]),
         ],
     );
     art_cut(
         c,
         r,
         &[
-            sh_strip(12.0, 4.0, 12.0, 18.25, 1.5),
-            sh_strip(4.0, 9.0, 9.25, 10.14, 1.5),
-            sh_strip(4.0, 12.5, 9.25, 13.64, 1.5),
-            sh_strip(14.75, 10.14, 20.0, 9.0, 1.5),
-            sh_strip(14.75, 13.64, 20.0, 12.5, 1.5),
+            sh_strip(12.0, 3.25, 12.0, 17.5, 1.5),
+            sh_strip(4.0, 8.25, 9.25, 9.39, 1.5),
+            sh_strip(4.0, 11.75, 9.25, 12.89, 1.5),
+            sh_strip(14.75, 9.39, 20.0, 8.25, 1.5),
+            sh_strip(14.75, 12.89, 20.0, 11.75, 1.5),
         ],
     );
 }
 fn art_library(c: &mut Canvas, r: Rect) {
-    let lean = sh_turn(sh_rect(14.5, 7.5, 3.5, 12.5, 1.0), 14.5, 20.0, 18.0);
-    art_fill(c, r, &[sh_rect(2.0, 19.5, 20.0, 2.5, 1.0), sh_rect(3.0, 4.5, 4.0, 15.5, 1.0), sh_rect(8.5, 8.0, 4.0, 12.0, 1.0), lean]);
+    // the tallest book in the middle, so the heights do not step down like a chart
+    let lean = sh_turn(sh_rect(14.75, 6.75, 3.5, 12.0, 1.0), 14.75, 18.75, 18.0);
+    art_fill(c, r, &[sh_rect(2.0, 18.25, 20.0, 2.5, 1.0), sh_rect(2.75, 6.25, 4.5, 12.5, 1.0), sh_rect(8.75, 2.75, 4.5, 16.0, 1.0), lean]);
+    art_cut(
+        c,
+        r,
+        &[sh_rect(2.0, 8.75, 6.0, 1.5, 0.0), sh_rect(2.0, 12.25, 6.0, 1.5, 0.0), sh_rect(8.0, 5.25, 6.0, 1.5, 0.0), sh_rect(8.0, 8.75, 6.0, 1.5, 0.0)],
+    );
 }
 fn art_documents(c: &mut Canvas, r: Rect) {
     art_fill(c, r, &[sh_rect(8.0, 2.0, 12.0, 16.0, 2.0)]);
@@ -1535,7 +1566,7 @@ fn art_art(c: &mut Canvas, r: Rect) {
             sh_disc(6.74, 9.28, 1.4),
             sh_disc(10.59, 6.33, 1.4),
             sh_disc(15.21, 7.79, 1.4),
-            sh_bar(14.75, 15.0, 23.0, 23.25, 4.0),
+            sh_bar(16.5, 16.5, 23.0, 23.0, 4.0),
         ],
     );
 }
@@ -1554,11 +1585,9 @@ fn art_code(c: &mut Canvas, r: Rect) {
         c,
         r,
         &[
-            sh_bar(7.5, 8.5, 4.75, 12.0, 1.5),
-            sh_bar(4.75, 12.0, 7.5, 15.5, 1.5),
-            sh_bar(16.5, 8.5, 19.25, 12.0, 1.5),
-            sh_bar(19.25, 12.0, 16.5, 15.5, 1.5),
-            sh_bar(13.25, 6.5, 10.75, 17.5, 1.5),
+            sh_path(&[(7.75, 8.5), (5.0, 12.0), (7.75, 15.5)], 1.5),
+            sh_path(&[(16.25, 8.5), (19.0, 12.0), (16.25, 15.5)], 1.5),
+            sh_strip(13.25, 6.5, 10.75, 17.5, 1.5),
         ],
     );
 }
@@ -1574,30 +1603,28 @@ fn art_science(c: &mut Canvas, r: Rect) {
     art_cut(c, r, &[sh_poly(&[(10.9, 10.5), (13.1, 10.5), (15.25, 14.0), (8.75, 14.0)]), sh_disc(10.0, 17.75, 1.0), sh_disc(14.0, 18.25, 0.9)]);
 }
 fn art_math(c: &mut Canvas, r: Rect) {
-    art_fill(c, r, &[sh_rect(2.5, 2.5, 19.0, 19.0, 2.0)]);
-    art_cut(
+    // plus, minus, times and equals, two by two, in black on the paper
+    let times = |deg: f32| sh_turn(sh_rect(2.75, 15.75, 8.5, 2.5, 0.5), 7.0, 17.0, deg);
+    art_fill(
         c,
         r,
         &[
-            sh_strip(5.0, 7.5, 10.0, 7.5, 1.75),
-            sh_strip(7.5, 5.0, 7.5, 10.0, 1.75),
-            sh_strip(14.0, 7.5, 19.0, 7.5, 1.75),
-            sh_strip(5.75, 14.75, 9.25, 18.25, 1.75),
-            sh_strip(9.25, 14.75, 5.75, 18.25, 1.75),
-            sh_strip(14.0, 14.625, 19.0, 14.625, 1.75),
-            sh_strip(14.0, 18.375, 19.0, 18.375, 1.75),
+            sh_rect(3.0, 5.75, 8.0, 2.5, 0.5),
+            sh_rect(5.75, 3.0, 2.5, 8.0, 0.5),
+            sh_rect(13.0, 5.75, 8.0, 2.5, 0.5),
+            times(45.0),
+            times(-45.0),
+            sh_rect(13.0, 13.25, 8.0, 2.5, 0.5),
+            sh_rect(13.0, 18.25, 8.0, 2.5, 0.5),
         ],
     );
 }
 fn art_language(c: &mut Canvas, r: Rect) {
+    // a globe: a rim 2 wide, a meridian ring that meets it at the poles, the equator and the centre meridian
     art_fill(c, r, &[sh_disc(12.0, 12.0, 10.0)]);
-    art_cut(c, r, &[sh_oval(12.0, 12.0, 5.25, 10.5)]);
-    art_fill(c, r, &[sh_oval(12.0, 12.0, 3.75, 9.0)]);
-    art_cut(
-        c,
-        r,
-        &[sh_strip(1.0, 12.0, 23.0, 12.0, 1.5), sh_strip(12.0, 1.0, 12.0, 23.0, 1.5), sh_strip(1.0, 6.75, 23.0, 6.75, 1.5), sh_strip(1.0, 17.25, 23.0, 17.25, 1.5)],
-    );
+    art_cut(c, r, &[sh_oval(12.0, 12.0, 5.25, 8.0)]);
+    art_fill(c, r, &[sh_oval(12.0, 12.0, 3.75, 6.5)]);
+    art_cut(c, r, &[sh_strip(1.0, 12.0, 23.0, 12.0, 1.5), sh_strip(12.0, 1.0, 12.0, 23.0, 1.5)]);
     // the rim drawn again over the lines' ends, so the globe keeps its round edge
     art_fill(c, r, &[sh_band(12.0, 12.0, 10.0, 8.0, 0.0, 360.0)]);
 }
@@ -1630,6 +1657,8 @@ fn art_recipes(c: &mut Canvas, r: Rect) {
         r,
         &[sh_disc(7.5, 9.5, 4.0), sh_disc(12.0, 7.5, 4.75), sh_disc(16.5, 9.5, 4.0), sh_rect(5.0, 9.5, 14.0, 6.5, 0.0), sh_rect(5.5, 17.5, 13.0, 3.5, 1.0)],
     );
+    // two pleats rising from the crown's foot, the toque's mark
+    art_cut(c, r, &[sh_rect(9.25, 12.0, 1.5, 4.5, 0.0), sh_rect(13.25, 12.0, 1.5, 4.5, 0.0)]);
 }
 fn art_health(c: &mut Canvas, r: Rect) {
     art_fill(
@@ -1681,7 +1710,7 @@ fn art_travel(c: &mut Canvas, r: Rect) {
     let parts = [
         sh_bar(12.0, 2.75, 12.0, 20.0, 3.25),
         sh_round(&[(12.0, 8.0, 0.0), (21.0, 13.75, 0.75), (21.0, 16.0, 0.75), (12.0, 13.5, 0.0), (3.0, 16.0, 0.75), (3.0, 13.75, 0.75)]),
-        sh_round(&[(12.0, 17.0, 0.0), (16.0, 19.75, 0.5), (16.0, 21.0, 0.5), (12.0, 20.0, 0.0), (8.0, 21.0, 0.5), (8.0, 19.75, 0.5)]),
+        sh_round(&[(12.0, 17.0, 0.0), (16.0, 19.25, 0.5), (16.0, 21.25, 0.5), (12.0, 20.0, 0.0), (8.0, 21.25, 0.5), (8.0, 19.25, 0.5)]),
     ];
     let ink: Vec<ArtShape> = parts.into_iter().map(|p| sh_move(sh_turn(p, 12.0, 12.0, 45.0), 0.4, -0.75)).collect();
     art_fill(c, r, &ink);
@@ -1743,10 +1772,10 @@ fn art_garden(c: &mut Canvas, r: Rect) {
         c,
         r,
         &[
-            sh_strip(12.0, 11.0, 12.0, 20.0, 2.0),
-            sh_leaf(11.5, 13.5, 3.0, 8.5, 4.5),
-            sh_leaf(12.5, 11.5, 21.0, 4.0, 5.5),
-            sh_rect(4.0, 19.5, 16.0, 2.5, 1.25),
+            sh_bar(12.0, 12.0, 12.0, 19.0, 2.0),
+            sh_leaf(11.5, 12.5, 3.0, 7.5, 4.5),
+            sh_leaf(12.5, 10.5, 21.0, 3.0, 5.5),
+            sh_rect(4.0, 18.5, 16.0, 2.5, 1.25),
         ],
     );
 }
@@ -1767,8 +1796,9 @@ fn art_baby(c: &mut Canvas, r: Rect) {
     art_fill(c, r, &[sh_disc(12.0, 5.5, 2.5), sh_oval(12.0, 10.5, 7.5, 2.75), sh_band(12.0, 17.0, 4.5, 2.5, 0.0, 360.0)]);
 }
 fn art_tools(c: &mut Canvas, r: Rect) {
-    let turn = |s: ArtShape| sh_turn(s, 12.0, 12.0, 45.0);
-    art_fill(c, r, &[turn(sh_disc(12.0, 6.0, 4.75)), turn(sh_bar(12.0, 9.0, 12.0, 21.5, 4.0))]);
+    // nearer upright than the pencil's and the key's 45 degrees, so the three do not share a diagonal
+    let turn = |s: ArtShape| sh_move(sh_turn(s, 12.0, 12.0, 30.0), -0.6, 0.0);
+    art_fill(c, r, &[turn(sh_disc(12.0, 6.0, 4.75)), turn(sh_bar(12.0, 9.0, 12.0, 21.0, 4.0))]);
     art_cut(c, r, &[turn(sh_rect(10.25, 0.0, 3.5, 6.0, 0.0))]);
 }
 fn art_lock(c: &mut Canvas, r: Rect) {
@@ -1803,7 +1833,8 @@ fn art_cloud(c: &mut Canvas, r: Rect) {
 }
 fn art_computer(c: &mut Canvas, r: Rect) {
     art_fill(c, r, &[sh_rect(2.0, 3.0, 20.0, 14.0, 2.0), sh_rect(10.5, 16.5, 3.0, 3.5, 0.0), sh_rect(7.0, 19.5, 10.0, 2.0, 1.0)]);
-    art_cut(c, r, &[sh_rect(4.0, 5.0, 16.0, 9.0, 0.0)]);
+    // the screen solid, parted from the chin by a white line
+    art_cut(c, r, &[sh_rect(4.0, 13.25, 16.0, 1.5, 0.0)]);
 }
 fn art_phone(c: &mut Canvas, r: Rect) {
     art_fill(c, r, &[sh_rect(6.0, 2.0, 12.0, 20.0, 2.0)]);
