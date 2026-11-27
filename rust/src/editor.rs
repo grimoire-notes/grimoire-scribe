@@ -2353,9 +2353,9 @@ fn blit_canvas(screen: &mut Canvas, pc: &Canvas, zoom: f32, ox: f32, oy: f32, r:
 // r: its bilinear blend would give a solid stroke (0 on the page where its paper is not 0) a gray rim on screen, which
 // the live frames dither and the settle then sends again. A screen pixel of r whose four page pixels include such ink
 // is made again: black where the ink has half of its weight or more, else the blend of the four with each ink pixel
-// taken as its paper (`paper`: the page's paper alone and its stride; None: white). So a solid stroke changes a
-// screen pixel only to black, at any zoom, and leaves the others as they were over its paper; every pixel with no
-// such ink beside it is blit_canvas's, the same bytes. (The same sampling as blit_canvas, pixel for pixel.)
+// taken as its paper (`paper`: the page's paper alone and its stride; None: white). So over its paper a solid stroke
+// changes a screen pixel only to black, at any zoom, and leaves the others as they were; every pixel with no such ink
+// beside it is blit_canvas's, the same bytes. (The same sampling as blit_canvas, pixel for pixel.)
 // Beside other ink it never lightens: where the ink has less than half the weight and one of the four with any weight
 // is neither such ink nor its own paper (pencil, charcoal, a highlight, a pen given grain, under the stroke or over
 // it), blit_canvas's blend stays, which counts the ink as black and so is never lighter than the view without the

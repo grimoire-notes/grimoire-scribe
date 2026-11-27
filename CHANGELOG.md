@@ -121,8 +121,9 @@
   next shown. A notebook's card in the Library follows the change when the notebook is next opened and left. In
   Polish and Japanese its texts are in English until they are translated.
 - **Polish and Japanese** (#315, nebuff). The texts of the new home, Apps, the Package Store and the rest of 2.2's
-  and 2.3's screens are translated. In this beta 45 of 1,267 texts are still in English in each language: the
-  Package Store's license steps, the package kit's messages, Manage apps... and Settings > Updates' version line.
+  and 2.3's screens are translated. In this beta 45 of 1,267 texts are still in English in each language, among
+  them the Package Store's license steps, the package kit's messages, Manage apps... and Settings > Updates' version
+  line.
 - Settings > Updates says "Version 2.2.0 to 2.3.0" where it had an arrow, which Classic's fonts do not have; and
   the home's Sort select shows its value alone where the caption and value do not fit even small, as in Japanese
   (#316).

@@ -144,8 +144,9 @@ fn solid_is_the_threshold_of_smooth() {
     check!(SOLID_STEP == 16);
 }
 
-// The ballpoint at pressure 0.6 on white, a horizontal stroke: Smooth's column across it is the one the port's
-// experiment measured (254 106 42 38 54 186), and Solid draws it 5 px of 0; the fineliner 3 px.
+// The ballpoint at pressure 0.6 on white, a horizontal stroke: Smooth's column across it is 254 106 42 38 54 186, of
+// which the rule (16 or more below what was there) makes 5 px of 0 with Solid; the fineliner 3 px. These are the
+// widths the setting was judged at.
 fn solid_widths_are_the_ones_judged() {
     let (w, h) = (240, 120);
     for (t, width) in [(TOOL_BALLPOINT, 5), (TOOL_FINELINER, 3)] {
