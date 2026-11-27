@@ -293,6 +293,14 @@ fn nothing_is_sent_while_the_pairing_card_is_up() {
     canvas_fill(&mut c, Rect { x: 100, y: 100, w: 10, h: 10 }, 0);
     live_push(&c, Rect { x: 100, y: 100, w: 10, h: 10 });
     check!(read_batch(sv[1], &mut seen, w, h, &mut hellos) == 1);
+    if seen[105 * w as usize + 105] != 0 {
+        // The viewer, looking at every tile again, read this one while live_push was still copying it: it is
+        // marked after the copy, so it comes again whole, in a batch of its own (live.rs live_push). The tile it
+        // sent holds part of the change (it differed from what was sent before, and the change is all that
+        // differs), so no other tile was sent in its place.
+        check!((100..110).any(|y| (100..110).any(|x| seen[y * w as usize + x] == 0)));
+        check!(read_batch(sv[1], &mut seen, w, h, &mut hellos) == 1);
+    }
     check!(seen[0] == 200 && seen[105 * w as usize + 105] == 0 && hellos == 1);
     live_stop();
     close(sv[1]);
@@ -490,6 +498,7 @@ fn a_viewer_sends_the_pen_after_the_tiles_and_only_its_newest_place() {
         live_pen(LIVE_PEN_HOVER, 10.0 + i as f32, 150.0);
         sleep_ms(5);
     }
+    let moved = now_ms().wrapping_sub(t0);
     frames = 0;
     let mut last_read = t0;
     while !quiet(sv[1], 150) && next_pen(sv[1], &mut pen, None, None) {
@@ -497,7 +506,11 @@ fn a_viewer_sends_the_pen_after_the_tiles_and_only_its_newest_place() {
         last_read = now_ms();
     }
     check!(frames >= 2 && frames <= (last_read.wrapping_sub(t0) / LIVE_PEN_MS) as i32 + 2);
-    check!(frames < 60); // (60 places: fewer frames than that, whatever the load)
+    // 60 places in less time than 60 frames take: fewer frames than places. (Where every sleep ran as long as a
+    // frame's time, a runner at background priority, each place can have a frame of its own: the bound above is
+    // then all there is to hold. A frame of its own for each needs the last place at least 58 frames' time after
+    // the first frame, which comes no sooner than the first place.)
+    check!(frames < 60 || moved >= 58 * LIVE_PEN_MS);
     check!(pen[0] == 69 && pen[1] == 150);
     // A pen that stays where it is is not told again; gone, it is told once.
     live_pen(LIVE_PEN_HOVER, 69.0, 150.0);
