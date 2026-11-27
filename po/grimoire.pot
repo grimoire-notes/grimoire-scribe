@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Grimoire 2.3.0-beta.1\n"
 "Report-Msgid-Bugs-To: https://github.com/ganten1998/grimoire-scribe/issues\n"
-"POT-Creation-Date: 2026-11-27 00:34-0600\n"
+"POT-Creation-Date: 2026-11-27 07:51-0600\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -834,6 +834,19 @@ msgstr ""
 
 #: rust/src/app.rs rust/src/library.rs
 msgid "Couldn't save shortcuts.ini"
+msgstr ""
+
+#. TRANSLATORS: also a toast, when a light or warmth action bound by hand is used on a
+#. device without a front light; 1700 px at 44 px.
+#. TRANSLATORS: in the Display page where the sliders would be (1420 px at 44 px).
+#: rust/src/app.rs rust/src/dispmenu.rs
+msgid "Front light controls are not available here."
+msgstr ""
+
+#. TRANSLATORS: also a toast, when Warmth down or up (a key or gesture) is used on a front
+#. light without warmth; 1700 px at 44 px.
+#: rust/src/app.rs rust/src/dispmenu.rs
+msgid "This Kindle has no warmth control."
 msgstr ""
 
 #. TRANSLATORS: light action before its cached level is known; toast, 1700 px at 44 px.
@@ -1725,21 +1738,19 @@ msgstr ""
 msgid "Status bar"
 msgstr ""
 
-#. TRANSLATORS: in the Display page where the sliders would be (1420 px at 44 px).
-#: rust/src/dispmenu.rs
-msgid "Front light controls are not available here."
-msgstr ""
-
 #: rust/src/dispmenu.rs
 msgid "Auto brightness (follow the room's light)"
 msgstr ""
 
 #: rust/src/dispmenu.rs
-msgid "This Kindle has no warmth control."
+msgid "Sideways, show the whole page"
 msgstr ""
 
+#. TRANSLATORS: the Sleep settings page's one row on a device whose system owns sleep (its
+#. own timer and sleep picture): on keeps the screen from sleeping while Grimoire is open
+#. (Sleep after: never), off leaves it to the device. About 1500 px at 44 px, beside its switch.
 #: rust/src/dispmenu.rs
-msgid "Sideways, show the whole page"
+msgid "Keep the screen on while Grimoire is open"
 msgstr ""
 
 #: rust/src/dispmenu.rs
