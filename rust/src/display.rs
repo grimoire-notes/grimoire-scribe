@@ -254,6 +254,56 @@ pub fn display_last_fast_waiting() -> bool {
     active().display_last_fast_waiting()
 }
 
+/// The margin display_settle_area gives the pixels it finds (screen px): a tight crop of changed pixels can leave
+/// edge artifacts on some panels.
+pub const SETTLE_MARGIN: i32 = 3;
+
+/// The settle after writing with Ink edges at Solid (editor.rs settle_solid, 2.3, #320): the part of r (screen px)
+/// whose pixels the panel shows at another level (value >> 4) than `screen` holds them now, padded by SETTLE_MARGIN and
+/// clipped to r, or empty when every level matches; the caller refreshes what this returns in grays, or nothing.
+/// Pixels that got lighter count as well as darker ones (a shape snapped, an undo, the lasso, erasing).
+///
+/// The contract for a platform: it answers r whole unless it knows what it last gave the panel at every pixel of r.
+/// One that keeps no record answers r whole (the default), and so does one whose last frames may not all have
+/// reached the panel as they were written: a refresh refused or failed, a live frame the driver may read half done,
+/// a rotation or an inversion since; until a whole grayscale frame has gone out again. A platform with a pen mode
+/// leaves it when it answers empty, as the grayscale refresh would have made it do.
+#[inline]
+pub fn display_settle_area(screen: &Canvas, r: Rect) -> Rect {
+    active().display_settle_area(screen, r)
+}
+
+/// The box of the pixels of r (in `screen`'s pixels) whose level (v >> 4) differs from what `level_of(x, y)` says the
+/// panel shows there, padded by SETTLE_MARGIN and clipped to r; RECT_EMPTY when none differs. A platform's
+/// display_settle_area with a record of its panel can answer with it.
+pub fn settle_area_by(screen: &Canvas, r: Rect, mut level_of: impl FnMut(i32, i32) -> u8) -> Rect {
+    let r = rect_intersect(r, Rect { x: 0, y: 0, w: screen.w, h: screen.h });
+    let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, -1, -1);
+    for y in r.y..r.y + r.h {
+        let row = &screen.px[(y * screen.stride) as usize..];
+        for x in r.x..r.x + r.w {
+            if row[x as usize] >> 4 != level_of(x, y) {
+                x0 = x0.min(x);
+                x1 = x1.max(x);
+                y0 = y0.min(y);
+                y1 = y1.max(y);
+            }
+        }
+    }
+    if x1 < 0 {
+        return RECT_EMPTY;
+    }
+    settle_area_pad(Rect { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 }, r)
+}
+
+/// The pixels found, `found`, padded by SETTLE_MARGIN and clipped to r (empty for none found).
+pub fn settle_area_pad(found: Rect, r: Rect) -> Rect {
+    if rect_is_empty(found) {
+        return RECT_EMPTY;
+    }
+    rect_intersect(rect_inflate(found, SETTLE_MARGIN), r)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

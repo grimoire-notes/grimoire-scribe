@@ -378,6 +378,10 @@ pub struct EditorState {
     step_pushes: u64,
     /// undos and redos done by swapping a patch back (a probe, editor.undo_patched)
     undo_patched: u32,
+    /// Ink edges at Solid: settles after writing that sent a refresh, and those that sent none, the panel showing
+    /// already what the page holds (settle_now_in; probes editor.settles_sent and editor.settles_quiet)
+    settles_sent: u32,
+    settles_quiet: u32,
     /// the stroke eraser's tiles (MASK_TILE) drawn again, and those the boxes of what it took off
     /// cover (a probe, editor.erase_tiles)
     erase_tiles: (u32, u32),
@@ -12586,13 +12590,38 @@ fn settle_now_in(a: &mut App) {
     }
     if !rect_is_empty(s.settle) {
         let r = s.settle;
-        show(a, r, RefreshMode::Ui);
+        if ink_edges() == InkEdges::Solid {
+            settle_solid(a, r);
+        } else {
+            show(a, r, RefreshMode::Ui);
+        }
     }
     ed(a).settle = RECT_EMPTY;
     if ed(a).panel_stale {
         repaint_panel(a, RefreshMode::Ui);
     }
     ed(a).panel_stale = false;
+}
+
+// The settle with Ink edges at Solid (2.3, #320): page rect r composed on the screen, then refreshed in grays only
+// where the panel shows another level than the screen now holds (display_settle_area: the platform's record of what
+// it last gave the panel, lighter pixels as well as darker ones, with a margin), and not at all where it shows them
+// all: a solid stroke's live frames put its pixels on the panel as the page has them, so it needs no second pass.
+// Only r is judged: anything else due (the panel's own repaint, a toolbar change) goes out as it would.
+fn settle_solid(a: &mut App, r: Rect) {
+    let sr = page_to_screen(a, r);
+    if rect_is_empty(sr) {
+        return;
+    }
+    compose(a, sr);
+    let d = display_settle_area(&a.screen, sr);
+    let s = ed(a);
+    if rect_is_empty(d) {
+        s.settles_quiet += 1;
+        return;
+    }
+    s.settles_sent += 1;
+    app_invalidate(a, d, RefreshMode::Ui);
 }
 
 /// Ink edges changed (Settings > Pen, 2.3, #320), maybe over an open notebook (the quick settings' Settings): what the
@@ -13738,6 +13767,10 @@ pub fn editor_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32
     } else if key == "undo_patched" {
         // Undos and redos that swapped a patch back instead of drawing the region again.
         csnprintf!(out, cap, "%u", s.undo_patched);
+    } else if key == "settles_sent" || key == "settles_quiet" {
+        // With Ink edges at Solid: the settles after writing that sent a grayscale refresh, and those that sent none,
+        // the panel showing already what the page holds (settle_solid).
+        csnprintf!(out, cap, "%u", if key == "settles_sent" { s.settles_sent } else { s.settles_quiet });
     } else if key == "live_matches_render" {
         // The open page drawn afresh, pixel for pixel what drawing, erasing and undoing left in the
         // page canvas: 1 when they are the same.

@@ -421,6 +421,91 @@ fn cached_shadow_matches_fbpack_row_without_reading_fb() {
     }
 }
 
+// fbpack_level_span (the settle with Ink edges at Solid, display_settle_area): after a grayscale frame, every rotation,
+// flip, inversion and depth, a row's first and last pixels whose level (v >> 4) the shadow shows otherwise, lighter or
+// darker; none where a change stays within its level.
+fn level_span_finds_what_differs_by_level() {
+    for bpp in [8, 32] {
+        for rotation in 0..4 {
+            for flip in [false, true] {
+                for invert in [false, true] {
+                    let w = if rotation & 1 != 0 { PH } else { PW };
+                    let h = if rotation & 1 != 0 { PW } else { PH };
+                    let bytes = (bpp / 8) as usize;
+                    let mut fb = vec![0u8; ROOM * bytes + 2 * GUARD];
+                    let mut previous = vec![0u8; ROOM];
+                    let mut shown = vec![0u8; ROOM];
+                    let src: Vec<u8> = (0..w * h).map(|i| (37 + i * 29 % 200) as u8).collect();
+                    frame_cached(&mut fb, &mut previous, &mut shown, &src, bpp, rotation, flip, invert, false, true);
+                    let span = |now: &[u8], y: i32| {
+                        let (fx, fy) = position(0, y, rotation, flip);
+                        let (nx, ny) = position(1, y, rotation, flip);
+                        let pstep = ((ny - fy) * PW + nx - fx) as isize;
+                        fbpack_level_span(&now[(y * w) as usize..((y + 1) * w) as usize], &shown, (fy * PW + fx) as usize, pstep, invert)
+                    };
+                    for y in 0..h {
+                        check!(span(&src, y).is_none());
+                    }
+                    let mut now = src.clone();
+                    let y = h / 2;
+                    // within a level: nothing
+                    let at = (y * w + 2) as usize;
+                    now[at] = (src[at] & 0xF0) | (!src[at] & 0x0F);
+                    check!(span(&now, y).is_none());
+                    // darker at 1, lighter at w - 2: both found, the row's ends
+                    now[(y * w + 1) as usize] = src[(y * w + 1) as usize].saturating_sub(40);
+                    now[(y * w + w - 2) as usize] = src[(y * w + w - 2) as usize].saturating_add(60);
+                    check!(span(&now, y) == Some((1, (w - 2) as usize)));
+                    check!(span(&now, y - 1).is_none());
+                }
+            }
+        }
+    }
+}
+
+// A solid ballpoint word written over a ruled page in its live frames (fast, over a known frame, through the RAM shadow
+// as the Kindle copies them): the shadow then shows the settled page at every pixel's level, so the settle sends
+// nothing; the same word with Smooth leaves its dithered grays to settle.
+fn solid_frames_leave_nothing_to_settle() {
+    const W: i32 = 240;
+    const H: i32 = 120;
+    for e in [InkEdges::Solid, InkEdges::Smooth] {
+        let mut page = Canvas::default();
+        check!(canvas_init(&mut page, W, H) == 0);
+        for y in (10..H).step_by(24) {
+            canvas_fill(&mut page, Rect { x: 0, y, w: W, h: 2 }, 200);
+        }
+        let n = (W * H) as usize;
+        let (mut fb, mut previous, mut shown) = (vec![0u8; n], vec![0u8; n], vec![0u8; n]);
+        let copy = |page: &Canvas, r: Rect, fast: bool, fb: &mut [u8], previous: &mut [u8], shown: &mut [u8]| {
+            for y in r.y..r.y + r.h {
+                let at = (y * W + r.x) as usize;
+                fbpack_row_cached(fb, at, 1, Some(&mut *previous), Some(&mut *shown), at, 1, &page.px[at..], r.w, r.x, y, 8, false, fast, true);
+            }
+        };
+        copy(&page, Rect { x: 0, y: 0, w: W, h: H }, false, &mut fb, &mut previous, &mut shown);
+        let mut prm = ToolParams::default();
+        tool_params_default(TOOL_BALLPOINT, &mut prm);
+        let mut b = BrushState::default();
+        ink_edges_as(e, || brush_begin(&mut b, TOOL_BALLPOINT, &prm, 99, 300.0));
+        for k in 0..=80 {
+            let f = k as f32 / 80.0;
+            let q = PenSample { x: 30.0 + 180.0 * f, y: 64.0 + 25.0 * (f * 12.0).sin(), pressure: 0.3 + 0.6 * f, t_ms: k * 8, ..Default::default() };
+            let d = rect_intersect(brush_add(&mut b, &mut page, &q), Rect { x: 0, y: 0, w: W, h: H });
+            if !rect_is_empty(d) {
+                copy(&page, d, true, &mut fb, &mut previous, &mut shown);
+            }
+        }
+        let differ = (0..H).filter(|&y| fbpack_level_span(&page.px[(y * W) as usize..((y + 1) * W) as usize], &shown, (y * W) as usize, 1, false).is_some()).count();
+        if e == InkEdges::Solid {
+            check!(differ == 0);
+            check!(page.px.iter().zip(shown.iter()).all(|(&p, &s)| p == s));
+        } else {
+            check!(differ > 10);
+        }
+    }
+}
+
 #[test]
 fn test_fbpack() {
     run!(gray_paper_survives_live_ink_and_overlap);
@@ -429,5 +514,7 @@ fn test_fbpack() {
     run!(no_cache_falls_back_and_invalidating_repaints);
     run!(pen_refreshes_keep_coordinate_processing_at_every_edge);
     run!(cached_shadow_matches_fbpack_row_without_reading_fb);
+    run!(level_span_finds_what_differs_by_level);
+    run!(solid_frames_leave_nothing_to_settle);
     done();
 }

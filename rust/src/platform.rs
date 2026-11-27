@@ -51,6 +51,12 @@ pub trait Platform: Sync {
     fn display_last_fast_waiting(&self) -> bool {
         false
     }
+    /// display_settle_area: r whole where the platform keeps no record of what it gave the panel (the settle then
+    /// refreshes all of r, as it always has).
+    fn display_settle_area(&self, screen: &Canvas, r: Rect) -> Rect {
+        let _ = screen;
+        r
+    }
 
     // ---- input.rs ----
     fn input_open(&self, screen_w: i32, screen_h: i32, dpi: f32, pen: Option<&InputCalib>, touch: Option<&InputCalib>) -> i32;
@@ -336,6 +342,10 @@ in_tree_platform!(
             crate::display_fbink::display_last_fast_waiting()
         }
         #[inline]
+        fn display_settle_area(&self, screen: &Canvas, r: Rect) -> Rect {
+            crate::display_fbink::display_settle_area(screen, r)
+        }
+        #[inline]
         fn input_touch_trace_event(&self, line: &str) {
             crate::input_evdev::input_touch_trace_event(line)
         }
@@ -349,6 +359,10 @@ in_tree_platform!(
         #[inline]
         fn input_touch_trace_event(&self, line: &str) {
             crate::sim_sdl::input_touch_trace_event(line)
+        }
+        #[inline]
+        fn display_settle_area(&self, screen: &Canvas, r: Rect) -> Rect {
+            crate::sim_sdl::display_settle_area(screen, r)
         }
     }
 );
