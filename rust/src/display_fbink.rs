@@ -48,7 +48,9 @@ use std::time::{Duration, Instant};
 // The driver requires that pen-mode updates never collide with standard ones (FBInk's note): so a
 // stroke enters pen mode only while no standard update can still be on the panel (the quiet thread
 // below follows them), the driver stays in it until a grayscale refresh is due, and that refresh
-// first waits for the pen's last update to end.
+// first waits for the pen's last update to end. With Ink edges at Solid (2.3, #320) pen mode also
+// ends at a pause after writing that sends nothing (display_settle_area's empty answer), after the
+// same wait: no refresh follows it then, and the next stroke enters pen mode again at its first frame.
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum PenCfg {
@@ -266,7 +268,8 @@ fn fbink_get_last_marker() -> u32 {
 fn fbink_wait_for_complete(fd: i32, marker: u32) -> i32 {
     // SAFETY: plain values. The callers keep the hard rule: never on a marker the quiet thread
     // waits on (display_wait checks its books first; pen_leave's marker went out in pen mode, which
-    // the quiet thread never takes on).
+    // the quiet thread never takes on). The main thread may wait on the pen's last marker twice, one
+    // wait after the other (pen_leave, then display_wait: see there); never two waiters at once.
     unsafe { ffi::grim_fbink_wait_for_complete(fd, marker) }
 }
 fn fbink_mtk_toggle_auto_reagl(fd: i32, on: bool) -> i32 {
@@ -682,7 +685,8 @@ fn read_pen_cfg(s: &State) -> PenCfg {
 
 // A stroke of ink starts (on) or ends. Its fast frames take pen mode when it is on and no standard
 // update can still be on the panel (display_present); the driver stays in pen mode past the stroke,
-// until a grayscale refresh is due (pen_leave).
+// until a grayscale refresh is due or, with Ink edges at Solid, a pause after writing sends nothing
+// (pen_leave, from display_present or display_settle_area).
 pub fn display_pen_mode(on: bool) {
     display_live_ink(on);
     with(|s| {
@@ -717,6 +721,8 @@ pub fn display_pen_mode(on: bool) {
 
 // Before a standard update: out of pen mode, once the panel has finished the pen's last update (a
 // standard one over it would collide). Grayscale refreshes come after a pause, so this rarely waits.
+// Also at a pause after writing with Ink edges at Solid that sends nothing (display_settle_area): no
+// update follows it then, and whichever standard one comes next finds the pen's last one ended.
 fn pen_leave(s: &mut State) {
     if !s.g_pen_mode {
         return;
@@ -997,8 +1003,9 @@ pub fn display_skip_status(r: Rect) {
     with(|s| s.g_status = r);
 }
 /// Whether the driver is in pen mode now. It stays so past a stroke, until a grayscale refresh
-/// is due (pen_leave), and that refresh waits for the pen's last frame: the clock and battery
-/// corner (status.rs) keeps its own refreshes out of that wait.
+/// is due or, with Ink edges at Solid, a pause after writing sends nothing (pen_leave), and either
+/// first waits for the pen's last frame: the clock and battery corner (status.rs) keeps its own
+/// refreshes out of that wait.
 pub fn display_pen_mode_on() -> bool {
     with(|s| s.g_pen_mode)
 }
@@ -1424,6 +1431,13 @@ pub fn display_band_overwritten(screen: &Canvas, band: Rect, skip: Rect) -> bool
 
 // Until the last update has ended (before sleep and exit). One the quiet thread took on is waited
 // for in its books, not at the driver: a second waiter on its marker would sit out the driver's 5 s.
+// After a pause that sent nothing with Ink edges at Solid, the last update is the pen's own, and
+// pen_leave has waited on its marker already: this then waits on it a second time, later, from the
+// same thread. That is no second waiter: the first wait has returned, and the quiet thread never
+// takes on a pen mode marker. The driver answers such a wait at once: it drops an update's markers
+// from its list as the update ends, and a marker it does not list returns 0, which FBInk reads as
+// "already fully been completed" (read in the Scribe 2's driver module, not measured;
+// docs/TESTING.md's Ink edges device check 9 times it on a Scribe).
 pub fn display_wait() {
     let fd = with(|s| s.g_fd);
     if fd < 0 {

@@ -193,7 +193,9 @@ pub fn display_skip_status(r: Rect) {
 }
 /// True while the panel's driver is in pen mode: set by the first stroke's fast frames and
 /// kept past the stroke until a grayscale refresh is due (display_fbink.rs, pen_leave), which then
-/// waits for the pen's last frame. The simulator answers with what display_pen_mode last asked.
+/// waits for the pen's last frame, or until a pause after writing with Ink edges at Solid sends
+/// nothing (display_settle_area's empty answer), after the same wait. The simulator answers with
+/// what display_pen_mode last asked.
 #[inline]
 pub fn display_pen_mode_on() -> bool {
     active().display_pen_mode_on()

@@ -162,9 +162,9 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   that changed (a save waits for the storage twice, so it follows the refresh). They are held back while
   the pen is near (any pen event until `IN_PEN_LEAVE`, or until a finger the touch panel lets through: that
   is never the pen's hand), a stroke or another gesture is in progress (`editor_busy`), or the driver is in
-  pen mode (`display_pen_mode_on`: it stays so past a stroke until a grayscale refresh is due, and
-  that refresh waits for the pen's last frame, so a refresh of the corner must not be the one that
-  ends it). Taking it down is not held back by the pen merely being near: a sheet opened under the pen
+  pen mode (`display_pen_mode_on`: it stays so past a stroke until a grayscale refresh is due or, with
+  Ink edges at Solid, a pause after writing sends nothing, and either waits for the pen's last frame,
+  so a refresh of the corner must not be the one that ends it). Taking it down is not held back by the pen merely being near: a sheet opened under the pen
   must not keep the corner over the sheet. A finger tap in the 14 mm corner square, or on the box's place with 4 mm around it (shown or
   not: `status_hit`), turns it on and off: decided at the lift, with the
   finger down in the zone, on no control (`editor_control_at`: the panel, or a link, but
