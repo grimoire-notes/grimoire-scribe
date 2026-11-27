@@ -1,5 +1,7 @@
 //! The global quick settings panel (2.3): a one-finger pull down from the top of any screen opens
-//! brightness and warmth, Settings, rotation lock and auto brightness over whatever is in front.
+//! brightness and warmth, Settings, rotation lock and auto brightness over whatever is in front. On a
+//! platform without a front light (light_available() false) it has Settings and rotation lock alone,
+//! and is only as tall as they need (#326).
 //!
 //! The panel is the app's, not a screen's: the pull and the panel take their pointer events before
 //! the screen sees them, and app_flush overlays the panel for the present, putting the screen's own
@@ -30,6 +32,8 @@ pub struct Quick {
     warmth: i32,
     /// the Kindle's own auto brightness: 1 on, 0 off, -1 where there is no sensor
     auto: i32,
+    /// light_available() as the panel opened: false, no light rows and no Auto brightness
+    light: bool,
     pressed: Option<Rect>,
     /// a finger that came down in the top strip, and has not pulled far enough yet
     tracking: bool,
@@ -41,9 +45,11 @@ struct QuickLayout {
     rect: Rect,
     title: Rect,
     close: Rect,
+    /// Settings, Rotation lock and Auto brightness: the first `count` of them (2 without a light)
     buttons: [(i32, Rect); 3],
-    bright: Rect,
-    warm: Rect,
+    count: usize,
+    /// the Brightness and Warmth rows, None without a light
+    sliders: Option<(Rect, Rect)>,
 }
 
 /// The top strip a pull starts in: the bar where it is drawn, and the same system strip when the
@@ -61,7 +67,8 @@ fn panel_top(a: &App) -> i32 {
     }
 }
 
-fn quick_layout(a: &App) -> QuickLayout {
+/// `light`: the panel's light rows and Auto brightness are there (Quick::light).
+fn quick_layout(a: &App, light: bool) -> QuickLayout {
     let top = panel_top(a);
     let m = ui_px(40.0);
     let top_pad = ui_px(28.0);
@@ -72,8 +79,8 @@ fn quick_layout(a: &App) -> QuickLayout {
     let slider_h = ui_px(112.0);
     let slider_gap = ui_px(18.0);
     let bottom_pad = ui_px(30.0);
-    let h = (top_pad + title_h + title_gap + button_h + button_gap + slider_h * 2 + slider_gap + bottom_pad)
-        .min((a.h - top).max(1));
+    let sliders_h = if light { button_gap + slider_h * 2 + slider_gap } else { 0 };
+    let h = (top_pad + title_h + title_gap + button_h + sliders_h + bottom_pad).min((a.h - top).max(1));
     let rect = Rect::new(0, top, a.w, h);
     let title_y = top + top_pad;
     let title = Rect::new(m, title_y, (a.w - 2 * m - ui_px(90.0)).max(0), title_h);
@@ -81,16 +88,20 @@ fn quick_layout(a: &App) -> QuickLayout {
     let close = Rect::new(a.w - m - close_sz, title_y + ui_px(4.0), close_sz, close_sz);
     let gap = ui_px(24.0);
     let by = title_y + title_h + title_gap;
-    let bw = ((a.w - 2 * m - 2 * gap) / 3).max(1);
+    let count: usize = if light { 3 } else { 2 };
+    let bw = ((a.w - 2 * m - (count as i32 - 1) * gap) / count as i32).max(1);
     let buttons = [
         (Q_SETTINGS, Rect::new(m, by, bw, button_h)),
         (Q_ROTATE, Rect::new(m + bw + gap, by, bw, button_h)),
         (Q_AUTO, Rect::new(m + 2 * (bw + gap), by, bw, button_h)),
     ];
     let sy = by + button_h + button_gap;
-    let bright = Rect::new(m, sy, (a.w - 2 * m).max(0), slider_h);
-    let warm = Rect::new(m, sy + slider_h + slider_gap, (a.w - 2 * m).max(0), slider_h);
-    QuickLayout { rect, title, close, buttons, bright, warm }
+    let sliders = light.then(|| {
+        let bright = Rect::new(m, sy, (a.w - 2 * m).max(0), slider_h);
+        let warm = Rect::new(m, sy + slider_h + slider_gap, (a.w - 2 * m).max(0), slider_h);
+        (bright, warm)
+    });
+    QuickLayout { rect, title, close, buttons, count, sliders }
 }
 
 fn quick_slider(value: i32, label: &'static str, row: Rect) -> Slider {
@@ -100,18 +111,20 @@ fn quick_slider(value: i32, label: &'static str, row: Rect) -> Slider {
 }
 
 fn quick_draw(a: &mut App) {
-    let lay = quick_layout(a);
+    let lay = quick_layout(a, a.quick.light);
     let (brightness, warmth, auto, pressed) = {
         let q = &a.quick;
         (q.brightness, q.warmth, q.auto, q.pressed)
     };
     let mut hits = HitList::default();
     hits_add(&mut hits, lay.close, Q_CLOSE, 0);
-    for (id, r) in lay.buttons {
+    for &(id, r) in &lay.buttons[..lay.count] {
         hits_add(&mut hits, r, id, 0);
     }
-    hits_add(&mut hits, lay.bright, Q_BRIGHT, 0);
-    hits_add(&mut hits, lay.warm, Q_WARM, 0);
+    if let Some((bright, warm)) = lay.sliders {
+        hits_add(&mut hits, bright, Q_BRIGHT, 0);
+        hits_add(&mut hits, warm, Q_WARM, 0);
+    }
     canvas_fill(&mut a.screen, lay.rect, 255);
     canvas_fill(
         &mut a.screen,
@@ -123,15 +136,17 @@ fn quick_draw(a: &mut App) {
     let labels = [tr("Settings"), tr("Rotation lock"), tr("Auto brightness")];
     let icons = [IconKind::Gear, IconKind::Collapse, IconKind::Brightness];
     let on = [false, a.settings.rotation_lock != 0, auto > 0];
-    for i in 0..3 {
+    for i in 0..lay.count {
         let st = if on[i] { ButtonStyle::Selected } else { ButtonStyle::Plain };
         crate::globalui::gui_button(&mut a.screen, lay.buttons[i].1, icons[i], labels[i], st);
     }
-    for (row, value, label) in [(lay.bright, brightness, tr("Brightness")), (lay.warm, warmth, tr("Warmth"))] {
-        let s = quick_slider(value, label, row);
-        let mut text = String::new();
-        csnprintf!(&mut text, 16, "%d", value.max(0));
-        ui_slider_draw(&mut a.screen, &s, Some(&text));
+    if let Some((bright, warm)) = lay.sliders {
+        for (row, value, label) in [(bright, brightness, tr("Brightness")), (warm, warmth, tr("Warmth"))] {
+            let s = quick_slider(value, label, row);
+            let mut text = String::new();
+            csnprintf!(&mut text, 16, "%d", value.max(0));
+            ui_slider_draw(&mut a.screen, &s, Some(&text));
+        }
     }
     if let Some(r) = pressed {
         canvas_invert(&mut a.screen, r);
@@ -146,11 +161,18 @@ pub fn is_open(a: &App) -> bool {
 }
 
 pub fn quick_open(a: &mut App) {
-    let mut q = Quick::default();
-    light_get(&mut q.brightness, &mut q.warmth);
-    q.auto = light_auto();
+    let mut q = Quick { light: light_available(), ..Default::default() };
+    if q.light {
+        light_get(&mut q.brightness, &mut q.warmth);
+        q.auto = light_auto();
+    } else {
+        // (no light to read: the panel has no row that would show it, and the probes answer -1)
+        q.brightness = -1;
+        q.warmth = -1;
+        q.auto = -1;
+    }
     q.open = true;
-    q.rect = quick_layout(a).rect;
+    q.rect = quick_layout(a, q.light).rect;
     a.quick = q;
     app_invalidate(a, a.quick.rect, RefreshMode::Ui);
 }
@@ -445,7 +467,7 @@ pub fn quick_cover(a: &mut App, dirty: &mut Rect) -> bool {
         return false;
     }
     let old = a.quick.rect;
-    let now = quick_layout(a).rect;
+    let now = quick_layout(a, a.quick.light).rect;
     if now != old {
         *dirty = rect_union(*dirty, old);
         a.quick.rect = now;
