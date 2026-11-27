@@ -16637,7 +16637,7 @@ mod tests {
         });
         page
     }
-    // The reviewer's ten views of that page on a 640 x 420 screen: (zoom, ox, oy). Sideways and fitted, a notebook of
+    // Ten views of that page on a 640 x 420 screen: (zoom, ox, oy). Sideways and fitted, a notebook of
     // another size either way, 1:1 panned half a pixel, sideways at the width, three pinches, the page smaller than
     // the view (the desk around it), and the page's right bottom corner.
     const SCALED_VIEWS: [(f32, f32, f32); 10] = [
@@ -16941,7 +16941,9 @@ mod tests {
     // is lighter than the same ruled view of the page without the solid strokes but over other ink the stroke covered
     // (the page does not keep what a stroke covers, so the rule takes paper for it there): those are counted apart,
     // the paper drawn where nothing but the ink and paper shows, and a few beside other ink, whose sampling the covered
-    // ink would have changed. Over paper alone every pixel is black or the paper drawn. Writing the view without the
+    // ink would have changed. None is darker than the view without the solid strokes unless it is black, the ruled
+    // view's own, or its value with the ink's pixels taken as their paper (the last met where a stroke covered other
+    // ink beside more of it). Over paper alone every pixel is black or the paper drawn. Writing the view without the
     // stroke beside other ink (each ink pixel taken as its paper) puts a pale outline along the stroke over the pencil
     // and the highlight; leaving the ruled view's own pixel there lightens other ink at some pixels.
     #[test]
@@ -16997,7 +16999,9 @@ mod tests {
                     }
                     assert!(black > 300, "{what}: the ink shows ({black} px)");
                     assert!(kept > 50, "{what}: beside other ink the ruled view's own pixel stays ({kept} px)");
-                    // (on this page 0 to 34 of the one kind a view, 0 to 19 of the other, at most 95 and 53 lighter)
+                    // (on this page 0 to 34 of the one kind a view, 0 to 19 of the other, at most 95 and 53 lighter;
+                    // other pages give more, and the paper drawn can be lighter by all of the covered ink's
+                    // darkness, where the view without the strokes shows that ink at its own gray over a ruling)
                     assert!(covered < 100 && covered_beside < 100, "{what}: {covered} and {covered_beside} of {} pixels are lighter over covered ink", after.len());
                 }
             }

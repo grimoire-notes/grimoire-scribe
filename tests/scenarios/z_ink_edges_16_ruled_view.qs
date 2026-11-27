@@ -7,9 +7,9 @@
 # the page settles to. A stroke between two lines: right after its live frames the panel shows the page as it
 # settles (display.stale 0), and the pause after writing sends nothing. A word across two lines: the simulator's fast
 # refreshes dither every pixel of their rect, a line's unchanged gray too, where a Kindle's leave an unchanged pixel
-# alone (docs/SIM.md, editor.settles_sent), so here its settle sends the rows of the two lines its frames covered,
-# and nothing of the ink: between the lines, above and below them, the panel shows the settled page before the
-# settle. The lines beside the ink are the ones drawn before it (display.dark over a band the ink does not reach:
+# alone (docs/SIM.md, editor.settles_sent), so here its settle sends one rect over the two lines its frames covered
+# and the rows between them, and nothing the panel lacks: between the lines, above and below them, the panel shows
+# the settled page before the settle. The lines beside the ink are the ones drawn before it (display.dark over a band the ink does not reach:
 # six lines, two rows each).
 # rust-only
 wait 3600

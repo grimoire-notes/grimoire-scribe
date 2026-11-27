@@ -3815,14 +3815,17 @@ minute and tap a tool, then read it. The first whole answer of each reason in a 
 12. **The look.** With Solid, write a word, then turn the page and back (a flash). Does the word change? Compare
     its black with the same word written with Smooth and settled.
 13. **Line paper, sideways and zoomed out.** With Solid, a notebook on Medium rule and one on Seyes, the Scribe
-    sideways with the whole page fitted, then upright pinched out to about three quarters: the lines are drawn at
-    the screen's own scale there (#308). A ballpoint word between two lines settles with nothing sent (`quiet`
-    rises). A word across a line: nothing changes at the pause either, or at most the rows of the line it crossed
-    are sent (`part`; never a refresh of the ink: the Mac's test of the Kindle's own copy of such frames finds no
-    row to send, where the simulator sends the line's rows). The lines beside and under the stroke stay whole and
-    as gray as elsewhere on the page, with no lighter or thicker piece beside the ink. Write a pencil word across
-    a line too: it settles into grays as ever. Failure: a flicker at each pause, the ink refreshed in grays, or a
-    line broken, lighter or thicker beside the stroke. Photograph it beside the same page at Smooth.
+    sideways: first with the whole page fitted (zoomed out as far as it goes, the page at three quarters of its
+    size), then zoomed in a little from there (about nine tenths, the page's top and bottom just past the screen).
+    Upright, a page of the Scribe's own size never shows below 100%. In both views the lines are drawn at the
+    screen's own scale (#308). A ballpoint word between two lines settles with nothing sent (`quiet` rises). A
+    word across a line: nothing changes at the pause either, or at most a box over the line it crossed is sent
+    (`part`; never a refresh of the ink: the Mac's test of the Kindle's own copy of such frames finds no row to
+    send, where the simulator sends one box over the lines crossed and the rows between them). The lines beside
+    and under the stroke stay whole and as gray as elsewhere on the page, with no lighter or thicker piece beside
+    the ink. Write a pencil word across a line too: it settles into grays as ever. Failure: a flicker at each
+    pause, the ink refreshed in grays, or a line broken, lighter or thicker beside the stroke. Photograph it beside
+    the same page at Smooth.
 
 For any failure send the two commands' output, a photo, and the check's number.
 

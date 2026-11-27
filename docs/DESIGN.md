@@ -158,10 +158,13 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   ruled view's own sampling can be the lighter of the two: it takes the darkest ink among a pixel's page pixels,
   there the stroke's black, as the gray of all of them, and lays the others over the paper it drew by that. The
   page does not keep what a solid stroke covers, so where the four show only the ink and paper, other ink the
-  stroke covered there shows as paper, lighter than without the stroke (and in the ruled view a few pixels beside
-  other ink, whose sampling the covered ink would have changed): a few pixels of a view, more where the stroke
-  meets black of the paper's own (a PDF page's text, a template's lines) under a highlight or pencil, as that
-  black counts as paper. So the settle of a solid stroke that crosses other ink in such a view may send a small
+  stroke covered there shows as paper, lighter than without the stroke (and in the ruled view some pixels beside
+  other ink, whose sampling the covered ink would have changed, come out lighter or darker): a few pixels a view
+  on a written page, more over dense layers of ink, zoomed in, and where the stroke meets black of the paper's own
+  (a PDF page's text, a template's lines) under a highlight or pencil, as that black counts as paper. In the
+  sampled view such a pixel is lighter by about half the covered ink's darkness at most (the covered pixel weighs
+  less than half); in the ruled view by up to all of it, where the view without the stroke shows the covered ink
+  at its own gray over a line (`rules_tap`) and the pass gives the paper drawn. So the settle of a solid stroke that crosses other ink in such a view may send a small
   refresh, of the grays beside it. A view at 100% on whole pixels copies the page (a
   page of the screen's size scrolled, or one a little smaller at rest, issue #303) and has no such pass: nothing
   is blended there, and the desk comes right up to the page (`view_copies`). The Links bar's view of another page
