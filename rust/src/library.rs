@@ -13835,9 +13835,7 @@ mod tests {
         assert_eq!((a.settings.sleep_minutes, a.prevent_applied), (0, 1), "on: Sleep after never, applied");
         assert_eq!(tap(&mut dm, &mut a), DmResult::Changed);
         assert_eq!((a.settings.sleep_minutes, a.prevent_applied), (SLEEP_MINUTES_DEFAULT, 0), "off: the default");
-        let mut saved = Settings::default();
-        settings_load(&mut saved);
-        assert_eq!(saved.sleep_minutes, SLEEP_MINUTES_DEFAULT, "saved");
+        // (what each flip leaves in settings.ini on disk: the test below)
         assert_eq!(a.settings.sleep_mode, 2, "the stored sleep screen is left as it is");
         lib(&mut a).dm = dm;
 
@@ -13851,6 +13849,79 @@ mod tests {
         }
         lib(&mut a).dm = dm;
 
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Each flip of Keep the screen on is in settings.ini on disk, read back from the file: on writes
+    // sleep_minutes=0 over the 15 stored, off writes the default over that 0. Each value differs from the one
+    // before it and from what a missing file gives (settings_default), so a flip that saved nothing fails here.
+    // No other line of the file changes, the stored sleep screen among them.
+    #[test]
+    fn sleep_settings_keep_the_screen_on_is_saved_each_way() {
+        let root = std::env::temp_dir().join(format!("grimoire-keep-on-saved-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        assert_eq!(font_init(), 0);
+        ui_init(300.0);
+        ui_set_theme(UiTheme::Gothic);
+        i18n_set("en");
+        let mut a = App { w: 1860, h: 2480, dpi: 300.0, input_drained: true, ..Default::default() };
+        assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+        #[cfg(feature = "sim")]
+        {
+            // (a panel for the press's feedback to go to)
+            let (mut w, mut h) = (a.w, a.h);
+            crate::sim_sdl::display_set_orientation(0, &mut w, &mut h);
+        }
+        library_init(&mut a);
+        test_services(Some(Services::without("sleep")));
+        a.settings.sleep_minutes = 15;
+        a.settings.sleep_mode = 2;
+        assert_eq!(settings_save(&a.settings), 0);
+        let on_disk = || {
+            let ini = std::fs::read_to_string(root.join("settings.ini")).unwrap_or_default();
+            let mut loaded = Settings::default();
+            settings_load(&mut loaded);
+            (ini, loaded)
+        };
+        let others = |ini: &str| ini.lines().filter(|l| !l.starts_with("sleep_minutes=")).map(str::to_owned).collect::<Vec<_>>();
+        let (before, loaded) = on_disk();
+        assert!(before.lines().any(|l| l == "sleep_minutes=15"), "before:\n{before}");
+        assert_eq!((loaded.sleep_minutes, loaded.sleep_mode), (15, 2), "before, read back");
+        assert_ne!(SLEEP_MINUTES_DEFAULT, 15);
+
+        lib(&mut a).modal = Modal::Settings;
+        lib(&mut a).settings_cat = 2;
+        act(&mut a, &Hit { r: RECT_EMPTY, id: H_SET_SLEEP, arg: 0 });
+        assert_eq!(lib(&mut a).dm.page, crate::dispmenu::DmPage::Sleep);
+        let mut dm = std::mem::take(&mut lib(&mut a).dm);
+        dispmenu_draw(&mut dm, &mut a);
+        let tap = |dm: &mut DispMenu, a: &mut App| {
+            let (x, y) = dispmenu_control_point(dm, "keep_on").expect("no Keep the screen on");
+            let mut dirty = RECT_EMPTY;
+            dispmenu_pointer(dm, a, 0, x, y, 1000, &mut dirty);
+            dispmenu_pointer(dm, a, 2, x, y, 1050, &mut dirty)
+        };
+
+        // On: Sleep after never.
+        assert_eq!(tap(&mut dm, &mut a), DmResult::Changed);
+        let (ini, loaded) = on_disk();
+        assert!(ini.lines().any(|l| l == "sleep_minutes=0"), "on, saved:\n{ini}");
+        assert_eq!((loaded.sleep_minutes, loaded.sleep_mode), (0, 2), "on, read back");
+        assert_eq!(others(&ini), others(&before), "on: another line changed");
+
+        // Off: the default minutes.
+        assert_eq!(tap(&mut dm, &mut a), DmResult::Changed);
+        let (ini, loaded) = on_disk();
+        let want = format!("sleep_minutes={SLEEP_MINUTES_DEFAULT}");
+        assert!(ini.lines().any(|l| l == want), "off, saved:\n{ini}");
+        assert_eq!((loaded.sleep_minutes, loaded.sleep_mode), (SLEEP_MINUTES_DEFAULT, 2), "off, read back");
+        assert_eq!(others(&ini), others(&before), "off: another line changed");
+
+        test_services(None);
+        lib(&mut a).dm = dm;
         library_free(&mut a);
         canvas_free(&mut a.screen);
         let _ = std::fs::remove_dir_all(&root);
