@@ -2356,6 +2356,10 @@ fn blit_canvas(screen: &mut Canvas, pc: &Canvas, zoom: f32, ox: f32, oy: f32, r:
 // taken as its paper (`paper`: the page's paper alone and its stride; None: white). So a solid stroke changes a
 // screen pixel only to black, at any zoom, and leaves the others as they were over its paper; every pixel with no
 // such ink beside it is blit_canvas's, the same bytes. (The same sampling as blit_canvas, pixel for pixel.)
+// Beside other ink it never lightens: where the ink has less than half the weight and one of the four with any weight
+// is neither such ink nor its own paper (pencil, charcoal, a highlight, a pen given grain, under the stroke or over
+// it), blit_canvas's blend stays, which counts the ink as black and so is never lighter than the view without the
+// stroke. The paper is taken for the ink only where the page shows nothing but paper beside it.
 fn blit_solid_edges(screen: &mut Canvas, pc: &Canvas, paper: Option<(&[u8], i32)>, zoom: f32, ox: f32, oy: f32, r: Rect) {
     if rect_is_empty(r) || pc.w <= 0 || pc.h <= 0 || zoom <= 0.0 {
         return;
@@ -2410,22 +2414,28 @@ fn blit_solid_edges(screen: &mut Canvas, pc: &Canvas, paper: Option<(&[u8], i32)
             }
             let wt = [(255 - wx) * (255 - wy), wx * (255 - wy), (255 - wx) * wy, wx * wy];
             let at = [(x0, py0), (x1, py0), (x0, py1), (x1, py1)];
-            let (mut ink, mut sum) = (0u32, 0u32);
+            let (mut ink, mut sum, mut other) = (0u32, 0u32, false);
             for k in 0..4 {
                 let mut v = n[k];
-                if v == 0 {
-                    let p = paper_at(at[k].0, at[k].1);
-                    if p != 0 {
-                        ink += wt[k];
-                        v = p;
-                    }
+                let p = paper_at(at[k].0, at[k].1);
+                if v == 0 && p != 0 {
+                    ink += wt[k];
+                    v = p;
+                } else if v != p && wt[k] != 0 {
+                    other = true; // (pencil, charcoal, a highlight, a pen given grain: not the stroke's, not paper)
                 }
                 sum += wt[k] * v;
             }
             if ink == 0 {
                 continue; // (the paper's own black: blit_canvas's blend)
             }
-            screen.px[dst + i] = if 2 * ink >= 65025 { 0 } else { ((sum + 32512) / 65025) as u8 };
+            if 2 * ink >= 65025 {
+                screen.px[dst + i] = 0;
+            } else if !other {
+                screen.px[dst + i] = ((sum + 32512) / 65025) as u8;
+            }
+            // (else blit_canvas's blend stays: the page no longer holds what lay under the stroke, and its paper
+            // there would be lighter than the ink beside it)
         }
         if ((y - r.y) & 63) == 63 {
             work_pump();
@@ -15497,6 +15507,172 @@ mod tests {
             assert!(black > 20, "zoom {zoom}: the ink shows ({black} px)");
             let grays = (0..after.px.len()).filter(|&i| plain_after.px[i] != before.px[i] && plain_after.px[i] != 0).count();
             assert!(grays > 0, "zoom {zoom}: the bilinear blend alone gives grays");
+        }
+    }
+
+    // A 640 x 420 page for the scaled view's tests: a paper with gray rules and a black block of its own; on it
+    // other ink (a highlight band, pencil shading, charcoal, a marker and a ballpoint given grain) and solid strokes
+    // through all of it (a ballpoint from light to full pressure, a fineliner, a fountain pen, a marker, a
+    // calligraphy diagonal, a dot, and a word along the highlight, the pencil and the charcoal). Drawn with Ink
+    // edges at Solid as the pen writes: `solid` the solid strokes, `other_first` the other ink under them or over them.
+    fn scaled_view_paper() -> Canvas {
+        let (w, h) = (640, 420);
+        let mut paper = Canvas::default();
+        assert_eq!(canvas_init(&mut paper, w, h), 0);
+        for y in 0..h {
+            for x in 0..w {
+                let block = (560..600).contains(&x) && (30..70).contains(&y);
+                paper.px[(y * paper.stride + x) as usize] = if block { 0 } else if y % 60 == 28 || y % 60 == 29 { 119 } else { 255 };
+            }
+        }
+        paper
+    }
+    fn scaled_view_page(paper: &Canvas, solid: bool, other: bool, other_first: bool) -> Canvas {
+        const DPI: f32 = 300.0;
+        let prm = |t: ToolKind, grain: Option<f32>| {
+            let mut p = ToolParams::default();
+            tool_params_default(t, &mut p);
+            if let Some(g) = grain {
+                p.grain = g;
+            }
+            p
+        };
+        // a path from (x0, y0) to (x1, y1), swaying `sway` px to either side
+        let path = |t: ToolKind, p: &ToolParams, seed: u32, (x0, y0): (f32, f32), (x1, y1): (f32, f32), sway: f32, pressure: f32| {
+            let mut s = stroke_new(t, p, seed);
+            stroke_mark_tip(&mut s);
+            let len = ((x1 - x0).powi(2) + (y1 - y0).powi(2)).sqrt().max(1.0);
+            let n = (len / 4.0) as usize + 2;
+            for k in 0..n {
+                let f = k as f32 / (n - 1) as f32;
+                let off = sway * (f * 28.0).sin();
+                let q = PenSample { x: x0 + (x1 - x0) * f - (y1 - y0) / len * off, y: y0 + (y1 - y0) * f + (x1 - x0) / len * off,
+                    pressure, t_ms: k as u32 * 7, ..Default::default() };
+                stroke_append(&mut s, &q, DPI);
+            }
+            s
+        };
+        let mut others: Vec<Box<Stroke>> = Vec::new();
+        others.push(path(TOOL_HIGHLIGHTER, &prm(TOOL_HIGHLIGHTER, None), 11, (40.0, 100.0), (600.0, 100.0), 0.0, 0.8));
+        for k in 0..12 {
+            others.push(path(TOOL_PENCIL, &prm(TOOL_PENCIL, None), 40 + k, (40.0, 172.0 + 4.0 * k as f32), (600.0, 174.0 + 4.0 * k as f32), 0.0, 0.8));
+        }
+        for k in 0..5 {
+            others.push(path(TOOL_CHARCOAL, &prm(TOOL_CHARCOAL, None), 70 + k, (40.0, 250.0 + 5.0 * k as f32), (600.0, 251.0 + 5.0 * k as f32), 0.0, 0.9));
+        }
+        others.push(path(TOOL_MARKER, &prm(TOOL_MARKER, Some(1.0)), 80, (40.0, 330.0), (600.0, 330.0), 0.0, 0.8));
+        others.push(path(TOOL_BALLPOINT, &prm(TOOL_BALLPOINT, Some(0.5)), 81, (40.0, 356.0), (600.0, 358.0), 0.0, 0.9));
+        let mut solids: Vec<Box<Stroke>> = Vec::new();
+        for (i, (t, pressure)) in [(TOOL_BALLPOINT, 0.1f32), (TOOL_BALLPOINT, 0.3), (TOOL_BALLPOINT, 0.6), (TOOL_BALLPOINT, 1.0),
+            (TOOL_FINELINER, 0.6), (TOOL_FOUNTAIN, 0.6), (TOOL_MARKER, 0.6)].into_iter().enumerate()
+        {
+            let x = 80.0 + 60.0 * i as f32;
+            solids.push(path(t, &prm(t, None), 100 + i as u32, (x, 50.0), (x + 9.0, 392.0), 7.0, pressure));
+        }
+        solids.push(path(TOOL_CALLIGRAPHY, &prm(TOOL_CALLIGRAPHY, None), 120, (60.0, 60.0), (604.0, 384.0), 0.0, 0.7));
+        solids.push(path(TOOL_BALLPOINT, &prm(TOOL_BALLPOINT, None), 121, (520.4, 101.6), (521.9, 101.6), 0.0, 0.7));
+        for (k, y) in [100.0f32, 192.0, 262.0].into_iter().enumerate() {
+            solids.push(path(TOOL_BALLPOINT, &prm(TOOL_BALLPOINT, None), 130 + k as u32, (60.0, y), (540.0, y + 2.0), 9.0, 0.6));
+        }
+        for s in solids.iter().chain(&others) {
+            assert_eq!(ink_edges_as(InkEdges::Solid, || stroke_solid(s, stroke_tip(s))), s.seed >= 100, "the rule for stroke {}", s.seed);
+        }
+        let mut page = paper.clone();
+        let mut order: Vec<&Stroke> = Vec::new();
+        for first in [true, false] {
+            if other && first == other_first {
+                order.extend(others.iter().map(|s| &**s));
+            }
+            if solid && first != other_first {
+                order.extend(solids.iter().map(|s| &**s));
+            }
+        }
+        ink_edges_as(InkEdges::Solid, || {
+            for s in order {
+                let mut b = BrushState::default();
+                stroke_brush_begin(&mut b, s, DPI, None, 0, 0, 0);
+                for q in &s.pts {
+                    brush_add(&mut b, &mut page, q);
+                }
+            }
+        });
+        page
+    }
+    // The reviewer's ten views of that page on a 640 x 420 screen: (zoom, ox, oy). Sideways and fitted, a notebook of
+    // another size either way, 1:1 panned half a pixel, sideways at the width, three pinches, the page smaller than
+    // the view (the desk around it), and the page's right bottom corner.
+    const SCALED_VIEWS: [(f32, f32, f32); 10] = [
+        (0.75, -20.333334, 0.0),
+        (0.9366, -3.2, -1.1),
+        (1.0677, 4.7, 2.3),
+        (1.0, 0.5, 0.5),
+        (1.3333334, 0.0, 12.0),
+        (2.0, 31.5, 20.25),
+        (2.37, 100.2, 40.6),
+        (4.0, 180.0, 150.0),
+        (0.5, -320.0, -210.0),
+        (3.1, 490.0, 320.0),
+    ];
+    // What blit_view puts on screen for page canvas pc at Solid in a view that is not 1:1 (`pass` false: blit_canvas
+    // alone).
+    fn scaled_view(pc: &Canvas, paper: &Canvas, (zoom, ox, oy): (f32, f32, f32), pass: bool) -> Canvas {
+        let mut sc = Canvas::default();
+        assert_eq!(canvas_init(&mut sc, 640, 420), 0);
+        let r = Rect::new(0, 0, 640, 420);
+        blit_canvas(&mut sc, pc, zoom, ox, oy, r);
+        if pass {
+            blit_solid_edges(&mut sc, pc, Some((&paper.px, paper.stride)), zoom, ox, oy, r);
+        }
+        sc
+    }
+
+    // Ink edges at Solid (#320) in a view that is not 1:1, where a solid stroke crosses or lies beside other ink,
+    // drawn before it or after it: no screen pixel is lighter than the same view of the page without the solid
+    // strokes, and none is darker unless it is black or what blit_canvas's blend gives. One kind of pixel is the
+    // paper's own instead: where the stroke's own pixels cover a speck of the other ink and the page shows nothing
+    // but paper beside them, a few pixels of a view (the page does not keep what a stroke covers). Over paper alone
+    // every pixel is black or the paper's. Taking each ink pixel as its paper whatever lies beside it puts a pale
+    // outline along the stroke over pencil, charcoal or a highlight instead (lighter than the view without the
+    // stroke, by up to 7 of the panel's 16 levels).
+    #[test]
+    fn solid_ink_on_a_scaled_view_never_lightens_other_ink() {
+        let paper = scaled_view_paper();
+        let under = scaled_view_page(&paper, false, true, true);
+        // (the other ink here never reaches black, so a view of it has no solid ink for the pass to find)
+        assert!((0..under.px.len()).all(|i| under.px[i] != 0 || paper.px[i] == 0));
+        let alone = scaled_view_page(&paper, true, false, true);
+        for view in SCALED_VIEWS {
+            let (zoom, ox, oy) = view;
+            let paper_view = scaled_view(&paper, &paper, view, false);
+            let before = scaled_view(&under, &paper, view, true);
+            assert_eq!(before.px, scaled_view(&under, &paper, view, false).px, "zoom {zoom}: a page with no solid ink");
+            let on_paper = scaled_view(&alone, &paper, view, true);
+            for i in 0..on_paper.px.len() {
+                assert!(on_paper.px[i] == 0 || on_paper.px[i] == paper_view.px[i], "zoom {zoom} at {ox} {oy}, over paper alone: pixel {i} is {} over {}", on_paper.px[i], paper_view.px[i]);
+            }
+            for other_first in [true, false] {
+                let page = scaled_view_page(&paper, true, true, other_first);
+                // (the page itself: a solid stroke changes pixels only to black, and other ink over it leaves its black)
+                for i in 0..page.px.len() {
+                    assert!(page.px[i] == under.px[i] || page.px[i] == 0, "the page, other ink first {other_first}: pixel {i} is {} over {}", page.px[i], under.px[i]);
+                }
+                let plain = scaled_view(&page, &paper, view, false);
+                let after = scaled_view(&page, &paper, view, true);
+                let (mut black, mut kept, mut covered) = (0, 0, 0);
+                for i in 0..after.px.len() {
+                    let (a, b) = (after.px[i], before.px[i]);
+                    if a > b {
+                        assert!(a == paper_view.px[i], "zoom {zoom} at {ox} {oy}, other ink first {other_first}: pixel {i} is {a}, lighter than {b} without the strokes (the paper there is {})", paper_view.px[i]);
+                        covered += 1;
+                    }
+                    assert!(a >= b || a == 0 || a == plain.px[i], "zoom {zoom} at {ox} {oy}, other ink first {other_first}: pixel {i} is {a}, darker than {b} and not blit_canvas's {}", plain.px[i]);
+                    black += (a == 0 && b != 0) as u32;
+                    kept += (a != 0 && a < b) as u32;
+                }
+                assert!(black > 300, "zoom {zoom}: the ink shows ({black} px)");
+                assert!(kept > 50, "zoom {zoom}: beside other ink the blend stays ({kept} px)");
+                assert!(covered < 100, "zoom {zoom}, other ink first {other_first}: {covered} of {} pixels are the paper's over a covered speck", after.px.len());
+            }
         }
     }
 
