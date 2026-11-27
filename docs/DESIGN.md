@@ -102,7 +102,11 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   page holds. The settle composes its rect as ever, then asks the display for the part of it the panel shows at
   another level (value >> 4) than the screen holds now (`display_settle_area`), lighter pixels as well as darker
   ones (a shape snapped, an undo, the lasso and erasing take ink away), padded by 3 px (`SETTLE_MARGIN`), and
-  refreshes only that in grays, or nothing at all: a solid word on any paper settles with no refresh. Only the
+  refreshes only that in grays, or nothing at all: a solid word on any paper settles with no refresh. That holds
+  in a view that is not 1:1 too (zoomed, or a page fitted sideways), which compose scales bilinearly: with Solid, a
+  screen pixel whose page pixels include a solid stroke's black (0 where the page's paper is not) is black where
+  that ink has half its weight or more, else the blend with the ink's pixels taken as their paper (editor.rs
+  `blit_solid_edges`), so a solid stroke changes screen pixels only to black there as well. Only the
   settle's rect is judged; anything else due goes out as it would. The display's contract (display.rs): a platform
   answers the whole rect unless it knows what it last gave the panel at every pixel of it, so one that keeps no
   record (the default), or whose last frames may not all have reached the panel as written (a refresh refused or

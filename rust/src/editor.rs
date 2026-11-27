@@ -2076,12 +2076,27 @@ fn blit_view(a: &mut App, r: Rect) {
     let r = rect_intersect(r, Rect { x: 0, y: top, w: a.w, h: a.h - top ,
         },
     );
+    // Ink edges at Solid (#320): the page's paper, which tells a solid stroke's black from the paper's own
+    // (blit_solid_edges); drawn once for a page's paper, as an erase stroke draws it.
+    let solid = ink_edges() == InkEdges::Solid && !ed_ref(a).fast_blit && !rect_is_empty(r);
+    if solid {
+        let dpi = a.dpi;
+        let s = ed(a);
+        if s.open_page().is_some() && !s.page_canvas.px.is_empty() {
+            page_paper(s, dpi);
+        }
+    }
     let App { screen, ed, .. } = a;
     let s = ed.as_deref().unwrap();
     if s.fast_blit {
         blit_canvas_fast(screen, &s.page_canvas, s.zoom, s.ox, s.oy, r);
     } else {
         blit_canvas(screen, &s.page_canvas, s.zoom, s.ox, s.oy, r);
+        if solid {
+            let pc = &s.page_canvas;
+            let paper = s.paper.px.as_deref().filter(|_| s.paper.w == pc.w && s.paper.h == pc.h).map(|p| (&p[..], s.paper.stride));
+            blit_solid_edges(screen, pc, paper, s.zoom, s.ox, s.oy, r);
+        }
     }
 }
 
@@ -2332,6 +2347,90 @@ fn blit_canvas(screen: &mut Canvas, pc: &Canvas, zoom: f32, ox: f32, oy: f32, r:
     BLIT_SCRATCH.with(|cell| {
         *cell.borrow_mut() = sc;
     });
+}
+
+// Ink edges at Solid (#320), over a view that is not 1:1 (zoomed, or a page fitted sideways), after blit_canvas drew
+// r: its bilinear blend would give a solid stroke (0 on the page where its paper is not 0) a gray rim on screen, which
+// the live frames dither and the settle then sends again. A screen pixel of r whose four page pixels include such ink
+// is made again: black where the ink has half of its weight or more, else the blend of the four with each ink pixel
+// taken as its paper (`paper`: the page's paper alone and its stride; None: white). So a solid stroke changes a
+// screen pixel only to black, at any zoom, and leaves the others as they were over its paper; every pixel with no
+// such ink beside it is blit_canvas's, the same bytes. (The same sampling as blit_canvas, pixel for pixel.)
+fn blit_solid_edges(screen: &mut Canvas, pc: &Canvas, paper: Option<(&[u8], i32)>, zoom: f32, ox: f32, oy: f32, r: Rect) {
+    if rect_is_empty(r) || pc.w <= 0 || pc.h <= 0 || zoom <= 0.0 {
+        return;
+    }
+    let w = r.w as usize;
+    let mut x0s = vec![0usize; w];
+    let mut x1s = vec![0usize; w];
+    let mut wxs = vec![0u32; w];
+    let mut page_cols = vec![false; w];
+    let (mut lo, mut hi) = (usize::MAX, 0usize);
+    for i in 0..w {
+        let fx = ((r.x + i as i32) as f32 + 0.5) / zoom + ox - 0.5;
+        let x = fx.floor() as i32;
+        // (blit_canvas's desk: x < -1 or x >= pc.w)
+        page_cols[i] = x >= -1 && x < pc.w;
+        x0s[i] = clampi(x, 0, pc.w - 1) as usize;
+        x1s[i] = clampi(x + 1, 0, pc.w - 1) as usize;
+        wxs[i] = ((fx - x as f32) * 255.0) as u8 as u32;
+        if page_cols[i] {
+            lo = lo.min(x0s[i]);
+            hi = hi.max(x1s[i]);
+        }
+    }
+    if lo > hi {
+        return;
+    }
+    let has_black = |py: usize| pc.px[py * pc.stride as usize..][lo..=hi].contains(&0);
+    let paper_at = |x: usize, y: usize| paper.map_or(255u32, |(p, stride)| p[y * stride as usize + x] as u32);
+    for y in r.y..r.y + r.h {
+        let fy = (y as f32 + 0.5) / zoom + oy - 0.5;
+        let py = fy.floor() as i32;
+        if py < -1 || py >= pc.h {
+            continue;
+        }
+        let wy = ((fy - py as f32) * 255.0) as u32;
+        let py0 = clampi(py, 0, pc.h - 1) as usize;
+        let py1 = clampi(py + 1, 0, pc.h - 1) as usize;
+        if !has_black(py0) && !has_black(py1) {
+            continue;
+        }
+        let row0 = &pc.px[py0 * pc.stride as usize..];
+        let row1 = &pc.px[py1 * pc.stride as usize..];
+        let dst = y as usize * screen.stride as usize + r.x as usize;
+        for i in 0..w {
+            if !page_cols[i] {
+                continue;
+            }
+            let (x0, x1, wx) = (x0s[i], x1s[i], wxs[i]);
+            let n = [row0[x0] as u32, row0[x1] as u32, row1[x0] as u32, row1[x1] as u32];
+            if n[0].min(n[1]).min(n[2]).min(n[3]) != 0 {
+                continue;
+            }
+            let wt = [(255 - wx) * (255 - wy), wx * (255 - wy), (255 - wx) * wy, wx * wy];
+            let at = [(x0, py0), (x1, py0), (x0, py1), (x1, py1)];
+            let (mut ink, mut sum) = (0u32, 0u32);
+            for k in 0..4 {
+                let mut v = n[k];
+                if v == 0 {
+                    let p = paper_at(at[k].0, at[k].1);
+                    if p != 0 {
+                        ink += wt[k];
+                        v = p;
+                    }
+                }
+                sum += wt[k] * v;
+            }
+            if ink == 0 {
+                continue; // (the paper's own black: blit_canvas's blend)
+            }
+            screen.px[dst + i] = if 2 * ink >= 65025 { 0 } else { ((sum + 32512) / 65025) as u8 };
+        }
+        if ((y - r.y) & 63) == 63 {
+            work_pump();
+        }
+    }
 }
 
 /// Where a page of pgw x pgh rests on an aw x ah screen (view_rest), centred as view_clamp centres it: what
@@ -15309,6 +15408,56 @@ mod tests {
             if zoom == 1.0 && ox == 0.0 && oy == 0.0 {
                 assert_eq!(fast.px, pc.px);
             }
+        }
+    }
+
+    // Ink edges at Solid (#320) in a view that is not 1:1: a solid stroke changes screen pixels only to black, and
+    // leaves every other one as it was over its paper (gray rules, the paper's own black), so its live frames hold
+    // only black on the panel and the settle finds nothing to send. Without blit_solid_edges the bilinear blend
+    // puts grays on screen beside the ink.
+    #[test]
+    fn solid_ink_on_a_scaled_view_is_black_or_what_was_there() {
+        let (w, h) = (64, 48);
+        let mut paper = Canvas::default();
+        assert_eq!(canvas_init(&mut paper, w, h), 0);
+        for y in 0..h {
+            for x in 0..w {
+                paper.px[(y * w + x) as usize] = if y % 6 == 0 { 200 } else if x == 50 && y < 12 { 0 } else { 255 };
+            }
+        }
+        let mut page = paper.clone();
+        for y in 0..h {
+            for x in 0..w {
+                if (x - y - 8).abs() <= 2 || (x - 40) * (x - 40) + (y - 30) * (y - 30) <= 4 || (x == 20 && y == 40) {
+                    page.px[(y * w + x) as usize] = 0;
+                }
+            }
+        }
+        let cases = [(0.5f32, -32.0f32, -24.0f32), (0.75, -10.5, -5.25), (1.0, 0.5, 0.25), (1.33, 10.3, 6.7), (2.3, 20.1, 15.9), (4.0, 3.0, 2.0)];
+        for (zoom, ox, oy) in cases {
+            let r = Rect::new(0, 0, w, h);
+            let blank = || {
+                let mut c = Canvas::default();
+                assert_eq!(canvas_init(&mut c, w, h), 0);
+                c
+            };
+            let (mut before, mut plain_before, mut after, mut plain_after) = (blank(), blank(), blank(), blank());
+            blit_canvas(&mut plain_before, &paper, zoom, ox, oy, r);
+            blit_canvas(&mut before, &paper, zoom, ox, oy, r);
+            blit_solid_edges(&mut before, &paper, Some((&paper.px, paper.stride)), zoom, ox, oy, r);
+            // (no solid ink: blit_canvas's bytes, the paper's own black blended as ever)
+            assert_eq!(before.px, plain_before.px, "zoom {zoom}: a page with no solid ink");
+            blit_canvas(&mut plain_after, &page, zoom, ox, oy, r);
+            blit_canvas(&mut after, &page, zoom, ox, oy, r);
+            blit_solid_edges(&mut after, &page, Some((&paper.px, paper.stride)), zoom, ox, oy, r);
+            let mut black = 0;
+            for i in 0..after.px.len() {
+                assert!(after.px[i] == before.px[i] || after.px[i] == 0, "zoom {zoom}: pixel {i} is {} over {}", after.px[i], before.px[i]);
+                black += (after.px[i] == 0 && before.px[i] != 0) as u32;
+            }
+            assert!(black > 20, "zoom {zoom}: the ink shows ({black} px)");
+            let grays = (0..after.px.len()).filter(|&i| plain_after.px[i] != before.px[i] && plain_after.px[i] != 0).count();
+            assert!(grays > 0, "zoom {zoom}: the bilinear blend alone gives grays");
         }
     }
 
