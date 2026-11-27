@@ -366,6 +366,89 @@ pub fn settle_strip_by_bytes(
     Some(found)
 }
 
+/// Why a display_settle_area that keeps a record answered its rect whole all the same (the Kindle's, for
+/// grimoire.log).
+#[repr(usize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettleWhole {
+    /// No whole grayscale frame has gone out since the display opened, the screen was turned or inverted, or the
+    /// panel changed hands.
+    NoFrame = 0,
+    /// The frame is not known, and a refresh has failed since a settle last found it known (or since the display
+    /// opened): a failed refresh makes the frame unknown until a whole grayscale one goes out.
+    RefreshFailed = 1,
+    /// A colour panel, whose live frames are not waited for and may be read half done.
+    ColourPanel = 2,
+    /// No panel open, or no record of it kept.
+    NoRecord = 3,
+    /// A row of the rect would lie outside the record.
+    RowRange = 4,
+    /// What the scan reads of the display's state differed between two of its strips.
+    Changed = 5,
+}
+
+pub const SETTLE_WHOLE_KINDS: usize = 6;
+
+/// SettleWhole's reasons as the log names them, in its order.
+pub static K_SETTLE_WHOLE: [&str; SETTLE_WHOLE_KINDS] =
+    ["no frame known", "a refresh failed", "colour panel", "no record of the panel", "row out of range", "state changed during the scan"];
+
+/// What a display_settle_area that keeps a record has answered since the app started, for its log: plain counts,
+/// bumped as it answers and written out later, with the platform's refresh counts (settle_counts_line), so the
+/// settle itself writes no line for them. All stay 0 with Ink edges at Smooth, whose settle never asks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SettleCounts {
+    /// every level matched: nothing sent, pen mode left
+    pub quiet: u32,
+    /// the box of what differed sent, the record trusted
+    pub part: u32,
+    /// the rect whole (2.2's refresh), by SettleWhole
+    pub whole: [u32; SETTLE_WHOLE_KINDS],
+    /// a count rose since the line was last written
+    pub unlogged: bool,
+}
+
+pub fn settle_count_quiet(c: &mut SettleCounts) {
+    c.quiet = c.quiet.saturating_add(1);
+    c.unlogged = true;
+}
+
+pub fn settle_count_part(c: &mut SettleCounts) {
+    c.part = c.part.saturating_add(1);
+    c.unlogged = true;
+}
+
+/// Counts a whole answer; true the first time its reason occurs (the platform's log then says it once).
+pub fn settle_count_whole(c: &mut SettleCounts, why: SettleWhole) -> bool {
+    let n = &mut c.whole[why as usize];
+    *n = n.saturating_add(1);
+    c.unlogged = true;
+    *n == 1
+}
+
+/// The counts as a line for the log, the reasons that occurred in brackets ("display: settles so far: quiet 12,
+/// part 3, whole 2 (no frame known 1, a refresh failed 1)"), when a count rose since the last line (taken as written
+/// now); None otherwise, so a session that never settles this way logs nothing.
+pub fn settle_counts_line(c: &mut SettleCounts) -> Option<String> {
+    if !c.unlogged {
+        return None;
+    }
+    c.unlogged = false;
+    let whole = c.whole.iter().fold(0u32, |a, &n| a.saturating_add(n));
+    let mut line = format!("display: settles so far: quiet {}, part {}, whole {}", c.quiet, c.part, whole);
+    let mut sep = " (";
+    for (k, &n) in c.whole.iter().enumerate() {
+        if n != 0 {
+            line.push_str(&format!("{sep}{} {n}", K_SETTLE_WHOLE[k]));
+            sep = ", ";
+        }
+    }
+    if whole != 0 {
+        line.push(')');
+    }
+    Some(line)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -647,6 +730,53 @@ mod tests {
         }
         // (the pictures gave both answers, over rects of more than one strip too, with the pens read)
         assert!(empties > 100 && answers - empties > 100 && tall > 100 && read > 100, "{empties} of {answers} empty, {tall} tall, {read} reads");
+    }
+
+    // The settle answers' counts (SettleCounts): no line until one rises, each reason's first time told, and the line
+    // names the reasons that occurred.
+    #[test]
+    fn settle_counts_make_a_line_only_when_one_rose() {
+        let mut c = SettleCounts::default();
+        assert_eq!(settle_counts_line(&mut c), None);
+        assert_eq!(c, SettleCounts::default());
+        settle_count_quiet(&mut c);
+        settle_count_quiet(&mut c);
+        settle_count_part(&mut c);
+        assert_eq!(settle_counts_line(&mut c).as_deref(), Some("display: settles so far: quiet 2, part 1, whole 0"));
+        assert_eq!(settle_counts_line(&mut c), None, "nothing rose since");
+        // a whole answer: its reason's first time, once
+        assert!(settle_count_whole(&mut c, SettleWhole::RefreshFailed));
+        assert!(!settle_count_whole(&mut c, SettleWhole::RefreshFailed));
+        assert!(settle_count_whole(&mut c, SettleWhole::NoFrame));
+        assert_eq!(
+            settle_counts_line(&mut c).as_deref(),
+            Some("display: settles so far: quiet 2, part 1, whole 3 (no frame known 1, a refresh failed 2)")
+        );
+        assert_eq!(settle_counts_line(&mut c), None);
+        // every reason has its name, in the enum's order
+        for (k, why) in [
+            SettleWhole::NoFrame,
+            SettleWhole::RefreshFailed,
+            SettleWhole::ColourPanel,
+            SettleWhole::NoRecord,
+            SettleWhole::RowRange,
+            SettleWhole::Changed,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(why as usize, k);
+            let mut one = SettleCounts::default();
+            assert!(settle_count_whole(&mut one, why));
+            let line = settle_counts_line(&mut one).unwrap();
+            assert_eq!(line, format!("display: settles so far: quiet 0, part 0, whole 1 ({} 1)", K_SETTLE_WHOLE[k]));
+        }
+        // a count at its top stays there, and is no first time again
+        let mut top = SettleCounts { quiet: u32::MAX, ..Default::default() };
+        top.whole[SettleWhole::Changed as usize] = u32::MAX;
+        settle_count_quiet(&mut top);
+        assert!(!settle_count_whole(&mut top, SettleWhole::Changed));
+        assert_eq!((top.quiet, top.whole[5]), (u32::MAX, u32::MAX));
     }
 
     #[test]

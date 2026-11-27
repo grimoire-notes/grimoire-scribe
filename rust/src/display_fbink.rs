@@ -157,6 +157,11 @@ struct State {
     g_overlay: Rect,
     /// display_skip_status
     g_status: Rect,
+    /// What display_settle_area answered since start (Ink edges at Solid; all 0 with Smooth), for the log:
+    /// bumped as it answers, written with the refresh counts (send_refresh).
+    g_settles: SettleCounts,
+    /// g_fail when a settle last found the frame known: a failed refresh since is why it is not
+    g_settle_fail: i32,
 }
 
 impl State {
@@ -216,6 +221,8 @@ impl State {
             g_fence_gray: false,
             g_overlay: RECT_EMPTY,
             g_status: RECT_EMPTY,
+            g_settles: SettleCounts::default(),
+            g_settle_fail: 0,
         }
     }
 }
@@ -1097,6 +1104,10 @@ fn send_refresh(s: &mut State, r: Rect, mode: RefreshMode, wfm: i32, flashing: b
             s.g_count[3],
             s.g_fail
         );
+        // (and what the settles with Ink edges at Solid answered, when one did since the last line: never with Smooth)
+        if let Some(line) = settle_counts_line(&mut s.g_settles) {
+            qlog!("%s", &line);
+        }
     }
     if ret < 0 {
         qlog!("display: refresh %d,%d %dx%d mode %d failed (%d): %s", r.x, r.y, r.w, r.h, mode as i32, ret, &strerror(e));
@@ -1506,16 +1517,32 @@ fn settle_stamp(s: &State) -> SettleStamp {
 /// for the pump, and the pens read once more before pen_leave, whose wait reads none (display.rs settle_area_strips
 /// walks the strips; never a pump inside a borrow). The answer is the one pass's: r whole if the state the scan
 /// reads changed between two strips (SettleStamp), which the pump cannot do.
+///
+/// Each answer is counted (g_settles: quiet, part, or whole with its reason), for the line send_refresh writes
+/// beside its refresh counts; only a reason's first whole answer of the session writes a line here (settle_whole).
 pub fn display_settle_area(screen: &Canvas, r: Rect) -> Rect {
     let Some((c, stamp)) = with(|s| {
-        if s.g_fd < 0 || !s.g_frame_known || s.g_shown.px.is_empty() || s.g_st.has_color_panel {
-            return None;
-        }
-        let c = rect_intersect(rect_intersect(r, Rect { x: 0, y: 0, w: s.LW, h: s.LH }), Rect { x: 0, y: 0, w: screen.w, h: screen.h });
-        Some((c, settle_stamp(s)))
+        let why = if s.g_fd < 0 || s.g_shown.px.is_empty() {
+            SettleWhole::NoRecord
+        } else if s.g_st.has_color_panel {
+            SettleWhole::ColourPanel
+        } else if !s.g_frame_known {
+            if s.g_fail != s.g_settle_fail {
+                SettleWhole::RefreshFailed
+            } else {
+                SettleWhole::NoFrame
+            }
+        } else {
+            s.g_settle_fail = s.g_fail;
+            let c = rect_intersect(rect_intersect(r, Rect { x: 0, y: 0, w: s.LW, h: s.LH }), Rect { x: 0, y: 0, w: screen.w, h: screen.h });
+            return Some((c, settle_stamp(s)));
+        };
+        settle_whole(s, why);
+        None
     }) else {
         return r;
     };
+    let mut out_of_range = false;
     let found = settle_area_strips(
         c,
         |y0, y1| {
@@ -1526,11 +1553,13 @@ pub fn display_settle_area(screen: &Canvas, r: Rect) -> Rect {
                 let s = &*s;
                 let stride = s.g_shown.stride as isize;
                 // (along a logical row the shadow moves by a constant step, as copy_row's previous_at and previous_step)
-                settle_strip_by_bytes(screen, c, y0, y1, &s.g_shown.px, stamp.flip_px, |y| {
+                let found = settle_strip_by_bytes(screen, c, y0, y1, &s.g_shown.px, stamp.flip_px, |y| {
                     let (fx0, fy0) = to_fb(s, c.x, y);
                     let (fx1, fy1) = to_fb(s, c.x + 1, y);
                     (fy0 as isize * stride + fx0 as isize, (fy1 - fy0) as isize * stride + (fx1 - fx0) as isize)
-                })
+                });
+                out_of_range = found.is_none();
+                found
             })
         },
         work_pump,
@@ -1538,16 +1567,28 @@ pub fn display_settle_area(screen: &Canvas, r: Rect) -> Rect {
     with(|s| {
         // (after the last pump: what is decided here, and pen_leave's wait, come under this one borrow)
         let Some(d) = found.filter(|_| settle_stamp(s) == stamp) else {
+            settle_whole(s, if out_of_range { SettleWhole::RowRange } else { SettleWhole::Changed });
             return r;
         };
         if !rect_is_empty(s.g_live_area) && rect_contains_rect(c, s.g_live_area) {
             s.g_live_area = d;
         }
         if rect_is_empty(d) {
+            settle_count_quiet(&mut s.g_settles);
             pen_leave(s);
+        } else {
+            settle_count_part(&mut s.g_settles);
         }
         d
     })
+}
+
+// display_settle_area answered its rect whole: counted, and said in the log the first time its reason occurs (six
+// lines a session at most, each before the whole refresh that follows; the counts' own line is send_refresh's).
+fn settle_whole(s: &mut State, why: SettleWhole) {
+    if settle_count_whole(&mut s.g_settles, why) {
+        qlog!("display: settle answered all of it: %s", K_SETTLE_WHOLE[why as usize]);
+    }
 }
 
 /// With no word from the quiet thread, how long a refresh is taken to stay on the panel: the fast (DU)
