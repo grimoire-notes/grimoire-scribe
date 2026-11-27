@@ -2119,7 +2119,11 @@ fn blit_view(a: &mut App, r: Rect) {
     let rules = if rect_is_empty(r) { None } else { view_rules(ed(a), dpi) };
     // Ink edges at Solid (#320): the page's paper, which tells a solid stroke's black from the paper's own
     // (solid_px); drawn once for a page's paper, as an erase stroke draws it (a ruled view has made it: view_rules).
-    let solid = ink_edges() == InkEdges::Solid && !ed_ref(a).fast_blit && !rect_is_empty(r);
+    // Not at 100% on whole pixels, where the page is copied and nothing is blended (view_copies).
+    let solid = {
+        let s = ed_ref(a);
+        ink_edges() == InkEdges::Solid && !s.fast_blit && !rect_is_empty(r) && !view_copies(s.zoom, s.ox, s.oy)
+    };
     if solid {
         let s = ed(a);
         if s.open_page().is_some() && !s.page_canvas.px.is_empty() {
@@ -2835,6 +2839,13 @@ fn blit_canvas_fast(screen: &mut Canvas, pc: &Canvas, zoom: f32, ox: f32, oy: f3
     }
 }
 
+/// Whether blit_canvas copies the page's pixels as they are at this view: 100% on whole pixels, a page of the
+/// view's size scrolled or one a little smaller at rest (view_at_100). Nothing is blended there, so Ink edges at
+/// Solid has no pixel to make again (solid_edges).
+fn view_copies(zoom: f32, ox: f32, oy: f32) -> bool {
+    zoom == 1.0 && ox == ox.trunc() && oy == oy.trunc()
+}
+
 // The same for any page canvas at any view: the open page's, or the one the Links bar shows.
 fn blit_canvas(screen: &mut Canvas, pc: &Canvas, zoom: f32, ox: f32, oy: f32, r: Rect) {
     if rect_is_empty(r) {
@@ -2846,7 +2857,7 @@ fn blit_canvas(screen: &mut Canvas, pc: &Canvas, zoom: f32, ox: f32, oy: f32, r:
     }
     let w = r.w as usize;
     // Exact 1:1 integer-aligned pan inside the page: row memcpy.
-    if zoom == 1.0 && ox == ox.trunc() && oy == oy.trunc() {
+    if view_copies(zoom, ox, oy) {
         let sx = r.x + ox as i32;
         let sy = r.y + oy as i32;
         if sx >= 0 && sx + r.w <= pc.w && sy >= 0 && sy + r.h <= pc.h {
@@ -3045,8 +3056,12 @@ fn blit_solid_edges(screen: &mut Canvas, pc: &Canvas, paper: Option<(&[u8], i32)
 // is given to `put`, with its index in a canvas of row stride `stride`, the rule's answer, its taps' paper, the
 // weights, and whether the bottom taps weigh (over_paper_px's `bottom`). The rows of the page are searched for a
 // black pixel first, so a row with none costs a pass over its bytes. Input is pumped every 64 rows.
+//
+// Nothing at a view that copies the page (view_copies): there blit_canvas draws the desk right up to the page,
+// where the bilinear, and so this pass, reads the page's first column and row once more a pixel to the left and
+// above (a page a little smaller than the screen at rest, #303).
 fn solid_edges(pc: &Canvas, paper: Option<(&[u8], i32)>, stride: i32, zoom: f32, ox: f32, oy: f32, r: Rect, mut put: impl FnMut(usize, SolidPx, [u8; 4], u32, u32, bool)) {
-    if rect_is_empty(r) || pc.w <= 0 || pc.h <= 0 || zoom <= 0.0 {
+    if rect_is_empty(r) || pc.w <= 0 || pc.h <= 0 || zoom <= 0.0 || view_copies(zoom, ox, oy) {
         return;
     }
     let w = r.w as usize;
@@ -17024,6 +17039,54 @@ mod tests {
             }
         }
         ed(&mut a).fast_blit = false;
+    }
+
+    #[test]
+    fn a_page_a_little_smaller_than_the_screen_is_copied_with_ink_edges_at_solid_too() {
+        // The same 96x77 page at rest on a 100x80 screen (#303), with solid strokes on it that reach its first and
+        // last columns and rows, and Ink edges at Solid (#320): 100% on whole pixels copies the page, so there is no
+        // blend for the Solid pass to make again, and every screen pixel is the page's own or the desk. (The pass
+        // reads the page as the bilinear does, whose taps left of the page and above it are the page's first column
+        // and row again: run here it would draw a stroke's black a pixel into the desk.)
+        let mut a = app(100, 80, 96, 77);
+        a.scr = ScreenId::Editor;
+        let s = ed(&mut a);
+        nav_init(&mut s.nav);
+        s.open = true;
+        s.nb.page_ids = vec![1];
+        let i = s.entry_for(1).unwrap();
+        s.hist[i].page = Some(page_new(96, 77, PAPER_BLANK));
+        s.page = Some(1);
+        assert_eq!(canvas_init(&mut s.page_canvas, 96, 77), 0);
+        canvas_fill(&mut s.page_canvas, Rect::new(0, 0, 96, 77), 255);
+        for x in 0..96i32 {
+            for y in 0..77i32 {
+                if x == 0 || y == 0 || x == 95 || y == 76 || (x - y).abs() < 2 {
+                    s.page_canvas.px[(y * 96 + x) as usize] = 0;
+                }
+            }
+        }
+        view_reset(&mut a);
+        assert_eq!((ed_ref(&a).zoom, ed_ref(&a).ox, ed_ref(&a).oy), (1.0, -2.0, -1.0));
+        let pc = ed_ref(&a).page_canvas.clone();
+        let want = |x: i32, y: i32| -> u8 {
+            let (px, py) = (x - 2, y - 1);
+            if (0..96).contains(&px) && (0..77).contains(&py) { pc.px[py as usize * pc.stride as usize + px as usize] } else { 205 }
+        };
+        let _solid = InkEdgesScope::new(InkEdges::Solid);
+        for r in [Rect::new(0, 0, 100, 80), Rect::new(0, 0, 10, 10), Rect::new(90, 70, 10, 10), Rect::new(1, 0, 3, 80), Rect::new(0, 0, 100, 3)] {
+            a.screen.px.fill(77);
+            blit_view(&mut a, r);
+            for y in 0..80 {
+                for x in 0..100 {
+                    let got = a.screen.px[y as usize * a.screen.stride as usize + x as usize];
+                    let inside = x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+                    assert_eq!(got, if inside { want(x, y) } else { 77 }, "{r:?} at {x},{y}");
+                }
+            }
+        }
+        // (and the page's paper alone was not drawn for a view with nothing to tell by it)
+        assert!(ed_ref(&a).paper.px.is_none());
     }
 
     // The editor on an aw x ah screen with page 1 of a notebook of pw x ph pages on paper k open and drawn,

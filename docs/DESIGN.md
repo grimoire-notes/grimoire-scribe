@@ -149,8 +149,10 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   where nothing else is written, so each line stays whole and even up to the stroke and under its edge
   (`blit_canvas_ruled`: the answers are worked out over the drawn paper, before the ink is sampled over it, and
   put over the result; a byte kept for each pixel that reads such ink). So a solid stroke changes screen pixels
-  only to black there as well, and the frames drawn while writing are the frame the settle composes. Only the
-  settle's rect is judged; anything else due goes out as it would. The display's contract (display.rs): a platform
+  only to black there as well, and the frames drawn while writing are the frame the settle composes. A view at
+  100% on whole pixels copies the page (a page of the screen's size scrolled, or one a little smaller at rest,
+  issue #303) and has no such pass: nothing is blended there, and the desk comes right up to the page
+  (`view_copies`). Only the settle's rect is judged; anything else due goes out as it would. The display's contract (display.rs): a platform
   answers the whole rect unless it knows what it last gave the panel at every pixel of it, so one that keeps no
   record (the default), or whose last frames may not all have reached the panel as written (a refresh refused or
   failed, a rotation or inversion since, until a whole grayscale frame; a colour panel, whose live frames are not
