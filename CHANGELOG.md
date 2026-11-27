@@ -98,6 +98,12 @@
   cleaned once they stop (#307). A held tap on a widget is still a tap.
   Packages made with the package kit can also tell a tap from a long press and a drag, and are told when their
   settings change. docs/KIT.md says how.
+- **A page a little smaller than the screen shows at 100%** (#303). A notebook made on a screen a little smaller
+  than this one (its page at least 96% of the screen's width and height, and larger on neither) rests at 100%,
+  centred, with a narrow band of the desk around the page, where it was enlarged by a few percent to fill the
+  screen's width. Its ink shows pixel for pixel as it was written, without the softening the enlargement gave it,
+  and zooming back out, by a pinch or Fit page, returns to that view. Turned sideways, and on a screen of its own
+  size or one further from it, a notebook opens as before.
 - **Darker paper lines** (#314). Narrow, Medium and Wide rule (with and without a margin), Cornell notes, Graph
   paper, Dot grid, Cross grid, Isometric and Hexagon draw their lines darker, at least 2 px wide and on the panel's
   own grays, as Seyes rule does, so they read as sharply on the Scribe: the rules 119 (were 175, where 0 is black
@@ -106,12 +112,6 @@
   Isometric 136 and Hexagon 119. Seyes rule, Blank and the music papers are unchanged. After the update a page kept
   drawn to open quickly is drawn once more, so it shows the new lines, and so are a notebook's previews in the
   Pages view as the view opens and its card in the Library as the notebook is next opened and left.
-- **A page a little smaller than the screen shows at 100%** (#303). A notebook made on a screen a little smaller
-  than this one (its page at least 96% of the screen's width and height, and larger on neither) rests at 100%,
-  centred, with a narrow band of the desk around the page, where it was enlarged by a few percent to fill the
-  screen's width. Its ink shows pixel for pixel as it was written, without the softening the enlargement gave it,
-  and zooming back out, by a pinch or Fit page, returns to that view. Turned sideways, and on a screen of its own
-  size or one further from it, a notebook opens as before.
 
 ## 2.2.0 (2026-11-26)
 
