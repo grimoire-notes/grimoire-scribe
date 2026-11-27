@@ -187,10 +187,11 @@ pub struct Settings {
     pub whatsnew_due: bool,
     /// One-time hints already shown, a bitmask (settings.ini hints; bit numbers: docs/FORMAT.md).
     pub hints: i32,
-    /// The home app row's order, most recently used first (settings.ini `recent_apps`): Files,
-    /// Share, Settings, and installed app packages as `pkg:<id>`, comma separated. A core app missing
-    /// from the line follows in the default order; an app package the package index no longer has is
-    /// ignored when the row is built.
+    /// The apps in the order they were used, most recently used first (settings.ini `recent_apps`):
+    /// Files, Share, Settings, Package Store, and installed app packages as `pkg:<id>`, comma
+    /// separated. A core app missing from the line follows in the default order. The home app row
+    /// takes only the packages' order from it, after Files, Package Store and Share (library.rs
+    /// home_apps, #319); an app package the package index no longer has is ignored there.
     pub recent_apps: FixedStr<512>,
     /// The eye: dotted boxes over the page where a finger tap follows a link (settings.ini link_areas).
     pub link_areas: bool,
@@ -318,12 +319,13 @@ fn app_order_canonical(v: &[u8]) -> String {
     parts.join(",")
 }
 
-/// The home app row's four built-in apps, most recently used first.
+/// The four built-in apps' tokens in recent_apps (Files, Share, Settings, Package Store), most
+/// recently used first. The home app row does not follow them since #319 (library.rs home_apps).
 pub fn settings_app_order(s: &Settings) -> [i32; 4] {
     app_order_from(s.recent_apps.as_str().as_bytes())
 }
 
-/// One entry of recent_apps in the order the file names it, for the home row's interleaved order.
+/// One entry of recent_apps in the order the file names it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RecentApp {
     Core(i32),
@@ -370,9 +372,9 @@ fn rewrite_recent(s: &mut Settings, text: String) -> bool {
     true
 }
 
-/// Move a built-in `app` (0 Files, 1 Share, 2 Settings, 3 Package Store) to the front of the
-/// home app row. Every other app keeps its place, including installed packages. Returns false
-/// when nothing changes.
+/// Move a built-in `app` (0 Files, 1 Share, 2 Settings, 3 Package Store) to the front of
+/// recent_apps. Every other app keeps its place, including installed packages. The home app row
+/// keeps its pinned three wherever the token is (#319). Returns false when nothing changes.
 pub fn settings_app_used(s: &mut Settings, app: i32) -> bool {
     if !(0..4).contains(&app) {
         return false;
@@ -388,8 +390,9 @@ pub fn settings_app_used(s: &mut Settings, app: i32) -> bool {
     rewrite_recent(s, parts.join(","))
 }
 
-/// Move an installed app package to the front of the home app row. Every other app keeps its
-/// place, including the built-in apps. Returns false when unchanged.
+/// Move an installed app package to the front of recent_apps, and so to the front of the home
+/// app row's apps, after its pinned three. Every other app keeps its place, including the
+/// built-in apps. Returns false when unchanged.
 pub fn settings_package_app_used(s: &mut Settings, id: &str) -> bool {
     if package_token_id(format!("{APP_PACKAGE_PREFIX}{id}").as_bytes()).is_none() {
         return false;

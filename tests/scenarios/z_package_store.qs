@@ -2,7 +2,7 @@
 # rust-only
 # env: GRIMOIRE_PACKAGE_STORE_OFFLINE=1
 # copy: tests/fixtures/package-store .
-# Package Store: the fourth built-in app opens the saved GitHub catalog, filters apps and widgets,
+# Package Store: the second built-in app opens the saved GitHub catalog, filters apps and widgets,
 # shows a package's screenshot and icon, offers its repository QR and returns Home. The fixture is
 # the real catalog and assets from the content repository, so this checks the offline path.
 # The icons and screenshots are decoded by the sandboxed worker (issue #236), so each comes a
