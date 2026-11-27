@@ -14111,6 +14111,68 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // The rows 2.3 brought beside the sleep service's (#282): the Status bar page's size row (its small size is 0.92
+    // of medium since #319) and Settings > Pen's Ink edges row (#320) belong to no service, so a platform whose
+    // system owns sleep lists them as the Kindle does. With the sleep service and without it: Sleep & Clock has its
+    // two rows; the Status bar page has Hide status bar inside Notebooks, Display time as 12 hour and the size,
+    // which a tap moves on, and none of Sleep settings' rows; Pen has Ink edges.
+    #[test]
+    fn the_status_bar_size_and_ink_edges_rows_belong_to_no_service() {
+        let root = std::env::temp_dir().join(format!("grimoire-rows-no-service-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        assert_eq!(font_init(), 0);
+        ui_init(300.0);
+        ui_set_theme(UiTheme::Gothic);
+        i18n_set("en");
+        let mut a = App { w: 1860, h: 2480, dpi: 300.0, input_drained: true, ..Default::default() };
+        assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+        #[cfg(feature = "sim")]
+        {
+            // (a panel for the press's feedback to go to)
+            let (mut w, mut h) = (a.w, a.h);
+            crate::sim_sdl::display_set_orientation(0, &mut w, &mut h);
+        }
+        library_init(&mut a);
+        for services in [None, Some(Services::without("sleep"))] {
+            let without = services.is_some();
+            test_services(services);
+            let rows = |a: &mut App, cat: i32| -> Vec<i32> {
+                lib(a).modal = Modal::Settings;
+                lib(a).settings_cat = cat;
+                hits_clear(&mut lib(a).hits);
+                draw_settings(a);
+                a.lib.as_ref().unwrap().hits.h.iter().map(|h| h.id).collect()
+            };
+            let sleep_clock = rows(&mut a, 2);
+            assert!(sleep_clock.contains(&H_SET_SLEEP) && sleep_clock.contains(&H_SET_CLOCK), "without sleep {without}: Sleep & Clock's rows");
+            act(&mut a, &Hit { r: RECT_EMPTY, id: H_SET_CLOCK, arg: 0 });
+            assert_eq!(lib(&mut a).dm.page, crate::dispmenu::DmPage::StatusBar);
+            let mut dm = std::mem::take(&mut lib(&mut a).dm);
+            dispmenu_draw(&mut dm, &mut a);
+            for name in ["notebooks", "time12", "size"] {
+                assert!(dispmenu_control_point(&dm, name).is_some(), "without sleep {without}: Status bar lost {name}");
+            }
+            for name in ["keep_on", "sleep", "pin", "sleep_after"] {
+                assert!(dispmenu_control_point(&dm, name).is_none(), "without sleep {without}: Status bar shows {name}");
+            }
+            let was = a.settings.status_size;
+            let (x, y) = dispmenu_control_point(&dm, "size").unwrap();
+            let mut dirty = RECT_EMPTY;
+            dispmenu_pointer(&mut dm, &mut a, 0, x, y, 1000, &mut dirty);
+            assert_eq!(dispmenu_pointer(&mut dm, &mut a, 2, x, y, 1050, &mut dirty), DmResult::Changed);
+            assert_eq!(a.settings.status_size, (was + 1) % STATUS_SIZES, "without sleep {without}: the size moves on");
+            dm.open = false;
+            lib(&mut a).dm = dm;
+            let pen = rows(&mut a, settings_cat_of(settingsmenu::SettingId::InkEdges));
+            assert!(pen.contains(&H_SET_INK) && pen.contains(&H_SET_PENS), "without sleep {without}: Pen's rows");
+        }
+        test_services(None);
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     // Each flip of Keep the screen on is in settings.ini on disk, read back from the file: on writes
     // sleep_minutes=0 over the 15 stored, off writes the default over that 0. Each value differs from the one
     // before it and from what a missing file gives (settings_default), so a flip that saved nothing fails here.
