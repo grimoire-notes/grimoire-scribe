@@ -327,6 +327,9 @@ fn test_render_keep() {
     let root = format!("{}/render-keep-{}", tl_tmp(), std::process::id());
     let _ = std::fs::remove_dir_all(&root);
     check!(store_init(&root) == 0);
+    // (before the fingerprint is first taken, as app_init loads them: the papers' text is in it, Cornell's headings,
+    // the clefs and the TAB letters, and every_line_of_every_paper_is_in_the_fingerprint tries their grays too)
+    check!(font_init() == 0);
     run!(kept_drawings_are_exact_and_only_current);
     run!(drawings_kept_by_2_0_1_are_never_read_and_retired_once);
     run!(every_paper_is_in_the_fingerprint);

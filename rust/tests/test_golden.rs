@@ -233,7 +233,7 @@ const K_LATER_PAPERS: [(&str, u32); 4] = [
 // otherwise (one that took in the version, say) would have every one of them drawn again at each update, and only a
 // recorded value shows it. Recorded again only with a change that draws ink or a paper otherwise, which draws them
 // all again once.
-const K_RENDER_FINGERPRINT: u64 = 0x4f14_a03b_5176_c2e5;
+const K_RENDER_FINGERPRINT: u64 = 0x3583_e261_89a3_8730;
 
 fn crc32_bytes(crc: u32, p: &[u8]) -> u32 {
     static CRC_TABLE: OnceLock<[u32; 256]> = OnceLock::new();

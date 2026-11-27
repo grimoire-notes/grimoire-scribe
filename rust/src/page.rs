@@ -628,12 +628,16 @@ pub fn page_render_fingerprint() -> u64 {
     *FP.get_or_init(|| page_render_fingerprint_with(page_ink_fingerprint(), &paper_render))
 }
 
-// FNV-1a over px, eight bytes at a time (a byte at a time for the rest). Any one word that differs makes
-// the hash differ: each step is a bijection of the state.
+// FNV-1a over px, eight bytes at a time (a byte at a time for the rest), with the state's high half folded into
+// its low half after each multiply. Any one word that differs makes the hash differ: each step is a bijection of
+// the state. The fold is for several: a multiply carries a difference toward the high bits only, so without it a
+// change held to the high bytes of words (a glyph's edge in one column of pixels, x = 7 mod 8) was mixed into those
+// bits alone, and two such changes cancelled about one time in 256 (a clef's gray a step lighter did).
 fn fnv_words(mut h: u64, px: &[u8]) -> u64 {
     let mut words = px.chunks_exact(8);
     for w in &mut words {
         h = (h ^ u64::from_le_bytes([w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]])).wrapping_mul(0x100_0000_01b3);
+        h ^= h >> 32;
     }
     words.remainder().iter().fold(h, |h, &b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
 }
