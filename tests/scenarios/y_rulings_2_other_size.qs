@@ -22,6 +22,7 @@ expect editor.layers is ok
 shot 01-sideways
 rotate 0
 wait 1500
+expect editor.scale is 1.00
 expect editor.screen_composed is 1
 shot 02-upright
 quit
