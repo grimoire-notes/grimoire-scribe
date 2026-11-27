@@ -9,6 +9,8 @@
 # (editor.settles_quiet counts it, editor.settles_sent stays), and the page is the strokes drawn afresh. Then undo
 # and redo of the white ink, and the notebook closed (compacted) and opened again: the same pixels (display.dark over
 # each line, editor.matches_closed), the page drawn afresh each time.
+# (Each pause ends with "wait 30": the settle is taken in the loop's pass after the one that put the stroke's last
+# frames on the panel, so a loop that overran the whole pause still settles before the checks are read.)
 # rust-only
 wait 3600
 clock 1700000000
@@ -29,6 +31,7 @@ expect editor.tool is ballpoint
 pen line 300 400 700 420 20 0.6 0.6
 pen leave
 wait 2000
+wait 30
 expect editor.settles_quiet is 1
 # The four lines
 pen line 300 900 1300 910 40 0.6 0.6
@@ -37,6 +40,7 @@ pen line 300 1500 1300 1510 40 0.6 0.6
 pen line 300 1800 1300 1800 40 0.6 0.6
 pen leave
 wait 2000
+wait 30
 expect editor.strokes is 5
 expect editor.settles_quiet is 2
 expect editor.settles_sent is 0
@@ -64,6 +68,7 @@ expect display.stale.200.300.1200.1700 is 0
 eraser up 940 820
 pen leave
 wait 2000
+wait 30
 expect editor.strokes is 6
 expect editor.erase_strokes is 1
 expect editor.settles_quiet is 3
@@ -89,6 +94,7 @@ expect display.stale.200.300.1200.1700 is 0
 eraser up 1150 1170
 pen leave
 wait 2000
+wait 30
 expect editor.strokes is 7
 expect editor.erase_strokes is 2
 expect editor.settles_quiet is 4
@@ -101,9 +107,11 @@ shot 03-erased-along
 action eraser-mode
 expect settings.eraser_mode is 0
 wait 2000
+wait 30
 eraser line 800 1440 820 1580 12
 pen leave
 wait 2000
+wait 30
 expect editor.strokes is 6
 expect editor.erase_strokes is 2
 expect display.stale.200.300.1200.1700 is 0
@@ -130,6 +138,7 @@ expect display.stale.200.300.1200.1700 is 0
 pen up 1300 1801
 pen leave
 wait 2000
+wait 30
 expect editor.strokes is 7
 expect editor.erase_strokes is 3
 expect editor.stroke_look is white ballpoint
@@ -141,12 +150,14 @@ shot 05-white-ink
 # Undo and redo the white ink
 pentap panel undo
 wait 2000
+wait 30
 expect editor.strokes is 6
 expect display.stale.200.300.1200.1700 is 0
 expect display.dark.250.1760.1100.100 is 6014
 expect editor.live_matches_render is 1
 pentap panel redo
 wait 2000
+wait 30
 expect editor.strokes is 7
 expect display.stale.200.300.1200.1700 is 0
 expect display.dark.250.1760.1100.100 is 1003

@@ -6,6 +6,8 @@
 # no pixel beside the word's black is lighter than the highlight around it (editor.rs blit_solid_edges leaves
 # blit_canvas's blend beside other ink), also after a second and a third word are written across the highlight in
 # those views and have settled. The page is the strokes drawn afresh at each step.
+# (Each pause ends with "wait 30": the settle is taken in the loop's pass after the one that put the stroke's last
+# frames on the panel, so a loop that overran the whole pause still settles before the checks are read.)
 # rust-only
 wait 3600
 clock 1700000000
@@ -34,6 +36,7 @@ pen line 940 930 1000 870 12 0.6 0.6
 pen line 400 900 1000 902 30 0.6 0.6
 pen leave
 wait 2000
+wait 30
 expect editor.strokes is 11
 expect editor.settles_quiet is 1
 expect editor.settles_sent is 0
@@ -46,6 +49,7 @@ pen line 302 900 1102 900 40 0.8 0.8
 pen line 304 900 1104 900 40 0.8 0.8
 pen leave
 wait 2000
+wait 30
 expect editor.strokes is 14
 expect display.stale.200.800.1100.200 is 0
 expect display.dark.450.880.500.40 is 20000
@@ -60,6 +64,7 @@ wait 600
 expect rotation is 1
 pen leave
 wait 2000
+wait 30
 expect display.stale.700.500.800.400 is 0
 expect display.dark.900.660.300.30 is 9000
 shot 02-sideways
@@ -67,6 +72,7 @@ shot 02-sideways
 pen line 800 662 1300 688 40 0.6 0.6
 pen leave
 wait 2000
+wait 30
 expect editor.strokes is 15
 expect display.stale.700.500.800.400 is 0
 expect display.dark.900.660.300.30 is 9000
@@ -82,6 +88,7 @@ expect editor.zoomed is 1
 expect editor.zoom is 2.00
 pen leave
 wait 2000
+wait 30
 expect display.stale.100.700.1600.400 is 0
 expect display.dark.400.860.900.80 is 72000
 shot 04-pinched
@@ -89,6 +96,7 @@ shot 04-pinched
 pen line 300 870 1500 930 60 0.6 0.6
 pen leave
 wait 2000
+wait 30
 expect editor.strokes is 16
 expect display.stale.100.700.1600.400 is 0
 expect display.dark.400.860.900.80 is 72000
