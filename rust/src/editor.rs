@@ -2175,6 +2175,17 @@ fn peek_rules(s: &mut EditorState, dpi: f32, slot: usize, zoom: f32) -> Option<P
     if !(RULES_MIN_ZOOM..1.0).contains(&zoom) {
         return None;
     }
+    let k = peek_paper(s, slot)?;
+    if !paper_view_draws(k) {
+        return None;
+    }
+    rules_paper(s, k, dpi)
+}
+
+// The paper of the page the Links bar shows, where the open page's paper alone (s.paper) is its paper too: its
+// canvas cache slot drawn whole, on the paper the open page is on. None for any other page (no paper of its own
+// is kept for it).
+fn peek_paper(s: &EditorState, slot: usize) -> Option<PaperKind> {
     let e = &s.ccache[slot];
     let pc = &e.canvas;
     if pc.px.is_empty() || pc.w != s.pgw || pc.h != s.pgh || e.rows_done < s.pgh || e.white {
@@ -2182,10 +2193,7 @@ fn peek_rules(s: &mut EditorState, dpi: f32, slot: usize, zoom: f32) -> Option<P
     }
     let pid = s.peek.pid;
     let k = s.hist.iter().find(|h| h.page_id == pid).and_then(|h| h.page.as_deref()).or(e.page.as_deref())?.paper;
-    if !paper_view_draws(k) || s.open_page()?.paper != k {
-        return None;
-    }
-    rules_paper(s, k, dpi)
+    (s.open_page()?.paper == k).then_some(k)
 }
 
 // The open page's paper alone (s.paper, page_paper), paper k, current for the view: made here when it is not,
@@ -3758,8 +3766,15 @@ fn compose(a: &mut App, r: Rect) {
         // (below 100%, a paper of rulings at the screen's scale, as the open page's: peek_rules)
         let dpi = a.dpi;
         let rules = if rect_is_empty(r) { None } else { peek_rules(ed(a), dpi, slot, zoom) };
-        // (with Ink edges at Solid a solid stroke shows there as on the open page: blit_canvas_ruled)
-        let solid = ink_edges() == InkEdges::Solid;
+        // Ink edges at Solid (#320): the page shows here as it will once it is the open one (blit_view), where the
+        // open page's paper alone is its paper too (peek_paper), which tells a solid stroke's black from the
+        // paper's own. A page on another paper is sampled with no pass (no paper of its own is kept for it), and a
+        // view that copies the page has none (view_copies). Nothing is written here, so no settle counts on it.
+        let solid = ink_edges() == InkEdges::Solid && !rect_is_empty(r) && !view_copies(zoom, ox, oy);
+        let passed = solid && rules.is_none() && {
+            let s = ed(a);
+            peek_paper(s, slot).is_some_and(|k| rules_paper(s, k, dpi).is_some())
+        };
         let App { screen, ed, w: aw, .. } = a;
         let s = ed.as_deref().unwrap();
         let pc = &s.ccache[slot].canvas;
@@ -3769,6 +3784,9 @@ fn compose(a: &mut App, r: Rect) {
             blit_canvas_ruled(screen, pc, paper, s.paper.stride, k, dpi, zoom, ox, oy, r, solid);
         } else {
             blit_canvas(screen, pc, zoom, ox, oy, r);
+            if let (true, Some(paper)) = (passed, s.paper.px.as_deref()) {
+                blit_solid_edges(screen, pc, Some((paper, s.paper.stride)), zoom, ox, oy, r);
+            }
         }
     } else if view_identity(a) {
         let App { screen, ed, .. } = a;
@@ -17641,6 +17659,61 @@ mod tests {
         compose(&mut a, whole);
         assert!(a.screen.px == ruled(&a, &ed_ref(&a).ccache[0].canvas, true), "the bar at Solid");
         assert!((0..without.len()).all(|i| a.screen.px[i] == 0 || a.screen.px[i] == without[i]), "the bar at Solid: black, or the page without the strokes");
+    }
+
+    #[test]
+    fn with_ink_edges_at_solid_the_links_bar_shows_a_sampled_page_as_it_will_open() {
+        // The bar looking at page 2 sideways (0.75), a page sampled as ever (blank paper, or dots), written with
+        // solid strokes. At Smooth it is blit_canvas's. At Solid, on the open page's paper, it is what blit_view
+        // draws of the open page: the sampled view with the Solid pass, every pixel black or the page without the
+        // strokes. On another paper than the open page's (dots, from a blank page) no paper tells its ink by, and
+        // it is sampled with no pass.
+        let _panel = paper_panel_lock();
+        let whole = Rect::new(0, 0, 2480, 1860);
+        for (k1, k2) in [(PAPER_BLANK, PAPER_BLANK), (PAPER_DOTS, PAPER_DOTS), (PAPER_BLANK, PAPER_DOTS)] {
+            let mut a = ruled_app(2480, 1860, 1860, 2480, k1);
+            let dpi = a.dpi;
+            let s = ed(&mut a);
+            s.nb.page_ids = vec![1, 2];
+            let e = s.entry_for(2).unwrap();
+            s.hist[e].page = Some(page_new(1860, 2480, k2));
+            let mut peeked = Canvas::default();
+            assert_eq!(canvas_init(&mut peeked, 1860, 2480), 0);
+            page_render(&mut peeked, s.hist[e].page.as_deref().unwrap(), Rect::new(0, 0, 1860, 2480), dpi);
+            let paper2 = peeked.px.clone();
+            scatter_ink(&mut peeked, 3000, 7);
+            let other_ink = peeked.clone();
+            assert!(solid_marks(&mut peeked, &paper2, 1860) > 20_000);
+            s.ccache[0] = CacheEntry { pid: 2, w: 1860, h: 2480, pic_gen: bgimage_generation(), canvas: peeked, rows_done: 2480, from_hist: true, ..Default::default() };
+            s.peek = Peek { active: true, index: 1, pid: 2, slot: 0, count: 1, from_back: false };
+            let (zoom, ox, oy) = peek_view(2480, 1860, 1860, 2480, true);
+            assert_eq!(zoom, 0.75);
+            let sampled = |a: &App, pc: &Canvas| {
+                let mut c = a.screen.clone();
+                blit_canvas(&mut c, pc, zoom, ox, oy, whole);
+                c.px
+            };
+            compose(&mut a, whole);
+            assert!(a.screen.px == sampled(&a, &ed_ref(&a).ccache[0].canvas), "papers {} {}: the bar at Smooth", k1.0, k2.0);
+            let _solid = InkEdgesScope::new(InkEdges::Solid);
+            compose(&mut a, whole);
+            let shown = a.screen.px.clone();
+            let plain = sampled(&a, &ed_ref(&a).ccache[0].canvas);
+            if k1 == k2 {
+                let mut want = a.screen.clone();
+                blit_canvas(&mut want, &ed_ref(&a).ccache[0].canvas, zoom, ox, oy, whole);
+                blit_solid_edges(&mut want, &ed_ref(&a).ccache[0].canvas, Some((&paper2, 1860)), zoom, ox, oy, whole);
+                assert!(shown == want.px, "paper {}: the bar at Solid", k1.0);
+                let without = sampled(&a, &other_ink);
+                assert!((0..shown.len()).all(|i| shown[i] == 0 || shown[i] == without[i]), "paper {}: black, or the page without the strokes", k1.0);
+                assert!(shown != plain);
+                // (the paper it was told by is the open page's, made for the bar where the open page's view had not)
+                let s = ed_ref(&a);
+                assert!(s.paper.px.as_deref().is_some_and(|p| *p == paper2) && s.paper_k == k1);
+            } else {
+                assert!(shown == plain, "papers {} {}: sampled, no pass", k1.0, k2.0);
+            }
+        }
     }
 
     #[test]

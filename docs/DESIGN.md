@@ -152,7 +152,11 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   only to black there as well, and the frames drawn while writing are the frame the settle composes. A view at
   100% on whole pixels copies the page (a page of the screen's size scrolled, or one a little smaller at rest,
   issue #303) and has no such pass: nothing is blended there, and the desk comes right up to the page
-  (`view_copies`). Only the settle's rect is judged; anything else due goes out as it would. The display's contract (display.rs): a platform
+  (`view_copies`). The Links bar's view of another page follows the same rule, ruled or sampled, where the open
+  page's paper alone is that page's paper too (`peek_paper`: it tells a solid stroke's black from the paper's
+  own), so the page shows there as it will once it is open; a page on another paper is sampled with no pass,
+  since no paper of its own is kept for it. Only the settle's rect is judged; anything else due goes out as it
+  would. The display's contract (display.rs): a platform
   answers the whole rect unless it knows what it last gave the panel at every pixel of it, so one that keeps no
   record (the default), or whose last frames may not all have reached the panel as written (a refresh refused or
   failed, a rotation or inversion since, until a whole grayscale frame; a colour panel, whose live frames are not
