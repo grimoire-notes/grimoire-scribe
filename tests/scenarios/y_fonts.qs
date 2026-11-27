@@ -1,6 +1,7 @@
 # settings: status_mode=1
 # settings: theme=classic
 # settings: shortcuts_enabled=1
+# settings: status_size=1
 # env: GRIMOIRE_CHECK_FIT=1
 # Settings > Font (2.1, Classic only; the Font row of Settings' Display category since the new Settings
 # menu, #115): the row opens the Font sheet with the font in use highlighted; a tap on a family applies it at

@@ -1,3 +1,4 @@
+# settings: status_size=1
 # rust-only
 # root: z_bar_0_make
 # Find in pick mode (PHASE2 7.2): Link to...'s Search finds where a new link goes, by name or number, over the

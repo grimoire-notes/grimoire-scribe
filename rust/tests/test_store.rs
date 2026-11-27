@@ -1046,6 +1046,47 @@ fn ink_edges_saved_only_at_smooth() {
     unlink(&path);
 }
 
+// A settings.ini as 2.2.0 writes it (its settings_save of the defaults, after a load: tests/fixtures/
+// settings_2_2_0.ini) has no ink_edges line and settings_version=4 and holds status_size=1, 2.2's default. 2.3 reads
+// it as Solid and small: medium moves to small once (version 5); small and large stay, and so does a Smooth chosen in
+// a 2.3 beta (2.2 keeps the line as one it does not know). A medium chosen after the update stays: the file is
+// version 5 from then on, and 2.2 keeps a newer settings_version when it saves. A file without settings_version is
+// one written by hand, and keeps the size it names.
+fn settings_from_2_2_are_solid_and_small() {
+    let path = format!("{}/settings.ini", store_root());
+    let file = include_str!("fixtures/settings_2_2_0.ini");
+    check!(file.contains("\nsettings_version=4\n") && file.contains("\nstatus_size=1\n") && !file.contains("ink_edges"));
+    let load = |text: &str| {
+        let mut s = Settings::default();
+        check!(write_file_atomic(&path, text.as_bytes()) == 0);
+        check!(settings_load(&mut s) == 0);
+        s
+    };
+    let s = load(file);
+    check!(s.ink_edges == 1 && s.status_size == 0 && s.status_on && s.status_in_notebooks && s.version == 5);
+    check!(s.whatsnew_due);
+    check!(settings_save(&s) == 0 && has_pins_line(&path, "status_size=0") && has_pins_line(&path, "settings_version=5"));
+    check!(read_file(&path).is_some_and(|f| find(&f, "ink_edges").is_none()));
+    for (size, want) in [("2", 2), ("0", 0)] {
+        let s = load(&file.replace("\nstatus_size=1\n", &format!("\nstatus_size={size}\n")));
+        check!(s.ink_edges == 1 && s.status_size == want);
+    }
+    let s = load(&format!("{file}ink_edges=smooth\n"));
+    check!(s.ink_edges == 0 && s.status_size == 0);
+    check!(settings_save(&s) == 0 && has_pins_line(&path, "ink_edges=smooth"));
+    // medium chosen after the update: saved at version 5, never moved again
+    let mut s = load(file);
+    s.status_size = 1;
+    check!(settings_save(&s) == 0 && has_pins_line(&path, "status_size=1"));
+    let mut t = Settings::default();
+    check!(settings_load(&mut t) == 0 && t.status_size == 1);
+    check!(load(&file.replace("\nsettings_version=4\n", "\nsettings_version=5\n")).status_size == 1);
+    // no settings_version: kept as written
+    check!(load(&file.replace("\nsettings_version=4\n", "\n")).status_size == 1);
+    check!(load("status_size=1\n").status_size == 1);
+    unlink(&path);
+}
+
 // What's new after every update (the owner's rule of 2026-11-05): due when a file a Grimoire saved
 // names another version's notes as seen, whatever whatsnew_hide says (the 2.0.0 betas' box, read and
 // written back as it was); not due for this version's, nor for a file without settings_version.
@@ -1069,12 +1110,12 @@ fn status_corner_keys() {
     let mut s = Settings::default();
     let mut t = Settings::default();
     settings_default(&mut s);
-    // (medium by default since 2.0.0-rc.12)
-    check!(s.status_on && s.status_size == 1 && s.status_corner == 0 && s.status_mode == 1);
+    // (small by default since 2.3, #329; medium from 2.0.0-rc.12)
+    check!(s.status_on && s.status_size == 0 && s.status_corner == 0 && s.status_mode == 1);
     check!(
         settings_save(&s) == 0
             && has_pins_line(&path, "status_on=1")
-            && has_pins_line(&path, "status_size=1")
+            && has_pins_line(&path, "status_size=0")
     );
     let text = read_file(&path).unwrap_or_default();
     let at = |k: &str| text.windows(k.len()).position(|w| w == k.as_bytes());
@@ -1089,7 +1130,7 @@ fn status_corner_keys() {
     check!(settings_load(&mut t) == 0 && t.status_on && t.status_size == 2);
     // a file with neither key: the defaults
     check!(write_file_atomic(&path, b"invert=1\n") == 0);
-    check!(settings_load(&mut t) == 0 && t.status_on && t.status_size == 1);
+    check!(settings_load(&mut t) == 0 && t.status_on && t.status_size == 0);
     // a size past the range is the nearest, a third state is on; both go back as they were
     check!(write_file_atomic(&path, b"status_on=2\nstatus_size=7\n") == 0);
     check!(settings_load(&mut t) == 0 && t.status_on && t.status_size == 2);
@@ -1539,6 +1580,7 @@ fn test_store() {
     run!(pdf_gamma_key);
     run!(ink_edges_key);
     run!(ink_edges_saved_only_at_smooth);
+    run!(settings_from_2_2_are_solid_and_small);
     run!(whatsnew_due_after_every_update);
     run!(gesture_keys);
     run!(rotation_lock_key);

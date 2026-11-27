@@ -1,3 +1,4 @@
+# settings: status_size=1
 # settings: ink_edges=smooth
 # env: GRIMOIRE_SIM_CLOCK=script
 # env: TZ=UTC

@@ -53,7 +53,7 @@ impl NotebookInfo {
     }
 }
 
-pub const SETTINGS_VERSION: i32 = 4;
+pub const SETTINGS_VERSION: i32 = 5;
 /// pens pinned to the editor's panel, at most
 pub const PANEL_PINS_MAX: usize = 3;
 
@@ -137,8 +137,8 @@ pub struct Settings {
     /// hides it there, and another tap on the top strip brings it back; the state is saved. Settings
     /// > Sleep & Clock > Status bar can also turn it back on. The other screens' bars are always shown.
     pub status_on: bool,
-    /// and how large it is: 0 small, 1 medium, 2 large (settings.ini status_size). The size scales
-    /// the whole top status bar too, not just the corner clock (globalui.rs).
+    /// and how large it is: 0 small (the default since 2.3, #329), 1 medium, 2 large (settings.ini status_size). The
+    /// size scales the whole top status bar too, not just the corner clock (globalui.rs).
     pub status_size: i32,
     /// and in which corner of the page it sits: 0 top left (the default), 1 top right, 2 bottom right,
     /// 3 bottom left (settings.ini status_corner; the tap zone follows it)
@@ -5018,7 +5018,7 @@ pub fn settings_default(s: &mut Settings) {
     s.before_eraser = -1;
     s.status_on = true;
     s.status_in_notebooks = true;
-    s.status_size = 1;
+    s.status_size = 0; // small (2.3, #329; medium from 2.0.0-rc.12 to 2.3.0-beta.1)
     s.status_corner = 0;
     s.clock_12h = false;
     s.rotation_lock = 0;
@@ -5514,6 +5514,14 @@ fn settings_upgrade(s: &mut Settings) {
     ];
     if s.version >= SETTINGS_VERSION {
         return;
+    }
+    // Version 5 (2.3, #329): the status bar is small by default. A file a Grimoire saved before it (it has
+    // settings_version) that holds medium, the default from 2.0.0-rc.12 to 2.3.0-beta.1, moves to small; small and
+    // large stay. A file without settings_version keeps the size it names: every version that wrote status_size
+    // wrote settings_version too, so such a file was written by hand.
+    if s.version >= 1 && s.status_size == 1 {
+        qlog!("settings: status bar size updated medium -> small");
+        s.status_size = 0;
     }
     if s.version < 4 {
         for &(tool, lo, hi) in SIZES_V4.iter() {
