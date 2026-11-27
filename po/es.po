@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Grimoire 1.0.0-beta\n"
 "Report-Msgid-Bugs-To: https://github.com/ganten1998/grimoire-scribe/issues\n"
-"POT-Creation-Date: 2026-11-26 15:53-0600\n"
+"POT-Creation-Date: 2026-11-27 00:34-0600\n"
 "PO-Revision-Date: 2026-10-20 08:02-0500\n"
 "Last-Translator: draft\n"
 "Language-Team: Spanish\n"
@@ -4110,6 +4110,13 @@ msgstr "Botón del lápiz: %s"
 msgid "Darker lines in imported PDFs: %s"
 msgstr "Líneas más oscuras en los PDF importados: %s"
 
+#. TRANSLATORS: Settings' Pen category row that opens the Ink edges choices, with the one in use
+#. ("Ink edges: Solid"): how the pens' strokes are drawn on the screen.
+#: rust/src/library.rs
+#, c-format
+msgid "Ink edges: %s"
+msgstr "Bordes de la tinta: %s"
+
 #: rust/src/library.rs
 #, c-format
 msgid "Mirror PDFs to %s (USB)"
@@ -4465,6 +4472,11 @@ msgstr "Borrador"
 #: rust/src/library.rs
 msgid "Darker lines in imported PDFs"
 msgstr "Líneas más oscuras en los PDF importados"
+
+#. TRANSLATORS: the title of the list of how the pens' strokes are drawn (Settings > Pen): Smooth or Solid.
+#: rust/src/library.rs
+msgid "Ink edges"
+msgstr "Bordes de la tinta"
 
 #: rust/src/library.rs
 msgid "Kindle"
@@ -5921,6 +5933,29 @@ msgstr "Medio"
 msgctxt "darker lines"
 msgid "Strong"
 msgstr "Fuerte"
+
+#. TRANSLATORS: Settings' Pen category, the row that opens the Ink edges choices, with the one in use ("Ink edges:
+#. Smooth"): how the pens' strokes are drawn, with soft gray edges or in hard black.
+#: rust/src/settingsmenu.rs
+msgctxt "ink edges"
+msgid "Smooth"
+msgstr "Suaves"
+
+#: rust/src/settingsmenu.rs
+msgctxt "ink edges"
+msgid "Solid"
+msgstr "Sólidos"
+
+#. TRANSLATORS: the Ink edges list's two choices (Settings > Pen), each one line: the strokes drawn with soft gray
+#. edges, which the screen draws again in grays once you stop writing; or the ballpoint, fineliner, fountain pen,
+#. marker and calligraphy pen in pure black with hard edges, which need no second drawing.
+#: rust/src/settingsmenu.rs
+msgid "Smooth: soft gray edges, redrawn after writing"
+msgstr "Suaves: bordes grises, redibujados al dejar de escribir"
+
+#: rust/src/settingsmenu.rs
+msgid "Solid: pens in hard black, no second redraw"
+msgstr "Sólidos: trazos en negro puro, sin redibujar"
 
 #: rust/src/settingsmenu.rs
 msgid "Style (Gothic)"

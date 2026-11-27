@@ -378,6 +378,10 @@ pub struct EditorState {
     step_pushes: u64,
     /// undos and redos done by swapping a patch back (a probe, editor.undo_patched)
     undo_patched: u32,
+    /// Ink edges at Solid: settles after writing that sent a refresh, and those that sent none, the panel showing
+    /// already what the page holds (settle_now_in; probes editor.settles_sent and editor.settles_quiet)
+    settles_sent: u32,
+    settles_quiet: u32,
     /// the stroke eraser's tiles (MASK_TILE) drawn again, and those the boxes of what it took off
     /// cover (a probe, editor.erase_tiles)
     erase_tiles: (u32, u32),
@@ -2072,12 +2076,27 @@ fn blit_view(a: &mut App, r: Rect) {
     let r = rect_intersect(r, Rect { x: 0, y: top, w: a.w, h: a.h - top ,
         },
     );
+    // Ink edges at Solid (#320): the page's paper, which tells a solid stroke's black from the paper's own
+    // (blit_solid_edges); drawn once for a page's paper, as an erase stroke draws it.
+    let solid = ink_edges() == InkEdges::Solid && !ed_ref(a).fast_blit && !rect_is_empty(r);
+    if solid {
+        let dpi = a.dpi;
+        let s = ed(a);
+        if s.open_page().is_some() && !s.page_canvas.px.is_empty() {
+            page_paper(s, dpi);
+        }
+    }
     let App { screen, ed, .. } = a;
     let s = ed.as_deref().unwrap();
     if s.fast_blit {
         blit_canvas_fast(screen, &s.page_canvas, s.zoom, s.ox, s.oy, r);
     } else {
         blit_canvas(screen, &s.page_canvas, s.zoom, s.ox, s.oy, r);
+        if solid {
+            let pc = &s.page_canvas;
+            let paper = s.paper.px.as_deref().filter(|_| s.paper.w == pc.w && s.paper.h == pc.h).map(|p| (&p[..], s.paper.stride));
+            blit_solid_edges(screen, pc, paper, s.zoom, s.ox, s.oy, r);
+        }
     }
 }
 
@@ -2328,6 +2347,101 @@ fn blit_canvas(screen: &mut Canvas, pc: &Canvas, zoom: f32, ox: f32, oy: f32, r:
     BLIT_SCRATCH.with(|cell| {
         *cell.borrow_mut() = sc;
     });
+}
+
+// Ink edges at Solid (#320), over a view that is not 1:1 (zoomed, or a page fitted sideways), after blit_canvas drew
+// r: its bilinear blend would give a solid stroke (0 on the page where its paper is not 0) a gray rim on screen, which
+// the live frames dither and the settle then sends again. A screen pixel of r whose four page pixels include such ink
+// is made again: black where the ink has half of its weight or more, else the blend of the four with each ink pixel
+// taken as its paper (`paper`: the page's paper alone and its stride; None: white). So over its paper a solid stroke
+// changes a screen pixel only to black, at any zoom, and leaves the others as they were; every pixel with no such ink
+// beside it is blit_canvas's, the same bytes. (The same sampling as blit_canvas, pixel for pixel.)
+// Beside other ink it never lightens: where the ink has less than half the weight and one of the four with any weight
+// is neither such ink nor its own paper (pencil, charcoal, a highlight, a pen given grain, under the stroke or over
+// it), blit_canvas's blend stays, which counts the ink as black and so is never lighter than the view without the
+// stroke. The paper is taken for the ink only where the page shows nothing but paper beside it; the paper's own black
+// counts as paper there, so other ink the stroke covered beside a black line of the paper shows as that paper.
+fn blit_solid_edges(screen: &mut Canvas, pc: &Canvas, paper: Option<(&[u8], i32)>, zoom: f32, ox: f32, oy: f32, r: Rect) {
+    if rect_is_empty(r) || pc.w <= 0 || pc.h <= 0 || zoom <= 0.0 {
+        return;
+    }
+    let w = r.w as usize;
+    let mut x0s = vec![0usize; w];
+    let mut x1s = vec![0usize; w];
+    let mut wxs = vec![0u32; w];
+    let mut page_cols = vec![false; w];
+    let (mut lo, mut hi) = (usize::MAX, 0usize);
+    for i in 0..w {
+        let fx = ((r.x + i as i32) as f32 + 0.5) / zoom + ox - 0.5;
+        let x = fx.floor() as i32;
+        // (blit_canvas's desk: x < -1 or x >= pc.w)
+        page_cols[i] = x >= -1 && x < pc.w;
+        x0s[i] = clampi(x, 0, pc.w - 1) as usize;
+        x1s[i] = clampi(x + 1, 0, pc.w - 1) as usize;
+        wxs[i] = ((fx - x as f32) * 255.0) as u8 as u32;
+        if page_cols[i] {
+            lo = lo.min(x0s[i]);
+            hi = hi.max(x1s[i]);
+        }
+    }
+    if lo > hi {
+        return;
+    }
+    let has_black = |py: usize| pc.px[py * pc.stride as usize..][lo..=hi].contains(&0);
+    let paper_at = |x: usize, y: usize| paper.map_or(255u32, |(p, stride)| p[y * stride as usize + x] as u32);
+    for y in r.y..r.y + r.h {
+        let fy = (y as f32 + 0.5) / zoom + oy - 0.5;
+        let py = fy.floor() as i32;
+        if py < -1 || py >= pc.h {
+            continue;
+        }
+        let wy = ((fy - py as f32) * 255.0) as u32;
+        let py0 = clampi(py, 0, pc.h - 1) as usize;
+        let py1 = clampi(py + 1, 0, pc.h - 1) as usize;
+        if !has_black(py0) && !has_black(py1) {
+            continue;
+        }
+        let row0 = &pc.px[py0 * pc.stride as usize..];
+        let row1 = &pc.px[py1 * pc.stride as usize..];
+        let dst = y as usize * screen.stride as usize + r.x as usize;
+        for i in 0..w {
+            if !page_cols[i] {
+                continue;
+            }
+            let (x0, x1, wx) = (x0s[i], x1s[i], wxs[i]);
+            let n = [row0[x0] as u32, row0[x1] as u32, row1[x0] as u32, row1[x1] as u32];
+            if n[0].min(n[1]).min(n[2]).min(n[3]) != 0 {
+                continue;
+            }
+            let wt = [(255 - wx) * (255 - wy), wx * (255 - wy), (255 - wx) * wy, wx * wy];
+            let at = [(x0, py0), (x1, py0), (x0, py1), (x1, py1)];
+            let (mut ink, mut sum, mut other) = (0u32, 0u32, false);
+            for k in 0..4 {
+                let mut v = n[k];
+                let p = paper_at(at[k].0, at[k].1);
+                if v == 0 && p != 0 {
+                    ink += wt[k];
+                    v = p;
+                } else if v != p && wt[k] != 0 {
+                    other = true; // (pencil, charcoal, a highlight, a pen given grain: not the stroke's, not paper)
+                }
+                sum += wt[k] * v;
+            }
+            if ink == 0 {
+                continue; // (the paper's own black: blit_canvas's blend)
+            }
+            if 2 * ink >= 65025 {
+                screen.px[dst + i] = 0;
+            } else if !other {
+                screen.px[dst + i] = ((sum + 32512) / 65025) as u8;
+            }
+            // (else blit_canvas's blend stays: the page no longer holds what lay under the stroke, and its paper
+            // there would be lighter than the ink beside it)
+        }
+        if ((y - r.y) & 63) == 63 {
+            work_pump();
+        }
+    }
 }
 
 /// Where a page of pgw x pgh rests on an aw x ah screen (view_rest), centred as view_clamp centres it: what
@@ -12586,13 +12700,80 @@ fn settle_now_in(a: &mut App) {
     }
     if !rect_is_empty(s.settle) {
         let r = s.settle;
-        show(a, r, RefreshMode::Ui);
+        if ink_edges() == InkEdges::Solid {
+            settle_solid(a, r);
+        } else {
+            show(a, r, RefreshMode::Ui);
+        }
     }
     ed(a).settle = RECT_EMPTY;
     if ed(a).panel_stale {
         repaint_panel(a, RefreshMode::Ui);
     }
     ed(a).panel_stale = false;
+}
+
+// Ink edges at Solid (2.3, #320): whether the pause's settle (editor_tick) waits for this pass's flush. The settle
+// judges what the panel shows (settle_solid), so it is taken only after the flush that put the stroke's last live
+// frames there, and a tick comes before its pass's flush (mainloop.rs: the input batch, the tick, the flush). While
+// something still waits for the flush where the settle's rect is on screen (App.dirty: the frames of a stroke this
+// very pass handled, when the loop comes to the pen's leaving SETTLE_LEFT_MS late), the settle stays due; the flush
+// sends the frames and empties App.dirty, and the next tick takes the settle. Taken at once it would find the panel
+// without those frames and send them again in grays, the second pass Solid is there to spare. Only the settle's own
+// rect is asked about, but App.dirty is one rect: refreshes waiting elsewhere (a toolbar change and another beyond
+// the stroke) can span it together and hold the settle back one pass, never more. Nothing is flushed from the
+// tick. With Smooth the settle is not judged against the panel and goes out with the waiting frames as ever; a
+// settle an action forces (settle_now from Undo, a tap on the toolbar, Settings) is taken at once; and under the
+// Pages view nothing is settled at all (settle_now_in).
+fn settle_waits_for_flush(a: &App) -> bool {
+    if ink_edges() != InkEdges::Solid || rect_is_empty(a.dirty) {
+        return false;
+    }
+    let s = ed_ref(a);
+    !s.pv.open && !rect_is_empty(s.settle) && rect_overlaps(a.dirty, page_to_screen(a, s.settle))
+}
+
+// The settle with Ink edges at Solid (2.3, #320): page rect r composed on the screen, then refreshed in grays only
+// where the panel shows another level than the screen now holds (display_settle_area: the platform's record of what
+// it last gave the panel, lighter pixels as well as darker ones, with a margin), and not at all where it shows them
+// all: a solid stroke's live frames put its pixels on the panel as the page has them, so it needs no second pass.
+// Only r is judged: anything else due (the panel's own repaint, a toolbar change) goes out as it would.
+fn settle_solid(a: &mut App, r: Rect) {
+    let sr = page_to_screen(a, r);
+    if rect_is_empty(sr) {
+        return;
+    }
+    compose(a, sr);
+    let d = display_settle_area(&a.screen, sr);
+    let s = ed(a);
+    if rect_is_empty(d) {
+        s.settles_quiet += 1;
+        return;
+    }
+    s.settles_sent += 1;
+    app_invalidate(a, d, RefreshMode::Ui);
+}
+
+/// Ink edges changed (Settings > Pen, 2.3, #320), maybe over an open notebook (the quick settings' Settings): what the
+/// notebook keeps drawn under the setting before goes (its undo steps' patches, the pages kept in memory, the pages
+/// drawn ahead), and its open page is drawn again with the new one at once, before anything can keep a picture of
+/// the canvas (a kept drawing's or a preview's stamp names the setting it is written under, store.rs): as a page
+/// opens, with "Loading page..." first when it is slow and has no drawing kept under the new setting. Its card
+/// follows. With no notebook open there is nothing to do: a notebook opens with the setting in force.
+pub fn editor_ink_edges_changed(a: &mut App) {
+    let Some(s) = a.ed.as_deref_mut() else { return };
+    if !s.open {
+        return;
+    }
+    for e in s.hist.iter_mut() {
+        history_trim_patches(&mut e.h, 0);
+    }
+    page_views_clear(s);
+    cache_free(s);
+    s.thumb_dirty = true;
+    if s.page_ix().is_some() && !s.page_canvas.px.is_empty() {
+        render_page_open(a);
+    }
 }
 
 fn write_thumb_if_needed(a: &mut App) {
@@ -12732,7 +12913,9 @@ pub fn editor_tick(a: &mut App, now: u32) {
     let s = ed(a);
     // The pen gone for SETTLE_LEFT_MS (not just lifted high for a moment), or near for too long.
     let stopped = now.wrapping_sub(s.settle_from) >= SETTLE_NEAR_MS || (!s.pen_near && now.wrapping_sub(s.pen_left) >= SETTLE_LEFT_MS);
-    if s.open && s.owner == Owner::None && !s.pinching && (!rect_is_empty(s.settle) || s.panel_stale) && stopped {
+    if s.open && s.owner == Owner::None && !s.pinching && (!rect_is_empty(s.settle) || s.panel_stale) && stopped
+        && !settle_waits_for_flush(a)
+    {
         settle_now(a);
     }
     du_wear_tick(a, now);
@@ -13717,6 +13900,10 @@ pub fn editor_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32
     } else if key == "undo_patched" {
         // Undos and redos that swapped a patch back instead of drawing the region again.
         csnprintf!(out, cap, "%u", s.undo_patched);
+    } else if key == "settles_sent" || key == "settles_quiet" {
+        // With Ink edges at Solid: the settles after writing that sent a grayscale refresh, and those that sent none,
+        // the panel showing already what the page holds (settle_solid).
+        csnprintf!(out, cap, "%u", if key == "settles_sent" { s.settles_sent } else { s.settles_quiet });
     } else if key == "live_matches_render" {
         // The open page drawn afresh, pixel for pixel what drawing, erasing and undoing left in the
         // page canvas: 1 when they are the same.
@@ -14432,13 +14619,18 @@ mod tests {
         assert!(rect_is_empty(editor_live_panel(&a)));
     }
     fn fshape_app() -> App {
+        fshape_app_of(1000, 1400)
+    }
+    // The same on a w x h screen with pages of its size (1860 x 2480 is the simulated panel's: what a settle with Ink
+    // edges at Solid compares the screen with).
+    fn fshape_app_of(w: i32, h: i32) -> App {
         #[cfg(feature = "sim")]
         {
             // Allocate the simulator's presented buffer without opening a window or script.
             let (mut w, mut h) = (0, 0);
             crate::sim_sdl::display_set_orientation(0, &mut w, &mut h);
         }
-        let mut a = app(1000, 1400, 1000, 1400);
+        let mut a = app(w, h, w, h);
         a.scr = ScreenId::Editor;
         a.settings.status_on = false;
         a.settings.status_mode = 2;
@@ -14453,15 +14645,89 @@ mod tests {
         s.nb.page_ids = vec![1, 2];
         for pid in [1, 2] {
             let i = s.entry_for(pid).unwrap();
-            s.hist[i].page = Some(page_new(1000, 1400, PAPER_BLANK));
+            s.hist[i].page = Some(page_new(w, h, PAPER_BLANK));
         }
         s.page = Some(1);
-        assert_eq!(canvas_init(&mut s.page_canvas, 1000, 1400), 0);
+        assert_eq!(canvas_init(&mut s.page_canvas, w, h), 0);
         render_page_full(&mut a);
         view_reset(&mut a);
         compose_all(&mut a, RefreshMode::Ui);
         app_flush(&mut a);
         a
+    }
+
+    // A ballpoint line from (x0, y) to (x1, y) on the open page and the pen's leaving, all at time t: the events of
+    // one batch, as the loop hands them over when it comes to them late.
+    #[cfg(feature = "sim")]
+    fn solid_line_in_one_batch(a: &mut App, x0: f32, x1: f32, y: f32, t: u32) {
+        tool_params_default(TOOL_BALLPOINT, &mut a.settings.tools[TOOL_BALLPOINT.0 as usize]);
+        a.settings.current_tool = TOOL_BALLPOINT;
+        a.settings.draw_tool = TOOL_BALLPOINT;
+        let mut ev = InEvent { type_: InType::PenDown, x: x0, y, pressure: 0.6, t_ms: t, ..Default::default() };
+        editor_event(a, &ev);
+        ev.type_ = InType::PenMove;
+        for k in 1..=20 {
+            ev.x = x0 + (x1 - x0) * k as f32 / 20.0;
+            editor_event(a, &ev);
+        }
+        ev.type_ = InType::PenUp;
+        app_pen_feedback_end(a);
+        editor_event(a, &ev);
+        ev.type_ = InType::PenLeave;
+        ev.pressure = 0.0;
+        editor_event(a, &ev);
+    }
+
+    // Ink edges at Solid (#320): the pause's settle follows the flush of the stroke's own live frames. The loop
+    // handles a batch of input, ticks, then flushes. When it comes to a stroke and the pen's leaving SETTLE_LEFT_MS
+    // late, the tick of that pass finds the settle due while the stroke's frames still wait for the flush: it leaves
+    // the settle due, the flush puts the frames on the panel, and the next tick settles with nothing to send. Taken
+    // in the first tick the settle compares the screen with a panel that was not given the frames, and sends them
+    // again in grays. A refresh waiting elsewhere on the screen holds no settle back, and with Smooth the settle
+    // goes out with the frames in one refresh as ever.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn the_solid_settle_waits_for_the_flush_of_the_strokes_own_frames() {
+        let _solid = InkEdgesScope::new(InkEdges::Solid);
+        let mut a = fshape_app_of(1860, 2480);
+        let counts = |a: &App| (ed_ref(a).settles_quiet, ed_ref(a).settles_sent);
+        let t = now_ms();
+        let late = t.wrapping_add(SETTLE_LEFT_MS + 250);
+        a.last_input = late; // (the batch was just handled: none of the tick's idle work is due)
+        solid_line_in_one_batch(&mut a, 400.0, 1000.0, 900.0, t);
+        assert_eq!(ed_ref(&a).open_page().unwrap().strokes.len(), 1);
+        let frames = a.dirty;
+        assert!(!rect_is_empty(frames) && a.dirty_mode == RefreshMode::Fast, "the stroke's frames wait for the flush");
+        // the tick of the batch's own pass, late: the settle is due and stays so
+        editor_tick(&mut a, late);
+        assert!(!rect_is_empty(ed_ref(&a).settle), "the settle waits");
+        assert_eq!(counts(&a), (0, 0));
+        assert_eq!((a.dirty, a.dirty_mode), (frames, RefreshMode::Fast), "the tick adds nothing to the frames' refresh");
+        app_flush(&mut a);
+        assert!(rect_is_empty(a.dirty));
+        // the next pass: the panel shows the stroke, the settle sends nothing for it
+        editor_tick(&mut a, late.wrapping_add(30));
+        assert!(rect_is_empty(ed_ref(&a).settle));
+        assert_eq!(counts(&a), (1, 0), "a solid stroke settles with nothing sent");
+        app_flush(&mut a);
+        // a refresh waiting elsewhere on the screen is not the stroke's: the settle is taken in that very tick
+        let t = now_ms();
+        solid_line_in_one_batch(&mut a, 400.0, 1000.0, 1200.0, t);
+        app_flush(&mut a);
+        app_invalidate(&mut a, Rect::new(100, 2000, 300, 100), RefreshMode::Ui);
+        editor_tick(&mut a, t.wrapping_add(SETTLE_LEFT_MS + 250));
+        assert!(rect_is_empty(ed_ref(&a).settle));
+        assert_eq!(counts(&a), (2, 0));
+        app_flush(&mut a);
+        // Smooth: the settle goes out with the frames that wait, one grayscale refresh
+        drop(_solid);
+        let t = now_ms();
+        solid_line_in_one_batch(&mut a, 400.0, 1000.0, 1500.0, t);
+        assert_eq!(a.dirty_mode, RefreshMode::Fast);
+        editor_tick(&mut a, t.wrapping_add(SETTLE_LEFT_MS + 250));
+        assert!(rect_is_empty(ed_ref(&a).settle));
+        assert!(!rect_is_empty(a.dirty) && a.dirty_mode == RefreshMode::Ui);
+        assert_eq!(counts(&a), (2, 0));
     }
 
     #[test]
@@ -15254,6 +15520,391 @@ mod tests {
             }
             if zoom == 1.0 && ox == 0.0 && oy == 0.0 {
                 assert_eq!(fast.px, pc.px);
+            }
+        }
+    }
+
+    // Ink edges at Solid (#320) in a view that is not 1:1: a solid stroke changes screen pixels only to black, and
+    // leaves every other one as it was over its paper (gray rules, the paper's own black), so its live frames hold
+    // only black on the panel and the settle finds nothing to send. Without blit_solid_edges the bilinear blend
+    // puts grays on screen beside the ink.
+    #[test]
+    fn solid_ink_on_a_scaled_view_is_black_or_what_was_there() {
+        let (w, h) = (64, 48);
+        let mut paper = Canvas::default();
+        assert_eq!(canvas_init(&mut paper, w, h), 0);
+        for y in 0..h {
+            for x in 0..w {
+                paper.px[(y * w + x) as usize] = if y % 6 == 0 { 200 } else if x == 50 && y < 12 { 0 } else { 255 };
+            }
+        }
+        let mut page = paper.clone();
+        for y in 0..h {
+            for x in 0..w {
+                if (x - y - 8).abs() <= 2 || (x - 40) * (x - 40) + (y - 30) * (y - 30) <= 4 || (x == 20 && y == 40) {
+                    page.px[(y * w + x) as usize] = 0;
+                }
+            }
+        }
+        let cases = [(0.5f32, -32.0f32, -24.0f32), (0.75, -10.5, -5.25), (1.0, 0.5, 0.25), (1.33, 10.3, 6.7), (2.3, 20.1, 15.9), (4.0, 3.0, 2.0)];
+        for (zoom, ox, oy) in cases {
+            let r = Rect::new(0, 0, w, h);
+            let blank = || {
+                let mut c = Canvas::default();
+                assert_eq!(canvas_init(&mut c, w, h), 0);
+                c
+            };
+            let (mut before, mut plain_before, mut after, mut plain_after) = (blank(), blank(), blank(), blank());
+            blit_canvas(&mut plain_before, &paper, zoom, ox, oy, r);
+            blit_canvas(&mut before, &paper, zoom, ox, oy, r);
+            blit_solid_edges(&mut before, &paper, Some((&paper.px, paper.stride)), zoom, ox, oy, r);
+            // (no solid ink: blit_canvas's bytes, the paper's own black blended as ever)
+            assert_eq!(before.px, plain_before.px, "zoom {zoom}: a page with no solid ink");
+            blit_canvas(&mut plain_after, &page, zoom, ox, oy, r);
+            blit_canvas(&mut after, &page, zoom, ox, oy, r);
+            blit_solid_edges(&mut after, &page, Some((&paper.px, paper.stride)), zoom, ox, oy, r);
+            let mut black = 0;
+            for i in 0..after.px.len() {
+                assert!(after.px[i] == before.px[i] || after.px[i] == 0, "zoom {zoom}: pixel {i} is {} over {}", after.px[i], before.px[i]);
+                black += (after.px[i] == 0 && before.px[i] != 0) as u32;
+            }
+            assert!(black > 20, "zoom {zoom}: the ink shows ({black} px)");
+            let grays = (0..after.px.len()).filter(|&i| plain_after.px[i] != before.px[i] && plain_after.px[i] != 0).count();
+            assert!(grays > 0, "zoom {zoom}: the bilinear blend alone gives grays");
+        }
+    }
+
+    // A 640 x 420 page for the scaled view's tests: a paper with gray rules and black of its own (a block, and two
+    // 1 px lines through the other ink below, as a PDF page's text or a picture template's lines lie under a
+    // highlight); on it other ink (a highlight band, pencil shading, charcoal, a marker and a ballpoint given grain)
+    // and solid strokes through all of it (a ballpoint from light to full pressure, a fineliner, a fountain pen, a
+    // marker, a calligraphy diagonal, a dot, and a word along the highlight, the pencil and the charcoal). Drawn with
+    // Ink edges at Solid as the pen writes: `solid` the solid strokes, `other_first` the other ink under them or over
+    // them.
+    fn scaled_view_paper() -> Canvas {
+        let (w, h) = (640, 420);
+        let mut paper = Canvas::default();
+        assert_eq!(canvas_init(&mut paper, w, h), 0);
+        for y in 0..h {
+            for x in 0..w {
+                let block = (560..600).contains(&x) && (30..70).contains(&y);
+                let line = (y == 104 && (40..600).contains(&x)) || (x == 500 && (80..400).contains(&y));
+                paper.px[(y * paper.stride + x) as usize] =
+                    if block || line { 0 } else if y % 60 == 28 || y % 60 == 29 { 119 } else { 255 };
+            }
+        }
+        paper
+    }
+    fn scaled_view_page(paper: &Canvas, solid: bool, other: bool, other_first: bool) -> Canvas {
+        const DPI: f32 = 300.0;
+        let prm = |t: ToolKind, grain: Option<f32>| {
+            let mut p = ToolParams::default();
+            tool_params_default(t, &mut p);
+            if let Some(g) = grain {
+                p.grain = g;
+            }
+            p
+        };
+        // a path from (x0, y0) to (x1, y1), swaying `sway` px to either side
+        let path = |t: ToolKind, p: &ToolParams, seed: u32, (x0, y0): (f32, f32), (x1, y1): (f32, f32), sway: f32, pressure: f32| {
+            let mut s = stroke_new(t, p, seed);
+            stroke_mark_tip(&mut s);
+            let len = ((x1 - x0).powi(2) + (y1 - y0).powi(2)).sqrt().max(1.0);
+            let n = (len / 4.0) as usize + 2;
+            for k in 0..n {
+                let f = k as f32 / (n - 1) as f32;
+                let off = sway * (f * 28.0).sin();
+                let q = PenSample { x: x0 + (x1 - x0) * f - (y1 - y0) / len * off, y: y0 + (y1 - y0) * f + (x1 - x0) / len * off,
+                    pressure, t_ms: k as u32 * 7, ..Default::default() };
+                stroke_append(&mut s, &q, DPI);
+            }
+            s
+        };
+        let mut others: Vec<Box<Stroke>> = Vec::new();
+        others.push(path(TOOL_HIGHLIGHTER, &prm(TOOL_HIGHLIGHTER, None), 11, (40.0, 100.0), (600.0, 100.0), 0.0, 0.8));
+        for k in 0..12 {
+            others.push(path(TOOL_PENCIL, &prm(TOOL_PENCIL, None), 40 + k, (40.0, 172.0 + 4.0 * k as f32), (600.0, 174.0 + 4.0 * k as f32), 0.0, 0.8));
+        }
+        for k in 0..5 {
+            others.push(path(TOOL_CHARCOAL, &prm(TOOL_CHARCOAL, None), 70 + k, (40.0, 250.0 + 5.0 * k as f32), (600.0, 251.0 + 5.0 * k as f32), 0.0, 0.9));
+        }
+        others.push(path(TOOL_MARKER, &prm(TOOL_MARKER, Some(1.0)), 80, (40.0, 330.0), (600.0, 330.0), 0.0, 0.8));
+        others.push(path(TOOL_BALLPOINT, &prm(TOOL_BALLPOINT, Some(0.5)), 81, (40.0, 356.0), (600.0, 358.0), 0.0, 0.9));
+        let mut solids: Vec<Box<Stroke>> = Vec::new();
+        for (i, (t, pressure)) in [(TOOL_BALLPOINT, 0.1f32), (TOOL_BALLPOINT, 0.3), (TOOL_BALLPOINT, 0.6), (TOOL_BALLPOINT, 1.0),
+            (TOOL_FINELINER, 0.6), (TOOL_FOUNTAIN, 0.6), (TOOL_MARKER, 0.6)].into_iter().enumerate()
+        {
+            let x = 80.0 + 60.0 * i as f32;
+            solids.push(path(t, &prm(t, None), 100 + i as u32, (x, 50.0), (x + 9.0, 392.0), 7.0, pressure));
+        }
+        solids.push(path(TOOL_CALLIGRAPHY, &prm(TOOL_CALLIGRAPHY, None), 120, (60.0, 60.0), (604.0, 384.0), 0.0, 0.7));
+        solids.push(path(TOOL_BALLPOINT, &prm(TOOL_BALLPOINT, None), 121, (520.4, 101.6), (521.9, 101.6), 0.0, 0.7));
+        for (k, y) in [100.0f32, 192.0, 262.0].into_iter().enumerate() {
+            solids.push(path(TOOL_BALLPOINT, &prm(TOOL_BALLPOINT, None), 130 + k as u32, (60.0, y), (540.0, y + 2.0), 9.0, 0.6));
+        }
+        for s in solids.iter().chain(&others) {
+            assert_eq!(ink_edges_as(InkEdges::Solid, || stroke_solid(s, stroke_tip(s))), s.seed >= 100, "the rule for stroke {}", s.seed);
+        }
+        let mut page = paper.clone();
+        let mut order: Vec<&Stroke> = Vec::new();
+        for first in [true, false] {
+            if other && first == other_first {
+                order.extend(others.iter().map(|s| &**s));
+            }
+            if solid && first != other_first {
+                order.extend(solids.iter().map(|s| &**s));
+            }
+        }
+        ink_edges_as(InkEdges::Solid, || {
+            for s in order {
+                let mut b = BrushState::default();
+                stroke_brush_begin(&mut b, s, DPI, None, 0, 0, 0);
+                for q in &s.pts {
+                    brush_add(&mut b, &mut page, q);
+                }
+            }
+        });
+        page
+    }
+    // The reviewer's ten views of that page on a 640 x 420 screen: (zoom, ox, oy). Sideways and fitted, a notebook of
+    // another size either way, 1:1 panned half a pixel, sideways at the width, three pinches, the page smaller than
+    // the view (the desk around it), and the page's right bottom corner.
+    const SCALED_VIEWS: [(f32, f32, f32); 10] = [
+        (0.75, -20.333334, 0.0),
+        (0.9366, -3.2, -1.1),
+        (1.0677, 4.7, 2.3),
+        (1.0, 0.5, 0.5),
+        (1.3333334, 0.0, 12.0),
+        (2.0, 31.5, 20.25),
+        (2.37, 100.2, 40.6),
+        (4.0, 180.0, 150.0),
+        (0.5, -320.0, -210.0),
+        (3.1, 490.0, 320.0),
+    ];
+    // What blit_view puts on screen for page canvas pc at Solid in a view that is not 1:1 (`pass` false: blit_canvas
+    // alone).
+    fn scaled_view(pc: &Canvas, paper: &Canvas, (zoom, ox, oy): (f32, f32, f32), pass: bool) -> Canvas {
+        let mut sc = Canvas::default();
+        assert_eq!(canvas_init(&mut sc, 640, 420), 0);
+        let r = Rect::new(0, 0, 640, 420);
+        blit_canvas(&mut sc, pc, zoom, ox, oy, r);
+        if pass {
+            blit_solid_edges(&mut sc, pc, Some((&paper.px, paper.stride)), zoom, ox, oy, r);
+        }
+        sc
+    }
+    // The four page pixels (their index in pc and their weight) that blit_canvas blends for screen pixel sx, sy of
+    // that view; on the desk, none with any weight.
+    fn scaled_four((zoom, ox, oy): (f32, f32, f32), sx: i32, sy: i32, pc: &Canvas) -> [(usize, u32); 4] {
+        let fx = (sx as f32 + 0.5) / zoom + ox - 0.5;
+        let fy = (sy as f32 + 0.5) / zoom + oy - 0.5;
+        let (px, py) = (fx.floor() as i32, fy.floor() as i32);
+        if px < -1 || px >= pc.w || py < -1 || py >= pc.h {
+            return [(0, 0); 4];
+        }
+        let wx = ((fx - px as f32) * 255.0) as u8 as u32;
+        let wy = ((fy - py as f32) * 255.0) as u32;
+        let at = |x: i32, y: i32| (clampi(y, 0, pc.h - 1) * pc.stride + clampi(x, 0, pc.w - 1)) as usize;
+        [
+            (at(px, py), (255 - wx) * (255 - wy)),
+            (at(px + 1, py), wx * (255 - wy)),
+            (at(px, py + 1), (255 - wx) * wy),
+            (at(px + 1, py + 1), wx * wy),
+        ]
+    }
+
+    // Ink edges at Solid (#320) in a view that is not 1:1, where a solid stroke crosses or lies beside other ink,
+    // drawn before it or after it: no screen pixel is lighter than the same view of the page without the solid
+    // strokes, and none is darker unless it is black or what blit_canvas's blend gives. One kind of pixel is the
+    // paper's own instead: where the stroke's own pixels cover other ink and the four page pixels show nothing but
+    // the ink and paper beside them (the page does not keep what a stroke covers). Away from the paper's own black
+    // that is a few pixels of a view. The paper's own black counts as its paper, and other ink over it leaves it
+    // black, so where a stroke meets a black line of the paper under a highlight or pencil there are more of them
+    // (on this page 101 to 769 a view): they are counted apart. Over paper alone every pixel is black or the
+    // paper's. Taking each ink pixel as its paper whatever lies beside it puts a pale outline along the stroke over
+    // pencil, charcoal or a highlight instead (lighter than the view without the stroke, by up to 7 of the panel's
+    // 16 levels).
+    #[test]
+    fn solid_ink_on_a_scaled_view_never_lightens_other_ink() {
+        let paper = scaled_view_paper();
+        let under = scaled_view_page(&paper, false, true, true);
+        // (the other ink here never reaches black, so a view of it has no solid ink for the pass to find)
+        assert!((0..under.px.len()).all(|i| under.px[i] != 0 || paper.px[i] == 0));
+        let alone = scaled_view_page(&paper, true, false, true);
+        for view in SCALED_VIEWS {
+            let (zoom, ox, oy) = view;
+            let paper_view = scaled_view(&paper, &paper, view, false);
+            let before = scaled_view(&under, &paper, view, true);
+            assert_eq!(before.px, scaled_view(&under, &paper, view, false).px, "zoom {zoom}: a page with no solid ink");
+            let on_paper = scaled_view(&alone, &paper, view, true);
+            for i in 0..on_paper.px.len() {
+                assert!(on_paper.px[i] == 0 || on_paper.px[i] == paper_view.px[i], "zoom {zoom} at {ox} {oy}, over paper alone: pixel {i} is {} over {}", on_paper.px[i], paper_view.px[i]);
+            }
+            for other_first in [true, false] {
+                let page = scaled_view_page(&paper, true, true, other_first);
+                // (the page itself: a solid stroke changes pixels only to black, and other ink over it leaves its black)
+                for i in 0..page.px.len() {
+                    assert!(page.px[i] == under.px[i] || page.px[i] == 0, "the page, other ink first {other_first}: pixel {i} is {} over {}", page.px[i], under.px[i]);
+                }
+                let plain = scaled_view(&page, &paper, view, false);
+                let after = scaled_view(&page, &paper, view, true);
+                let (mut black, mut kept, mut covered, mut covered_by_black) = (0, 0, 0, 0);
+                for i in 0..after.px.len() {
+                    let (a, b) = (after.px[i], before.px[i]);
+                    if a > b {
+                        assert!(a == paper_view.px[i], "zoom {zoom} at {ox} {oy}, other ink first {other_first}: pixel {i} is {a}, lighter than {b} without the strokes (the paper there is {})", paper_view.px[i]);
+                        let (sx, sy) = (i as i32 % after.stride, i as i32 / after.stride);
+                        if scaled_four(view, sx, sy, &paper).iter().any(|&(j, wt)| wt != 0 && paper.px[j] == 0) {
+                            covered_by_black += 1;
+                        } else {
+                            covered += 1;
+                        }
+                    }
+                    assert!(a >= b || a == 0 || a == plain.px[i], "zoom {zoom} at {ox} {oy}, other ink first {other_first}: pixel {i} is {a}, darker than {b} and not blit_canvas's {}", plain.px[i]);
+                    black += (a == 0 && b != 0) as u32;
+                    kept += (a != 0 && a < b) as u32;
+                }
+                assert!(black > 300, "zoom {zoom}: the ink shows ({black} px)");
+                assert!(kept > 50, "zoom {zoom}: beside other ink the blend stays ({kept} px)");
+                assert!(covered < 100, "zoom {zoom}, other ink first {other_first}: {covered} of {} pixels are the paper's over a covered speck", after.px.len());
+                assert!(covered_by_black < 1000, "zoom {zoom}, other ink first {other_first}: {covered_by_black} pixels beside the paper's own black are the paper's over covered ink");
+            }
+        }
+    }
+
+    // The scaled view's rule at Solid written out pixel by pixel (editor.rs blit_solid_edges), on the page above at
+    // its ten views. With W the weight of the solid ink (0 where the page's paper is not) among a screen pixel's four
+    // page pixels: blit_canvas's value where W is 0; black where W is half the whole weight or more; blit_canvas's
+    // value where W is less and one of the four with any weight is other ink; else the paper's own. Black from any
+    // weight would widen every stroke by a screen pixel a side; black only at the whole weight would thin it.
+    #[test]
+    fn solid_ink_on_a_scaled_view_is_black_from_half_the_weight() {
+        let paper = scaled_view_paper();
+        let (w, h) = (paper.w, paper.h);
+        for other_first in [true, false] {
+            let page = scaled_view_page(&paper, true, true, other_first);
+            for view in SCALED_VIEWS {
+                let (zoom, ox, oy) = view;
+                let plain = scaled_view(&page, &paper, view, false);
+                let paper_view = scaled_view(&paper, &paper, view, false);
+                let got = scaled_view(&page, &paper, view, true);
+                let (mut black, mut papers, mut kept) = (0, 0, 0);
+                for sy in 0..got.h {
+                    let fy = (sy as f32 + 0.5) / zoom + oy - 0.5;
+                    let py = fy.floor() as i32;
+                    let wy = ((fy - py as f32) * 255.0) as u32;
+                    for sx in 0..got.w {
+                        let i = (sy * got.stride + sx) as usize;
+                        let fx = (sx as f32 + 0.5) / zoom + ox - 0.5;
+                        let px = fx.floor() as i32;
+                        let wx = ((fx - px as f32) * 255.0) as u8 as u32;
+                        let want = if px < -1 || px >= w || py < -1 || py >= h {
+                            plain.px[i] // (the desk)
+                        } else {
+                            let at = |x: i32, y: i32| (clampi(y, 0, h - 1) * page.stride + clampi(x, 0, w - 1)) as usize;
+                            let four = [
+                                (at(px, py), (255 - wx) * (255 - wy)),
+                                (at(px + 1, py), wx * (255 - wy)),
+                                (at(px, py + 1), (255 - wx) * wy),
+                                (at(px + 1, py + 1), wx * wy),
+                            ];
+                            let ink = |j: usize| page.px[j] == 0 && paper.px[j] != 0;
+                            let weight: u32 = four.iter().filter(|&&(j, _)| ink(j)).map(|&(_, wt)| wt).sum();
+                            let other = four.iter().any(|&(j, wt)| wt != 0 && !ink(j) && page.px[j] != paper.px[j]);
+                            if weight == 0 {
+                                plain.px[i]
+                            } else if 2 * weight >= 255 * 255 {
+                                black += 1;
+                                0
+                            } else if other {
+                                kept += 1;
+                                plain.px[i]
+                            } else {
+                                papers += 1;
+                                paper_view.px[i]
+                            }
+                        };
+                        assert_eq!(got.px[i], want, "zoom {zoom} at {ox} {oy}, other ink first {other_first}: pixel {sx},{sy}");
+                    }
+                }
+                assert!(black > 300 && papers > 300 && kept > 50, "zoom {zoom}: black {black}, the paper's {papers}, blit_canvas's {kept}");
+            }
+        }
+    }
+
+    // The paper blit_view hands that pass is the open page's own (page_paper), at Solid in a view that is not 1:1: a
+    // solid stroke across graph paper's gray lines leaves every screen pixel black or the paper's, and a black of
+    // the paper's own (a picture's, as a PDF page or a template has: here put into the kept paper and the page, which
+    // no built-in paper has) keeps blit_canvas's edges. Handed no paper the pass takes white for it: the ink over a
+    // line then counts as white there, and the paper's black as ink.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn blit_view_hands_the_solid_pass_the_pages_own_paper() {
+        let _solid = InkEdgesScope::new(InkEdges::Solid);
+        paper_set_panel_ppi(0.0, 300.0);
+        let (w, h) = (640, 420);
+        let mut a = fshape_app_of(w, h);
+        let prm = |t: ToolKind| {
+            let mut p = ToolParams::default();
+            tool_params_default(t, &mut p);
+            p
+        };
+        // a page of graph paper with two solid strokes down across its lines
+        let s = ed(&mut a);
+        let ip = s.page_ix().unwrap();
+        let mut page = page_new(w, h, PAPER_GRID);
+        for (k, t) in [TOOL_BALLPOINT, TOOL_MARKER].into_iter().enumerate() {
+            let mut st = stroke_new(t, &prm(t), 0x400 + k as u32);
+            for i in 0..60 {
+                let f = i as f32 / 59.0;
+                stroke_append(&mut st, &PenSample { x: 150.0 + 200.0 * k as f32 + 60.0 * f, y: 20.0 + 380.0 * f, pressure: 0.6, t_ms: i * 7, ..Default::default() }, 300.0);
+            }
+            page_add(&mut page, st);
+        }
+        let mut paper = Canvas::default();
+        assert_eq!(canvas_init(&mut paper, w, h), 0);
+        page_paper_render(&mut paper, &page, Rect::new(0, 0, w, h), 300.0);
+        assert!(paper.px.contains(&136) && paper.px.contains(&85) && !paper.px.contains(&0), "the paper has gray lines and no black");
+        s.hist[ip].page = Some(page);
+        render_page_full(&mut a);
+        let whole = Rect::new(0, 0, w, h);
+        let view_of = |c: &Canvas, zoom: f32, ox: f32, oy: f32| {
+            let mut sc = Canvas::default();
+            assert_eq!(canvas_init(&mut sc, w, h), 0);
+            blit_canvas(&mut sc, c, zoom, ox, oy, whole);
+            sc
+        };
+        let views = [(2.0f32, 100.0f32, 60.0f32), (0.75, -20.333334, 0.0), (1.3333334, 40.0, 12.0)];
+        for (zoom, ox, oy) in views {
+            let s = ed(&mut a);
+            (s.zoom, s.ox, s.oy) = (zoom, ox, oy);
+            blit_view(&mut a, whole);
+            let paper_view = view_of(&paper, zoom, ox, oy);
+            let mut black = 0;
+            for i in 0..a.screen.px.len() {
+                assert!(a.screen.px[i] == 0 || a.screen.px[i] == paper_view.px[i], "zoom {zoom}: pixel {i} is {} over the paper's {}", a.screen.px[i], paper_view.px[i]);
+                black += (a.screen.px[i] == 0) as u32;
+            }
+            assert!(black > 300, "zoom {zoom}: the ink shows ({black} px)");
+        }
+        // the paper's own black: a block of it in the kept paper and on the page, clear of the strokes
+        let s = ed(&mut a);
+        assert!(s.paper.px.is_some() && (s.paper.w, s.paper.h) == (w, h), "blit_view kept the page's paper");
+        let block = Rect::new(250, 120, 60, 40);
+        let lines = paper.clone();
+        canvas_fill(&mut paper, block, 0);
+        canvas_fill(&mut s.page_canvas, block, 0);
+        s.paper.px = Some(Rc::new(paper.px.clone()));
+        for (zoom, ox, oy) in views {
+            let s = ed(&mut a);
+            (s.zoom, s.ox, s.oy) = (zoom, ox, oy);
+            blit_view(&mut a, whole);
+            let paper_view = view_of(&paper, zoom, ox, oy);
+            let lines_view = view_of(&lines, zoom, ox, oy);
+            let edges = (0..paper_view.px.len()).filter(|&i| paper_view.px[i] != 0 && paper_view.px[i] != lines_view.px[i]).count();
+            assert!(edges > 20, "zoom {zoom}: the block's edges are blended ({edges} px)");
+            for i in 0..a.screen.px.len() {
+                assert!(a.screen.px[i] == 0 || a.screen.px[i] == paper_view.px[i], "zoom {zoom}, the paper's black: pixel {i} is {} over the paper's {}", a.screen.px[i], paper_view.px[i]);
             }
         }
     }

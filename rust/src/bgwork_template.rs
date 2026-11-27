@@ -1313,7 +1313,9 @@ fn make_page_template(dest: &str, src: &str, index: i32, key: u64, dpi: f32) -> 
         return -1;
     }
     bgimage_take_missing(); // (what drew white before)
-    page_render(&mut c, &page, Rect::new(0, 0, page.w, page.h), dpi);
+    // (with Ink edges at Smooth whatever the setting, as an export draws: the picture is a file, the paper of
+    // pages drawn under either setting, 2.3, #320)
+    ink_edges_as(InkEdges::Smooth, || page_render(&mut c, &page, Rect::new(0, 0, page.w, page.h), dpi));
     if bgimage_take_missing() {
         qlog!("templates: %s: the page's paper picture is missing; no template made", dest);
         return -1;

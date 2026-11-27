@@ -109,9 +109,22 @@
   Isometric 136 and Hexagon 119. Seyes rule, Blank and the music papers are unchanged. After the update a page kept
   drawn to open quickly is drawn once more, so it shows the new lines, and so are a notebook's previews in the
   Pages view as the view opens and its card in the Library as the notebook is next opened and left.
+- **Ink edges** (#320). Settings > Pen > Ink edges: Smooth (as before, the default) or Solid. With Solid the
+  ballpoint, fineliner, fountain pen, marker and calligraphy pen draw their strokes in pure black with hard edges:
+  every pixel a stroke darkens by 16 levels or more (of 255, against what was there before it) becomes black, and
+  the rest is left as it was. The page shows while you write what it shows after, so on a black-and-white screen the
+  pause after writing sends no second redraw, zoomed in and sideways too, except a small one where a stroke crosses
+  gray ink (pencil, charcoal, a highlight) in such a view. With Solid, white ink or the precise eraser
+  takes a solid pen's stroke away whole wherever it covers it at all, however light the pass, with no half-erased
+  gray left. The pencils, charcoal, the highlighter and a pen turned down to a light gray or given grain or Tilt
+  lightens in Pen feel draw as before, and PDF and PNG exports, Share and the USB mirror always draw with Smooth.
+  Pages kept drawn to open quickly and the Pages view's previews are drawn again once after a change, as each is
+  next shown. A notebook's card in the Library follows the change when the notebook is next opened and left. In
+  Polish and Japanese its texts are in English until they are translated.
 - **Polish and Japanese** (#315, nebuff). The texts of the new home, Apps, the Package Store and the rest of 2.2's
-  and 2.3's screens are translated. In this beta 39 of 1,261 texts are still in English in each language: the
-  Package Store's license steps, the package kit's messages, Manage apps... and Settings > Updates' version line.
+  and 2.3's screens are translated. In this beta 45 of 1,267 texts are still in English in each language, among
+  them the Package Store's license steps, the package kit's messages, Manage apps... and Settings > Updates' version
+  line.
 - Settings > Updates says "Version 2.2.0 to 2.3.0" where it had an arrow, which Classic's fonts do not have; and
   the home's Sort select shows its value alone where the caption and value do not fit even small, as in Japanese
   (#316).

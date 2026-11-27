@@ -678,6 +678,65 @@ fn page_as_a_template_picture() {
     canvas_free(&mut a.screen);
 }
 
+// Ink edges (2.3, #320): a page made into a template's picture is drawn with Smooth whatever the setting, as an export
+// is (the picture is a file, the paper of pages drawn under either setting). The job runs with the setting at Solid
+// (its child takes it at the fork) and writes the very picture the page drawn with Smooth gives, not the Solid one.
+fn page_template_draws_smooth() {
+    let mut nb = NotebookInfo::default();
+    check!(store_create("Solid forms", "", PAPER_MEDIUM, &mut nb) == 0);
+    let (mut pw, mut ph) = (0, 0);
+    store_notebook_page_size(&nb, &mut pw, &mut ph);
+    let mut page = page_new(pw, ph, PAPER_MEDIUM);
+    for (i, t) in [TOOL_BALLPOINT, TOOL_FINELINER, TOOL_MARKER].into_iter().enumerate() {
+        let mut prm = ToolParams::default();
+        tool_params_default(t, &mut prm);
+        let mut s = stroke_new(t, &prm, 40 + i as u32);
+        stroke_mark_tip(&mut s);
+        for k in 0..30 {
+            let q = PenSample { x: 200.0 + k as f32 * 40.0, y: 400.0 + i as f32 * 300.0 + 30.0 * (k as f32 * 0.7).sin(), pressure: 0.6, t_ms: k * 8, ..Default::default() };
+            stroke_append(&mut s, &q, DPI);
+        }
+        page_add(&mut page, s);
+    }
+    check!(store_save_page(&nb, 0, &page) == 0);
+    let Some(key) = store_page_template_key(&nb, 0, pw, ph) else {
+        check!(false);
+        return;
+    };
+    let mut dir = String::new();
+    check!(bgimage_dir(nb.id.as_str(), &mut dir, 700) == 0 && mkdir_p(&dir) == 0);
+    let mut ix = BgIndex::default();
+    let (mut id, mut added) = (0u32, false);
+    check!(bgindex_load(&dir, &mut ix) == 0 && bgindex_claim(&mut ix, &dir, key, &mut id, &mut added) == 0 && added);
+    check!(bgindex_save(&dir, &ix) == 0);
+    bgindex_free(&mut ix);
+    let mut file = String::new();
+    bgimage_file(&dir, id, &mut file, 800);
+    // the picture as the job makes it, drawn here with either setting
+    let picture = |e: InkEdges| -> Vec<u8> {
+        let mut c = Canvas::default();
+        check!(canvas_init(&mut c, page.w, page.h) == 0);
+        ink_edges_as(e, || page_render(&mut c, &page, Rect::new(0, 0, page.w, page.h), DPI));
+        let mut fit = BgPicture::default();
+        check!(bgimage_normalize(&BgPicture { px: c.px, w: c.w, h: c.h, ch: 1 }, pw, ph, &mut fit) == 0);
+        let out = format!("{}/solid-forms-{:?}.png", root(), e);
+        check!(bgimage_write_png(&out, &fit) == 0);
+        let bytes = std::fs::read(&out).unwrap_or_default();
+        let _ = std::fs::remove_file(&out);
+        bytes
+    };
+    let smooth = picture(InkEdges::Smooth);
+    check!(!smooth.is_empty() && picture(InkEdges::Solid) != smooth);
+    let path = format!("{}:0:{:016x}", nb.id.as_str(), key);
+    {
+        let _solid = InkEdgesScope::new(InkEdges::Solid); // (until the job has ended: it forks when it starts)
+        bg_queue(BgKind::PageTemplate, Some(nb.id.as_str()), Some(&path), DPI, true);
+        check!(drain_jobs() == BgKind::PageTemplate as i32);
+    }
+    check!(bgimage_read(&file, 32 << 20).as_deref() == Some(&smooth[..]));
+    check!(ink_edges() == InkEdges::Smooth);
+}
+
 // The From a file... tile (2.2, #146): the last tile, after every template (so no template's tile moves for it),
 // on a page of its own when the templates fill their pages; a tap on it says so and leaves the sheet open. Once the
 // host has asked for a copy the tile waits (it cannot be tapped) until the copy job is no longer queued or running;
@@ -817,6 +876,7 @@ fn test_tplsheet() {
     run!(empty_state_paragraphs);
     run!(from_notebook_tile);
     run!(page_as_a_template_picture);
+    run!(page_template_draws_smooth);
     run!(from_file_tile);
     run!(a_copy_ends_under_a_contact);
     font_shutdown();

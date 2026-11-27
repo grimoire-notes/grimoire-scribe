@@ -226,6 +226,10 @@ pub struct Settings {
     /// at, by `pdfwork::Gamma`'s index (settings.ini `pdf_gamma`, `Gamma::NAMES`: absent at Off, the default; a value
     /// this build does not have is Off and is written back as it was).
     pub pdf_gamma: i32,
+    /// Ink edges (2.3, #320): how the solid pens draw, by `InkEdges`' index (settings.ini `ink_edges`,
+    /// `InkEdges::NAMES`: absent at smooth, the default; a value this build does not have is Smooth and is written back
+    /// as it was). brush.rs reads it from ink_edges(), which app_init and the Settings row set.
+    pub ink_edges: i32,
 }
 
 /// settings.ini files_sort's values, by Settings.files_sort (2.2).
@@ -4375,11 +4379,13 @@ fn page_preview_files(nb: &NotebookInfo, pid: u32) -> Option<(String, String, St
 }
 // What a preview, a card (editor.rs card_page_source) and a kept drawing are of: the page file (inode, size, times),
 // the previews' generation, and since 2.3.0 the renderer that draws them (page.rs page_render_fingerprint, 16 hex
-// digits after a colon). A version that draws a paper or ink otherwise (2.3.0's darker papers, #314) then takes none
-// of the pictures another drew for its own, and draws each again as it is next asked for: a preview as its Pages view
-// opens, a card as its notebook is next left. That holds for pictures an earlier version drew before the update and
-// after it (moved back and forth between versions), for a notebook back from the trash or a backup, and for a job an
-// earlier version left running, with nothing written to make it so and nothing done as the app starts.
+// digits after a colon; with the Ink edges setting in force, page_render_fingerprint_screen: Smooth's is that one,
+// Solid's another, so a picture drawn under one setting is not shown under the other, #320). A version that draws a
+// paper or ink otherwise (2.3.0's darker papers, #314) then takes none of the pictures another drew for its own, and
+// draws each again as it is next asked for: a preview as its Pages view opens, a card as its notebook is next left.
+// That holds for pictures an earlier version drew before the update and after it (moved back and forth between
+// versions), for a notebook back from the trash or a backup, and for a job an earlier version left running, with
+// nothing written to make it so and nothing done as the app starts.
 fn preview_stamp(source: &str) -> Option<String> {
     let st = std::fs::metadata(source).ok()?;
     let generation=std::path::Path::new(source).parent()?.join(".page-previews/generation");
@@ -4394,7 +4400,7 @@ fn preview_renderer() -> String {
     if std::env::var("GRIMOIRE_SIM_PREVIEWS_CURRENT").is_ok_and(|v| v == "1") {
         return String::new();
     }
-    format!(":{:016x}", page_render_fingerprint())
+    format!(":{:016x}", page_render_fingerprint_screen())
 }
 fn preview_tag(path:&str)->Option<String> {
     use std::io::Read;
@@ -4637,7 +4643,7 @@ fn page_render_current(nb: &NotebookInfo, pid: u32) -> bool {
 // 28 s for the owner's two stress pages, saying "Loading page..."), and keeps its drawing again.
 const RENDER_TAG_VERSION: u32 = 2;
 fn render_tag(stamp: &str, w: i32, h: i32, layered: bool) -> String {
-    format!("{stamp}|{w}x{h}|{:016x}|k{RENDER_TAG_VERSION}{}", page_render_fingerprint(), if layered { "|L" } else { "" })
+    format!("{stamp}|{w}x{h}|{:016x}|k{RENDER_TAG_VERSION}{}", page_render_fingerprint_screen(), if layered { "|L" } else { "" })
 }
 // Whether a kept drawing's tag is one 2.0.0 or 2.0.1 wrote (store_retire_page_render): a stamp, |WxH| and a
 // fingerprint, then "|L" or nothing, with no kept drawings' version. Whatever the stamp, size or renderer.
@@ -5029,6 +5035,7 @@ pub fn settings_default(s: &mut Settings) {
     s.hints = 0;
     s.recent_apps.set("files,share,settings,store");
     s.link_areas = false;
+    s.ink_edges = 0; // Smooth: as before 2.3
 }
 
 /// pen.panel / touch.panel: the panel the calibration was made on, "WxH" (1.1 on). A value that does
@@ -5406,6 +5413,8 @@ fn settings_cb(s: &mut Settings, k: &[u8], v: &[u8]) -> bool {
         b"home_sort" => s.home_sort = keep_int("home_sort", v, 0, 3),
         // 2.2: darker lines in imported PDFs (issue #173), read strictly: only the three known values
         b"pdf_gamma" => s.pdf_gamma = keep_named("pdf_gamma", v, &crate::pdfwork::Gamma::NAMES),
+        // 2.3: Ink edges (#320), read strictly: smooth or solid
+        b"ink_edges" => s.ink_edges = keep_named("ink_edges", v, &InkEdges::NAMES),
         b"recent_apps" => {
             s.recent_apps.set(&app_order_canonical(v));
         }
@@ -5835,6 +5844,8 @@ pub fn settings_save(s: &Settings) -> i32 {
     } else {
         put(&mut b, "recent_apps", s.recent_apps.as_str());
     }
+    // 2.3: Ink edges (#320), a line only at Solid (or a value this build does not have, written back as it was).
+    put_unless_default(&mut b, "ink_edges", InkEdges::from_index(s.ink_edges).name(), InkEdges::Smooth.name());
     // Lines this build does not know, as they were; but a pen.panel or touch.panel this build could
     // not read goes once the calibration's panel is recorded (written above in its place).
     let unknown = with(|st| st.g_set_unknown.clone());

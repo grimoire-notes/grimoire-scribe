@@ -71,8 +71,22 @@ pub fn stroke_brush_begin(b: &mut BrushState, s: &Stroke, dpi: f32, paper: Optio
         b.tip = stroke_tip(s);
     }
     if erase {
-        brush_set_erase(b, paper, x0, y0, stride);
+        brush_set_erase(b, paper, x0, y0, stride); // (Solid or not by the setting: brush_set_erase)
+    } else {
+        b.solid = stroke_solid(s, b.tip);
     }
+}
+
+/// Whether stroke s, drawn with tip variant `tip`, is drawn Solid now: Ink edges at Solid (ink_edges) and a
+/// stroke the rule takes (stroke_may_be_solid). Pages reach the rule here alone.
+pub fn stroke_solid(s: &Stroke, tip: u8) -> bool {
+    ink_edges() == InkEdges::Solid && !stroke_is_erase(s) && brush_ink_solid(s.tool, tip, &s.params, s.ext[0])
+}
+/// Whether stroke s is drawn Solid when Ink edges is Solid (brush_ink_solid with its own tip and colour).
+pub fn stroke_may_be_solid(s: &Stroke) -> bool {
+    let t = stroke_render_tool(s);
+    let tip = if brush_tip_known(t, stroke_tip(s)) { stroke_tip(s) } else { brush_tip_current(t) };
+    !stroke_is_erase(s) && brush_ink_solid(s.tool, tip, &s.params, s.ext[0])
 }
 
 /// a notebook id with its terminator (STORE_ID_LEN)
@@ -260,6 +274,14 @@ pub fn page_render_tiles(c: &mut Canvas, p: &Page, region: Rect, mask: &Rc<TileM
         return;
     }
     render_layers(c, p, region, dpi, PAGE_LAYER_ALL, None, -1, None, Some(mask))
+}
+/// page_render as compaction draws a region (render_layers with the page's strokes in pieces, each piece from its
+/// own brush): the same pixels, for the tests to say so.
+#[doc(hidden)]
+pub fn page_render_in_pieces(c: &mut Canvas, p: &Page, region: Rect, dpi: f32) {
+    let mut ps = Pieces { p, dpi, pc: Vec::new() };
+    ps.pc.resize_with(p.strokes.len(), || None);
+    render_layers(c, p, region, dpi, PAGE_LAYER_ALL, None, -1, Some(&mut ps), None);
 }
 /// Marks in m the tiles stroke s draws into, as a dry run of its brush measures its dabs.
 pub fn stroke_mark_tiles(m: &mut TileMask, s: &Stroke, dpi: f32) {
@@ -588,17 +610,25 @@ fn render_from(c: &mut Canvas, p: &Page, region: Rect, dpi: f32, layers: i32, sk
             continue;
         };
         let mut next = -1; // the point b stands before
+        let mut first_piece = true;
         for pc in pcs {
             if !rect_overlaps(pc.box_, r) {
                 continue;
             }
             if pc.first != next {
+                // (the pieces of one stroke share its solid shadow, as the stroke drawn whole has one: a pixel two
+                // of them reach is drawn as the whole stroke draws it; and a piece's brush, measured dry, is Solid
+                // or not by the setting now)
+                let shadow = if first_piece { None } else { b.shadow.take() };
                 b = pc.b.clone();
+                b.shadow = shadow;
+                b.solid = stroke_solid(s, b.tip);
                 if stroke_is_erase(s) {
                     brush_set_erase(&mut b, rest.clone(), rx, ry, rstride);
                 }
                 b.mask = mask.cloned();
             }
+            first_piece = false;
             for m in pc.first..pc.end {
                 brush_add(&mut b, c, &s.pts[m as usize]);
                 if ((m - pc.first) & 127) == 127 {
@@ -623,9 +653,93 @@ fn render_from(c: &mut Canvas, p: &Page, region: Rect, dpi: f32, layers: i32, sk
 /// 160 px) has no line on it: a paper drawn differently kept its old drawings (#314). Seyes is drawn at the
 /// panel's density, which the display sets as it opens, and Cornell's headings and the clefs in the fonts
 /// app_init loads: both before any page is drawn or this is taken (paper_set_panel_ppi, font_init).
+/// It is the renderer's with Ink edges at Smooth whatever the setting (page_ink_fingerprint draws Smooth): what the PDF
+/// cache, and every picture drawn with Smooth, are kept under. page_render_fingerprint_for names either.
 pub fn page_render_fingerprint() -> u64 {
     static FP: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *FP.get_or_init(|| page_render_fingerprint_with(page_ink_fingerprint(), &paper_render))
+}
+
+/// The fingerprint of the renderer with Ink edges at e (2.3, #320): Smooth's is page_render_fingerprint; Solid's is
+/// that one with two pages drawn Solid folded into it, the ink page and a second page of what the rule and the
+/// eraser do at Solid (page_solid_fingerprint_page), taken once per process: a change to how either setting draws
+/// ink, to which strokes the rule takes, to how white ink and the eraser restore a solid stroke, or to any paper,
+/// changes it too. Pictures drawn for the screen (Pages previews, Library cards, kept drawings) are stamped with the
+/// one of the setting they were drawn under (page_render_fingerprint_screen), and none is shown under the other. 0
+/// when there is no memory for a page.
+pub fn page_render_fingerprint_for(e: InkEdges) -> u64 {
+    static SOLID: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    match e {
+        InkEdges::Smooth => page_render_fingerprint(),
+        InkEdges::Solid => *SOLID.get_or_init(|| {
+            let p = page_solid_fingerprint_page();
+            let mut c = Canvas::default();
+            if canvas_init(&mut c, p.w, p.h) != 0 {
+                return 0;
+            }
+            // (a few milliseconds that read no pens: work_pump_off)
+            ink_edges_as(InkEdges::Solid, || work_pump_off(|| page_render(&mut c, &p, Rect { x: 0, y: 0, w: p.w, h: p.h }, 300.0)));
+            page_render_fingerprint_solid_with(&c)
+        }),
+    }
+}
+/// Solid's fingerprint with `second` as the drawing of its second page: page_render_fingerprint_for(Solid) is this
+/// with that page as page_render draws it at Solid. A test passes the page drawn by another rule to see that the
+/// fingerprint tells it apart. 0 when there is no memory for a page.
+#[doc(hidden)]
+pub fn page_render_fingerprint_solid_with(second: &Canvas) -> u64 {
+    let fp = page_render_fingerprint();
+    match ink_edges_as(InkEdges::Solid, ink_fingerprint_page) {
+        Some(c) if fp != 0 => {
+            let folded = fnv_words(fp ^ 0x5011_d000_0000_0320, &c.px[..(c.w * c.h) as usize]);
+            fnv_words(folded, &second.px[..(second.w * second.h) as usize])
+        }
+        _ => 0,
+    }
+}
+/// Solid's fingerprint's second page, which holds what the ink page (every tool at its defaults) does not: three
+/// lines and the eraser across them. A ballpoint line with white ink of the ballpoint along it a pixel off (the
+/// eraser's rule at Solid: a solid stroke's black restored whole or not at all); a marker given Grain past
+/// SOLID_GRAIN_MOST and a ballpoint given Tilt lightens, its pen tilted (the rule's two refusals for a pen's own
+/// settings, brush.rs brush_ink_solid: both draw as with Smooth); and the precise eraser down through all three. So
+/// a later change of the rule's answer for grain or tilt, or of how erasing draws at Solid, moves Solid's
+/// fingerprint, and the pictures kept under it are drawn again.
+#[doc(hidden)]
+pub fn page_solid_fingerprint_page() -> Box<Page> {
+    let mut p = page_new(120, 88, PAPER_NARROW);
+    let line = |t: ToolKind, seed: u32, y: f32, prm: &ToolParams, tilt: f32| {
+        let mut s = stroke_new(t, prm, seed);
+        for k in 0..16 {
+            let f = k as f32 / 15.0;
+            let pt = PenSample { x: 10.0 + 100.0 * f, y, pressure: 0.3 + 0.6 * f, tilt_x: tilt, tilt_y: tilt / 2.0, t_ms: k * 8 };
+            stroke_append(&mut s, &pt, 300.0);
+        }
+        s
+    };
+    let mut ink = ToolParams::default();
+    tool_params_default(TOOL_BALLPOINT, &mut ink);
+    let mut eraser = ToolParams::default();
+    tool_params_default(TOOL_ERASER, &mut eraser);
+    let mut grainy = ToolParams::default();
+    tool_params_default(TOOL_MARKER, &mut grainy);
+    grainy.grain = 0.6;
+    let mut shaded = ink;
+    shaded.tilt_opacity = 0.6;
+    page_add(&mut p, line(TOOL_BALLPOINT, 0x5EED_0320, 24.0, &ink, 0.0));
+    page_add(&mut p, line(TOOL_ERASER, erase_seed(TOOL_BALLPOINT, 0x0320), 25.0, &ink, 0.0));
+    page_add(&mut p, line(TOOL_MARKER, 0x5EED_0322, 46.0, &grainy, 0.0));
+    page_add(&mut p, line(TOOL_BALLPOINT, 0x5EED_0323, 66.0, &shaded, 40.0));
+    let mut across = stroke_new(TOOL_ERASER, &eraser, erase_seed(TOOL_ERASER, 0x0321));
+    for k in 0..21 {
+        stroke_append(&mut across, &PenSample { x: 60.0, y: 4.0 + 4.0 * k as f32, pressure: 0.5, t_ms: k * 8, ..Default::default() }, 300.0);
+    }
+    page_add(&mut p, across);
+    p
+}
+
+/// The fingerprint of the renderer as the screen draws now: with the Ink edges setting in force (ink_edges).
+pub fn page_render_fingerprint_screen() -> u64 {
+    page_render_fingerprint_for(ink_edges())
 }
 
 // FNV-1a over px, eight bytes at a time (a byte at a time for the rest), with the state's high half folded into
@@ -667,8 +781,17 @@ pub fn page_render_fingerprint_with(ink: u64, paper: &dyn Fn(&mut Canvas, PaperK
 }
 
 /// The ink half of the renderer's fingerprint: a small fixed page with a stroke of every tool (ink and
-/// white), drawn and hashed (0 when there is no memory for it). The whole fingerprint until 2.3.0.
+/// white), drawn and hashed (0 when there is no memory for it). The whole fingerprint until 2.3.0. Drawn with Ink
+/// edges at Smooth whatever the setting (2.3, #320), so it is the same in every process.
 pub fn page_ink_fingerprint() -> u64 {
+    match ink_edges_as(InkEdges::Smooth, ink_fingerprint_page) {
+        Some(c) => c.px.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3)),
+        None => 0,
+    }
+}
+
+// The ink half's page drawn with the setting in force (None when there is no memory for it).
+fn ink_fingerprint_page() -> Option<Canvas> {
     let mut p = page_new(240, 160, PAPER_NARROW);
     for t in 0..TOOL_COUNT as i32 {
         let mut prm = ToolParams::default();
@@ -684,11 +807,11 @@ pub fn page_ink_fingerprint() -> u64 {
     }
     let mut c = Canvas::default();
     if canvas_init(&mut c, p.w, p.h) != 0 {
-        return 0;
+        return None;
     }
     // (a few milliseconds that read no pens: work_pump_off)
     work_pump_off(|| page_render(&mut c, &p, Rect { x: 0, y: 0, w: p.w, h: p.h }, 300.0));
-    c.px.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
+    Some(c)
 }
 
 /// Renders the whole page then box-downsamples into thumb (thumb size sets the scale).
@@ -757,10 +880,13 @@ struct Compact<'a> {
     ps: Pieces<'a>,
     // The reference: the page as it is, each layer drawn where a check of that layer first needs
     // it (`ready` per REF_BLOCK square). Marked strokes change nothing, so drawing it without them
-    // gives the same pixels and it never goes stale.
-    /// the page, the ink layer
-    layer: [Canvas; 2],
-    ready: [Vec<u8>; 2],
+    // gives the same pixels and it never goes stale. One per Ink edges setting in `edges` (Smooth, and
+    // Solid too on a page with a stroke the setting draws otherwise: stroke_may_be_solid): a stroke is
+    // left out only when that changes neither drawing.
+    edges: Vec<InkEdges>,
+    /// per setting: the page, the ink layer
+    layer: Vec<[Canvas; 2]>,
+    ready: Vec<[Vec<u8>; 2]>,
     blocks_x: i32,
     // Where the paper is white, a pixel of the ink layer is that pixel of the page, whatever is
     // drawn: the same strokes over the same white, restoring toward the same white. So the ink
@@ -774,9 +900,10 @@ struct Compact<'a> {
 
 const REF_BLOCK: i32 = 16;
 
-// Makes sure the reference of layer l (0 the page, 1 the ink layer) is drawn over r, a rect on the
-// page: the rect around the blocks r meets that are not yet (drawing a block again changes nothing).
-fn ref_ready(x: &mut Compact, l: usize, r: Rect) {
+// Makes sure the reference of setting e (an index of edges) and layer l (0 the page, 1 the ink layer) is drawn
+// over r, a rect on the page: the rect around the blocks r meets that are not yet (drawing a block again changes
+// nothing).
+fn ref_ready(x: &mut Compact, e: usize, l: usize, r: Rect) {
     let bx0 = r.x / REF_BLOCK;
     let bx1 = (r.x + r.w - 1) / REF_BLOCK;
     let by0 = r.y / REF_BLOCK;
@@ -787,7 +914,7 @@ fn ref_ready(x: &mut Compact, l: usize, r: Rect) {
     let mut my1 = by0 - 1;
     for by in by0..=by1 {
         for bx in bx0..=bx1 {
-            if x.ready[l][(by * x.blocks_x + bx) as usize] == 0 {
+            if x.ready[e][l][(by * x.blocks_x + bx) as usize] == 0 {
                 mx0 = if bx < mx0 { bx } else { mx0 };
                 mx1 = if bx > mx1 { bx } else { mx1 };
                 my0 = if by < my0 { by } else { my0 };
@@ -801,19 +928,20 @@ fn ref_ready(x: &mut Compact, l: usize, r: Rect) {
     let t = Rect { x: mx0 * REF_BLOCK, y: my0 * REF_BLOCK, w: (mx1 - mx0 + 1) * REF_BLOCK, h: (my1 - my0 + 1) * REF_BLOCK };
     let t = rect_intersect(t, Rect { x: 0, y: 0, w: x.p.w, h: x.p.h });
     if l != 0 {
-        canvas_fill(&mut x.layer[l], t, 255); // the ink layer starts white
+        canvas_fill(&mut x.layer[e][l], t, 255); // the ink layer starts white
     }
-    render_layers(&mut x.layer[l], x.p, t, x.dpi, if l != 0 { PAGE_LAYER_INK } else { PAGE_LAYER_ALL }, Some(&*x.drop), -1, Some(&mut x.ps), None);
+    let _edges = InkEdgesScope::new(x.edges[e]);
+    render_layers(&mut x.layer[e][l], x.p, t, x.dpi, if l != 0 { PAGE_LAYER_INK } else { PAGE_LAYER_ALL }, Some(&*x.drop), -1, Some(&mut x.ps), None);
     for by in my0..=my1 {
         let at = (by * x.blocks_x + mx0) as usize;
-        x.ready[l][at..at + (mx1 - mx0 + 1) as usize].fill(1);
+        x.ready[e][l][at..at + (mx1 - mx0 + 1) as usize].fill(1);
     }
 }
 
 // Whether leaving out stroke k too (besides the marked ones) changes r, a rect on the page, in layer
-// l: 1 if it does, 0 if not, -1 out of memory. Draws r without them over the reference, compares
-// the two and puts the reference back.
-fn differs_in(x: &mut Compact, l: usize, r: Rect, k: i32) -> i32 {
+// l under setting e: 1 if it does, 0 if not, -1 out of memory. Draws r without them over the reference,
+// compares the two and puts the reference back.
+fn differs_in(x: &mut Compact, e: usize, l: usize, r: Rect, k: i32) -> i32 {
     let need = r.w as usize * r.h as usize;
     if need > x.keep.len() {
         if x.keep.try_reserve_exact(need - x.keep.len()).is_err() {
@@ -821,9 +949,9 @@ fn differs_in(x: &mut Compact, l: usize, r: Rect, k: i32) -> i32 {
         }
         x.keep.resize(need, 0);
     }
-    ref_ready(x, l, r);
+    ref_ready(x, e, l, r);
     {
-        let c = &x.layer[l];
+        let c = &x.layer[e][l];
         for y in 0..r.h {
             let at = ((r.y + y) * c.stride + r.x) as usize;
             let to = y as usize * r.w as usize;
@@ -831,11 +959,14 @@ fn differs_in(x: &mut Compact, l: usize, r: Rect, k: i32) -> i32 {
         }
     }
     if l != 0 {
-        canvas_fill(&mut x.layer[l], r, 255);
+        canvas_fill(&mut x.layer[e][l], r, 255);
     }
-    render_layers(&mut x.layer[l], x.p, r, x.dpi, if l != 0 { PAGE_LAYER_INK } else { PAGE_LAYER_ALL }, Some(&*x.drop), k, Some(&mut x.ps), None);
+    {
+        let _edges = InkEdgesScope::new(x.edges[e]);
+        render_layers(&mut x.layer[e][l], x.p, r, x.dpi, if l != 0 { PAGE_LAYER_INK } else { PAGE_LAYER_ALL }, Some(&*x.drop), k, Some(&mut x.ps), None);
+    }
     let mut same = true;
-    let c = &mut x.layer[l];
+    let c = &mut x.layer[e][l];
     for y in 0..r.h {
         let at = ((r.y + y) * c.stride + r.x) as usize;
         let row = &mut c.px[at..at + r.w as usize];
@@ -859,20 +990,26 @@ fn row_marked(x: &Compact, y: i32, r: Rect) -> bool {
 }
 
 // The same for both layers: the page over r, then the ink layer over the runs of rows of r where
-// the paper has marks.
+// the paper has marks; under each setting of edges, until one differs.
 fn differs(x: &mut Compact, r: Rect, k: i32) -> i32 {
-    let mut d = differs_in(x, 0, r, k);
-    let mut y = r.y;
-    while x.ink_too && d == 0 && y < r.y + r.h {
-        if row_marked(x, y, r) {
-            let mut end = y + 1;
-            while end < r.y + r.h && row_marked(x, end, r) {
-                end += 1;
+    let mut d = 0;
+    for e in 0..x.edges.len() {
+        d = differs_in(x, e, 0, r, k);
+        let mut y = r.y;
+        while x.ink_too && d == 0 && y < r.y + r.h {
+            if row_marked(x, y, r) {
+                let mut end = y + 1;
+                while end < r.y + r.h && row_marked(x, end, r) {
+                    end += 1;
+                }
+                d = differs_in(x, e, 1, Rect { x: r.x, y, w: r.w, h: end - y }, k);
+                y = end;
             }
-            d = differs_in(x, 1, Rect { x: r.x, y, w: r.w, h: end - y }, k);
-            y = end;
+            y += 1;
         }
-        y += 1;
+        if d != 0 {
+            break;
+        }
     }
     d
 }
@@ -958,21 +1095,28 @@ fn compact_start(x: &mut Compact) -> i32 {
         return -1;
     }
     x.ps.pc.resize_with(n, || None);
-    if canvas_init(&mut x.layer[0], p.w, p.h) != 0 {
-        return -1;
-    }
     x.blocks_x = (p.w + REF_BLOCK - 1) / REF_BLOCK;
     let blocks = x.blocks_x as usize * ((p.h + REF_BLOCK - 1) / REF_BLOCK) as usize;
-    let (Some(r0), Some(r1), Some(marked)) = (zeroed(blocks), zeroed(blocks), zeroed(x.blocks_x as usize * p.h as usize)) else {
+    for _ in 0..x.edges.len() {
+        let mut layer = [Canvas::default(), Canvas::default()];
+        let (Some(r0), Some(r1)) = (zeroed(blocks), zeroed(blocks)) else {
+            return -1;
+        };
+        if canvas_init(&mut layer[0], p.w, p.h) != 0 {
+            return -1;
+        }
+        x.layer.push(layer);
+        x.ready.push([r0, r1]);
+    }
+    let Some(marked) = zeroed(x.blocks_x as usize * p.h as usize) else {
         return -1;
     };
-    x.ready = [r0, r1];
     x.marked = marked;
     // Where the paper has marks (the reference is drawn over it later).
-    page_paper_render(&mut x.layer[0], p, Rect { x: 0, y: 0, w: p.w, h: p.h }, x.dpi);
+    page_paper_render(&mut x.layer[0][0], p, Rect { x: 0, y: 0, w: p.w, h: p.h }, x.dpi);
     for y in 0..p.h {
-        let at = (y * x.layer[0].stride) as usize;
-        let row = &x.layer[0].px[at..at + p.w as usize];
+        let at = (y * x.layer[0][0].stride) as usize;
+        let row = &x.layer[0][0].px[at..at + p.w as usize];
         let m = &mut x.marked[y as usize * x.blocks_x as usize..];
         for k in 0..p.w as usize {
             if row[k] != 255 {
@@ -981,11 +1125,12 @@ fn compact_start(x: &mut Compact) -> i32 {
             }
         }
     }
-    if x.ink_too && canvas_init(&mut x.layer[1], p.w, p.h) != 0 {
-        -1
-    } else {
-        0
+    for e in 0..x.edges.len() {
+        if x.ink_too && canvas_init(&mut x.layer[e][1], p.w, p.h) != 0 {
+            return -1;
+        }
     }
+    0
 }
 
 // (compact_free: nothing to do by hand, the buffers drop with x)
@@ -1009,6 +1154,11 @@ fn compact_start(x: &mut Compact) -> i32 {
 /// 15 s without a heartbeat: never call it on the UI thread. It only reads p, so a forked child (as
 /// bgjob.c runs exports) can work on its own copy of the page. Memory: two page-size canvases (one
 /// on paper white all over) and the pieces of the strokes it draws.
+///
+/// Both Ink edges settings (2.3, #320): on a page with a stroke Solid draws otherwise than Smooth
+/// (stroke_may_be_solid), a stroke is left out only when that changes neither drawing, so the page reads the same
+/// after under either setting (a solid stroke's black pixel and its Smooth gray are not restored alike by an
+/// eraser's soft rim). Such a page takes up to twice the time and two more page-size canvases.
 pub fn page_droppable(p: &Page, dpi: f32, drop: &mut [bool]) -> i32 {
     let ns = p.strokes.len();
     let mut any = false;
@@ -1028,8 +1178,9 @@ pub fn page_droppable(p: &Page, dpi: f32, drop: &mut [bool]) -> i32 {
         dpi,
         drop: &mut drop[..ns],
         ps: Pieces { p, dpi, pc: Vec::new() },
-        layer: [Canvas::default(), Canvas::default()],
-        ready: [Vec::new(), Vec::new()],
+        edges: if p.strokes.iter().any(|s| stroke_may_be_solid(s)) { vec![InkEdges::Smooth, InkEdges::Solid] } else { vec![InkEdges::Smooth] },
+        layer: Vec::new(),
+        ready: Vec::new(),
         blocks_x: 0,
         ink_too: false,
         marked: Vec::new(),

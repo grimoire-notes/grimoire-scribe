@@ -299,6 +299,9 @@ fn render_page_links(
     color: Option<&mut Option<Vec<u8>>>,
     read: Option<&mut dyn FnMut(PaperKind)>,
 ) -> i32 {
+    // Every export draws its pages here, with Ink edges at Smooth whatever the setting (2.3, #320): a PDF, a PNG,
+    // the share studio's layers and the USB mirror keep the soft gray edges a print wants.
+    let _smooth = InkEdgesScope::new(InkEdges::Smooth);
     // Rendered at the notebook's page size, as the editor has the page: one an older version scaled
     // to another screen goes back to that size, and a missing or damaged page is blank paper of it.
     let mut p: Option<Box<Page>> = None;

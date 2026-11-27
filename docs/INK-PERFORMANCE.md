@@ -174,6 +174,24 @@ of plain DU strokes, the others most likely because the grayscale settle, then s
 a stroke, was still on the panel when the next word began. The settle now waits until the pen
 leaves the page (150 ms gone), or 1.5 s with it still near, so writing does not meet it.
 
+With Ink edges at Solid (2.3, #320) pen mode also ends at a pause after writing that sends
+nothing. The settle asks the display which part of its rect the panel shows at another level
+than the page holds (`display_settle_area`, which on the Kindle compares the page with the bytes
+last written to the framebuffer). When there is none it waits for the pen's last update, as the
+grayscale refresh would have, and leaves pen mode with no refresh after it; the next stroke
+enters pen mode again at its first frame. The scan calls the pump every 64 rows, as the screen
+copy does, and once more before that wait (Reader stalls, below: the pump reads the pens unless
+they were read under 8 ms before, so they were read at most about 8 ms before the wait begins;
+the wait itself reads none, like the grayscale refresh's). grimoire.log counts what
+these settles answered: `display: settles so far: quiet N, part N, whole N (...)`, written with
+the refresh counts' line (`display: refreshes so far: ...`, at the first refresh 30 s or more
+after the last such line) when a count rose: quiet sent nothing, part sent the box of what
+differed, whole sent the whole rect as 2.2 does, with the reasons that occurred in brackets (no
+frame known, a refresh failed, colour panel, no record of the panel, row out of range, state
+changed during the scan). The first whole answer of each reason in a session also writes
+`display: settle answered all of it: <reason>`. With Smooth no count rises (after a switch from
+Solid one `settles so far` line may still follow, for the counts that rose before it).
+
 ## Reader stalls
 
 The kernel keeps each reader's events of an input device in a buffer of its own. Grimoire's for
@@ -240,7 +258,8 @@ host's full-screen copy against the log's 89-102 ms), gives the same figures. Si
   calls are in the loops all the CPU-bound stalls go through: render_layers after each stroke and
   every 128 points in one (3 to 15 ms on the Kindle, by tool), paper_render after a page of paper,
   bgimage_render, both downsamples (thumbnails, paper previews), the screen copy and the editor's
-  zoomed view every 64 rows, and write_file_atomic between its write, fsync, rename and folder
+  zoomed view every 64 rows, the scan of the settle with Ink edges at Solid every 64 rows (2.3),
+  and write_file_atomic between its write, fsync, rename and folder
   fsync, so a save waits one fsync at a time. input_poll pumps first too, so a queue the main loop
   takes its time over still has the pens read. Only the process that set the hook runs it: a forked
   child (an export, a share server render) shares Grimoire's input devices, and reading them would
