@@ -3710,13 +3710,17 @@ Not run on a Scribe. The Mac's tests cover the drawing and the settle's logic: `
 is the threshold of Smooth over every background, the other tools unchanged, every way of drawing a page the same,
 exports Smooth), `test_fbpack.rs` (a solid word's live frames through the RAM shadow leave nothing to settle,
 `fbpack_level_span` in every rotation), `test_render_keep.rs`, `test_erase.rs` (compaction under both settings),
-`test_store.rs`, and the scenarios `z_ink_edges_1_row` to `_8_es_fit_classic`. The Kindle's own answer
+`test_store.rs`, `test_tplsheet.rs` (a page made into a template's picture is Smooth), the editor's unit test of the
+scaled view, and the scenarios `z_ink_edges_1_row` to `_11_dense_switch` (zoomed in and sideways, the Library's
+cards after a change, a change over a dense page). The Kindle's own answer
 (display_fbink.rs `display_settle_area`: its row mapping, inversion, pen mode left when it answers empty) runs only
 on a device. To check with Solid (Settings > Pen > Ink edges): a ballpoint word goes on in black and nothing changes
 on the screen at the pause after writing; a pencil word still settles in grays; the status bar's minute still comes
 after writing stops; a word written, the notebook left and opened again looks the same; a highlight over a solid word
-leaves it as black as it was; the USB mirror's PDF of such a page has soft edges; and with Smooth everything is as in
-2.2.0.
+leaves it as black as it was; zoomed in, and sideways with the page fitted, a ballpoint word also goes on in black and
+nothing changes at the pause; white ink traced along a solid word takes it away with no dark rim left; after a switch
+the Library's cards change to the new look within moments; the USB mirror's PDF of such a page has soft edges; and
+with Smooth everything is as in 2.2.0.
 
 ## 2.3, packages' pictures decoded by the worker (issue #236): device checks
 
