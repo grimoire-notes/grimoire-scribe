@@ -12,6 +12,8 @@
 # show (LASSO-DESIGN.md row 10). A width clamped at each resize lost its value in the same selection already.
 # display.dark counts what the panel shows dark in a place.
 # (the clock corner held still: its minute's refresh would land among the counted ones)
+# (Since 2.3.0 the paper's rules are darker than mid-gray, issue #314, so display.dark counts them: a place with no
+# ink counts its rules' pixels, two rows of each rule across it, and "not N" there says ink shows beside them.)
 clock 1700000000
 wait 300
 tap library add
@@ -28,8 +30,8 @@ eraser line 300 900 960 900 40
 waitfor display.stale.300.600.1000.800 is 0
 expect editor.strokes is 3
 expect editor.page_sig_keep is kept
-expect display.dark.360.850.540.100 is 0
-expect display.dark.360.650.540.100 not 0
+expect display.dark.360.850.540.100 is 1080
+expect display.dark.360.650.540.100 not 2160
 # twice as large and back in the same selection, then Done
 tap panel tool-picker
 wait 100
@@ -72,7 +74,7 @@ expect editor.live_matches_render is 1
 tap panel select.done
 wait 300
 waitfor display.stale.300.600.1500.1300 is 0
-expect display.dark.360.850.540.100 is 0
+expect display.dark.360.850.540.100 is 1080
 # (the word still shows nothing: a lasso round it alone selects nothing)
 tap panel tool-picker
 wait 100
@@ -118,7 +120,7 @@ expect editor.sel_box is 360 645 1072 622
 tap panel select.done
 wait 300
 waitfor display.stale.300.600.1500.1300 is 0
-expect display.dark.356.1060.1050.190 not 0
+expect display.dark.356.1060.1050.190 not 6300
 tap panel tool-picker
 wait 100
 tap panel picker.select
@@ -146,8 +148,8 @@ expect editor.sel_box is 363 648 533 308
 tap panel select.done
 wait 300
 waitfor display.stale.300.600.1500.1300 is 0
-expect display.dark.360.850.540.100 is 0
-expect display.dark.360.650.540.100 not 0
+expect display.dark.360.850.540.100 is 1080
+expect display.dark.360.650.540.100 not 2160
 # twice as large, Done, and the notebook closed and opened again: its file keeps the erasing at 12 mm, so made as
 # large as it was, the word's loops show
 pentap panel undo
@@ -213,5 +215,5 @@ expect editor.sel_box is 363 648 533 308
 tap panel select.done
 wait 300
 waitfor display.stale.300.600.1500.1300 is 0
-expect display.dark.360.850.540.100 not 0
+expect display.dark.360.850.540.100 not 1080
 quit

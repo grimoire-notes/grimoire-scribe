@@ -4015,8 +4015,9 @@ fn draw_updates(a: &mut App) {
         action_style = ButtonStyle::Disabled;
     } else if upd == UPD_DONE && newer {
         // TRANSLATORS: Settings > Updates, the system update's version change (%s is the version
-        // installed, %s the one the update branch offers).
-        csnprintf!(&mut detail, 300, tr("Version %s → %s"), GRIMOIRE_VERSION, &latest);
+        // installed, %s the one the update branch offers). No arrow: Atkinson Hyperlegible Next and
+        // Noto Sans have none, and every character of a text must be in every face (test_i18n).
+        csnprintf!(&mut detail, 300, tr("Version %s to %s"), GRIMOIRE_VERSION, &latest);
         action = tr("Update");
         action_icon = IconKind::Download;
         action_style = ButtonStyle::Primary;
@@ -7594,7 +7595,7 @@ pub(crate) fn redraw_filling(a: &mut App) {
     }
     before.px.extend_from_slice(&a.screen.px);
     draw_front(a);
-    let changed = canvas_changed_rect(&before, &a.screen);
+    let changed = canvas_changed_rect(&before, &a.screen, Rect { x: 0, y: 0, w: a.screen.w, h: a.screen.h });
     if !rect_is_empty(changed) {
         app_invalidate_filling(a, changed);
     }
@@ -10392,7 +10393,9 @@ pub fn library_event(a: &mut App, ev: &InEvent) {
 }
 
 fn library_event_in(a: &mut App, ev: &InEvent) {
-    if a.app_view.open {
+    // (the input a hardware key brings to an open keyboard of the Library's, app_type_text, is that keyboard's, never a
+    // touch of an open app's)
+    if a.app_view.open && !(a.kb_inject.is_some() && library_keyboard_area(a).is_some()) {
         crate::apphost::apphost_event(a, ev);
         return;
     }
@@ -11921,6 +11924,38 @@ mod tests {
         s.gestures_group = 0;
         s.gestures_file_readable = true;
         a
+    }
+
+    // A keyboard of the Library's open while an app is open takes the keys that type, as every keyboard of
+    // Grimoire's does (#268): the character goes into its text, and neither the key nor the input it brings reaches
+    // the app (as a key, or as a touch where the keyboard is). No screen opens a keyboard over an app in this
+    // version; this holds the order of app_event_screens and library_event_in for one that will.
+    #[test]
+    fn a_keyboard_open_over_an_app_takes_the_keys_that_type() {
+        let mut a = pen_record_app();
+        a.scr = ScreenId::Library;
+        lib(&mut a).modal = Modal::None;
+        open_kb(&mut a, KbPurpose::NewName, "Name", b"ab");
+        assert!(library_keyboard_area(&a).is_some(), "the keyboard is open, and drawn");
+        // (an app on the screen: it has no module here, so nothing of it runs)
+        a.app_view.open = true;
+        let key = |a: &mut App, code: i32| {
+            for type_ in [InType::Key, InType::KeyUp] {
+                app_event(a, &InEvent { type_, value: code, t_ms: now_ms(), ..Default::default() });
+            }
+        };
+        key(&mut a, 46); // c
+        key(&mut a, 57); // Space
+        assert_eq!(lib(&mut a).kb.text.as_str(), "abc ", "the keys typed into the keyboard");
+        assert!(a.app_view.open && lib(&mut a).kb.open);
+        // its Cancel (Esc) closes the keyboard, and the app stays: the next key is the app's, and types nothing
+        key(&mut a, 1);
+        assert!(!lib(&mut a).kb.open && a.app_view.open);
+        key(&mut a, 46);
+        assert_eq!(lib(&mut a).kb.text.as_str(), "abc ", "nothing more typed with no keyboard open");
+        a.app_view.open = false;
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
     }
 
     fn record_side(a: &mut App, t_ms: u32, down: bool) {

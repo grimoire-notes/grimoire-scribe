@@ -124,6 +124,8 @@ pub struct WidgetFrame {
     pub layout: WidgetLayout,
     pub runtime: Option<WidgetRuntime>,
     pub runtime_error: Option<String>,
+    /// the body's contact recognised (the kit's events) and the drawing pass input owes (kithost.rs)
+    pub input: crate::kithost::KitInput,
 }
 
 /// Where a contact came down in a frame. The editor routes input by these.
@@ -164,15 +166,18 @@ impl WidgetFrame {
             },
             runtime: None,
             runtime_error: None,
+            input: Default::default(),
         }
     }
 
-    /// Loads the package's WASM instance on the first draw, or keeps the error for the body.
+    /// Loads the package's WASM instance on the first draw (or the first touch of its body), or keeps the error for
+    /// the body. The module is given the frame's body from its start on.
     pub fn ensure_runtime(&mut self) {
         if self.runtime.is_some() || self.runtime_error.is_some() {
             return;
         }
-        match WidgetRuntime::new(self.def.id) {
+        let body = self.body_rect();
+        match WidgetRuntime::new(self.def.id, (body.w, body.h)) {
             Ok(r) => self.runtime = Some(r),
             Err(e) => self.runtime_error = Some(e),
         }
@@ -321,11 +326,16 @@ impl WidgetHost {
         self.frames.iter().position(|f| f.def.id == id)
     }
 
-    /// Lets an open frame of this package read the settings that were just saved.
+    /// Lets an open frame of this package read the settings that were just saved, and tells its module so (a
+    /// SETTINGS event), which owes a drawing pass when it says its picture changed.
     pub fn reload_settings(&mut self, id: &str) {
         if let Some(i) = self.index_of(id) {
-            if let Some(rt) = self.frames[i].runtime.as_mut() {
+            let f = &mut self.frames[i];
+            if let Some(rt) = f.runtime.as_mut() {
                 rt.reload_settings(id);
+                if rt.event(&crate::kithost::KitEvent::new(crate::kithost::EV_SETTINGS, 0, 0, 0, 0)) == Some(true) {
+                    f.input.owe();
+                }
             }
         }
     }

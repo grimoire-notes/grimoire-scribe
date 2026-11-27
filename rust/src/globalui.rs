@@ -404,23 +404,20 @@ pub fn gui_select(c: &mut Canvas, r: Rect, caption: &str, value: &str) {
     let tw = (chev.x - ui_px(12.0) - tx).max(0);
     // One line, as the reference home writes it ("Sort: Name (A-Z)"): a caption and a value in two
     // lines needed one more row of room than the chips beside them have.
+    // A caption and value that do not fit even at the small size (a longer language) leave the
+    // caption out: the value alone is what the select says, and nothing is cut short.
+    let px = ui_text_size().min((r.h - ui_px(20.0)) as f32 * 0.52);
     let mut line = String::new();
     if caption.is_empty() {
         line.push_str(value);
     } else {
         csnprintf!(&mut line, 160, "%s: %s", caption, value);
+        if font_fit_px(FontFace::Bold, px, ui_small_size().min(px), &line, tw) <= 0.0 {
+            line.clear();
+            line.push_str(value);
+        }
     }
-    ui_text(
-        c,
-        FontFace::Bold,
-        ui_text_size().min((r.h - ui_px(20.0)) as f32 * 0.52),
-        ui_small_size(),
-        Rect::new(tx, r.y, tw, r.h),
-        &line,
-        1,
-        false,
-        0,
-    );
+    ui_text(c, FontFace::Bold, px, ui_small_size(), Rect::new(tx, r.y, tw, r.h), &line, 1, false, 0);
 }
 
 /// The floating action button: a black disc in Classic, a carved black square in Gothic, with the

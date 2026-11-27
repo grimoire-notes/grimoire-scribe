@@ -381,6 +381,13 @@ fn script_batch() -> bool {
 // Everything after the command line: the data root, the language, the display and input, the App,
 // and the loop (main.c's main from getenv("GRIMOIRE_ROOT") on). In the headless build the loop's
 // poll is sim_sdl::input_poll_app, which the App is handed for the runner's expect checks.
+/// The input events the main loop reads at most before its tick and its flush, and the milliseconds it spends
+/// handling them at most (checked after each event), whichever ends the batch first: a backlog of samples never holds
+/// a screen update back for longer. On the Kindle, where a package's calls take longer, the time is the bound that
+/// holds. What a widget's or an app's module is called for between two ticks: docs/KIT.md, How a pass follows input.
+pub const INPUT_BATCH_MAX: u32 = 64;
+pub const INPUT_BATCH_MS: u32 = 8;
+
 fn run() -> i32 {
     #[cfg(feature = "kindle")]
     const DEFAULT_ROOT: &str = "/mnt/us/grimoire";
@@ -484,7 +491,7 @@ fn run() -> i32 {
             loop {
                 event_timed(&mut app, &ev, &mut slow);
                 count += 1;
-                if !(app.running && count < 64 && (now_ms().wrapping_sub(batch_at) < 8 || script_batch())) {
+                if !(app.running && count < INPUT_BATCH_MAX && (now_ms().wrapping_sub(batch_at) < INPUT_BATCH_MS || script_batch())) {
                     app.input_drained = false;
                     break;
                 }
