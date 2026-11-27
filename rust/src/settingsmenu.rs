@@ -89,6 +89,8 @@ pub enum Label {
     Mirror,
     /// Darker lines in imported PDFs, with the level in use (2.2, issue #173).
     DarkerLines,
+    /// Ink edges, with the setting in use (2.3, #320).
+    InkEdges,
 }
 
 /// What a row does. `library::setting_hit` maps it to the hit id that `act` already handles.
@@ -117,6 +119,7 @@ pub enum SettingId {
     Updates,
     AboutDevice,
     DarkerLines,
+    InkEdges,
 }
 
 /// The state a check row shows, or None for a row drawn as text.
@@ -213,6 +216,23 @@ pub static DARKER_NAMES: [&str; 3] = [
     nc_("darker lines", "Strong"),
 ];
 
+/// Ink edges (settings.ini ink_edges, by `InkEdges`' index): the row's short names, translated with their context,
+/// `c_(INK_EDGES_CTX, ..)`, then the list's labels (2.3, #320).
+pub const INK_EDGES_CTX: &str = "ink edges";
+pub static INK_EDGES_NAMES: [&str; 2] = [
+    // TRANSLATORS: Settings' Pen category, the row that opens the Ink edges choices, with the one in use ("Ink edges:
+    // Smooth"): how the pens' strokes are drawn, with soft gray edges or in hard black.
+    nc_("ink edges", "Smooth"),
+    nc_("ink edges", "Solid"),
+];
+pub static INK_EDGES_LABELS: [&str; 2] = [
+    // TRANSLATORS: the Ink edges list's two choices (Settings > Pen), each one line: the strokes drawn with soft gray
+    // edges, which the screen draws again in grays once you stop writing; or the ballpoint, fineliner, fountain pen,
+    // marker and calligraphy pen in pure black with hard edges, which need no second drawing.
+    n_("Smooth: soft gray edges, redrawn after writing"),
+    n_("Solid: pens in hard black, no second redraw"),
+];
+
 /// The style row's two labels: the current theme in parentheses, as Rotation names its two
 /// orientations.
 pub const STYLE_GOTHIC: &str = n_("Style (Gothic)");
@@ -227,7 +247,7 @@ pub const DISPLAY_NO_LIGHT: &str = n_("Display");
 /// page shows; the layout never hardcodes a category or a row.
 // TRANSLATORS: Settings' categories, down the left of its page, each with its icon: General's
 // (language, updates, Wi-Fi, Kindle notebooks), Display's (front light, theme, dark mode, font, rotation, zoom), Sleep &
-// Clock's (sleep screen, timer, clock), the Pen's (tool settings, its button, the eraser, calibration),
+// Clock's (sleep screen, timer, clock), the Pen's (tool settings, its button, the eraser, calibration, ink edges),
 // Controls'
 // (shortcuts, pairing, gestures), and System's (KOReader, USB PDF mirroring, about the device,
 // darker lines in imported PDFs).
@@ -266,6 +286,8 @@ pub static CATEGORIES: &[Category] = &[
         // TRANSLATORS: the row that opens the eraser's choices: whole strokes, or precise.
         Item::value(IconKind::Eraser, Label::Eraser, SettingId::EraserMode),
         Item::open(IconKind::Target, n_("Calibrate pen and touch"), SettingId::Calibration).when(Show::Calibration),
+        // (last, so the rows above it keep their places)
+        Item::value(IconKind::Ballpoint, Label::InkEdges, SettingId::InkEdges),
     ]),
     Category::new(n_("Controls"), IconKind::Gamepad, &[
         Item::open(IconKind::Gamepad, n_("Shortcuts: keys and controller buttons"), SettingId::Shortcuts),
@@ -335,10 +357,10 @@ mod tests {
         assert_eq!(ids(0), vec![SettingId::Language, SettingId::Updates, SettingId::Wifi, SettingId::KindleImport]);
         assert_eq!(ids(1), vec![SettingId::Display, SettingId::Theme, SettingId::DarkMode, SettingId::Font, SettingId::Rotate, SettingId::Pinch]);
         assert_eq!(ids(2), vec![SettingId::SleepSettings, SettingId::ClockSettings]);
-        assert_eq!(ids(3), vec![SettingId::PenFeel, SettingId::SideButton, SettingId::EraserMode, SettingId::Calibration]);
+        assert_eq!(ids(3), vec![SettingId::PenFeel, SettingId::SideButton, SettingId::EraserMode, SettingId::Calibration, SettingId::InkEdges]);
         assert_eq!(ids(4), vec![SettingId::Shortcuts, SettingId::Pair, SettingId::Gestures]);
         assert_eq!(ids(5), vec![SettingId::KOReader, SettingId::Mirror, SettingId::AboutDevice, SettingId::DarkerLines]);
-        assert_eq!(CATEGORIES.iter().map(|c| c.items.len()).sum::<usize>(), 23);
+        assert_eq!(CATEGORIES.iter().map(|c| c.items.len()).sum::<usize>(), 24);
 
         assert_eq!(text(2, 0), "Sleep settings");
         assert_eq!(text(2, 1), "Status bar");
@@ -379,5 +401,9 @@ mod tests {
         assert_eq!(DARKER_NAMES, ["Off", "Medium", "Strong"]);
         assert_eq!((SIDE_BUTTON_NAMES.len(), SIDE_BUTTON_LABELS.len()), (4, 4));
         assert_eq!((ERASER_NAMES.len(), ERASER_LABELS.len()), (2, 2));
+        assert!(matches!(CATEGORIES[3].items[4].label, Label::InkEdges));
+        assert!(matches!(CATEGORIES[3].items[4].show, Show::Always));
+        assert_eq!(INK_EDGES_NAMES, ["Smooth", "Solid"]);
+        assert_eq!(INK_EDGES_LABELS.len(), crate::brush::InkEdges::NAMES.len());
     }
 }

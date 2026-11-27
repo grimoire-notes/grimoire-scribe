@@ -2,8 +2,9 @@
 
 Apps are full-screen programs packaged for Grimoire. They are installed and managed in the
 **Package Store** and with **Manage apps...** at the foot of the **All apps** page, open from the
-home app row or the **All apps** page, and run in a WebAssembly host that gives them the whole
-display. They are a package kind of their own: an app is not a widget, and a widget is not an app.
+home app row or the **All apps** page (both list the built-in Files, Package Store and Share first,
+then the installed apps, most recently used first), and run in a WebAssembly host that gives them the
+whole display. They are a package kind of their own: an app is not a widget, and a widget is not an app.
 Anyone can publish one from a GitHub repository or a HTTPS `package.yaml`, exactly as widget
 packages are published.
 
@@ -15,7 +16,7 @@ manifest type (`type: app`) and the runtime.
 
 ## Package Store
 
-The home app row's fourth built-in app is **Package Store**. It is a catalog of apps and widgets
+The home app row's second built-in app is **Package Store**, between Files and Share. It is a catalog of apps and widgets
 kept outside Grimoire, in a GitHub repository whose `index.json` names each package's manifest,
 artifact, icon, screenshots and description. Opening a package shows its screenshots and metadata,
 then Install downloads the manifest and artifact and runs the package manager's trust prompt,

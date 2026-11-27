@@ -711,6 +711,8 @@ pub fn app_init(a: &mut App, w: i32, h: i32, dpi: f32) -> i32 {
     settings_load(&mut a.settings);
     // (darker lines in imported PDFs: the imports this process queues are drawn at the setting, 2.2)
     crate::pdfimport::set_darker(crate::pdfwork::Gamma::from_index(a.settings.pdf_gamma));
+    // (Ink edges: how every brush this thread begins draws the solid pens, 2.3)
+    ink_edges_set(InkEdges::from_index(a.settings.ink_edges));
     let mut shortcuts_path = String::new();
     csnprintf!(&mut shortcuts_path, 600, "%s/shortcuts.ini", &store_root());
     // A starter map nobody edited becomes this build's (grimoire.log says so; no toast); edited files stay.
@@ -794,6 +796,9 @@ pub fn app_init(a: &mut App, w: i32, h: i32, dpi: f32) -> i32 {
     // renderer drew are drawn again, #314), and after the fonts just loaded and the panel's density, which its papers
     // draw Cornell's headings, the clefs and Seyes with. It writes nothing and reads no notebook.
     let _ = page_render_fingerprint();
+    // (and the one of the Ink edges setting in force, which the screen's pictures are stamped with: page.rs
+    // page_render_fingerprint_screen)
+    let _ = page_render_fingerprint_screen();
     for op in K_SCREENS.iter() {
         (op.init)(a);
     }
@@ -2709,6 +2714,8 @@ fn app_flush_in(a: &mut App) {
     }
     live_toast_sync(a, overlay, reached, noticed.is_some());
     // (never the cleaning Full, nor a refresh with anything asked for in it)
+    // (said only with its present: a flush that sends nothing, as after a settle with nothing to send, says nothing;
+    // a Solid settle held back a pass for its stroke's frames, settle_waits_for_flush, says nothing until it is taken)
     display_unasked(unasked && m == RefreshMode::Ui);
     display_present(&a.screen, a.dirty, m);
     du_wear_presented(&mut a.du_wear, a.dirty, m);
@@ -3332,6 +3339,12 @@ pub fn app_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
     } else if key == "settings.pdf_gamma" {
         // darker lines in imported PDFs as settings.ini says it (2.2): 1.0, 1.5 or 2.0
         csnprintf!(out, cap, "%s", crate::pdfwork::Gamma::from_index(st.pdf_gamma).name());
+    } else if key == "settings.ink_edges" {
+        // Ink edges as settings.ini says it (2.3): smooth or solid
+        csnprintf!(out, cap, "%s", InkEdges::from_index(st.ink_edges).name());
+    } else if key == "ink_edges" {
+        // the setting the brushes follow now (brush.rs ink_edges): smooth or solid
+        csnprintf!(out, cap, "%s", ink_edges().name());
     } else if key == "settings.home" {
         // the home folder as settings.ini keeps it (2.2): empty for Notebooks, notebooks/<folder>, files/<path>
         csnprintf!(out, cap, "%s", st.home.as_str());
@@ -3771,6 +3784,50 @@ mod tests {
         // nothing of it off the screen
         app_invalidate_unasked(&mut a, Rect { x: -500, y: 0, w: 100, h: 100 });
         assert!(!a.dirty_unasked && rect_is_empty(a.dirty));
+        canvas_free(&mut a.screen);
+    }
+
+    /// The hint goes to the platform only with the present it is for (display_unasked right before display_present,
+    /// in app_flush and nowhere else), so none is ever left with the platform for a later present. A flush with
+    /// nothing to send says nothing: the settle of a solid word that finds the panel showing the page already
+    /// invalidates nothing (editor.rs settle_solid, Ink edges at Solid), and a refresh sent straight to the display
+    /// after it (a tap's pressed look) goes without the hint. A flush held back (the pen down on an action, or
+    /// asleep) says nothing either, and keeps the word with what waits, for that present.
+    #[test]
+    fn the_hint_goes_only_with_its_own_present() {
+        let mut a = notice_app();
+        let r = Rect { x: 100, y: 500, w: 400, h: 300 };
+        let other = Rect { x: 900, y: 900, w: 50, h: 50 };
+        let sent = |want: &str| {
+            if let Some(got) = unasked_sent() {
+                assert_eq!(got, want);
+            }
+        };
+        let _ = unasked_sent();
+        // a widget's timed redraw goes out with the hint; a flush with nothing to send after it says nothing, and
+        // a tap's pressed look, sent straight to the display, goes without
+        app_invalidate_unasked(&mut a, r);
+        app_flush(&mut a);
+        sent("1");
+        app_flush(&mut a);
+        app_press_feedback(&mut a, other);
+        sent("0");
+        // held back while the pen is down on an action: nothing sent, nothing said, and the word waits with the
+        // rect; a pressed look meanwhile goes without it, and the redraw's own present has it
+        for held in ["pen", "asleep"] {
+            app_invalidate_unasked(&mut a, r);
+            (a.pen_action_down, a.asleep) = (held == "pen", held == "asleep");
+            app_flush(&mut a);
+            assert!(a.dirty_unasked && a.dirty == r, "{held}: it waits");
+            app_press_feedback(&mut a, other);
+            sent("0");
+            (a.pen_action_down, a.asleep) = (false, false);
+            app_flush(&mut a);
+            assert!(!a.dirty_unasked && rect_is_empty(a.dirty), "{held}: sent");
+            sent("1");
+            app_press_feedback(&mut a, other);
+            sent("0");
+        }
         canvas_free(&mut a.screen);
     }
 

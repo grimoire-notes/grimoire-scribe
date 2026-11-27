@@ -45,7 +45,7 @@ wait 400
 expect asleep is 0
 expect screen is editor
 # Sleep settings over the open page: the switch alone (no sleep screen row, no Pin this page, no slider).
-# The Status bar page stays.
+# The Status bar page stays, and so do Pen's rows.
 pentap panel settings
 wait 300
 expect editor.modal is settings
@@ -67,7 +67,33 @@ shot 03-sleep-settings-keep-on-on
 tap library display.keep_on
 wait 200
 expect settings.sleep_minutes is 10
-tap library display.done
+# The Status bar page is as on the Kindle: its three rows, the size among them (the small size is 0.92 of medium
+# since #319), and none of Sleep settings'. A tap on the size moves it on.
+tap library display.back
+wait 300
+expect editor.modal is settings
+tap library status-bar
+wait 300
+expect editor.settings.sheet is display
+expect library.ui_has.display.notebooks is 1
+expect library.ui_has.display.time12 is 1
+expect library.ui_has.display.size is 1
+expect library.ui_has.display.keep_on is 0
+expect library.ui_has.display.sleep is 0
+expect library.ui_has.display.sleep_after is 0
+expect settings.status_size is 1
+tap library display.size
+wait 200
+expect settings.status_size is 2
+shot 04-status-bar
+# Pen's rows, Ink edges among them (2.3, #320): it belongs to no service
+tap library display.back
+wait 300
+tap library settings.cat.3
+wait 100
+expect library.ui_has.pen-feel is 1
+expect library.ui_has.ink-edges is 1
+tap library done
 wait 300
 expect editor.modal is none
 # Gestures: Screen without Sleep screen and Sleep now, System without Sleep after.
@@ -86,7 +112,7 @@ expect library.gestures_group is screen
 expect library.ui_has.gestures.row.8 is 1
 expect library.ui_has.gestures.row.9 is 0
 expect library.gestures.8 has PDF copies
-shot 04-gestures-screen
+shot 05-gestures-screen
 tap library done
 wait 100
 tap library gestures.group.system
@@ -96,5 +122,5 @@ expect library.ui_has.gestures.row.5 is 1
 expect library.ui_has.gestures.row.6 is 0
 expect library.gestures.4 has Language
 expect library.gestures.5 has Update channel
-shot 05-gestures-system
+shot 06-gestures-system
 quit

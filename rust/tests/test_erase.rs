@@ -953,8 +953,14 @@ fn compaction_drops_only_what_changes_nothing() {
 // The compaction rule the slow way: in stroke order, ink first, then erase strokes, a stroke on the
 // page is marked when the page and its ink layer, drawn whole without it and the strokes marked
 // before it, are what they are without those alone. Only ink a later erase stroke's bbox reaches
-// is a candidate.
+// is a candidate. Under both Ink edges settings (2.3, #320): a stroke is marked only when that holds
+// under each.
 fn droppable_slowly(p: &Page, drop: &mut [bool]) -> i32 {
+    droppable_slowly_under(p, drop, &[InkEdges::Smooth, InkEdges::Solid])
+}
+
+// The same, under the settings given.
+fn droppable_slowly_under(p: &Page, drop: &mut [bool], edges: &[InkEdges]) -> i32 {
     let mut n = 0;
     let mut any = false;
     for i in 0..p.strokes.len() {
@@ -965,15 +971,23 @@ fn droppable_slowly(p: &Page, drop: &mut [bool]) -> i32 {
         return 0;
     }
     let all = Rect { x: 0, y: 0, w: p.w, h: p.h };
-    // the page and its ink layer, without the marked strokes / and stroke i
-    let mut with = [Canvas::default(), Canvas::default()];
+    // per setting, the page and its ink layer, without the marked strokes / and stroke i
+    let mut with: Vec<[Canvas; 2]> = Vec::new();
     let mut without = [Canvas::default(), Canvas::default()];
     for l in 0..2 {
-        canvas_init(&mut with[l], p.w, p.h);
         canvas_init(&mut without[l], p.w, p.h);
     }
-    page_render(&mut with[0], p, all, DPI);
-    page_render_layers(&mut with[1], p, all, DPI, PAGE_LAYER_INK);
+    for &e in edges {
+        let mut c = [Canvas::default(), Canvas::default()];
+        for l in 0..2 {
+            canvas_init(&mut c[l], p.w, p.h);
+        }
+        ink_edges_as(e, || {
+            page_render(&mut c[0], p, all, DPI);
+            page_render_layers(&mut c[1], p, all, DPI, PAGE_LAYER_INK);
+        });
+        with.push(c);
+    }
     for pass in 0..2 {
         for i in 0..p.strokes.len() {
             let s = &p.strokes[i];
@@ -989,17 +1003,19 @@ fn droppable_slowly(p: &Page, drop: &mut [bool]) -> i32 {
             }
             drop[i] = true;
             let v = page_without(p, drop);
-            page_render(&mut without[0], &v, all, DPI);
-            canvas_fill(&mut without[1], all, 255);
-            page_render_layers(&mut without[1], &v, all, DPI, PAGE_LAYER_INK);
+            let mut same = true;
+            for (k, &e) in edges.iter().enumerate() {
+                ink_edges_as(e, || {
+                    page_render(&mut without[0], &v, all, DPI);
+                    canvas_fill(&mut without[1], all, 255);
+                    page_render_layers(&mut without[1], &v, all, DPI, PAGE_LAYER_INK);
+                });
+                same = same && diff_px(&with[k][0], &without[0], all) == 0 && diff_px(&with[k][1], &without[1], all) == 0;
+            }
             view_free(v);
-            drop[i] = diff_px(&with[0], &without[0], all) == 0 && diff_px(&with[1], &without[1], all) == 0;
+            drop[i] = same;
             n += drop[i] as i32;
         }
-    }
-    for l in 0..2 {
-        canvas_free(&mut with[l]);
-        canvas_free(&mut without[l]);
     }
     n
 }
@@ -1091,13 +1107,73 @@ fn compaction_is_the_rule() {
         let nf = page_droppable(&p, DPI, &mut fast);
         let ns = droppable_slowly(&p, &mut slow);
         check!(nf == ns && fast == slow);
-        if nf != ns {
+        if nf != ns || fast != slow {
             eprintln!("  page {}: {} marked, the slow way {}", it, nf, ns);
         }
         marked += nf as i64;
         page_free(p);
     }
     check!(marked > 20); // the pages gave it plenty to mark
+}
+
+// Ink edges (2.3, #320): ink that Smooth buries and Solid shows is kept. A faint thin fineliner line under three
+// highlights: drawn Smooth its grays are all lighter than the highlighter's ink, and the highlights bring each of them
+// to the highlighter's own gray, as they bring the paper beside it; drawn Solid its black is below that ink, which
+// leaves it alone, so it shows through. A precise eraser across them makes it a candidate. Left out, the page would
+// read otherwise with Solid, so compaction keeps it; the slow rule with Smooth alone would not.
+fn compaction_keeps_what_solid_shows() {
+    let sized = |t: ToolKind, mm: f32, op: Option<f32>| {
+        let mut p = ToolParams::default();
+        tool_params_default(t, &mut p);
+        p.size_min_mm = mm;
+        p.size_max_mm = mm;
+        if let Some(op) = op {
+            p.opacity_min = op;
+            p.opacity_max = op;
+        }
+        p
+    };
+    let mut p = page_new(80, 50, PAPER_BLANK);
+    let mut s = stroke_new(TOOL_FINELINER, &sized(TOOL_FINELINER, 0.11, None), 5);
+    for k in 0..12 {
+        stroke_append(&mut s, &PenSample { x: 15.0 + k as f32 * 4.0, y: 25.0, pressure: 0.09, t_ms: k * 6, ..Default::default() }, DPI);
+    }
+    page_add(&mut p, s);
+    for i in 0..3 {
+        let mut hl = stroke_new(TOOL_HIGHLIGHTER, &sized(TOOL_HIGHLIGHTER, 1.4, Some(0.73)), 30 + i);
+        hl.ext[2] = TIP_FIRST;
+        for k in 0..16 {
+            stroke_append(&mut hl, &PenSample { x: 8.0 + k as f32 * 4.0, y: 25.0, pressure: 1.0, t_ms: k * 6, ..Default::default() }, DPI);
+        }
+        page_add(&mut p, hl);
+    }
+    let mut e = stroke_new(TOOL_ERASER, &sized(TOOL_ERASER, 1.0, None), erase_seed(TOOL_ERASER, 77));
+    for k in 0..12 {
+        stroke_append(&mut e, &PenSample { x: 40.0, y: 4.0 + k as f32 * 4.0, pressure: 1.0, t_ms: k * 6, ..Default::default() }, DPI);
+    }
+    page_add(&mut p, e);
+    let n = p.strokes.len();
+    let (mut fast, mut slow, mut smooth_only) = (vec![false; n], vec![false; n], vec![false; n]);
+    let nf = page_droppable(&p, DPI, &mut fast);
+    check!(nf == droppable_slowly(&p, &mut slow) && fast == slow);
+    check!(!fast[0]);
+    droppable_slowly_under(&p, &mut smooth_only, &[InkEdges::Smooth]);
+    check!(smooth_only[0]);
+    // without what it marked, the page draws the same under either setting
+    let v = page_without(&p, &fast);
+    for e in [InkEdges::Smooth, InkEdges::Solid] {
+        let (mut a, mut b) = (Canvas::default(), Canvas::default());
+        canvas_init(&mut a, p.w, p.h);
+        canvas_init(&mut b, p.w, p.h);
+        let all = Rect { x: 0, y: 0, w: p.w, h: p.h };
+        ink_edges_as(e, || {
+            page_render(&mut a, &p, all, DPI);
+            page_render(&mut b, &v, all, DPI);
+        });
+        check!(diff_px(&a, &b, all) == 0);
+    }
+    view_free(v);
+    page_free(p);
 }
 
 // Ink the page shows and the ink layer does not: a light pencil line along a staff line, under a
@@ -1774,6 +1850,7 @@ fn test_erase() {
     run!(fully_erased_stroke_leaves_nothing);
     run!(compaction_drops_only_what_changes_nothing);
     run!(compaction_is_the_rule);
+    run!(compaction_keeps_what_solid_shows);
     run!(compaction_checks_the_page_too);
     run!(restored_is_the_page_only);
     run!(one_call_keeps_the_lines);

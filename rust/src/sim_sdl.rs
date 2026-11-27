@@ -1044,6 +1044,23 @@ pub(crate) fn display_probe_read(key: &str) -> Option<String> {
 
 pub fn display_wait() {}
 
+/// display.rs display_settle_area: the simulated panel is the record (it holds what each refresh left there, a fast
+/// one's grays dithered to black and white), compared level by level with the screen; r whole while there is no
+/// panel of the screen's size.
+pub fn display_settle_area(screen: &Canvas, r: Rect) -> Rect {
+    with(|st| {
+        let w = st.w;
+        if st.eink.is_empty() || screen.w != w || screen.h != st.h {
+            return r;
+        }
+        let (eink, invert) = (&st.eink, st.sim_invert);
+        settle_area_by(screen, r, |x, y| {
+            let e = eink[(y * w + x) as usize];
+            (if invert { 255 - e } else { e }) >> 4
+        })
+    })
+}
+
 pub fn display_set_orientation(quarter_turns: i32, w: &mut i32, h: &mut i32) {
     with(|st| {
         // Portrait size is whichever of the configured dimensions is the narrow one.
@@ -4190,6 +4207,48 @@ mod tests {
         // line 9 (no App to answer "screen"), 10, 11, 12, 13, 14 fail; the eight before pass
         assert_eq!(with(|st| (st.expect_total, st.expect_failed)), (14, 6));
         assert!(!SIM_STORAGE_FULL.load(Ordering::Relaxed));
+    }
+
+    // display_settle_area (Ink edges, Solid: the settle after writing, 2.3, #320): empty where the panel shows every
+    // level the screen holds, a solid stroke's black and white frame included; the box of what differs, padded by
+    // SETTLE_MARGIN and clipped to the rect asked, after a gray one (dithered by DU) or a pixel made lighter; the rect
+    // whole with no panel of the screen's size.
+    #[test]
+    fn settle_area_is_what_the_panel_shows_otherwise() {
+        fresh();
+        with(|st| st.eink = white_panel(st.w, st.h).unwrap());
+        let mut c = Canvas::default();
+        assert_eq!(canvas_init(&mut c, 1860, 2480), 0);
+        let r = Rect { x: 100, y: 100, w: 300, h: 200 };
+        assert_eq!(display_settle_area(&c, r), RECT_EMPTY);
+        // a solid stroke: only 0 on white, its fast frame shows it as it is
+        canvas_fill(&mut c, Rect { x: 150, y: 180, w: 120, h: 5 }, 0);
+        display_present(&c, Rect { x: 140, y: 170, w: 140, h: 25 }, RefreshMode::Fast);
+        assert_eq!(display_settle_area(&c, r), RECT_EMPTY);
+        // a gray within a level of the panel's is not sent
+        canvas_fill(&mut c, Rect { x: 300, y: 120, w: 4, h: 4 }, 250);
+        assert_eq!(display_settle_area(&c, r), RECT_EMPTY);
+        // a gray stroke's fast frame is dithered: the settle sends its box, with the margin
+        canvas_fill(&mut c, Rect { x: 200, y: 220, w: 50, h: 6 }, 128);
+        display_present(&c, Rect { x: 200, y: 220, w: 50, h: 6 }, RefreshMode::Fast);
+        let d = display_settle_area(&c, r);
+        assert!(rect_contains_rect(Rect { x: 197, y: 217, w: 56, h: 12 }, d) && d.w >= 50 && d.h >= 6, "{d:?}");
+        display_present(&c, d, RefreshMode::Ui);
+        assert_eq!(display_settle_area(&c, r), RECT_EMPTY);
+        // a pixel made lighter (the stroke taken back) counts too, clipped to the rect asked
+        canvas_fill(&mut c, Rect { x: 150, y: 180, w: 120, h: 5 }, 255);
+        assert_eq!(display_settle_area(&c, Rect { x: 0, y: 0, w: 200, h: 400 }), Rect { x: 147, y: 177, w: 53, h: 11 });
+        // inverted colors: the panel holds them inverted, the same answer
+        display_present(&c, Rect { x: 0, y: 0, w: 1860, h: 2480 }, RefreshMode::Ui);
+        display_set_invert(true);
+        display_present(&c, Rect { x: 0, y: 0, w: 1860, h: 2480 }, RefreshMode::Ui);
+        assert_eq!(display_settle_area(&c, r), RECT_EMPTY);
+        canvas_fill(&mut c, Rect { x: 110, y: 110, w: 1, h: 1 }, 0);
+        assert_eq!(display_settle_area(&c, r), Rect { x: 107, y: 107, w: 7, h: 7 });
+        display_set_invert(false);
+        // no panel of the screen's size: the rect whole
+        with(|st| st.eink = Vec::new());
+        assert_eq!(display_settle_area(&c, r), r);
     }
 
     #[test]

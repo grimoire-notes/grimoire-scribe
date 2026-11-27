@@ -1,20 +1,23 @@
 # Changelog
 
-## 2.3.0 (unreleased)
+## 2.3.0-beta.1 (2026-11-27)
 
-- **A new home** (#225, nebuff). The Library opens as a home screen: the status bar at the top, then the
-  Library's title with its Settings and Search buttons, a row of apps (Files, Share, Settings, Package Store and
-  any app installed, most recently used first) with Show All at its end, the All, Notebooks and Folders chips
-  beside Sort (Name (A-Z), Name (Z-A), Newest first, Oldest first), both kept across restarts, and the cards. The
-  + button at the bottom right makes a New notebook or a New folder, or opens Share (Import over Wi-Fi). Search
-  opens the keyboard and shows, as you type, the notebooks and folders in every folder whose names hold what is
-  typed. The top bar of New, Folder, Share, Settings and Exit is gone: Exit is at the foot of Settings' left
-  column.
-- **The Apps page and What's new** (#225, nebuff). Show All opens Apps: every app, most recently used first,
+- **A new home** (#225, nebuff; #319). The Library opens as a home screen: the status bar at the top, then
+  Grimoire's bat and the Library's title (a tap on either opens What's new) with the Settings and Search buttons
+  at the top right, a row of apps (Files, the Package Store and Share first, always in that order, then any app
+  installed, most recently used first) with Show All at its end, the All, Notebooks and Folders chips beside Sort
+  (Name (A-Z), Name (Z-A), Newest first, Oldest first), both kept across restarts, and the cards. Inside a folder
+  the bat's place has Back and the folder's name. Settings is not in the row: the button at the top right and
+  Quick settings open it. The + button at the bottom right makes a New notebook or a New folder, or opens Share
+  (Import over Wi-Fi). Search opens the keyboard and shows, as you type, the notebooks and folders in every folder
+  whose names hold what is typed. The top bar of New, Folder, Share, Settings and Exit is gone: Exit is at the
+  foot of Settings' left column.
+- **The Apps page and What's new** (#225, nebuff; #319). Show All opens Apps: every app in the row's order,
   with What's new, About (Settings > System > About: device and storage) and Manage apps... at its foot. What's
   new is a screen of its own, no longer a card under the bat: every version down the left, newest first, and the
-  notes of the one tapped at the right, set to fit. It still opens by itself once after each update, on this
-  version's notes; its X or Esc closes it.
+  notes of the one tapped at the right, set to fit. The bat on the home (or its title) opens it, as What's new on
+  Apps does, and it still opens by itself once after each update, on this version's notes; its X or Esc closes
+  it.
 - **Quick settings** (#225, nebuff). A one-finger pull down from the top of any screen, a notebook's or an app's
   too, opens Brightness and Warmth, Settings, Rotation lock (the screen stays turned as it is) and Auto
   brightness. A notebook's toolbar has no Display button any more: brightness and warmth are here, and the rest
@@ -24,8 +27,8 @@
   notebook it lies over the page's top margin with the page showing through; a tap on it hides it, and a tap on
   the top strip brings it back. There its minute's refresh waits while the pen is writing or near the screen,
   and comes once the pen has left (#242). Settings > Sleep & Clock > Status bar (was Clock settings) has Hide
-  status bar inside Notebooks, Display time as 12 hour and its size (small, medium, large); the corner rows are
-  gone.
+  status bar inside Notebooks, Display time as 12 hour and its size: small (92% of medium, #319), medium (the
+  default) or large; the corner rows are gone.
 - **Apps** (#225, nebuff; #238, #259). Full-screen programs packaged for Grimoire, installed from the Package
   Store. One opens from the home's app row or Apps, and two fingers swiped up from the bottom of the screen to
   the middle bring the home back in every app. Manage apps... at the foot of Apps has each app's settings page,
@@ -68,7 +71,7 @@
   the one picked.
 - Housekeeping: package-check's size guard for the Kindle binary is now 14 MB (was 13 MB; the zip's stays 7 MB):
   Apps, the Package Store and the package kit brought the binary past 13 MB (#253).
-- **Folder icons and pictures** (#230). A folder's menu (its `...`) has Icon & picture...: pick one of 48 icons for
+- **Folder icons and pictures** (#230, nebuff). A folder's menu (its `...`) has Icon & picture...: pick one of 48 icons for
   the folder's card, in two pages of ordinary uses (school, work, documents, photos, music, recipes, travel, pets
   and more), or give it a picture from `grimoire/photos` (From a file... copies one in from anywhere on the Kindle).
   Picking one clears the other: the card shows the picture in place of the icon, and the plain folder while the
@@ -79,7 +82,7 @@
   letters, digits, punctuation and Space type into it as its keys do (the US layout, with Shift), Backspace
   deletes, Enter is Done and Esc is Cancel. With no keyboard open its keys do what they did. On the Kindle, as
   for every key, Settings > Shortcuts > Enable shortcuts must be on.
-- **Kindle notebooks** (#196). Copy a notebook's folder from the Kindle's `.notebooks/` into `grimoire/import/`
+- **Kindle notebooks** (#196, nebuff). Copy a notebook's folder from the Kindle's `.notebooks/` into `grimoire/import/`
   and Grimoire imports its ink: one page per page, strokes scaled to the Scribe's page, pressure kept, and
   Amazon's brushes mapped to Grimoire's. It takes the Scribe's title where it has one, the folder's name
   otherwise, and leaves out the blank `note_template_collection` templates. Text and other non-ink page content
@@ -118,6 +121,27 @@
   Isometric 136 and Hexagon 119. Seyes rule, Blank and the music papers are unchanged. After the update a page kept
   drawn to open quickly is drawn once more, so it shows the new lines, and so are a notebook's previews in the
   Pages view as the view opens and its card in the Library as the notebook is next opened and left.
+- **Ink edges** (#320). Settings > Pen > Ink edges: Smooth (as before, the default) or Solid. With Solid the
+  ballpoint, fineliner, fountain pen, marker and calligraphy pen draw their strokes in pure black with hard edges:
+  every pixel a stroke darkens by 16 levels or more (of 255, against what was there before it) becomes black, and
+  the rest is left as it was. The page shows while you write what it shows after, so on a black-and-white screen the
+  pause after writing sends no second redraw, zoomed in and sideways too, except a small one where a stroke crosses
+  gray ink (pencil, charcoal, a highlight) in such a view. With Solid, white ink or the precise eraser
+  takes a solid pen's stroke away whole wherever it covers it at all, however light the pass, with no half-erased
+  gray left. The pencils, charcoal, the highlighter and a pen turned down to a light gray or given grain or Tilt
+  lightens in Pen feel draw as before, and PDF and PNG exports, Share and the USB mirror always draw with Smooth.
+  Pages kept drawn to open quickly and the Pages view's previews are drawn again once after a change, as each is
+  next shown. A notebook's card in the Library follows the change when the notebook is next opened and left. In
+  Polish and Japanese its texts are in English until they are translated.
+- **Polish and Japanese** (#315, nebuff). The texts of the new home, Apps, the Package Store and the rest of 2.2's
+  and 2.3's screens are translated. In this beta 46 of 1,268 texts are still in English in each language: 35 of
+  the Package Store's (among them its search, installing from GitHub, updating, uninstalling and the license
+  steps), the package kit's two messages, Manage apps..., Settings > Updates' version line, Ink edges' six, and one
+  a Kindle never shows (the Sleep settings switch of a device whose system owns sleep). Spanish has 167 of them
+  in English in this beta, most of 2.3's new screens; they come with 2.3.0.
+- Settings > Updates says "Version 2.2.0 to 2.3.0" where it had an arrow, which Classic's fonts do not have; and
+  the home's Sort select shows its value alone where the caption and value do not fit even small, as in Japanese
+  (#316).
 - **Quick settings without a front light** (#326). Where the device has no front light, the pull from the top
   opens nothing: the panel's controls are mostly the light's, which had nothing to set there. Settings is still
   on the home screen, Rotation lock is still an action for a button or gesture, and in a notebook a tap at the
@@ -129,6 +153,7 @@
   nor Light and Warmth without a front light). The Kindle keeps its lists and its Sleep settings page; the one
   change there is that Warmth down / up on a Kindle whose light has no warmth says "This Kindle has no warmth
   control." instead of "Light not ready.".
+- Fixes: the update-channel shortcut's message names the channel it sets; it named the other one (#312).
 
 ## 2.2.0 (2026-11-26)
 

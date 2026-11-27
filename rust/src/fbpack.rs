@@ -273,6 +273,23 @@ pub fn fbpack_row_cached(
     }
 }
 
+/// The first and last pixel i of a logical row `src` whose level (v >> 4, inverted first when `invert`, as the row is
+/// written) differs from the level of the byte `shown` holds for it, shown[shown_at + i * shown_step] (the RAM shadow
+/// of what was last written to the framebuffer, indexed as fbpack_row_cached's `shown` and `previous`); None when every
+/// level matches. Pixels lighter than what is shown count as well as darker ones. (The settle after writing with Ink
+/// edges at Solid asks this of every row it would refresh: display_settle_area.)
+pub fn fbpack_level_span(src: &[u8], shown: &[u8], shown_at: usize, shown_step: isize, invert: bool) -> Option<(usize, usize)> {
+    let mut span: Option<(usize, usize)> = None;
+    for (i, &v) in src.iter().enumerate() {
+        let v = if invert { 255 - v } else { v };
+        let at = (shown_at as isize + i as isize * shown_step) as usize;
+        if v >> 4 != shown[at] >> 4 {
+            span = Some((span.map_or(i, |(a, _)| a), i));
+        }
+    }
+    span
+}
+
 /// Odd-rotation MTK pen updates below 6000 pixels can bypass coordinate processing. Expand the
 /// refresh, without changing its pixels, to at least 6400 pixels while staying inside the panel.
 pub fn fbpack_pen_region(r: Rect, width: i32, height: i32) -> Rect {

@@ -362,6 +362,150 @@ pub fn brush_nib_angle(p: &ToolParams, tilt_x: f32, tilt_y: f32) -> f32 {
     deg
 }
 
+// ---- Ink edges: Smooth or Solid (2.3, #320) ----
+//
+// Smooth draws every stroke as this file always has: an anti-aliased rim, and the gray the pressure gives.
+// Solid draws the strokes of the solid pens (brush_ink_solid: the opaque, untextured pens in a black or dark gray
+// ink) in pure black with hard edges: a pixel such a stroke darkens by SOLID_STEP or more, against the value it
+// had before the stroke, becomes 0, and every other pixel keeps its value. The stroke's Smooth deposit is worked
+// out as ever, in a shadow of the pixels it touches (SolidShadow), and only the threshold reaches the canvas, so
+// a stroke drawn live, sample by sample, and the same stroke replayed give the same pixels. The setting is read
+// where a brush begins (brush_begin, stroke_brush_begin), so every drawing on screen follows it; exports draw
+// inside ink_edges_as(InkEdges::Smooth, ..).
+
+/// The two ways the solid pens draw (settings.ini `ink_edges`, by NAMES).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InkEdges {
+    /// soft gray edges, as every version before 2.3 drew
+    #[default]
+    Smooth = 0,
+    /// the solid pens in pure black, hard edged
+    Solid = 1,
+}
+impl InkEdges {
+    /// settings.ini's values, by index (absent at "smooth").
+    pub const NAMES: [&'static str; 2] = ["smooth", "solid"];
+    /// The setting at index i (Settings.ink_edges); any other index is Smooth.
+    pub fn from_index(i: i32) -> InkEdges {
+        if i == 1 {
+            InkEdges::Solid
+        } else {
+            InkEdges::Smooth
+        }
+    }
+    pub fn name(self) -> &'static str {
+        InkEdges::NAMES[self as usize]
+    }
+}
+
+thread_local! {
+    // (each thread has its own, Smooth until set: the app's one thread, its forked children with it, and each
+    // test's thread)
+    static INK_EDGES: std::cell::Cell<InkEdges> = const { std::cell::Cell::new(InkEdges::Smooth) };
+}
+/// The Ink edges setting the brushes begun on this thread follow.
+pub fn ink_edges() -> InkEdges {
+    INK_EDGES.with(|c| c.get())
+}
+/// Sets it (app_init from settings.ini, and Settings > Pen > Ink edges).
+pub fn ink_edges_set(e: InkEdges) {
+    INK_EDGES.with(|c| c.set(e));
+}
+/// The setting while it lives, the one before it given back as it drops (a panic unwinding included).
+pub struct InkEdgesScope(InkEdges);
+impl InkEdgesScope {
+    pub fn new(e: InkEdges) -> InkEdgesScope {
+        let was = ink_edges();
+        ink_edges_set(e);
+        InkEdgesScope(was)
+    }
+}
+impl Drop for InkEdgesScope {
+    fn drop(&mut self) {
+        ink_edges_set(self.0);
+    }
+}
+/// f run with the setting at e, then the setting as it was: exports draw so with Smooth.
+pub fn ink_edges_as<R>(e: InkEdges, f: impl FnOnce() -> R) -> R {
+    let _scope = InkEdgesScope::new(e);
+    f()
+}
+
+/// Ink edges at Solid: a pixel a solid stroke darkens by this much or more (out of 255, against the pixel's value
+/// before the stroke) becomes 0; any other pixel keeps its value.
+pub const SOLID_STEP: i32 = 16;
+/// The lightest a solid stroke's darkest ink may be (out of 255) and still be drawn Solid: black or a dark gray.
+pub const SOLID_INK_DARKEST: f32 = 64.0;
+/// The most grain (Pen feel's Grain) a pen may have and still be drawn Solid: the marker's own, whose tooth changes no
+/// pixel a solid stroke draws. A pen given more is a textured one.
+pub const SOLID_GRAIN_MOST: f32 = 0.15;
+
+/// The rule, written once: whether a stroke of tool t, tip variant `tip`, settings p and colour byte (a stroke's
+/// ext[0]) is drawn Solid when Ink edges is Solid. Ink of an opaque, untextured pen (not the pencils' or
+/// charcoal's graphite, no more grain than SOLID_GRAIN_MOST, no shading by tilt), no colour of a palette, and a
+/// darkest ink of black or a dark gray: at the defaults the ballpoint, fineliner, fountain pen, marker and
+/// calligraphy pen, never the pencils, charcoal, the highlighter or the eraser, nor a pen whose darkness was turned
+/// down to a light gray or that was given grain or Tilt lightens.
+pub fn brush_ink_solid(t: ToolKind, tip: u8, p: &ToolParams, colour: u8) -> bool {
+    if t == TOOL_ERASER || (t.0 as u32) >= TOOL_COUNT as u32 || colour != 0 {
+        return false;
+    }
+    let lk = look_of(t, tip);
+    let dark = sane(p.opacity_min, 0.0, 1.0, 0.5).max(sane(p.opacity_max, 0.0, 1.0, 1.0));
+    let untextured = sane(p.grain, 0.0, 1.0, 0.0) <= SOLID_GRAIN_MOST && sane(p.tilt_opacity, 0.0, 1.0, 0.0) <= 0.0;
+    !lk.graphite && untextured && 255.0 - (255.0 - lk.ink as f32) * dark <= SOLID_INK_DARKEST
+}
+
+// A solid stroke's shadow: its Smooth values over the pixels it has touched, in tiles of SHADOW_TILE square
+// copied from the canvas as the stroke first reaches them (the pixel before the stroke, then what Smooth would
+// have made of it so far).
+const SHADOW_SHIFT: i32 = 6;
+const SHADOW_TILE: i32 = 1 << SHADOW_SHIFT;
+#[derive(Clone, Default)]
+pub struct SolidShadow {
+    /// tile key -> its index in tiles
+    index: std::collections::HashMap<u32, usize>,
+    tiles: Vec<Box<[u8; (SHADOW_TILE * SHADOW_TILE) as usize]>>,
+    /// the last tile reached: its key + 1 (0 none) and index
+    last: (u32, usize),
+}
+impl std::fmt::Debug for SolidShadow {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "SolidShadow({} tiles)", self.tiles.len())
+    }
+}
+impl SolidShadow {
+    // The shadow's pixel (x, y), a pixel of c inside its clip.
+    #[inline(always)]
+    fn px(&mut self, c: &Canvas, x: i32, y: i32) -> &mut u8 {
+        let key = ((y >> SHADOW_SHIFT) as u32) << 16 | ((x >> SHADOW_SHIFT) as u32 & 0xFFFF);
+        let slot = if self.last.0 == key + 1 {
+            self.last.1
+        } else {
+            let n = self.tiles.len();
+            let slot = *self.index.entry(key).or_insert(n);
+            if slot == n {
+                let mut t = Box::new([255u8; (SHADOW_TILE * SHADOW_TILE) as usize]);
+                let (tx, ty) = ((x >> SHADOW_SHIFT) << SHADOW_SHIFT, (y >> SHADOW_SHIFT) << SHADOW_SHIFT);
+                let (x0, x1) = (tx.max(0), (tx + SHADOW_TILE).min(c.w));
+                for yy in 0..SHADOW_TILE {
+                    let py = ty + yy;
+                    if py < 0 || py >= c.h || x0 >= x1 {
+                        continue;
+                    }
+                    let at = (py * c.stride + x0) as usize;
+                    let to = (yy * SHADOW_TILE + (x0 - tx)) as usize;
+                    t[to..to + (x1 - x0) as usize].copy_from_slice(&c.px[at..at + (x1 - x0) as usize]);
+                }
+                self.tiles.push(t);
+            }
+            self.last = (key + 1, slot);
+            slot
+        };
+        &mut self.tiles[slot][(((y & (SHADOW_TILE - 1)) << SHADOW_SHIFT) | (x & (SHADOW_TILE - 1))) as usize]
+    }
+}
+
 /// Incremental renderer. Live drawing and re-rendering both go through brush_add so the
 /// results are pixel-identical. Ink color is fixed per tool (pencil graphite ~40,
 /// mech ~30, ballpoint ~10).
@@ -410,6 +554,11 @@ pub struct BrushState {
     /// after the dab) are pushed here (the exact-area lasso cuts a stroke at its own dabs, lasso.rs
     /// stroke_dabs). None = nothing kept (every draw).
     pub dab_log: Option<Vec<(PenSample, f32, f32, f32)>>,
+    /// Ink edges at Solid and a solid pen's stroke (brush_ink_solid): set by brush_begin and stroke_brush_begin;
+    /// on an erase brush (brush_set_erase), Ink edges at Solid: a solid stroke's black is restored whole (put_px).
+    pub solid: bool,
+    /// a solid stroke's Smooth values over the pixels it touched (made as it first draws)
+    pub shadow: Option<Box<SolidShadow>>,
 }
 
 /// Tip variants (a stroke's ext[2], low 4 bits; docs/FORMAT.md): 0 is a tool's first tip, the one
@@ -608,6 +757,7 @@ pub fn brush_begin(b: &mut BrushState, t: ToolKind, p: &ToolParams, seed: u32, d
     b.seed = seed;
     b.dpi = if dpi > 50.0 && dpi < 2000.0 { dpi } else { 300.0 };
     b.tip = brush_tip_current(t);
+    b.solid = ink_edges() == InkEdges::Solid && brush_ink_solid(t, b.tip, p, 0);
 }
 /// Puts b (just begun) in erase mode, for an erase stroke: white ink with the tool's texture, or
 /// the precise eraser's round hard tip (TOOL_ERASER). Its dabs lighten each pixel toward the paper
@@ -617,6 +767,9 @@ pub fn brush_begin(b: &mut BrushState, t: ToolKind, p: &ToolParams, seed: u32, d
 /// right for a canvas of ink alone, wrong over paper with lines (it would wipe them).
 pub fn brush_set_erase(b: &mut BrushState, paper: Option<std::rc::Rc<Vec<u8>>>, x0: i32, y0: i32, stride: i32) {
     b.erase = true;
+    // (with Ink edges at Solid, a solid stroke's black comes back to its paper whole or not at all: put_px; any
+    // other pixel is restored as with Smooth)
+    b.solid = ink_edges() == InkEdges::Solid;
     b.restored = false;
     b.paper = paper;
     b.paper_x0 = x0;
@@ -683,8 +836,58 @@ struct DabTarget<'a> {
 // One pixel of a dab, the only place a dab writes one: a is the dab's own coverage, ad its share
 // once the spacing is compensated (what the deposit uses). An erase dab restores toward paper, the
 // paper under the pixel (stamp_as reads it).
+// A solid stroke's pixel (SOLID, with its shadow): the Smooth deposit goes into the shadow, by
+// canvas_deposit_px_in's very arithmetic, and the pixel becomes 0 once that is SOLID_STEP or more below what the
+// pixel was before the stroke (the canvas holds it until then); 0 stays 0.
+// An erase stroke at Solid (ERASE and SOLID) over a solid stroke's black (0 where the paper is not): the mirror of
+// it. The restore Smooth would make goes into the shadow, by canvas_restore_px_in's arithmetic, and the pixel takes
+// its paper whole once that is SOLID_STEP or more above 0; until then it stays 0. So white ink or the precise
+// eraser over solid ink leaves black or the paper, never a half restored gray rim. Every other pixel is restored as
+// with Smooth.
 #[inline(always)]
-fn put_px<const ERASE: bool>(t: &mut DabTarget, c: &mut Canvas, x: i32, y: i32, ad: f32, a: f32, paper: u8) {
+fn put_px<const ERASE: bool, const SOLID: bool>(t: &mut DabTarget, c: &mut Canvas, x: i32, y: i32, ad: f32, a: f32, paper: u8, sh: Option<&mut SolidShadow>) {
+    if SOLID && ERASE {
+        let at = (y * c.stride + x) as usize;
+        if c.px[at] == 0 && paper != 0 {
+            let Some(sh) = sh else { return };
+            let sm = sh.px(c, x, y);
+            if *sm < paper {
+                if a >= 0.999 {
+                    *sm = paper;
+                } else {
+                    let v = (fmla((paper - *sm) as f32, ad, *sm as f32) + 0.5) as i32;
+                    if v > *sm as i32 {
+                        *sm = if v < paper as i32 { v as u8 } else { paper };
+                    }
+                }
+            }
+            if *sm as i32 >= SOLID_STEP {
+                c.px[at] = paper;
+                t.restored = true;
+            }
+            return;
+        }
+    }
+    if SOLID && !ERASE {
+        let at = (y * c.stride + x) as usize;
+        let was = c.px[at];
+        let Some(sh) = sh else { return };
+        if was == 0 {
+            return;
+        }
+        let sm = sh.px(c, x, y);
+        if *sm <= t.ink {
+            return;
+        }
+        let v = (fmla(-((*sm - t.ink) as f32), ad, *sm as f32) + 0.5) as i32;
+        if v < *sm as i32 {
+            *sm = v as u8;
+        }
+        if was as i32 - *sm as i32 >= SOLID_STEP {
+            c.px[at] = 0;
+        }
+        return;
+    }
     if !ERASE {
         // (stamp_as clips the dab's box to the canvas's clip, so every pixel here is inside it)
         canvas_deposit_px_in(c, x, y, t.ink, ad);
@@ -767,13 +970,13 @@ fn share(m: &mut ShareMemo, a: f32, inv_n: f32) -> f32 {
     v
 }
 
-// One dab, and its radius (what spaces the next). `erase` and `dry` are constants at each call (stamp),
+// One dab, and its radius (what spaces the next). `erase`, `dry` and `solid` are constants at each call (stamp),
 // so each gets a copy of its own: the ink copy is the dab as it was before erase strokes, with no erase
-// test left in its pixel loop.
+// test left in its pixel loop, and no solid one (Ink edges, Smooth: as before 2.3).
 // (Every `a * b + c` of the C that clang contracts is an fmla: PORTING.md, Floating point. The sites
 // were read off the C build's IR, one by one.)
 #[inline(always)]
-fn stamp_as<const ERASE: bool, const DRY: bool>(b: &mut BrushState, c: &mut Canvas, s: &PenSample) -> (Rect, f32) {
+fn stamp_as<const ERASE: bool, const DRY: bool, const SOLID: bool>(b: &mut BrushState, c: &mut Canvas, s: &PenSample) -> (Rect, f32) {
     let mut r = 0.0f32;
     let mut op = 0.0f32;
     brush_dab(b.tool, &b.params, s, b.dpi, &mut r, &mut op);
@@ -866,6 +1069,8 @@ fn stamp_as<const ERASE: bool, const DRY: bool>(b: &mut BrushState, c: &mut Canv
     // SAFETY: the memo is this thread's own and stamp_as never runs inside itself, so this is the
     // only reference to it while the dab is drawn.
     let memo: &mut ShareMemo = SHARE.with(|m| unsafe { &mut *m.get() });
+    // (a solid stroke's shadow, out of the brush while the dab draws, back at its end)
+    let mut shadow: Option<Box<SolidShadow>> = if SOLID { Some(b.shadow.take().unwrap_or_default()) } else { None };
     // A round dab draws nothing past this far from its centre (a textured one's tooth and dust reach
     // further, by at most half its roughness and the dust's width; a nib's shape is not round): each
     // row visits only the pixels within it, plus a pixel's margin that no rounding can cross, and the
@@ -974,7 +1179,7 @@ fn stamp_as<const ERASE: bool, const DRY: bool>(b: &mut BrushState, c: &mut Canv
                         }
                         let a = op * 0.75 * fmla(0.5f32, t, 0.5);
                         let ad = share(memo, a, inv_n);
-                        put_px::<ERASE>(&mut tg, c, x, y, ad, a, paper);
+                        put_px::<ERASE, SOLID>(&mut tg, c, x, y, ad, a, paper, shadow.as_deref_mut());
                         continue;
                     }
                     let prof = clampf((r_out - de) / edge_w, 0.0, 1.0);
@@ -1016,29 +1221,36 @@ fn stamp_as<const ERASE: bool, const DRY: bool>(b: &mut BrushState, c: &mut Canv
                     continue;
                 }
                 let ad = if !lk.graphite && g_eff <= 0.0 && a == op { core_ad } else { share(memo, a, inv_n) };
-                put_px::<ERASE>(&mut tg, c, x, y, ad, a, paper);
+                put_px::<ERASE, SOLID>(&mut tg, c, x, y, ad, a, paper, shadow.as_deref_mut());
             }
         }
     }
     if tg.restored {
         b.restored = true;
     }
+    if SOLID {
+        b.shadow = shadow;
+    }
     (box_, r)
 }
 
 fn stamp(b: &mut BrushState, c: &mut Canvas, s: &PenSample) -> (Rect, f32) {
     if b.dry {
-        let out = stamp_as::<false, true>(b, c, s);
+        let out = stamp_as::<false, true, false>(b, c, s);
         let (nc, ns) = (b.nib_c, b.nib_s);
         if let Some(log) = b.dab_log.as_mut() {
             log.push((*s, out.1, nc, ns));
         }
         return out;
     }
-    if b.erase {
-        stamp_as::<true, false>(b, c, s)
+    if b.erase && b.solid {
+        stamp_as::<true, false, true>(b, c, s)
+    } else if b.erase {
+        stamp_as::<true, false, false>(b, c, s)
+    } else if b.solid {
+        stamp_as::<false, false, true>(b, c, s)
     } else {
-        stamp_as::<false, false>(b, c, s)
+        stamp_as::<false, false, false>(b, c, s)
     }
 }
 
