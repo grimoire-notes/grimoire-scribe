@@ -15418,9 +15418,14 @@ mod tests {
     // one batch, as the loop hands them over when it comes to them late.
     #[cfg(feature = "sim")]
     fn solid_line_in_one_batch(a: &mut App, x0: f32, x1: f32, y: f32, t: u32) {
-        tool_params_default(TOOL_BALLPOINT, &mut a.settings.tools[TOOL_BALLPOINT.0 as usize]);
-        a.settings.current_tool = TOOL_BALLPOINT;
-        a.settings.draw_tool = TOOL_BALLPOINT;
+        line_in_one_batch(a, TOOL_BALLPOINT, x0, x1, y, t);
+    }
+    // The same with tool `tool`.
+    #[cfg(feature = "sim")]
+    fn line_in_one_batch(a: &mut App, tool: ToolKind, x0: f32, x1: f32, y: f32, t: u32) {
+        tool_params_default(tool, &mut a.settings.tools[tool.0 as usize]);
+        a.settings.current_tool = tool;
+        a.settings.draw_tool = tool;
         let mut ev = InEvent { type_: InType::PenDown, x: x0, y, pressure: 0.6, t_ms: t, ..Default::default() };
         editor_event(a, &ev);
         ev.type_ = InType::PenMove;
@@ -15486,6 +15491,65 @@ mod tests {
         assert!(rect_is_empty(ed_ref(&a).settle));
         assert!(!rect_is_empty(a.dirty) && a.dirty_mode == RefreshMode::Ui);
         assert_eq!(counts(&a), (2, 0));
+    }
+
+    // Ink edges at Solid with the hint of a refresh nobody asked for (display_unasked, app.rs app_flush_in): the hint
+    // goes only with its own present. A pause's settle that sends nothing, here taken one pass late after the
+    // stroke's frames were flushed (settle_waits_for_flush), says nothing to the display: a pressed look sent
+    // straight to it afterwards (app_press_feedback) goes without the hint, as does the next flush's refresh. A
+    // settle that left the word said would have the platform take it with the next present that is not the
+    // flush's (a pressed look, the status bar's own refresh), on a platform that takes it with mem::take.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn a_quiet_solid_settle_leaves_no_hint_set() {
+        let _solid = InkEdgesScope::new(InkEdges::Solid);
+        let mut a = fshape_app_of(1860, 2480);
+        let unasked = || crate::sim_sdl::display_probe_read("display.unasked");
+        let _ = unasked();
+        let t = now_ms();
+        let late = t.wrapping_add(SETTLE_LEFT_MS + 250);
+        a.last_input = late;
+        solid_line_in_one_batch(&mut a, 400.0, 1000.0, 900.0, t);
+        editor_tick(&mut a, late);
+        assert!(!rect_is_empty(ed_ref(&a).settle), "the settle waits for the stroke's frames");
+        app_flush(&mut a);
+        editor_tick(&mut a, late.wrapping_add(30));
+        assert_eq!((ed_ref(&a).settles_quiet, ed_ref(&a).settles_sent), (1, 0), "a solid stroke settles with nothing sent");
+        assert!(rect_is_empty(a.dirty));
+        app_flush(&mut a);
+        crate::app::app_press_feedback(&mut a, Rect::new(100, 2000, 200, 100));
+        assert_eq!(unasked().as_deref(), Some("0"), "a pressed look after the quiet settle");
+        app_invalidate(&mut a, Rect::new(100, 1500, 300, 100), RefreshMode::Ui);
+        app_flush(&mut a);
+        assert_eq!(unasked().as_deref(), Some("0"), "the next refresh");
+    }
+
+    // Ink edges at Solid: a pause's settle that sends is a refresh asked for (settle_solid: app_invalidate), so it
+    // goes without the hint, alone or with a widget frame's timed redraw that waited beside it (one present, the hint
+    // cleared). A pencil word: Solid leaves the pencil soft, so its settle sends its grays.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn a_solid_settle_that_sends_goes_without_the_hint() {
+        let _solid = InkEdgesScope::new(InkEdges::Solid);
+        let mut a = fshape_app_of(1860, 2480);
+        let unasked = || crate::sim_sdl::display_probe_read("display.unasked");
+        let counts = |a: &App| (ed_ref(a).settles_quiet, ed_ref(a).settles_sent);
+        for (k, widget) in [false, true].into_iter().enumerate() {
+            let t = now_ms();
+            line_in_one_batch(&mut a, TOOL_PENCIL, 400.0, 1000.0, 900.0 + 300.0 * k as f32, t);
+            app_flush(&mut a);
+            let _ = unasked();
+            if widget {
+                crate::app::app_invalidate_unasked(&mut a, Rect::new(100, 2000, 300, 100));
+                assert!(a.dirty_unasked);
+            }
+            a.last_input = t.wrapping_add(SETTLE_LEFT_MS + 250); // (none of the tick's idle work is due)
+            editor_tick(&mut a, t.wrapping_add(SETTLE_LEFT_MS + 250));
+            assert_eq!(counts(&a), (0, k as u32 + 1), "widget {widget}: the pencil's settle sends");
+            assert!(!a.dirty_unasked && a.dirty_mode == RefreshMode::Ui, "widget {widget}: asked for");
+            app_flush(&mut a);
+            assert_eq!(unasked().as_deref(), Some("0"), "widget {widget}: the settle's present goes without the hint");
+        }
     }
 
     #[test]

@@ -2714,7 +2714,8 @@ fn app_flush_in(a: &mut App) {
     }
     live_toast_sync(a, overlay, reached, noticed.is_some());
     // (never the cleaning Full, nor a refresh with anything asked for in it)
-    // (said only with its present: a flush that sends nothing, as after a settle with nothing to send, says nothing)
+    // (said only with its present: a flush that sends nothing, as after a settle with nothing to send, says nothing;
+    // a Solid settle held back a pass for its stroke's frames, settle_waits_for_flush, says nothing until it is taken)
     display_unasked(unasked && m == RefreshMode::Ui);
     display_present(&a.screen, a.dirty, m);
     du_wear_presented(&mut a.du_wear, a.dirty, m);
