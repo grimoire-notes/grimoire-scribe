@@ -1582,6 +1582,14 @@ fn draw_folder_face(c: &mut Canvas, s: &mut LibraryState, tb: Rect, path: &str, 
     }
 }
 
+/// A card's frame over its cover `tb` (a notebook's page, a folder's picture or icon): the paper painted back outside
+/// the frame's shape, Gothic's cut corners or Classic's round ones, so nothing of a picture shows past the frame
+/// (#332; the picture was held to the rectangle), then the 4 px outline.
+fn card_frame(c: &mut Canvas, tb: Rect) {
+    ui_frame_outside(c, tb, gui_radius(), 255);
+    ui_frame(c, tb, gui_radius(), 0, false, ui_px(4.0));
+}
+
 fn draw_card(c: &mut Canvas, s: &mut LibraryState, dpi: f32, r: Rect, idx: usize) {
     let it = s.items[idx];
     if it.is_files {
@@ -1602,7 +1610,7 @@ fn draw_card(c: &mut Canvas, s: &mut LibraryState, dpi: f32, r: Rect, idx: usize
         }
         c.clip = saved;
     }
-    ui_frame(c, tb, gui_radius(), 0, false, ui_px(4.0));
+    card_frame(c, tb);
     let mut line2 = String::new();
     let mut label = String::new();
     let title: &str;
@@ -12104,6 +12112,44 @@ mod tests {
         library_free(&mut a);
         canvas_free(&mut a.screen);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // A card's picture follows the card's corners (#332): over a cover filled to its edges, card_frame paints the
+    // paper back outside the frame's shape, Gothic's cut corners and Classic's round ones, so every pixel a filled
+    // frame leaves white is white, and the cover's middle is untouched.
+    #[test]
+    fn a_cards_picture_is_clipped_to_the_cards_corners() {
+        ui_init(300.0);
+        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+            ui_set_theme(theme);
+            let tb = Rect::new(20, 30, 402, 536);
+            let (w, h) = (tb.x * 2 + tb.w, tb.y * 2 + tb.h);
+            let mut card = Canvas::default();
+            let mut shape = Canvas::default();
+            assert_eq!(canvas_init(&mut card, w, h), 0);
+            assert_eq!(canvas_init(&mut shape, w, h), 0);
+            canvas_fill(&mut card, Rect::new(0, 0, w, h), 255);
+            canvas_fill(&mut card, tb, 0);
+            card_frame(&mut card, tb);
+            canvas_fill(&mut shape, Rect::new(0, 0, w, h), 255);
+            ui_frame(&mut shape, tb, gui_radius(), 0, true, 0);
+            let mut outside = 0;
+            for y in 0..h {
+                for x in 0..w {
+                    let i = (y * card.stride + x) as usize;
+                    if shape.px[i] == 255 {
+                        outside += 1;
+                        assert_eq!(card.px[i], 255, "{theme:?}: ({x}, {y}) is outside the frame and shows the picture");
+                    }
+                }
+            }
+            assert!(outside > w * h - tb.w * tb.h, "{theme:?}: the corners were counted");
+            let mid = ((tb.y + tb.h / 2) * card.stride + tb.x + tb.w / 2) as usize;
+            assert_eq!(card.px[mid], 0, "{theme:?}");
+            canvas_free(&mut card);
+            canvas_free(&mut shape);
+        }
+        ui_set_theme(UiTheme::Gothic);
     }
 
     // The home is drawn with its bar's minute recorded, so a tick in that minute draws nothing again.

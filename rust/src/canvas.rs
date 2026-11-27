@@ -247,6 +247,48 @@ pub fn canvas_chamfer_rect(c: &mut Canvas, r: Rect, mut ch: i32, gray: u8, fille
     }
 }
 
+/// `gray` over each corner of r that lies outside a filled shape, `cover` giving the shape's coverage of the pixel
+/// centred at (px, py): only the four corner boxes `k` px a side are walked, the rest of r being inside the shape.
+fn corners_outside(c: &mut Canvas, r: Rect, k: i32, gray: u8, cover: impl Fn(f32, f32) -> f32) {
+    let k = k.min(r.w).min(r.h).max(0);
+    for (x0, y0) in [(r.x, r.y), (r.x + r.w - k, r.y), (r.x, r.y + r.h - k), (r.x + r.w - k, r.y + r.h - k)] {
+        let b = rect_intersect(Rect::new(x0, y0, k, k), c.clip);
+        for y in b.y..b.y + b.h {
+            let row = y as usize * c.stride as usize;
+            for x in b.x..b.x + b.w {
+                let a = 1.0 - cover(x as f32 + 0.5, y as f32 + 0.5);
+                if a > 0.0 {
+                    blend_px(&mut c.px[row + x as usize], gray, a);
+                }
+            }
+        }
+    }
+}
+
+/// The part of r outside the rounded rect canvas_round_rect fills there, painted gray, its edge antialiased as the
+/// shape's is: a picture blitted into r, then this with the paper's gray, shows nothing past the round corners.
+pub fn canvas_round_rect_outside(c: &mut Canvas, r: Rect, radius: i32, gray: u8) {
+    if rect_is_empty(r) {
+        return;
+    }
+    let radius = radius.min(r.w.min(r.h) / 2).max(0);
+    let rr = radius as f32;
+    corners_outside(c, r, radius + 1, gray, |px, py| rr_alpha(r, rr, px, py, true, 0));
+}
+
+/// The part of r outside the rect with cut corners canvas_chamfer_rect fills there (ch px), painted gray, as
+/// canvas_round_rect_outside does for round corners.
+pub fn canvas_chamfer_rect_outside(c: &mut Canvas, r: Rect, ch: i32, gray: u8) {
+    if rect_is_empty(r) {
+        return;
+    }
+    let ch = ch.min(r.w.min(r.h) / 2).max(0);
+    let (hw, hh) = (r.w as f32 * 0.5, r.h as f32 * 0.5);
+    let (cx, cy) = (r.x as f32 + hw, r.y as f32 + hh);
+    let k = hw + hh - ch as f32;
+    corners_outside(c, r, ch + 1, gray, |px, py| ch_alpha(cx, cy, hw, hh, k, px, py, true, 0));
+}
+
 /// Filled diamond of "radius" r (center to tip).
 pub fn canvas_lozenge(c: &mut Canvas, cx: f32, cy: f32, r: f32, gray: u8) {
     let s = (r * 2.0).round_ties_even() as i32;

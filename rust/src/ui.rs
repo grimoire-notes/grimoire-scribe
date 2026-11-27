@@ -159,6 +159,17 @@ pub fn ui_frame(c: &mut Canvas, r: Rect, radius: i32, gray: u8, filled: bool, t:
     }
 }
 
+/// ui_frame's shape turned inside out: `gray` over the part of r outside the shape ui_frame fills there (Gothic's
+/// cut corners, Classic's round ones). A Library card paints its paper back over its picture's corners with it, so
+/// nothing of the picture shows past its frame (#332).
+pub fn ui_frame_outside(c: &mut Canvas, r: Rect, radius: i32, gray: u8) {
+    if gothic() {
+        canvas_chamfer_rect_outside(c, r, radius + radius / 4, gray);
+    } else {
+        canvas_round_rect_outside(c, r, radius, gray);
+    }
+}
+
 /// A pointed (equilateral) arch: springers at (x0, ys) and (x1, ys), stroked with width w.
 // (3.14159265f is the C's float literal, not f32::consts::PI)
 #[allow(clippy::approx_constant, clippy::excessive_precision)]
