@@ -3717,6 +3717,39 @@ a font of their own being checked, KOReader's Open this book in Grimoire after t
 from the Package Store. The owner's verdict, 2026-11-25: "this is good." The device checks listed in #100 were not
 reported one by one.
 
+## 2.3, the home's rules and squares (issue #332): device checks
+
+Not run on a Scribe. The Mac's tests hold the layout and the taps: library.rs's unit tests (the squares and their
+step for 1 to 12 apps upright and sideways, the marks outside every hit at every status bar size in both themes,
+the foot rule's 40 px, the page arrows on the + button's centre line, a card's picture held to its corners, the
+header with no bat), globalui.rs's (Classic's + a rounded rectangle, a long name on a smaller size or two lines),
+and the scenarios `z_home_ruled` (a populated home in Gothic and Classic, upright and sideways, in a folder, the
+Apps page, at the small and the large status bar), `z_home_header` and `z_home_header_classic`. What only the panel
+shows:
+
+1. **The rules.** On the home in Gothic: under "Library" a black rule, thick over thin, from margin to margin, with
+   as much paper over it as under it; between the apps and the chips the lozenge divider; under the chips a light
+   gray rule that reads as one even gray line (not dotted, not lost); over the page arrows and the + the title rule
+   turned over, with clear paper between it and the +. In Classic the same places with single black lines and a
+   plain line, no dots, at the main split.
+2. **Presses leave the rules alone.** Press and hold an app's square, a chip, Sort and a card, then let go: the
+   pressed part turns black and back, and no rule beside it flickers, turns grainy or keeps a ghost.
+3. **The squares.** The app row's squares are all one size with the same paper between every two, the first at the
+   left margin and Show All at the right one, upright and sideways; an installed app's own icon is sharp, its pixels
+   even (drawn at twice their size). The Apps page's squares stand in the same columns.
+4. **A long app name.** Settings > General > Language > Polski: Show All's name (Pokaż wszystko) is whole, on two
+   lines in Gothic and on one line in Classic's Terminess; in 日本語 the Package Store's name is whole. An
+   installed app with a long name (two words) shows both, on two lines if need be, never cut short.
+5. **Classic's +.** Settings > Display > Style > Classic: the + at the bottom right is a black rectangle with the
+   same round corners as the cards, the size it was; the page arrows and "Page 1 of 2" stand on its centre line. In
+   Gothic the + is the carved square, as before, with the arrows on its centre line too.
+6. **The cards' corners.** A folder with a picture (Folder icon > Picture...) and a notebook on Graph paper: nothing
+   of the picture or the grid shows past the card's cut corners (Gothic) or round ones (Classic).
+7. **No bat.** A tap on the title, or left of it, opens nothing; Show All > What's new opens What's new; after an
+   update What's new still opens by itself once.
+8. **Every status bar size.** Settings > Sleep & Clock > Status bar, small, medium and large: upright the cards are
+   two rows at each, nothing overlaps a rule, and sideways one row.
+
 ## 2.3, Ink edges (issue #320): device checks
 
 Not run on a Scribe. The Mac's tests cover the drawing and the settle's logic: `rust/tests/test_ink_edges.rs` (Solid
