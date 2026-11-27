@@ -97,6 +97,20 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
 - Live stroke: each pen sample batch renders new dabs into page_canvas, recomposes the dirty
   rect, FAST refresh. On pen-up: UI refresh of the stroke bbox so pencil grays come back. A
   press on the panel before that settle settles first, so Undo and Clear answer at once.
+- The settle with Ink edges at Solid (2.3, #320; editor.rs `settle_solid`): the solid pens' strokes hold only
+  black where they changed the page (Brush model, below), so their live frames already put on the panel what the
+  page holds. The settle composes its rect as ever, then asks the display for the part of it the panel shows at
+  another level (value >> 4) than the screen holds now (`display_settle_area`), lighter pixels as well as darker
+  ones (a shape snapped, an undo, the lasso and erasing take ink away), padded by 3 px (`SETTLE_MARGIN`), and
+  refreshes only that in grays, or nothing at all: a solid word on any paper settles with no refresh. Only the
+  settle's rect is judged; anything else due goes out as it would. The display's contract (display.rs): a platform
+  answers the whole rect unless it knows what it last gave the panel at every pixel of it, so one that keeps no
+  record (the default), or whose last frames may not all have reached the panel as written (a refresh refused or
+  failed, a rotation or inversion since, until a whole grayscale frame; a colour panel, whose live frames are not
+  waited for), refreshes all of it as before; one with a pen mode leaves it when it answers empty, as the
+  grayscale refresh would have (the status bar waits for it). display_fbink.rs answers from `g_shown`, the RAM
+  shadow of the bytes written to the framebuffer, row by row as `copy_row` writes them (`fbpack_level_span`);
+  the simulator from its panel. With Smooth the settle is the UI refresh of its whole rect, as before.
 - The Kindle display keeps the previous logical frame in physical order (+4.6 MB at 1860x2480).
   `fbpack_row` dithers only changed pixels for a FAST refresh. Unchanged gray image paper stays
   gray in the framebuffer, which DU leaves alone; earlier dithered ink stays as it was until the
@@ -196,6 +210,28 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   and softer edge, less valley filling at full pressure, and loose specks up to 0.4 r past the
   edge, hashed on page position and the stroke seed. brush_max_radius accounts for all of it.
 - Blend: "deposit" darkens only: dst = dst - (dst - ink) * a, applied per dab.
+- Ink edges (2.3, #320; Settings > Pen, settings.ini `ink_edges`): Smooth draws as above. Solid draws the solid
+  pens' strokes in pure black with hard edges. The rule is one function, brush.rs `brush_ink_solid`: ink with no
+  graphite (not the pencils or charcoal), no colour of a palette (a stroke's ext[0] 0), and a darkest ink of
+  black or a dark gray (`255 - (255 - ink) * max(opacity_min, opacity_max) <= 64`): at the defaults the
+  ballpoint, fineliner, fountain pen, marker and calligraphy pen, never the highlighter, the eraser or an erase
+  stroke. A solid stroke keeps its Smooth deposit in a shadow of the pixels it touches (`SolidShadow`, tiles of
+  64 px copied from the canvas as the stroke first reaches them), by the deposit's very arithmetic, and a pixel
+  of the canvas becomes 0 once that is 16 (`SOLID_STEP`) or more below what the pixel was before the stroke;
+  every other pixel keeps its value, so nothing is lightened and a pencil line or a highlight beside the stroke
+  stays as it was. Drawn live sample by sample or replayed, whole, in tiles, from a paste's first stroke or in
+  compaction's pieces (which share the stroke's shadow), the pixels are the same. The setting is read where a
+  brush begins (`brush_begin`, page.rs `stroke_brush_begin`, a thread-local `ink_edges()` that app_init and the
+  row set), so every picture on the screen follows it: the live frames, the settled page, a page drawn whole,
+  undo, the lasso, the Pages view, previews, cards and Live view. Exports draw inside
+  `ink_edges_as(InkEdges::Smooth, ..)` (export.rs `render_page_links`, which every PDF, PNG, share and mirror
+  page comes through, and a page made into a template's picture); grimoire-export never sets it. The renderer's
+  fingerprint is Smooth's whatever the setting (`page_ink_fingerprint` draws in the Smooth scope); Solid's is
+  `page_render_fingerprint_for(InkEdges::Solid)`, and the stamps of the screen's pictures (store.rs
+  `preview_stamp`, `render_tag`) name the one of the setting they were drawn under, so a kept drawing, a
+  preview or a card of the other setting is drawn again once. A change made over an open notebook drops its
+  undo patches and the pages kept in memory and draws its page again at once (editor.rs
+  `editor_ink_edges_changed`).
 - The eraser removes whole strokes it touches, or with `eraser_mode` 1 (Precise) draws erase
   strokes (below); one pen-down..up is ONE undo step. The eraser end of the pen
   (BTN_TOOL_RUBBER) and holding the side button (BTN_STYLUS) erase regardless of the selected
@@ -267,7 +303,11 @@ draws them. White ink and the precise eraser make them.
   page (tests/test_erase.c, `compaction_is_the_rule`). It only reads the page (the editor's undo
   history holds pointers to its strokes): leave the marked strokes out of a copy. Never call it on
   the UI thread: on the device a heavily erased page can take tens of seconds, past the watchdog's
-  15 s. Its read-only contract suits a forked child, as bgjob.c runs exports.
+  15 s. Its read-only contract suits a forked child, as bgjob.c runs exports. On a page with a stroke
+  Ink edges at Solid draws otherwise (page.rs `stroke_may_be_solid`) it checks under both settings,
+  each with its own reference: a stroke goes only when that changes neither drawing (an eraser's soft
+  rim brings a Smooth gray back to the paper in fewer dabs than a solid black pixel), so the page reads
+  the same after under either setting. Such a page takes up to twice the time and two more canvases.
 - Memory: a render whose region erase strokes reach allocates a copy of the paper there, up to the
   region's size (4.6 MB for a whole 1860x2480 page, in an export's child too); `page_droppable`
   needs two page-size canvases (one on white paper) and the pieces of the strokes it draws.
