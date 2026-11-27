@@ -6,9 +6,13 @@
 # refreshes the bar's strip alone, over its page and over its Pages view. Before, the bar read the machine's own
 # clock behind the script's: the minute changed when the machine's did, and its refresh landed among the ones a
 # scenario counts (issue #234: "ui 0 0 1860 78" beside a tile's own refresh).
-# (past the two launch repaints, at 1.2 s and 3.5 s, which refresh the whole screen)
+# (past the two launch repaints, at 1.2 s and 3.5 s, which refresh the whole screen: each in a wait of its own,
+# since the second is done a pass of the main loop after the first. One wait of 3,600 ms made its time up in one
+# step at its end on a slow machine, docs/SIM.md, did the first there, and left the second to land in the quiet
+# stretch counted below.)
 clock 1700000000
-wait 3600
+wait 1300
+wait 2300
 expect display.presents not -1
 wait 2000
 expect display.presents is

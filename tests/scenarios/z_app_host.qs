@@ -79,8 +79,9 @@ expect library.app.id is test.app.later
 expect library.app.error is
 expect library.app.status is later
 expect display.dark.40.40.200.100 is 20000
-wait 200
-expect library.app.open is 0
+# (waited for by what it does, not by a time: the pass comes due and is stopped in one round, and the app is
+# closed in the next, which a wait that makes its time up in one step at its end does not have)
+waitfor library.app.open is 0
 expect toast is The app stopped: all fuel consumed by WebAssembly
 expect screen is library
 expect library.sheet is none
