@@ -3690,7 +3690,11 @@ than the screen (`_14_near_page`), a solid word beside a widget's timed redraw (
 Status bar and Pen rows without the sleep service (`z_services_3_sleep`). Automated: the full gate on the
 release commit with the pinned toolchain. Crate ages: wasmi, wasmi_collections, wasmi_core and wasmi_ir 2.0.3
 (2026-11-24) are younger than two weeks at the tag, the same versions 2.2.0 shipped under the owner's waiver of
-2026-11-25 (two weeks old on 2026-12-08); every other crate is old enough. Not yet on a Kindle.
+2026-11-25 (two weeks old on 2026-12-08); every other crate is old enough. The bump commit's bundle (`c52c8352`,
+build `725feb9851ea`), from before the work above was merged, was installed on the owner's Scribe (firmware
+5.20.1.0.2) on 2026-11-26 after a backup, with the notebooks unchanged and KOReader left alone; the owner asked
+for the home's row, the bat and the smaller status bar (#319) and for Ink edges (#320) before the beta is
+published. The release commit's own build is not yet on a Kindle.
 
 ## 2.2.0
 

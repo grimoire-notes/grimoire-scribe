@@ -6,7 +6,7 @@
 # A tap on a version shows its notes in the reader, whole on one page (the owner, 2026-11-07:
 # "fit all"; about.rs note_fit), with the signature at their end and no page arrows. There is no
 # Back layer: the X and Esc close What's new. The rows are docs/whatsnew/'s notes as this build sees
-# them (VERSION 2.3.0-beta.1, dated 2026-11-26 by the changelog and the one marked): every release sets them
+# them (VERSION 2.3.0-beta.1, dated 2026-11-27 by the changelog and the one marked): every release sets them
 # again (docs/RELEASING.md, The bump commit).
 # rust-only
 wait 200
@@ -21,7 +21,7 @@ expect library.about.entries is 7
 expect library.about.rows is 7
 expect library.about.pages is 1
 expect library.about.row.1 is 2.3.0-beta.1
-expect library.about.row_date.1 is 2026-11-26
+expect library.about.row_date.1 is 2026-11-27
 expect library.about.row.2 is 2.2.0
 expect library.about.row_date.2 is 2026-11-26
 expect library.about.row.3 is 2.1.0

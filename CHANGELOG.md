@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.3.0-beta.1 (2026-11-26)
+## 2.3.0-beta.1 (2026-11-27)
 
 - **A new home** (#225, nebuff; #319). The Library opens as a home screen: the status bar at the top, then
   Grimoire's bat and the Library's title (a tap on either opens What's new) with the Settings and Search buttons
@@ -137,7 +137,8 @@
   and 2.3's screens are translated. In this beta 46 of 1,268 texts are still in English in each language: 35 of
   the Package Store's (among them its search, installing from GitHub, updating, uninstalling and the license
   steps), the package kit's two messages, Manage apps..., Settings > Updates' version line, Ink edges' six, and one
-  a Kindle never shows (the Sleep settings switch of a device whose system owns sleep).
+  a Kindle never shows (the Sleep settings switch of a device whose system owns sleep). Spanish has 167 of them
+  in English in this beta, most of 2.3's new screens; they come with 2.3.0.
 - Settings > Updates says "Version 2.2.0 to 2.3.0" where it had an arrow, which Classic's fonts do not have; and
   the home's Sort select shows its value alone where the caption and value do not fit even small, as in Japanese
   (#316).
