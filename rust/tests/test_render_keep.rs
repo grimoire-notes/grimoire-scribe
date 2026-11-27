@@ -322,6 +322,49 @@ fn drawings_kept_under_earlier_papers_are_drawn_again() {
     }
 }
 
+// Ink edges (2.3, #320): a page's pictures for the screen are stamped with the renderer of the setting they are drawn
+// under (page_render_fingerprint_screen): Smooth's stamp is as before, Solid's another, and a kept drawing or a Pages
+// preview made under one setting is not shown under the other (a card's source, the page file's identity, differs
+// too). The fingerprint of Smooth does not depend on the setting.
+fn pictures_follow_ink_edges() {
+    let solid = InkEdges::Solid;
+    let mut nb = NotebookInfo::default();
+    check!(store_create("Edges", "", PAPER_NARROW, &mut nb) == 0);
+    let (w, h) = (600, 800);
+    let p = page_with_ink(w, h);
+    check!(store_save_page(&nb, 0, &p) == 0);
+    let pid = nb.page_ids[0];
+    let smooth_id = store_page_source_identity(&nb, pid).unwrap_or_default();
+    let solid_id = ink_edges_as(solid, || store_page_source_identity(&nb, pid)).unwrap_or_default();
+    check!(smooth_id.ends_with(&format!(":{:016x}", page_render_fingerprint())));
+    check!(solid_id.ends_with(&format!(":{:016x}", page_render_fingerprint_for(solid))));
+    check!(solid_id != smooth_id && smooth_id.rsplit_once(':').map(|x| x.0) == solid_id.rsplit_once(':').map(|x| x.0));
+    check!(ink_edges_as(solid, page_render_fingerprint) == page_render_fingerprint());
+    let whole = Rect { x: 0, y: 0, w, h };
+    let (mut drawn_solid, mut drawn_smooth) = (Canvas::default(), Canvas::default());
+    check!(canvas_init(&mut drawn_solid, w, h) == 0 && canvas_init(&mut drawn_smooth, w, h) == 0);
+    ink_edges_as(solid, || page_render(&mut drawn_solid, &p, whole, 300.0));
+    page_render(&mut drawn_smooth, &p, whole, 300.0);
+    check!(drawn_solid.px != drawn_smooth.px);
+    let mut back = Canvas::default();
+    check!(canvas_init(&mut back, w, h) == 0);
+    // kept under Solid: read under Solid alone
+    check!(ink_edges_as(solid, || store_save_page_render(&nb, pid, &drawn_solid, false)));
+    check!(ink_edges_as(solid, || store_page_render_kept(&nb, pid, w, h, false)) && !store_page_render_kept(&nb, pid, w, h, false));
+    check!(!store_load_page_render(&nb, pid, w, h, &mut back, false));
+    check!(ink_edges_as(solid, || store_load_page_render(&nb, pid, w, h, &mut back, false)) && back.px == drawn_solid.px);
+    // kept under Smooth: read under Smooth alone
+    check!(store_save_page_render(&nb, pid, &drawn_smooth, false));
+    check!(!ink_edges_as(solid, || store_load_page_render(&nb, pid, w, h, &mut back, false)));
+    check!(store_load_page_render(&nb, pid, w, h, &mut back, false) && back.px == drawn_smooth.px);
+    // a Pages preview made under Solid is not current under Smooth, and the other way round
+    ink_edges_as(solid, || store_save_page_preview(&nb, pid, &drawn_solid));
+    check!(ink_edges_as(solid, || store_page_preview_ok(&nb, pid)) && !store_page_preview_ok(&nb, pid));
+    store_save_page_preview(&nb, pid, &drawn_smooth);
+    check!(store_page_preview_ok(&nb, pid) && !ink_edges_as(solid, || store_page_preview_ok(&nb, pid)));
+    check!(ink_edges() == InkEdges::Smooth);
+}
+
 #[test]
 fn test_render_keep() {
     let root = format!("{}/render-keep-{}", tl_tmp(), std::process::id());
@@ -335,6 +378,7 @@ fn test_render_keep() {
     run!(every_paper_is_in_the_fingerprint);
     run!(every_line_of_every_paper_is_in_the_fingerprint);
     run!(drawings_kept_under_earlier_papers_are_drawn_again);
+    run!(pictures_follow_ink_edges);
     let _ = std::fs::remove_dir_all(&root);
     done(); // (a failed check fails the test: it did not, without this)
 }
