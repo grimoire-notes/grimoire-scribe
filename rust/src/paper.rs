@@ -1524,6 +1524,54 @@ mod tests {
     }
 
     #[test]
+    fn a_view_draws_graph_paper_as_the_page_with_its_fifth_lines_whole() {
+        // Graph paper through a view (#314's grays and order): every line keeps its page width and gray, so a view
+        // has as many columns and rows of each gray as the page, and every fifth line is drawn after the others, so
+        // it is its gray from end to end of the footprint, where the lighter lines cross it too. In views of
+        // several scales, the page at several fractions of a pixel across.
+        let _panel = paper_panel_lock();
+        paper_set_panel_ppi(0.0, 300.0);
+        let (dpi, w, h) = (300.0, 1860, 2480);
+        let mut page = Canvas::default();
+        assert_eq!(canvas_init(&mut page, w, h), 0);
+        paper_render(&mut page, PAPER_GRID, Rect::new(0, 0, w, h), dpi);
+        let lines = |c: &Canvas, r: Rect, g: u8| -> (Vec<i32>, Vec<i32>) {
+            let at = |x: i32, y: i32| c.px[(y * c.stride + x) as usize];
+            let columns = (r.x..r.x + r.w).filter(|&x| (r.y..r.y + r.h).filter(|&y| at(x, y) == g).count() as i32 > r.h / 2).collect();
+            let rows = (r.y..r.y + r.h).filter(|&y| (r.x..r.x + r.w).filter(|&x| at(x, y) == g).count() as i32 > r.w / 2).collect();
+            (columns, rows)
+        };
+        let on_page = [GRID_LINE, GRID_FIFTH].map(|g| lines(&page, Rect::new(0, 0, w, h), g));
+        // (on the page: seven fifth lines down and nine across, 3 px wide)
+        assert_eq!((on_page[1].0.len(), on_page[1].1.len()), (21, 27));
+        for (n, zoom) in [0.75f32, 1920.0 / 2480.0, 0.6, 0.9, 0.969].into_iter().enumerate() {
+            let ox = -723.333_3 + 0.37 * n as f32;
+            let oy = -0.29 * n as f32;
+            let foot = Rect::new((-ox * zoom).round() as i32, (-oy * zoom).round() as i32, (w as f32 * zoom).round() as i32, (h as f32 * zoom).round() as i32);
+            let m = PaperView { zoom, ox, oy, foot };
+            let mut c = Canvas::default();
+            assert_eq!(canvas_init(&mut c, 2560, 2480), 0);
+            assert!(paper_render_view(&mut c, PAPER_GRID, w, h, dpi, m, Rect::new(0, 0, 2560, 2480)));
+            let at = |x: i32, y: i32| c.px[(y * 2560 + x) as usize];
+            for (g, (pc, pr)) in [GRID_LINE, GRID_FIFTH].into_iter().zip(&on_page) {
+                let (vc, vr) = lines(&c, foot, g);
+                assert_eq!((vc.len(), vr.len()), (pc.len(), pr.len()), "zoom {zoom}: the columns and rows of {g}");
+                if g != GRID_FIFTH {
+                    continue;
+                }
+                for x in vc {
+                    let cut = (foot.y..foot.y + foot.h).find(|&y| at(x, y) != g);
+                    assert!(cut.is_none(), "zoom {zoom}: the fifth line's column {x} is {} at {cut:?}", at(x, cut.unwrap_or(0)));
+                }
+                for y in vr {
+                    let cut = (foot.x..foot.x + foot.w).find(|&x| at(x, y) != g);
+                    assert!(cut.is_none(), "zoom {zoom}: the fifth line's row {y} is {} at {cut:?}", at(cut.unwrap_or(0), y));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn seyes_is_laid_out_at_the_panels_density() {
         // (the scale is process state: this test sets it and puts it back, holding the lock)
         let _panel = paper_panel_lock();
