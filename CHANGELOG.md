@@ -132,8 +132,9 @@
   Pages view's previews are drawn again once after a change, as each is next shown, and the Library's cards at once,
   in the background. In Polish and Japanese its texts are in English until they are translated.
 - **Polish and Japanese** (#315, nebuff). The texts of the new home, Apps, the Package Store and the rest of 2.2's
-  and 2.3's screens are translated. In this beta 45 of 1,267 texts are still in English in each language: the
-  Package Store's license steps, the package kit's messages, Manage apps... and Settings > Updates' version line.
+  and 2.3's screens are translated. In this beta 46 of 1,268 texts are still in English in each language: the
+  Package Store's license steps, the package kit's messages, Manage apps..., Settings > Updates' version line,
+  Ink edges' six, and one a Kindle never shows (the Sleep settings switch of a device whose system owns sleep).
 - Settings > Updates says "Version 2.2.0 to 2.3.0" where it had an arrow, which Classic's fonts do not have; and
   the home's Sort select shows its value alone where the caption and value do not fit even small, as in Japanese
   (#316).

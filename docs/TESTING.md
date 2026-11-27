@@ -3675,10 +3675,19 @@ They check the headless runner's panel; on the Kindle, check what the screen sho
 ## 2.3.0-beta.1
 
 The first beta of 2.3, from `release/2.3.0`: cut from `main` at `ef80193a` on 2026-11-26, after the owner chose a
-beta before 2.3.0 ("a 2.3 beta 1 is fine -- full release can have the strings"). It holds everything in CHANGELOG's
-2.3.0-beta.1 section: the home redesign, Apps and the Package Store (#225), folder icons (#230), Kindle notebooks
-(#196), typing on a paired keyboard (#266), the package kit and its input (#267, #272, #307), darker papers (#314),
-nebuff's Polish and Japanese (#315, #316) and the update-channel toast (#312). Automated: the full gate on the
+beta before 2.3.0 ("a 2.3 beta 1 is fine -- full release can have the strings"), with the work merged into it
+since: the home's app row, the bat and the small status bar (#319), Ink edges (#320), and `main` again through
+#310 (#302), which brought a page a little smaller than the screen at 100% (#303), even paper lines below 100%
+(#308) and six changes for platforms kept in other crates (#274, #275, #278, #280, #281, #282), of which a Kindle
+shows one toast (Warmth down or up on a light without warmth says "This Kindle has no warmth control."). It holds
+everything in CHANGELOG's 2.3.0-beta.1 section: the home redesign, Apps and the Package Store
+(#225), folder icons (#230), Kindle notebooks (#196), typing on a paired keyboard (#266), the package kit and its
+input (#267, #272, #307), darker papers (#314), nebuff's Polish and Japanese (#315, #316) and the update-channel
+toast (#312). Where the two lines of work met, the merge's own tests hold it (#302): Ink edges at Solid in a view
+that draws the paper's lines at its own scale (editor.rs's unit tests of the ruled view, the Links bar and the
+Kindle's copy of its frames; `z_ink_edges_12_ruled_view`, `_13_rulings`) and on a page at 100% a little smaller
+than the screen (`_14_near_page`), a solid word beside a widget's timed redraw (`_15_widget_unasked`), and the
+Status bar and Pen rows without the sleep service (`z_services_3_sleep`). Automated: the full gate on the
 release commit with the pinned toolchain. Crate ages: wasmi, wasmi_collections, wasmi_core and wasmi_ir 2.0.3
 (2026-11-24) are younger than two weeks at the tag, the same versions 2.2.0 shipped under the owner's waiver of
 2026-11-25 (two weeks old on 2026-12-08); every other crate is old enough. Not yet on a Kindle.
