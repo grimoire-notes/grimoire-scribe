@@ -133,12 +133,14 @@
   Pages kept drawn to open quickly and the Pages view's previews are drawn again once after a change, as each is
   next shown. A notebook's card in the Library follows the change when the notebook is next opened and left. In
   Polish and Japanese its texts are in English until they are translated.
+- **Empty trash** (#330). Files > Trash has Empty trash at the top right: it asks first, saying how many entries
+  and how much space go, then deletes them for good in the background and says what was freed.
 - **Polish and Japanese** (#315, nebuff). The texts of the new home, Apps, the Package Store and the rest of 2.2's
-  and 2.3's screens are translated. In this beta 46 of 1,268 texts are still in English in each language: 35 of
+  and 2.3's screens are translated. In this beta 52 of 1,274 texts are still in English in each language: 35 of
   the Package Store's (among them its search, installing from GitHub, updating, uninstalling and the license
-  steps), the package kit's two messages, Manage apps..., Settings > Updates' version line, Ink edges' six, and one
-  a Kindle never shows (the Sleep settings switch of a device whose system owns sleep). Spanish has 167 of them
-  in English in this beta, most of 2.3's new screens; they come with 2.3.0.
+  steps), the package kit's two messages, Manage apps..., Settings > Updates' version line, Ink edges' six, Empty
+  trash's six, and one a Kindle never shows (the Sleep settings switch of a device whose system owns sleep).
+  Spanish has 173 of them in English in this beta, most of 2.3's new screens; they come with 2.3.0.
 - Settings > Updates says "Version 2.2.0 to 2.3.0" where it had an arrow, which Classic's fonts do not have; and
   the home's Sort select shows its value alone where the caption and value do not fit even small, as in Japanese
   (#316).
