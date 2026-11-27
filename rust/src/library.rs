@@ -3,7 +3,7 @@
 
 use crate::prelude::*;
 use crate::appicon::AppIcon;
-use crate::globalui::{gui_app_tile, gui_button, gui_chip, gui_chip_h, gui_fab, gui_gap, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_row_h, gui_row_min_h, gui_select, gui_select_h, gui_status_bar, gui_status_h, gui_top_button_h, GuiPopupItem};
+use crate::globalui::{gui_app_tile, gui_button, gui_chip, gui_chip_h, gui_fab, gui_gap, gui_head_h, gui_header, gui_header_lead, gui_icon_button, gui_margin, gui_page_title_px, gui_popup, gui_radius, gui_row_h, gui_row_min_h, gui_select, gui_select_h, gui_status_bar, gui_status_h, gui_top_button_h, GuiPopupItem};
 use crate::settingsmenu;
 use crate::ui::{ui_row, ui_row_page, ui_row_pager, Row as UiRow};
 use crate::browser::{BrowseMode, Browser, BrowserResult, FilesPrefs, PickSpec};
@@ -613,6 +613,11 @@ pub(crate) fn bottom_h() -> i32 {
 }
 fn margin() -> i32 {
     gui_margin()
+}
+/// The size of one of the bat's blocks in the home's header (bat.rs draw_bat): 3 px, as the Library's
+/// bar drew it through 2.2, so the bat is 129 x 42 px at 300 dpi.
+fn home_bat_k() -> i32 {
+    ui_px(3.0)
 }
 /// The app row's height, and the width of one small app launcher in it.
 fn apps_h() -> i32 {
@@ -1955,12 +1960,18 @@ fn draw_base(a: &mut App) {
         tr("Library")
     };
     // The one header: title at the left, its round actions right to left. Search opens the keyboard
-    // over the Library, and the filtered grid follows each key typed.
-    let (head, actions) = gui_header(
+    // over the Library, and the filtered grid follows each key typed. At the top level Grimoire's bat
+    // stands left of the title, as it did in the Library's bar through 2.2 (#319), and a tap on the
+    // bat or the title opens What's new; in a folder, Back and the folder's name are there instead.
+    let top_level = s.cur_folder.is_empty();
+    let k = home_bat_k();
+    let lead = if top_level { (BAT_W * k, BAT_H * k) } else { (0, 0) };
+    let (head, actions) = gui_header_lead(
         c,
         aw,
         title,
-        !s.cur_folder.is_empty(),
+        !top_level,
+        lead,
         &[(IconKind::Gear, H_SETTINGS), (IconKind::Search, H_SEARCH)],
     );
     if !rect_is_empty(head.back) {
@@ -1968,6 +1979,11 @@ fn draw_base(a: &mut App) {
     }
     for (r, id) in actions {
         hits_add(&mut s.hits, r, id, 0);
+    }
+    if !rect_is_empty(head.lead) {
+        draw_bat(c, head.lead.x, head.lead.y, k);
+        let title_w = font_measure(FontFace::Title, gui_page_title_px(), title).min(head.title.w);
+        hits_add(&mut s.hits, Rect::new(0, head.title.y, head.title.x + title_w + ui_px(20.0), head.title.h), H_ABOUT, 0);
     }
 
     // The app row: small launchers with the icon in a rectangle and its name below, as a phone
@@ -11912,6 +11928,77 @@ mod tests {
             assert_eq!(page[..3].iter().map(|l| l.1.x).collect::<Vec<_>>(), row.iter().map(|l| l.1.x).collect::<Vec<_>>());
             close_modal(&mut a);
         }
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The bat (#319): at the home's top level Grimoire's bat stands left of the title, in Gothic and Classic, as
+    // bat.rs draws it, 3 px a block; a tap on it or on the title opens What's new, as Apps > What's new does. In a
+    // folder it is not there: Back and the folder's name are, and nothing there opens What's new.
+    #[test]
+    fn the_bat_is_on_the_homes_top_level_and_opens_whats_new() {
+        let root = std::env::temp_dir().join(format!("grimoire-home-bat-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        let mut nb = NotebookInfo::default();
+        assert_eq!(store_create("A", "School", PAPER_BLANK, &mut nb), 0);
+        let mut a = pen_record_app();
+        a.scr = ScreenId::Library;
+        settings_default(&mut a.settings);
+        lib(&mut a).modal = Modal::None;
+        reload(&mut a);
+        let k = home_bat_k();
+        assert_eq!(k, 3);
+        let bat = Rect::new(gui_margin(), gui_status_h() + (gui_head_h() - BAT_H * k) / 2, BAT_W * k, BAT_H * k);
+        let mut want = Canvas::default();
+        assert_eq!(canvas_init(&mut want, bat.w, bat.h), 0);
+        canvas_fill(&mut want, Rect::new(0, 0, bat.w, bat.h), 255);
+        draw_bat(&mut want, 0, 0, k);
+        let is_bat = |c: &Canvas| (0..bat.h).all(|y| {
+            let at = ((bat.y + y) * c.stride + bat.x) as usize;
+            c.px[at..at + bat.w as usize] == want.px[(y * want.stride) as usize..(y * want.stride + bat.w) as usize]
+        });
+        let tap = |a: &mut App, x: i32, y: i32, t_ms: u32| {
+            for type_ in [InType::TouchDown, InType::TouchUp] {
+                library_event_in(a, &InEvent { type_, x: x as f32, y: y as f32, t_ms, ..Default::default() });
+            }
+        };
+        let about = |a: &mut App| lib(a).hits.h.iter().find(|h| h.id == H_ABOUT).map(|h| h.r);
+        // (Apps > What's new: the note it opens on)
+        act(&mut a, &Hit { id: H_APPS, ..Default::default() });
+        act(&mut a, &Hit { id: H_APP, arg: 6, ..Default::default() });
+        assert_eq!(lib(&mut a).modal, Modal::About);
+        let note = lib(&mut a).about_note;
+        close_modal(&mut a);
+        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+            ui_set_theme(theme);
+            lib(&mut a).cur_folder.clear();
+            reload(&mut a);
+            redraw(&mut a, RefreshMode::Ui);
+            assert!(is_bat(&a.screen), "{theme:?}: the bat left of the title");
+            let r = about(&mut a).unwrap_or_else(|| panic!("{theme:?}: no hit on the bat and the title"));
+            assert!(rect_contains_rect(r, bat), "{theme:?}: {r:?}");
+            let title_x = bat.x + bat.w + ui_px(34.0);
+            assert!(r.x + r.w > title_x + ui_px(200.0), "{theme:?}: the title is in it: {r:?}");
+            for (i, (x, y)) in [(bat.x + bat.w / 2, bat.y + bat.h / 2), (title_x + ui_px(100.0), r.y + r.h / 2)].into_iter().enumerate() {
+                assert_eq!(probe(&mut a, &format!("ui_at.{x}.{y}")), "about", "{theme:?}");
+                tap(&mut a, x, y, 1000 + 100 * i as u32);
+                assert_eq!(lib(&mut a).modal, Modal::About, "{theme:?}: tap {i} opens What's new");
+                assert_eq!(lib(&mut a).about_note, note, "{theme:?}: on the note Apps > What's new opens on");
+                close_modal(&mut a);
+                assert_eq!(lib(&mut a).modal, Modal::None);
+            }
+            // In a folder: Back and the folder's name, no bat and nothing that opens What's new.
+            lib(&mut a).cur_folder.set("School");
+            reload(&mut a);
+            redraw(&mut a, RefreshMode::Ui);
+            assert!(about(&mut a).is_none(), "{theme:?}: no What's new in a folder");
+            assert!(lib(&mut a).hits.h.iter().any(|h| h.id == H_BACK), "{theme:?}: Back");
+            assert!(!is_bat(&a.screen), "{theme:?}: no bat in a folder");
+        }
+        ui_set_theme(UiTheme::Gothic);
+        canvas_free(&mut want);
         library_free(&mut a);
         canvas_free(&mut a.screen);
         let _ = std::fs::remove_dir_all(&root);

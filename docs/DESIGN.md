@@ -1356,9 +1356,12 @@ that would cross the limit (`clean_line`).
 `about.rs`. The notes are a file for each version, `docs/whatsnew/VERSION.md` (2.1.0; until then the one
 docs/WHATSNEW.md), compiled in, each a small Markdown: `# ` the title, `## ` a heading, `- ` a bullet, other
 lines a paragraph, `{signature}` where the owner's signature goes. They are the owner's text, not translated.
-The bat in the Library's top bar (or the name beside it) opens What's new as a card hanging from the bat: What's
-new and the version, this version's notes (each heading with its first bullet; notes without headings, every
-bullet and paragraph), the signature, Read all and Dismiss.
+Through 2.2 the bat in the Library's top bar (or the name beside it) opened What's new as a card hanging from the
+bat: What's new and the version, this version's notes (each heading with its first bullet; notes without headings,
+every bullet and paragraph), the signature, Read all and Dismiss. Since 2.3 What's new is a full screen of its own
+(`about_draw`: every version down the left, the notes of the one picked at the right), and the bat stands left of
+the home's title at its top level (library.rs `draw_base`, globalui.rs `gui_header_lead`; Back and the folder's
+name in a folder): a tap on it or on the title opens What's new, as the Apps page's What's new does (#319).
 
 - **The notes, a file a version** (2.1.0). build.rs lists `docs/whatsnew/*.md` into `NOTE_FILES`, each with
   the date of CHANGELOG.md's `## VERSION (YYYY-MM-DD)` heading (`unreleased` for `(unreleased)`, none

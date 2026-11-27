@@ -152,7 +152,10 @@ pub fn gui_top_button_h() -> i32 {
 pub struct GuiHeader {
     /// The Back button at the left (empty when the screen has none).
     pub back: Rect,
-    /// The title, between Back and the actions.
+    /// The room `gui_header_lead` keeps left of the title for the caller's mark (the home's bat),
+    /// centred on the title's axis; empty for every other header.
+    pub lead: Rect,
+    /// The title, between Back (or the lead) and the actions.
     pub title: Rect,
     /// The first row under the header: a screen's content starts here.
     pub foot: i32,
@@ -167,6 +170,21 @@ pub fn gui_header(
     aw: i32,
     title: &str,
     back: bool,
+    actions: &[(IconKind, i32)],
+) -> (GuiHeader, Vec<(Rect, i32)>) {
+    gui_header_lead(c, aw, title, back, (0, 0), actions)
+}
+
+/// `gui_header` with room for a mark of the caller's, `lead` (w, h), between Back and the title: the
+/// home's top level puts Grimoire's bat there (library.rs draw_base). The room is `GuiHeader::lead`,
+/// the title starts 34 px after it, and the caller draws the mark. With no lead (0, 0) the header is
+/// `gui_header`'s, pixel for pixel.
+pub fn gui_header_lead(
+    c: &mut Canvas,
+    aw: i32,
+    title: &str,
+    back: bool,
+    lead: (i32, i32),
     actions: &[(IconKind, i32)],
 ) -> (GuiHeader, Vec<(Rect, i32)>) {
     gui_status_bar(c, aw, sys_wall_clock());
@@ -193,9 +211,14 @@ pub fn gui_header(
         gui_icon_button(c, back_r, IconKind::Back, ButtonStyle::Plain);
         tx = back_r.x + bh + ui_px(22.0);
     }
+    let mut lead_r = RECT_EMPTY;
+    if lead.0 > 0 && lead.1 > 0 {
+        lead_r = Rect::new(tx, top + (th - lead.1) / 2, lead.0, lead.1);
+        tx = lead_r.x + lead_r.w + ui_px(34.0);
+    }
     let title_r = Rect::new(tx, top, (rx - tx - ui_px(20.0)).max(0), th);
     gui_page_title(c, title_r, title);
-    (GuiHeader { back: back_r, title: title_r, foot: top + th }, rects)
+    (GuiHeader { back: back_r, lead: lead_r, title: title_r, foot: top + th }, rects)
 }
 
 /// The size of a screen's title (`gui_page_title`): the title size, larger in Gothic's blackletter.
@@ -918,6 +941,7 @@ mod tests {
         let (head, actions) = gui_header(&mut c, 1860, "Library", true, &[(IconKind::Gear, 1)]);
         assert_eq!(head.back.y + head.back.h / 2, head.title.y + head.title.h / 2);
         assert_eq!(actions[0].0.y + actions[0].0.h / 2, head.title.y + head.title.h / 2);
+        assert!(rect_is_empty(head.lead));
         canvas_free(&mut c);
         gui_status_style(1, false);
     }
@@ -935,6 +959,40 @@ mod tests {
             .collect();
         gui_status_style(1, false);
         assert_eq!(heights, [72, 78, 92]);
+    }
+
+    // A header with a lead keeps its room between the margin and the title, centred on the title's axis, and is
+    // otherwise the header without one: a header with no lead draws the same pixels as gui_header.
+    #[test]
+    fn a_headers_lead_sits_before_the_title_and_no_lead_changes_nothing() {
+        ui_init(300.0);
+        assert_eq!(font_init(), 0);
+        gui_status_style(1, false);
+        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+            ui_set_theme(theme);
+            let mut plain = Canvas::default();
+            let mut none = Canvas::default();
+            let mut led = Canvas::default();
+            for c in [&mut plain, &mut none, &mut led] {
+                assert_eq!(canvas_init(c, 1860, 400), 0);
+            }
+            let acts = [(IconKind::Gear, 1), (IconKind::Search, 2)];
+            let (h0, a0) = gui_header(&mut plain, 1860, "Library", false, &acts);
+            let (h1, a1) = gui_header_lead(&mut none, 1860, "Library", false, (0, 0), &acts);
+            assert_eq!((h0.title, h0.foot, &a0), (h1.title, h1.foot, &a1), "{theme:?}");
+            // (under the status bar, whose clock reads the machine's minute)
+            let below = (gui_status_h() * plain.stride) as usize;
+            assert!(plain.px[below..] == none.px[below..], "{theme:?}: no lead, the same pixels");
+            let (h2, a2) = gui_header_lead(&mut led, 1860, "Library", false, (129, 42), &acts);
+            assert_eq!(h2.lead, Rect::new(gui_margin(), gui_status_h() + (gui_head_h() - 42) / 2, 129, 42), "{theme:?}");
+            assert_eq!(h2.title.x, h2.lead.x + 129 + ui_px(34.0), "{theme:?}");
+            assert_eq!(h2.lead.y + h2.lead.h / 2, h2.title.y + h2.title.h / 2, "{theme:?}");
+            assert_eq!(a2, a0, "{theme:?}: the actions stay where they were");
+            for c in [&mut plain, &mut none, &mut led] {
+                canvas_free(c);
+            }
+        }
+        ui_set_theme(UiTheme::Gothic);
     }
 
     // The standard sizes the screens lay their elements out at (and the package kit gives a package): Settings' rows
