@@ -11505,7 +11505,9 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                         name.push_str(&it.id);
                     }
                 } else {
-                    name.push_str(["files", "share", "", "store", "", "", "whats-new", "about"].get(hit.arg as usize).copied().unwrap_or(""));
+                    // (arg 2, Settings, has no launcher since #319; it keeps its name, so a check that the row
+                    // has no `app.settings` sees one that came back)
+                    name.push_str(["files", "share", "settings", "store", "", "", "whats-new", "about"].get(hit.arg as usize).copied().unwrap_or(""));
                 }
             }
             if matches!(hit.id, H_GESTURE_GROUP | H_BUTTON_GROUP) {
