@@ -25,7 +25,9 @@ expect bg.busy is 1
 shot 01-loading
 expect display.presents not -1
 waitbg 30000
+# (that tile alone refreshed as its preview comes, and once: the 400 ms after it shows hold no second refresh of it)
 waitfor editor.destination.shows is pppppppppp
+wait 400
 expect display.presents is ui 35 900 421 325
 shot 02-ready
 quit

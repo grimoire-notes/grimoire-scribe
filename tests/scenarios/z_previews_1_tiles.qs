@@ -21,8 +21,10 @@ expect bg.busy is 1
 shot 01-loading
 expect display.presents not -1
 waitbg 30000
-# the dense page's preview in its tile, that tile alone refreshed (a GL16, no flash)
+# the dense page's preview in its tile, that tile alone refreshed (a GL16, no flash), and once: the 400 ms after it
+# shows hold no second refresh of it
 waitfor editor.pages.shows is ppppppppp
+wait 400
 expect display.presents is ui 24 292 588 648
 shot 02-ready
 quit
