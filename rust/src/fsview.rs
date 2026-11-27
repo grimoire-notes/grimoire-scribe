@@ -8,7 +8,10 @@
 //! (browser.rs, issue #144).
 //!
 //! - One root: /mnt/us on the Kindle (when Grimoire's own folder is inside it); elsewhere GRIMOIRE_STORAGE,
-//!   a hook compiled out of the Kindle build. Never "/".
+//!   a hook compiled out of the Kindle build. Never "/". Off the Kindle four more hooks say what that storage
+//!   names otherwise: the folders of Files' three places at its root (GRIMOIRE_PLACE_DOCUMENTS,
+//!   GRIMOIRE_PLACE_DOWNLOADS, GRIMOIRE_PLACE_FONTS: `fsview_place_folder`) and more of the system's folders
+//!   (GRIMOIRE_STORAGE_SYSTEM, `is_system`).
 //! - One walk, no links: each component opened with openat(O_DIRECTORY|O_NOFOLLOW) from the one before, the
 //!   file with O_NOFOLLOW, so a link anywhere fails (O_NOFOLLOW covers the last component only; the Scribe's
 //!   kernel, 4.9, has no openat2). Each directory must be on the root's device, and none may be Grimoire's
@@ -44,7 +47,8 @@ pub const FS_FREE_FLOOR: u64 = 100 << 20;
 /// Under this, Files says "Kindle storage nearly full."
 pub const FS_FREE_LOW: u64 = 200 << 20;
 
-/// The system's folders at the storage root, never listed or entered.
+/// The system's folders at the storage root, never listed or entered (and off the Kindle GRIMOIRE_STORAGE_SYSTEM's:
+/// `is_system`).
 const SYSTEM: [&[u8]; 9] =
     [b"system", b"extensions", b"koreader", b"mrpackages", b"usbnet", b"libkh", b"linkss", b"linkfonts", b"kindle_hid_passthrough"];
 /// Grimoire's folders that are its own business, never listed or entered.
@@ -68,6 +72,51 @@ pub fn fsview_root() -> Option<String> {
         let s = std::env::var("GRIMOIRE_STORAGE").ok()?;
         (s.starts_with('/') && !s.trim_end_matches('/').is_empty()).then_some(s)
     }
+}
+
+/// The folder of one of Files' places at the storage root (Documents, Downloads, the Kindle's fonts): `kindle`, the
+/// Kindle's name for it; off the Kindle the variable `var`'s when it is set, for a platform whose data root sits
+/// inside a larger storage that names these folders otherwise (one name: no "/", not "." or ".."; empty, or no one
+/// name, and there is no such place). A hook compiled out of the Kindle build, as GRIMOIRE_STORAGE is.
+pub fn fsview_place_folder(var: &str, kindle: &str) -> Option<StoragePath> {
+    #[cfg(feature = "kindle")]
+    {
+        let _ = var;
+        StoragePath::root().join(kindle.as_bytes())
+    }
+    #[cfg(not(feature = "kindle"))]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        match std::env::var_os(var) {
+            Some(v) if v.is_empty() => None,
+            Some(v) => StoragePath::root().join(v.as_bytes()),
+            None => StoragePath::root().join(kindle.as_bytes()),
+        }
+    }
+}
+
+/// More of the system's folders at the storage root, off the Kindle: GRIMOIRE_STORAGE_SYSTEM's names, separated by
+/// "/" (the one byte no name holds; an empty name and one that begins with a dot are left out, a dot-entry being
+/// refused anyway). Read once. A hook compiled out of the Kindle build, as GRIMOIRE_STORAGE is.
+#[cfg(not(feature = "kindle"))]
+fn system_extra() -> &'static [Vec<u8>] {
+    static EXTRA: std::sync::OnceLock<Vec<Vec<u8>>> = std::sync::OnceLock::new();
+    EXTRA.get_or_init(|| {
+        use std::os::unix::ffi::OsStrExt;
+        let v = std::env::var_os("GRIMOIRE_STORAGE_SYSTEM").unwrap_or_default();
+        v.as_bytes().split(|&c| c == b'/').filter(|n| n.first().is_some_and(|&c| c != b'.')).map(<[u8]>::to_vec).collect()
+    })
+}
+
+#[cfg(feature = "kindle")]
+fn system_extra() -> &'static [Vec<u8>] {
+    &[]
+}
+
+/// Whether `n`, a name at the storage root, is one of the system's folders (SYSTEM, and off the Kindle
+/// GRIMOIRE_STORAGE_SYSTEM's), in any ASCII case.
+fn is_system(n: &[u8]) -> bool {
+    SYSTEM.iter().any(|s| eq_nocase(n, s)) || system_extra().iter().any(|s| eq_nocase(n, s))
 }
 
 /// A path relative to the storage root, checked: shorter than 600 bytes, no empty, "." or ".." component, no
@@ -232,7 +281,7 @@ fn zone_of(grimoire: Option<&StoragePath>, p: &StoragePath, pick: bool) -> FsZon
     if comps.iter().any(|n| n.first() == Some(&b'.') || odd_end(n) || (n.len() >= 4 && eq_nocase(&n[n.len() - 4..], b".sdr"))) {
         return FsZone::Refused;
     }
-    if comps.first().is_some_and(|n| SYSTEM.iter().any(|s| eq_nocase(n, s))) {
+    if comps.first().is_some_and(|n| is_system(n)) {
         return FsZone::Refused;
     }
     if let Some(g) = grimoire {
@@ -265,8 +314,8 @@ pub struct FsStorage {
     not_picked: Vec<(u64, u64)>,
     /// (dev, ino) of Grimoire's trash, where the writes put what is deleted
     trash: Option<(u64, u64)>,
-    /// (dev, ino) of the refused folders that are there as the storage is opened: the system's at the root (SYSTEM)
-    /// and Grimoire's own (OWN_REFUSED). The walk refuses them by identity as well as by name, so no other spelling
+    /// (dev, ino) of the refused folders that are there as the storage is opened: the system's at the root (SYSTEM,
+    /// and GRIMOIRE_STORAGE_SYSTEM's) and Grimoire's own (OWN_REFUSED). The walk refuses them by identity as well as by name, so no other spelling
     /// of a name that the storage takes for one of them reaches it.
     refused: Vec<(u64, u64)>,
 }
@@ -333,7 +382,8 @@ impl FsStorage {
         let g = grimoire.trim_end_matches('/');
         let trash = identity(&format!("{g}/trash"));
         // (the system's folders as the root has them, no link followed; Grimoire's own by its own root, which it trusts)
-        let system = SYSTEM.iter().filter_map(|n| CString::new(*n).ok().and_then(|c| stat_at(root_fd.as_raw_fd(), &c).ok()));
+        let names = SYSTEM.iter().copied().chain(system_extra().iter().map(Vec::as_slice));
+        let system = names.filter_map(|n| CString::new(n).ok().and_then(|c| stat_at(root_fd.as_raw_fd(), &c).ok()));
         let mut refused: Vec<(u64, u64)> = system.filter(|s| s.kind() == FsKind::Dir).map(|s| (s.dev, s.ino)).collect();
         refused.extend(OWN_REFUSED.iter().filter_map(|n| identity(&format!("{g}/{}", String::from_utf8_lossy(n)))));
         Ok(FsStorage {
