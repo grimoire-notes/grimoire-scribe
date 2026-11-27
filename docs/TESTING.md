@@ -3720,13 +3720,15 @@ is the threshold of Smooth over every background, the other tools unchanged, eve
 exports Smooth), `test_fbpack.rs` (a solid word's live frames through the RAM shadow leave nothing to settle,
 `fbpack_level_span` in every rotation), `test_render_keep.rs`, `test_erase.rs` (compaction under both settings),
 `test_store.rs`, `test_tplsheet.rs` (a page made into a template's picture is Smooth), the editor's unit tests of the
-scaled view (black from half the weight, never lighter beside other ink, the page's own paper) and of the settle's
-order, `display.rs`'s unit tests (the scan in strips of 64 rows: every row read once, the pump called after each
+scaled view (black from half the weight, never lighter beside other ink, the page's own paper), of the view that
+draws a paper's lines at the screen's scale (the same rule, the Links bar, the Kindle's own copy of its frames) and
+of the settle's order and its hint, `display.rs`'s unit tests (the scan in strips of 64 rows: every row read once, the pump called after each
 full strip and before an empty answer, the answer one pass gives in every rotation, no answer for a row that would
 leave the record; the log's counts), and the scenarios
-`z_ink_edges_1_row` to `_13_erase` (zoomed in and sideways, a card that follows a change when its
+`z_ink_edges_1_row` to `_17_rulings` (zoomed in and sideways, a card that follows a change when its
 notebook is next opened and left, a change over a dense page, a highlight beside a solid word in a scaled view,
-erasing with undo, redo and a reopen). The Kindle's own answer
+erasing with undo, redo and a reopen, a page a little smaller than the screen at 100%, a widget's timed redraw, and
+line paper sideways). The Kindle's own answer
 (display_fbink.rs `display_settle_area`: its row mapping, inversion, pen mode left when it answers empty) runs only
 on a device: it was read against the driver's rules and compiled, never run.
 
@@ -3738,7 +3740,7 @@ nothing changes at the pause; white ink traced along a solid word takes it away 
 a notebook's card in the Library keeps its look until the notebook is opened and left, then shows the new one; the
 USB mirror's PDF of such a page has soft edges; and with Smooth everything is as in 2.2.0.
 
-The driver, in twelve checks. Checks 2 to 6 and 9 must pass before Solid is offered, and check 6 failing holds the
+The driver, in thirteen checks. Checks 2 to 6 and 9 must pass before Solid is offered, and check 6 failing holds the
 setting back. Start Grimoire fresh for checks 2 and 3 (the pen mode lines are logged only in a session's first 400
 refreshes, live frames included). Keep a root shell over SSH. Before each check empty the kernel's log with
 `dmesg -c > /dev/null`, and after it run:
@@ -3812,6 +3814,15 @@ minute and tap a tool, then read it. The first whole answer of each reason in a 
     trace of the hand-drawn path left, and does it bother?
 12. **The look.** With Solid, write a word, then turn the page and back (a flash). Does the word change? Compare
     its black with the same word written with Smooth and settled.
+13. **Line paper, sideways and zoomed out.** With Solid, a notebook on Medium rule and one on Seyes, the Scribe
+    sideways with the whole page fitted, then upright pinched out to about three quarters: the lines are drawn at
+    the screen's own scale there (#308). A ballpoint word between two lines settles with nothing sent (`quiet`
+    rises). A word across a line: nothing changes at the pause either, or at most the rows of the line it crossed
+    are sent (`part`; never a refresh of the ink: the Mac's test of the Kindle's own copy of such frames finds no
+    row to send, where the simulator sends the line's rows). The lines beside and under the stroke stay whole and
+    as gray as elsewhere on the page, with no lighter or thicker piece beside the ink. Write a pencil word across
+    a line too: it settles into grays as ever. Failure: a flicker at each pause, the ink refreshed in grays, or a
+    line broken, lighter or thicker beside the stroke. Photograph it beside the same page at Smooth.
 
 For any failure send the two commands' output, a photo, and the check's number.
 
