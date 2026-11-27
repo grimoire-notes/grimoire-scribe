@@ -1,7 +1,7 @@
 # rust-only
 # generate: tests/previews_fixture.py
 # copy: tests/fixtures/photos photos
-# env: GRIMOIRE_KEEP_RENDER_MS=4294967294
+# env: GRIMOIRE_KEEP_RENDER_MS=4294967294 GRIMOIRE_SIM_CLOCK=script
 # The new paper of a dense page (a template or a photo the notebook already has), the page left at once, before
 # any idle save: the drawing it keeps as it is left is of the page on its new paper, never the old one, and so are
 # the Library card and the drawing read back at the next open.
