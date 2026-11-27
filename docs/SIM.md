@@ -449,8 +449,10 @@ A scenario with `# storage: 1` runs on a fixture storage root: the run's root is
 Grimoire's data root its folder `grimoire`, and `# copy: DIR DEST` and `# generate:` work on the storage root
 (tests/files_hostile.py plants links, a FIFO and odd names; tests/files_place_tree.py the tree the Files scenarios
 browse, files of known sizes and times among them). Without it, the storage is the folder around the data root,
-so the texts that name Grimoire's own folders say `<run name>/<folder>` (`y_all_screens/trash`), not
-`grimoire/trash` (tests/scenarios/y_own_folders_named.qs). `tap library new` then `tap library new.file` opens the picker;
+so the texts that name Grimoire's own folders say `<run name>/<folder>` (`y_own_folders_named/trash`), not
+`grimoire/trash` (tests/scenarios/y_own_folders_named.qs). y_all_screens.qs, z_pdf_darker_5_es_fit.qs and
+z_pdf_darker_6_es_fit_classic.qs have `# storage: 1`, and make l10n-check runs y_all_screens.qs and tests/l10n/fonts.qs
+on a storage root too, so the fit check measures those texts as the Kindle draws them. `tap library new` then `tap library new.file` opens the picker;
 `tap library files-card` opens Files (place mode) from its card in the Library (`# settings: files_card=1`), and
 `files-card-menu` that card's menu, whose rows are `files-card.open` and `files-card.hide` (Cancel is `done`).
 Taps: `tap library files.back`, `files.prev`, `files.next`, `files.row.N` (the Nth row on the screen, from 1),

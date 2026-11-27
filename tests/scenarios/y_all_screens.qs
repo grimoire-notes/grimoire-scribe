@@ -1,11 +1,14 @@
 # settings: status_mode=1
 # env: GRIMOIRE_CHECK_FIT=1
 # env: GRIMOIRE_SIM_ADDRS=wlan0=192.168.0.20
+# storage: 1
 # Every screen and sheet, upright and sideways, for the fit check: make l10n-check runs this in
 # every language, in Gothic and in Classic, with GRIMOIRE_CHECK_FIT=1, and a run that cuts any
 # text short to fit fails (its shots, build/shots/l10n/<lang>-<style>/, show translators every
 # screen); make scenarios runs it in English and Gothic. Its taps land in both styles, and it
-# checks only what does not depend on the language. It leaves every setting as it found it.
+# checks only what does not depend on the language. It leaves every setting as it found it. It runs on a
+# fixture storage root, its data root the folder grimoire in it as on the Kindle (make l10n-check's runs too), so
+# the texts that name one of Grimoire's folders read as there (grimoire/trash), not with the run's own name.
 # rust-only
 wait 100
 expect screen is library

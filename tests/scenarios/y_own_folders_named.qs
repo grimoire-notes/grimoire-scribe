@@ -7,7 +7,7 @@
 # y_own_folders_named/trash)) and the toast after it; Settings > System's Mirror PDFs row. On the Kindle, and in a
 # "# storage: 1" run, the same texts say grimoire/PDFs and grimoire/trash (files_10_restore_notebook).
 # rust-only
-wait 200
+wait 3600
 tap library add
 tap library add.new-notebook
 wait 100
@@ -19,7 +19,7 @@ pentap panel library
 wait 400
 expect screen is library
 expect library.items is 1
-tap 396 1197
+tap library card-menu.1
 wait 200
 expect library.sheet is more
 shot 01-more-menu

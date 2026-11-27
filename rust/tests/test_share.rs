@@ -527,6 +527,19 @@ fn an_import_tap_says_what_happened() {
     check!(!std::path::Path::new(&format!("{root}/import.real/Linked.pdf")).exists());
     check!(!std::path::Path::new(&grimoire::upload::part_path()).exists());
     check!(std::fs::remove_file(&import).is_ok() && std::fs::rename(format!("{root}/import.real"), &import).is_ok());
+    // kept, with the storage a folder further out than the Kindle's: the toast names the import folder as found
+    // from there (pdfimport::own_folder_shown)
+    std::env::set_var("GRIMOIRE_STORAGE", tl_tmp());
+    let mut s = send_pdf(&mut a, "Further.pdf");
+    let code = shown_code(&mut a);
+    a.asked = Asked::Shown(now_ms().wrapping_sub(PEN_REOPEN_MS));
+    let t = now_ms();
+    touch(&mut a, true, ix, iy, t);
+    touch(&mut a, false, ix, iy, t + 80);
+    std::env::remove_var("GRIMOIRE_STORAGE");
+    check!(a.toast.as_str() == format!("Copied to share-{}/grimoire/import.", std::process::id()));
+    check!(said(&answer(&mut a, &mut s), &code, "imported"));
+    check!(std::fs::remove_file(format!("{root}/import/Further.pdf")).is_ok());
     share_leave(&mut a);
     share_free(&mut a);
     std::env::remove_var("GRIMOIRE_SIM_ADDRS");
