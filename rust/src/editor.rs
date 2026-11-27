@@ -15738,6 +15738,143 @@ mod tests {
         }
     }
 
+    // The scaled view's rule at Solid written out pixel by pixel (editor.rs blit_solid_edges), on the page above at
+    // its ten views. With W the weight of the solid ink (0 where the page's paper is not) among a screen pixel's four
+    // page pixels: blit_canvas's value where W is 0; black where W is half the whole weight or more; blit_canvas's
+    // value where W is less and one of the four with any weight is other ink; else the paper's own. Black from any
+    // weight would widen every stroke by a screen pixel a side; black only at the whole weight would thin it.
+    #[test]
+    fn solid_ink_on_a_scaled_view_is_black_from_half_the_weight() {
+        let paper = scaled_view_paper();
+        let (w, h) = (paper.w, paper.h);
+        for other_first in [true, false] {
+            let page = scaled_view_page(&paper, true, true, other_first);
+            for view in SCALED_VIEWS {
+                let (zoom, ox, oy) = view;
+                let plain = scaled_view(&page, &paper, view, false);
+                let paper_view = scaled_view(&paper, &paper, view, false);
+                let got = scaled_view(&page, &paper, view, true);
+                let (mut black, mut papers, mut kept) = (0, 0, 0);
+                for sy in 0..got.h {
+                    let fy = (sy as f32 + 0.5) / zoom + oy - 0.5;
+                    let py = fy.floor() as i32;
+                    let wy = ((fy - py as f32) * 255.0) as u32;
+                    for sx in 0..got.w {
+                        let i = (sy * got.stride + sx) as usize;
+                        let fx = (sx as f32 + 0.5) / zoom + ox - 0.5;
+                        let px = fx.floor() as i32;
+                        let wx = ((fx - px as f32) * 255.0) as u8 as u32;
+                        let want = if px < -1 || px >= w || py < -1 || py >= h {
+                            plain.px[i] // (the desk)
+                        } else {
+                            let at = |x: i32, y: i32| (clampi(y, 0, h - 1) * page.stride + clampi(x, 0, w - 1)) as usize;
+                            let four = [
+                                (at(px, py), (255 - wx) * (255 - wy)),
+                                (at(px + 1, py), wx * (255 - wy)),
+                                (at(px, py + 1), (255 - wx) * wy),
+                                (at(px + 1, py + 1), wx * wy),
+                            ];
+                            let ink = |j: usize| page.px[j] == 0 && paper.px[j] != 0;
+                            let weight: u32 = four.iter().filter(|&&(j, _)| ink(j)).map(|&(_, wt)| wt).sum();
+                            let other = four.iter().any(|&(j, wt)| wt != 0 && !ink(j) && page.px[j] != paper.px[j]);
+                            if weight == 0 {
+                                plain.px[i]
+                            } else if 2 * weight >= 255 * 255 {
+                                black += 1;
+                                0
+                            } else if other {
+                                kept += 1;
+                                plain.px[i]
+                            } else {
+                                papers += 1;
+                                paper_view.px[i]
+                            }
+                        };
+                        assert_eq!(got.px[i], want, "zoom {zoom} at {ox} {oy}, other ink first {other_first}: pixel {sx},{sy}");
+                    }
+                }
+                assert!(black > 300 && papers > 300 && kept > 50, "zoom {zoom}: black {black}, the paper's {papers}, blit_canvas's {kept}");
+            }
+        }
+    }
+
+    // The paper blit_view hands that pass is the open page's own (page_paper), at Solid in a view that is not 1:1: a
+    // solid stroke across graph paper's gray lines leaves every screen pixel black or the paper's, and a black of
+    // the paper's own (a picture's, as a PDF page or a template has: here put into the kept paper and the page, which
+    // no built-in paper has) keeps blit_canvas's edges. Handed no paper the pass takes white for it: the ink over a
+    // line then counts as white there, and the paper's black as ink.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn blit_view_hands_the_solid_pass_the_pages_own_paper() {
+        let _solid = InkEdgesScope::new(InkEdges::Solid);
+        paper_set_panel_ppi(0.0, 300.0);
+        let (w, h) = (640, 420);
+        let mut a = fshape_app_of(w, h);
+        let prm = |t: ToolKind| {
+            let mut p = ToolParams::default();
+            tool_params_default(t, &mut p);
+            p
+        };
+        // a page of graph paper with two solid strokes down across its lines
+        let s = ed(&mut a);
+        let ip = s.page_ix().unwrap();
+        let mut page = page_new(w, h, PAPER_GRID);
+        for (k, t) in [TOOL_BALLPOINT, TOOL_MARKER].into_iter().enumerate() {
+            let mut st = stroke_new(t, &prm(t), 0x400 + k as u32);
+            for i in 0..60 {
+                let f = i as f32 / 59.0;
+                stroke_append(&mut st, &PenSample { x: 150.0 + 200.0 * k as f32 + 60.0 * f, y: 20.0 + 380.0 * f, pressure: 0.6, t_ms: i * 7, ..Default::default() }, 300.0);
+            }
+            page_add(&mut page, st);
+        }
+        let mut paper = Canvas::default();
+        assert_eq!(canvas_init(&mut paper, w, h), 0);
+        page_paper_render(&mut paper, &page, Rect::new(0, 0, w, h), 300.0);
+        assert!(paper.px.contains(&136) && paper.px.contains(&85) && !paper.px.contains(&0), "the paper has gray lines and no black");
+        s.hist[ip].page = Some(page);
+        render_page_full(&mut a);
+        let whole = Rect::new(0, 0, w, h);
+        let view_of = |c: &Canvas, zoom: f32, ox: f32, oy: f32| {
+            let mut sc = Canvas::default();
+            assert_eq!(canvas_init(&mut sc, w, h), 0);
+            blit_canvas(&mut sc, c, zoom, ox, oy, whole);
+            sc
+        };
+        let views = [(2.0f32, 100.0f32, 60.0f32), (0.75, -20.333334, 0.0), (1.3333334, 40.0, 12.0)];
+        for (zoom, ox, oy) in views {
+            let s = ed(&mut a);
+            (s.zoom, s.ox, s.oy) = (zoom, ox, oy);
+            blit_view(&mut a, whole);
+            let paper_view = view_of(&paper, zoom, ox, oy);
+            let mut black = 0;
+            for i in 0..a.screen.px.len() {
+                assert!(a.screen.px[i] == 0 || a.screen.px[i] == paper_view.px[i], "zoom {zoom}: pixel {i} is {} over the paper's {}", a.screen.px[i], paper_view.px[i]);
+                black += (a.screen.px[i] == 0) as u32;
+            }
+            assert!(black > 300, "zoom {zoom}: the ink shows ({black} px)");
+        }
+        // the paper's own black: a block of it in the kept paper and on the page, clear of the strokes
+        let s = ed(&mut a);
+        assert!(s.paper.px.is_some() && (s.paper.w, s.paper.h) == (w, h), "blit_view kept the page's paper");
+        let block = Rect::new(250, 120, 60, 40);
+        let lines = paper.clone();
+        canvas_fill(&mut paper, block, 0);
+        canvas_fill(&mut s.page_canvas, block, 0);
+        s.paper.px = Some(Rc::new(paper.px.clone()));
+        for (zoom, ox, oy) in views {
+            let s = ed(&mut a);
+            (s.zoom, s.ox, s.oy) = (zoom, ox, oy);
+            blit_view(&mut a, whole);
+            let paper_view = view_of(&paper, zoom, ox, oy);
+            let lines_view = view_of(&lines, zoom, ox, oy);
+            let edges = (0..paper_view.px.len()).filter(|&i| paper_view.px[i] != 0 && paper_view.px[i] != lines_view.px[i]).count();
+            assert!(edges > 20, "zoom {zoom}: the block's edges are blended ({edges} px)");
+            for i in 0..a.screen.px.len() {
+                assert!(a.screen.px[i] == 0 || a.screen.px[i] == paper_view.px[i], "zoom {zoom}, the paper's black: pixel {i} is {} over the paper's {}", a.screen.px[i], paper_view.px[i]);
+            }
+        }
+    }
+
     #[test]
     fn pen_page_turn_never_adds_a_page_and_preserves_map_keyboard() {
         let mut a = fshape_app();
