@@ -32,7 +32,10 @@ tests/scenarios/z_links_3_bar_learns.qs runs with 60, so its check of 120 notebo
 however fast the machine is, longer than the fixed 9 s wait it had before `waitfor`.
 `GRIMOIRE_CACHE_WINDOW_MS` (simulator only) sets the 30 s the idle
 save spaces its preview and kept-drawing writes by, and the quiet time a page needs for its kept drawing to be
-written at an idle save (0: neither; z_dense_saves_*, z_keep_ghost_*). `GRIMOIRE_SLEEP_MINUTE_MS` (simulator only) makes a
+written at an idle save (0: neither; z_dense_saves_*, z_keep_ghost_*). `GRIMOIRE_SIM_PREVIEWS_CURRENT=1` (simulator
+only) leaves the renderer's fingerprint out of the Pages previews' stamps, as versions before 2.3.0 wrote them, so
+the previews a fixture made as 2.0.0 or 2.0.1 did stay current (tests/previews_fixture.py ghosts: z_keep_ghost_7 to
+_10, z_dense_card_stale). `GRIMOIRE_SLEEP_MINUTE_MS` (simulator only) makes a
 minute of the Display sheet's "Sleep after" last that many milliseconds, so a scenario can see the
 timer run out.
 `GRIMOIRE_STORAGE=PATH` (off the Kindle only; compiled out of the Kindle build) stands for the Kindle's

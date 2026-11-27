@@ -162,7 +162,8 @@ The 13 parameters, in order, with the range every reader clamps them to:
 Readers also read a float that is not finite as 0 and clamp x and y to -10000..30000. Rendering
 replays each stroke from its first point, so how a page looks depends on these bytes alone:
 `tests/test_golden.c` holds renders recorded from 1.0.0-beta that every later version must
-reproduce.
+reproduce. (Since 2.3.0 the ruled, Cornell, graph, dot, cross grid, isometric and hexagon papers draw
+darker lines, on purpose, issue #314: the renders of the ink alone still match.)
 
 ### Page size
 
@@ -2406,6 +2407,14 @@ What 2.1.0 and the versions before it do with template PDFs (2.2):
 | a template PDF's entries in `templates/.cache/` (`<hash>.pages`, `<hash>-p<nnnn>.*`, `<hash>.bad`) | never read; their previews job, when a picture of the folder lacks its preview, removes them as entries of a file it does not list. Back in 2.2 the pages are drawn again at the next look |
 | a page whose paper came from a template PDF's page | an ordinary page on a template's picture (`bg/`), drawn as any (Image papers) |
 
+What 2.2.0 and the versions before it do with the stamps of 2.3.0's previews (issue #314; read in their code at the
+tags):
+
+| new data (2.3.0) | 2.2.0 and before |
+|---|---|
+| a preview's stamp (`p<page ID>.stamp`) and a card's `thumb.src` ending with the renderer's fingerprint | not a stamp they make, so not current: they draw the preview again as its Pages view opens, and the card as the notebook is next left, with their own lines. Back in 2.3.0 those stamps end with the generation, so it draws them again too |
+| a kept drawing's stamp (`p<page ID>.full.stamp`) whose first part ends with the renderer's fingerprint | another stamp and another renderer: the page is drawn instead, as with a kept drawing of any other build |
+
 ## Highlighter rendering in 1.2.0
 
 1.2.0 gave the highlighter a fixed vertical broad edge for every stroke, old ones too: the stroke
@@ -2572,7 +2581,8 @@ QPG data.
 
 Each notebook may contain small `p<page ID>.pgm` previews, at most 300 by 400 pixels, and matching
 `.stamp` files. Stamps include the source page file's identity, size and precise modification time,
-plus a template-generation marker. A changed page or template invalidates the preview. The UI reads
+plus a template-generation marker and, since 2.3.0, the renderer's fingerprint. A changed page, template or
+renderer invalidates the preview. The UI reads
 only bounded cached images; a background worker renders missing visible batches, capped at 64 pages.
 Worker writes use process-specific temporary names, verify the source did not change during rendering,
 and publish image then stamp. Preview errors never replace or modify page files. The entire cache
@@ -2583,7 +2593,10 @@ The folder holds three more kinds of file, all disposable too:
 - `p<page ID>.full` and `p<page ID>.full.stamp`: a **kept drawing** of a page that is slow to draw, the
   whole page canvas run-length coded (runs of one byte as `(count - 1) | 0x80` then the byte, anything
   else as `count - 1` then that many bytes). Its stamp is the preview's stamp, then `|WxH|` (the page
-  size it was drawn at), the renderer's fingerprint in 16 hex digits and, since 2.1.0, the kept drawings'
+  size it was drawn at), the renderer's fingerprint in 16 hex digits (a sample page of ink with every tool,
+  and since 2.3.0 every paper after it, each on a sample page with every kind of line it has, drawn and
+  hashed: a change to how ink or a paper draws there changes it, so 2.3.0's darker papers retire every kept
+  drawing once) and, since 2.1.0, the kept drawings'
   version (`|k2`), with `|L` after them for a page with floors. Anything that does not match exactly (another page file, size, renderer or layering) is
   never used: the page is drawn instead. The editor keeps one for a page that took a second or more to
   draw (as it opens, and at the idle save), and since 2.0.0-beta.2 the previews job keeps one for each
@@ -2602,8 +2615,14 @@ The folder holds three more kinds of file, all disposable too:
 Since 2.0.0-beta.2 a batch makes its missing previews cheapest first: pages with a current kept drawing
 (its whole stamp: page file, size and renderer), then the others by the size of their page files, so a dense
 page comes last. A preview counts as made when its stamp is current and its image as long as its header says
-(one cut short is made again). Previews written by an older version are used as they are, and older versions
-use these.
+(one cut short is made again). Since 2.3.0 a stamp ends with the renderer's fingerprint (a colon and 16 hex
+digits, as in a kept drawing's stamp), and so does what a Library card was drawn from (`thumb.src`, which names
+the page file's stamp): a preview or a card another renderer drew (any version before 2.3.0, whose stamps end
+with the generation) matches no stamp of this one, so each Pages view draws its previews again as it opens and a
+card is drawn again as its notebook is next left. Nothing is written to make it so, and nothing of it is done as
+the app starts. The same holds for a notebook back from the trash or a backup, and for pictures an older version drew
+between two starts of 2.3.0. Older versions take 2.3.0's previews and cards as not theirs, the same way, and draw
+them again (Moving between versions).
 
 ## The notebook PDF and its page streams: `.cache/pdf/<id>/` (2.1.0-beta.2)
 
@@ -2621,8 +2640,9 @@ line is simply drawn again):
 offset  size  field
 0       4     "GPZ2"
 4       4     renderer version (bumped by hand when the PDF's own drawing changes: colour, compression)
-8       8     FNV-1a of the Grimoire version string, xor the ink renderer's fingerprint (a sample page drawn with
-              every tool, as kept drawings use: a change to the ink or paper renderer changes it by itself)
+8       8     FNV-1a of the Grimoire version string, xor the renderer's fingerprint (a sample page drawn with
+              every tool, then since 2.3.0 every paper, as kept drawings use: a change to the ink or paper renderer
+              changes it by itself)
 16      4     dpi, as the bits of the f32
 20      8     the page file's size
 28      8     the page file's modification time, seconds

@@ -781,6 +781,11 @@ pub fn app_init(a: &mut App, w: i32, h: i32, dpi: f32) -> i32 {
     // before the first screen is drawn, so that screen is the one the guard waits for.
     crate::userfonts::userfonts_apply(a);
     display_set_invert(a.settings.invert);
+    // The renderer's fingerprint, taken here once for the process and the jobs it forks: before any screen reads a
+    // Pages preview, a Library card or a kept drawing (their stamps name it, store.rs preview_stamp: pictures another
+    // renderer drew are drawn again, #314), and after the fonts just loaded and the panel's density, which its papers
+    // draw Cornell's headings, the clefs and Seyes with. It writes nothing and reads no notebook.
+    let _ = page_render_fingerprint();
     for op in K_SCREENS.iter() {
         (op.init)(a);
     }
@@ -3926,8 +3931,10 @@ pub fn app_global_action(a: &mut App, action: i32, src: ActionSrc) -> bool {
         }
         SHORTCUT_UPDATE_CHANNEL => {
             a.settings.updates = (a.settings.updates + 1) % 3;
+            // In the order settings.ini keeps them (store.rs `updates`: 1 stable, 2 preview), which
+            // Settings > Updates reads too (library.rs `upd_preview`).
             // TRANSLATORS: update channels, used in a toast with Update channel: %s; 1700 px at 44 px.
-            const CHANNELS: [&str; 3] = [n_("Automatic"), n_("Preview"), n_("Stable")];
+            const CHANNELS: [&str; 3] = [n_("Automatic"), n_("Stable"), n_("Preview")];
             // TRANSLATORS: selected update channel, %s is its name; toast, 1700 px at 44 px bold.
             msg = cformat!(tr("Update channel: %s"), tr(CHANNELS[a.settings.updates as usize]));
         }

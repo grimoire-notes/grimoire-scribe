@@ -1029,12 +1029,17 @@ impl KitInput {
         true
     }
 
-    /// A pass input owed went out as a refresh of `r` in `mode`: a fast one is kept in the part the fast refreshes
-    /// covered.
+    /// A pass (the one input owed, or in an app one a redraw request brought) went out as a refresh of `r` in `mode`: a
+    /// fast one is kept in the part the fast refreshes covered.
     pub fn refreshed(&mut self, r: Rect, mode: RefreshMode) {
         if mode == RefreshMode::Fast {
             self.worn = rect_union(self.worn, r);
         }
+    }
+
+    /// Whether the passes refreshed any part of the screen fast since it was last taken (`take_worn`).
+    pub fn fast_refreshed(&self) -> bool {
+        !rect_is_empty(self.worn)
     }
 
     /// Once no contact is down: the part of the screen the passes refreshed fast, owed one full-depth refresh whatever

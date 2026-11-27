@@ -4015,8 +4015,9 @@ fn draw_updates(a: &mut App) {
         action_style = ButtonStyle::Disabled;
     } else if upd == UPD_DONE && newer {
         // TRANSLATORS: Settings > Updates, the system update's version change (%s is the version
-        // installed, %s the one the update branch offers).
-        csnprintf!(&mut detail, 300, tr("Version %s → %s"), GRIMOIRE_VERSION, &latest);
+        // installed, %s the one the update branch offers). No arrow: Atkinson Hyperlegible Next and
+        // Noto Sans have none, and every character of a text must be in every face (test_i18n).
+        csnprintf!(&mut detail, 300, tr("Version %s to %s"), GRIMOIRE_VERSION, &latest);
         action = tr("Update");
         action_icon = IconKind::Download;
         action_style = ButtonStyle::Primary;

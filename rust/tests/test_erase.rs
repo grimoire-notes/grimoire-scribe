@@ -1571,6 +1571,35 @@ fn crc_rect(c: &Canvas, r: Rect) -> u32 {
     crc
 }
 
+// 2.3.0 draws Medium rule's lines darker (issue #314, the owner's ask), and an erase stroke restores the paper
+// under it: the page's renders on Medium rule are these since, for these names only. The ink alone (", ink") and
+// every render on the grand staff are still the table's: how an erase stroke draws is unchanged.
+const K_DARKER_PAPERS: [(&str, u32); 13] = [
+    ("medium rule, white pencil", 0xed794721),
+    ("medium rule, white mechanical pencil", 0xeca72cbc),
+    ("medium rule, white ballpoint", 0xa9c3408f),
+    ("medium rule, round tip", 0x076e0fdf),
+    ("medium rule, white highlighter", 0x1ccedbdd),
+    ("medium rule, white highlighter, vertical tip", 0x88074d8e),
+    ("medium rule, white fountain pen", 0x350eb8fa),
+    ("medium rule, white fineliner", 0xdc3d57a8),
+    ("medium rule, white marker", 0x04085e7e),
+    ("medium rule, white charcoal", 0x2e456623),
+    ("medium rule, white calligraphy pen", 0xe15176e6),
+    ("medium rule, soft round tip", 0x90662afc),
+    ("medium rule, fine round tip", 0x9d961303),
+];
+
+// White ink in the highlighter's texture drawn with the vertical tip (TIP_HIGHLIGHTER_VERTICAL), as
+// strokes drawn since 2.0.0-beta.5 record it: what 2.0.0-beta.2 to beta.4 drew for every such
+// stroke (issue #5). K_LOOK is the round tip, which older strokes (no tip recorded) get.
+const K_VERTICAL: [(&str, u32); 4] = [
+    ("medium rule, white highlighter, vertical tip", 0x1d8309ca),
+    ("medium rule, white highlighter, vertical tip, ink", 0x14d61db0),
+    ("grand staff, white highlighter, vertical tip", 0x0a4bc45d),
+    ("grand staff, white highlighter, vertical tip, ink", 0x14d61db0),
+];
+
 fn look(name: &str, crc: u32) {
     if g_print() {
         println!("    (\"{}\", 0x{:08x}),", name, crc);
@@ -1579,16 +1608,7 @@ fn look(name: &str, crc: u32) {
     if !GOLDEN_HOST {
         return;
     }
-    // White ink in the highlighter's texture drawn with the vertical tip (TIP_HIGHLIGHTER_VERTICAL), as
-    // strokes drawn since 2.0.0-beta.5 record it: what 2.0.0-beta.2 to beta.4 drew for every such
-    // stroke (issue #5). The table above is the round tip, which older strokes (no tip recorded) get.
-    const VERTICAL: [(&str, u32); 4] = [
-            ("medium rule, white highlighter, vertical tip", 0x1d8309ca),
-            ("medium rule, white highlighter, vertical tip, ink", 0x14d61db0),
-            ("grand staff, white highlighter, vertical tip", 0x0a4bc45d),
-            ("grand staff, white highlighter, vertical tip, ink", 0x14d61db0),
-        ];
-    for &(n, expected) in VERTICAL.iter().chain(K_LOOK.iter()) {
+    for &(n, expected) in K_DARKER_PAPERS.iter().chain(K_VERTICAL.iter()).chain(K_LOOK.iter()) {
         if n != name {
             continue;
         }
@@ -1668,6 +1688,11 @@ const K_LOOK_KEY: [&str; LOOK_COUNT] = [
 // How erase strokes draw: each one over ink of five tools, on ruled paper and a grand staff, the
 // page and its ink layer, compared with the recorded table (and each one erases plenty).
 fn erase_look_is_recorded() {
+    // (the darker papers replace recorded renders of a page on Medium rule, never one of the ink alone)
+    for &(name, crc) in &K_DARKER_PAPERS {
+        let was = K_LOOK.iter().chain(K_VERTICAL.iter()).find(|&&(n, _)| n == name).map(|&(_, v)| v);
+        check!(name.starts_with("medium rule, ") && !name.ends_with(", ink") && was.is_some_and(|v| v != crc));
+    }
     const PAPERS: [PaperKind; 2] = [PAPER_MEDIUM, PAPER_GRAND];
     const UNDER: [ToolKind; 5] = [TOOL_MARKER, TOOL_PENCIL, TOOL_CHARCOAL, TOOL_FOUNTAIN, TOOL_BALLPOINT];
     let y0: f32 = 1240.0;
