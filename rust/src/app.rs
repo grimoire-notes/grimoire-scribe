@@ -98,6 +98,9 @@ pub struct App {
     /// what waits to be flushed is only what fills in by itself (app_invalidate_filling): its Ui is never the one
     /// promoted to the cleaning Full
     pub dirty_filling: bool,
+    /// what waits to be flushed is only what nobody asked for (app_invalidate_filling, app_invalidate_unasked):
+    /// its present goes out with display_unasked, as long as it is a Ui
+    pub dirty_unasked: bool,
     /// what fast refreshes left on the panel that only a flash wipes (display.rs, issue #11): the
     /// editor adds to it and cleans it; every Full, and a Clean over it, wipes it here at the flush
     pub du_wear: DuWear,
@@ -461,8 +464,13 @@ pub fn app_handed_over() -> bool {
 
 // The sleep screen to use. Hosted, KOReader keeps the Kindle UI paused for its whole session and
 // the launcher never wakes it, so the Kindle's own screensaver (mode 2) cannot show: the page
-// does instead.
+// does instead. Where the device's system owns sleep (Services, sleep) the sleep screen is not
+// Grimoire's to choose: the page, whatever settings.ini says, so a mode 2 left in it hands nothing
+// over to a system that takes nothing back.
 fn sleep_mode(a: &App) -> i32 {
+    if !sys_services().sleep {
+        return 0;
+    }
     if a.native_pin {
         return 2;
     }
@@ -1907,8 +1915,10 @@ fn app_sleep(a: &mut App) {
     if a.scr == ScreenId::Share {
         share_sleep(a);
     }
-    qlog!("sleep: mode %d", a.settings.sleep_mode);
     let mode = sleep_mode(a);
+    // (the sleep screen drawn, then settings.ini's: they differ under the native PIN, hosted by
+    // KOReader, and where the device's system owns sleep)
+    qlog!("sleep: mode %d (settings %d)", mode, a.settings.sleep_mode);
     with(|s| s.sleep_shown = mode);
     display_sleep();
     if mode == 2 {
@@ -2467,7 +2477,7 @@ fn app_tick_screens(a: &mut App, now: u32) {
     if bg != 0 {
         let mut msg = String::new();
         // TRANSLATORS: a PDF saved in the background, and where (the Kindle's folder of them).
-        if bg > 0 { csnprintf!(&mut msg, 256, tr("PDF saved to %s"), "grimoire/PDFs"); }
+        if bg > 0 { csnprintf!(&mut msg, 256, tr("PDF saved to %s"), crate::pdfimport::own_folder_shown("PDFs").as_str()); }
         app_toast(a, if bg > 0 { msg.as_str() } else { tr("Couldn't save PDF") }, 2500,
         );
     }
@@ -2526,10 +2536,12 @@ fn app_tick_screens(a: &mut App, now: u32) {
         a.wake_redraw_at = 0;
         app_invalidate_all(a, RefreshMode::Ui); // the screen is already right: just push it again
     }
-    // Sleep after a while without input, the same way the power button does.
+    // Sleep after a while without input, the same way the power button does (where the device sleeps
+    // when asked: elsewhere its own timer decides, and "never" is the one setting that acts).
     if !a.asleep
         && !a.sleep_requested
         && a.settings.sleep_minutes > 0
+        && sys_services().sleep
         && now.wrapping_sub(a.last_input) as i32 >= a.settings.sleep_minutes.wrapping_mul(sleep_minute_ms())
         && !(a.scr == ScreenId::Editor && editor_busy(a))
         && a.scr != ScreenId::Share
@@ -2567,6 +2579,7 @@ pub fn app_invalidate(a: &mut App, r: Rect, m: RefreshMode) {
         return;
     }
     a.dirty_filling = false; // (whatever else is waiting, this refresh is one something asked for)
+    a.dirty_unasked = false;
     invalidate_in(a, r, m);
 }
 
@@ -2574,13 +2587,29 @@ pub fn app_invalidate(a: &mut App, r: Rect, m: RefreshMode) {
 /// previews arrive): a Ui refresh of `r` like any other, and counted like any other, but never the one that
 /// becomes the cleaning Full (app_flush: every 30th Ui), which would flash the whole panel in the middle of a
 /// screen that is still arriving. The count runs on, and the next refresh that anything else asks for (a page
-/// turn, a tap) is the Full instead. Only while nothing else waits to be flushed with it.
+/// turn, a tap) is the Full instead. Its present tells the platform that nobody asked for it (display_unasked).
+/// Only while nothing else waits to be flushed with it.
 pub fn app_invalidate_filling(a: &mut App, r: Rect) {
     let r = rect_intersect(r, Rect { x: 0, y: 0, w: a.w, h: a.h });
     if rect_is_empty(r) {
         return;
     }
     a.dirty_filling = rect_is_empty(a.dirty) || a.dirty_filling;
+    a.dirty_unasked = rect_is_empty(a.dirty) || a.dirty_unasked;
+    invalidate_in(a, r, RefreshMode::Ui);
+}
+
+/// A part of the screen that redraws by itself when its time comes, nobody having touched anything (a widget
+/// frame's timed redraw): a Ui refresh of `r` counted like any other and promoted like any other (its 30th is
+/// the cleaning Full), whose present tells the platform that nobody asked for it (display_unasked), as a filling
+/// refresh's does. Only while nothing else waits to be flushed with it.
+pub fn app_invalidate_unasked(a: &mut App, r: Rect) {
+    let r = rect_intersect(r, Rect { x: 0, y: 0, w: a.w, h: a.h });
+    if rect_is_empty(r) {
+        return;
+    }
+    a.dirty_filling = false; // (counted and promoted as app_invalidate's: only the hint is its own)
+    a.dirty_unasked = rect_is_empty(a.dirty) || a.dirty_unasked;
     invalidate_in(a, r, RefreshMode::Ui);
 }
 
@@ -2641,6 +2670,8 @@ fn app_flush_in(a: &mut App) {
     }
     // (a refresh of what fills in by itself, alone: counted, and never promoted: app_invalidate_filling)
     let filling = std::mem::take(&mut a.dirty_filling) && rect_is_empty(self_dirty);
+    // (and of what nobody asked for, alone, filling or redrawn on its own time: display_unasked says so)
+    let unasked = std::mem::take(&mut a.dirty_unasked) && rect_is_empty(self_dirty);
     if m == RefreshMode::Ui {
         a.ui_refreshes_since_full += 1;
         if a.ui_refreshes_since_full >= 30 && !filling {
@@ -2685,6 +2716,8 @@ fn app_flush_in(a: &mut App) {
         }
     }
     live_toast_sync(a, overlay, reached, noticed.is_some());
+    // (never the cleaning Full, nor a refresh with anything asked for in it)
+    display_unasked(unasked && m == RefreshMode::Ui);
     display_present(&a.screen, a.dirty, m);
     du_wear_presented(&mut a.du_wear, a.dirty, m);
     if a.asked == Asked::Drawn {
@@ -3663,6 +3696,98 @@ mod tests {
         assert!(!a.dirty_filling && rect_is_empty(a.dirty));
     }
 
+    /// The presents since the last call that went with display_unasked, as the simulator counts them; None where
+    /// no platform hears of it (the host build's tests).
+    #[cfg(feature = "sim")]
+    fn unasked_sent() -> Option<String> {
+        crate::sim_sdl::display_probe_read("display.unasked")
+    }
+    #[cfg(not(feature = "sim"))]
+    fn unasked_sent() -> Option<String> {
+        None
+    }
+
+    /// What nobody asked for, flushed alone as a Ui, goes out with display_unasked: a part that fills in by itself
+    /// (app_invalidate_filling, Files' Covers tiles) and a part redrawn when its time comes (app_invalidate_unasked,
+    /// a widget frame's timed redraw). A refresh with anything asked for in it, before or after, goes without, as
+    /// does the cleaning Full. The timed redraw is counted and promoted as any Ui (its 30th is the Full), where a
+    /// filling refresh is never the Full.
+    #[test]
+    fn what_nobody_asked_for_goes_out_with_the_hint() {
+        let mut a = notice_app();
+        let r = Rect { x: 100, y: 500, w: 400, h: 300 };
+        let other = Rect { x: 900, y: 900, w: 50, h: 50 };
+        let sent = |want: &str| {
+            if let Some(got) = unasked_sent() {
+                assert_eq!(got, want);
+            }
+        };
+        let _ = unasked_sent();
+        // a Covers tile, alone
+        app_invalidate_filling(&mut a, r);
+        assert!(a.dirty_unasked && a.dirty_filling);
+        app_flush(&mut a);
+        assert!(!a.dirty_unasked);
+        sent("1");
+        // a widget's timed redraw, alone: a Ui, counted, and no filling one
+        a.ui_refreshes_since_full = 0;
+        app_invalidate_unasked(&mut a, r);
+        assert!(a.dirty_unasked && !a.dirty_filling && a.dirty_mode == RefreshMode::Ui && a.dirty == r);
+        app_flush(&mut a);
+        assert!(!a.dirty_unasked && rect_is_empty(a.dirty));
+        assert_eq!(a.ui_refreshes_since_full, 1);
+        sent("1");
+        // something asked for (a tap, a page turn): no hint
+        app_invalidate(&mut a, other, RefreshMode::Ui);
+        assert!(!a.dirty_unasked);
+        app_flush(&mut a);
+        sent("0");
+        // the two in one flush, in either order: an asked one, no hint
+        for asked_first in [false, true] {
+            if asked_first {
+                app_invalidate(&mut a, other, RefreshMode::Ui);
+            }
+            app_invalidate_unasked(&mut a, r);
+            app_invalidate_filling(&mut a, r);
+            if !asked_first {
+                app_invalidate(&mut a, other, RefreshMode::Ui);
+            }
+            assert!(!a.dirty_unasked && !a.dirty_filling && a.dirty == rect_union(r, other));
+            app_flush(&mut a);
+            sent("0");
+        }
+        // the 30th: a timed redraw is the cleaning Full, as before, and the Full goes without the hint; a filling
+        // refresh stays a Ui and has it
+        a.ui_refreshes_since_full = 29;
+        app_invalidate_unasked(&mut a, r);
+        app_flush(&mut a);
+        assert_eq!(a.ui_refreshes_since_full, 0, "promoted");
+        sent("0");
+        a.ui_refreshes_since_full = 29;
+        app_invalidate_filling(&mut a, r);
+        app_flush(&mut a);
+        assert_eq!(a.ui_refreshes_since_full, 30, "never promoted");
+        sent("1");
+        // a fast refresh asked for after it (a stroke's): something asked for, no hint
+        app_invalidate_unasked(&mut a, r);
+        app_invalidate(&mut a, r, RefreshMode::Fast);
+        assert!(!a.dirty_unasked, "anything asked for takes it away");
+        app_flush(&mut a);
+        sent("0");
+        // the app's own repaint (a toast shown or hidden, self_dirty) flushed with it: no hint
+        a.ui_refreshes_since_full = 0;
+        app_invalidate_filling(&mut a, r);
+        with(|s| s.self_dirty = other);
+        app_flush(&mut a);
+        assert!(!a.dirty_unasked && rect_is_empty(with(|s| s.self_dirty)));
+        assert_eq!(a.ui_refreshes_since_full, 1, "a Ui");
+        sent("0");
+        // nothing of it off the screen
+        app_invalidate_unasked(&mut a, Rect { x: -500, y: 0, w: 100, h: 100 });
+        assert!(!a.dirty_unasked && rect_is_empty(a.dirty));
+        canvas_free(&mut a.screen);
+    }
+
     /// Shown at the next flush; drawn again only for a new text, at most once every 2 s; none of it counted
     /// toward the Full, and App.screen holds none of it.
     #[test]
@@ -3798,6 +3923,77 @@ mod tests {
         assert!(import > 250 && import <= 600_000 / NOTICE_EVERY_MS + 1, "{import}");
         NOTICE_CLOCK.with(|c| c.set(None));
     }
+
+    // ---- the actions a device does not offer (actions.rs, action_offered) ----
+
+    /// Where the device's system owns sleep the sleep screen is the page, whatever settings.ini says (a mode 2
+    /// left there would hand the screen to a system that takes nothing).
+    #[test]
+    fn the_sleep_screen_is_the_page_where_the_system_owns_sleep() {
+        let mut a = App::default();
+        test_services(Some(Services::without("sleep")));
+        for mode in 0..4 {
+            a.settings.sleep_mode = mode;
+            assert_eq!(sleep_mode(&a), 0, "stored {mode}");
+        }
+        a.native_pin = true;
+        assert_eq!(sleep_mode(&a), 0, "native PIN");
+        a.native_pin = false;
+        test_services(None);
+        for mode in [0, 1, 3] {
+            a.settings.sleep_mode = mode;
+            assert_eq!(sleep_mode(&a), mode, "stored {mode}");
+        }
+    }
+
+    /// A binding written by hand for an action the lists leave out: Sleep now, Sleep screen, Sleep after without
+    /// sleep, Bluetooth controller without pairing and Update channel without updates do nothing, and Sleep now
+    /// never marks Grimoire asleep. The light's say why: no front light, or no warmth to it.
+    #[test]
+    fn actions_not_offered_do_nothing_when_bound_by_hand() {
+        let root = std::env::temp_dir().join(format!("grimoire-not-offered-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        let mut a = notice_app();
+        settings_default(&mut a.settings);
+        a.settings.sleep_minutes = 5;
+        let before = a.settings;
+        test_services(Some(Services::without("sleep,pairing,updates")));
+        for action in [SHORTCUT_SLEEP, SHORTCUT_SLEEP_SCREEN, SHORTCUT_SLEEP_AFTER, SHORTCUT_UPDATE_CHANNEL] {
+            assert!(app_global_action(&mut a, action, ActionSrc::Key), "{}", action_label(action));
+        }
+        assert!(app_global_action(&mut a, SHORTCUT_BLUETOOTH_CONTROLLER, ActionSrc::Touch));
+        assert!(!a.asleep && !a.sleep_requested && !a.toast_visible);
+        assert_eq!(
+            (a.settings.sleep_mode, a.settings.sleep_minutes, a.settings.updates, a.settings.controller),
+            (before.sleep_mode, before.sleep_minutes, before.updates, before.controller)
+        );
+        // With the services they act, as on the Kindle.
+        test_services(None);
+        assert!(app_global_action(&mut a, SHORTCUT_SLEEP_SCREEN, ActionSrc::Key));
+        assert!(app_global_action(&mut a, SHORTCUT_SLEEP_AFTER, ActionSrc::Key));
+        assert!(app_global_action(&mut a, SHORTCUT_UPDATE_CHANNEL, ActionSrc::Key));
+        assert_eq!((a.settings.sleep_mode, a.settings.sleep_minutes, a.settings.updates), (1, 10, 1));
+
+        // The light: none at all (the host's build), else one without warmth, then one with.
+        if !light_available() {
+            for action in [SHORTCUT_LIGHT_UP, SHORTCUT_WARMTH_DOWN] {
+                assert!(app_global_action(&mut a, action, ActionSrc::Key));
+                assert_eq!(a.toast.as_str(), "Front light controls are not available here.");
+            }
+        } else {
+            test_light_cached(10, -1);
+            assert!(app_global_action(&mut a, SHORTCUT_WARMTH_UP, ActionSrc::Key));
+            assert_eq!(a.toast.as_str(), "This Kindle has no warmth control.");
+            assert_eq!(light_cached(), (10, -1));
+            assert!(app_global_action(&mut a, SHORTCUT_LIGHT_UP, ActionSrc::Key));
+            assert_eq!(a.toast.as_str(), "Light 11 of 24");
+            test_light_cached(-1, -1);
+            assert!(app_global_action(&mut a, SHORTCUT_WARMTH_UP, ActionSrc::Key));
+            assert_eq!(a.toast.as_str(), "Light not ready.");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
 /// The existing screen lifecycle applied after a language or theme change.
 pub fn app_relayout(a: &mut App) {
@@ -3845,6 +4041,14 @@ pub fn app_toggle_controller(a: &mut App) {
 /// Settings actions shared by the editor and Library. Callers apply their modal/stroke guards.
 pub fn app_global_action(a: &mut App, action: i32, src: ActionSrc) -> bool {
     if !(SHORTCUT_INVERT..=SHORTCUT_UPDATE_CHANNEL).contains(&action) || action_sources(action) & src.mask() == 0 { return false; }
+    let light_step = matches!(action, SHORTCUT_LIGHT_DOWN | SHORTCUT_LIGHT_UP | SHORTCUT_WARMTH_DOWN | SHORTCUT_WARMTH_UP);
+    if !light_step && !action_offered(action) {
+        // A binding written by hand (shortcuts.ini, gestures.ini) for an action the lists leave out here
+        // (actions.rs, action_offered): it does nothing (the light's say why, below). Sleep now would mark
+        // Grimoire asleep on a screen that stays awake, with pen and touch set aside until the system
+        // sleeps and wakes.
+        return true;
+    }
     let mut msg = String::new();
     let mut relayout = false;
     match action {
@@ -3856,7 +4060,19 @@ pub fn app_global_action(a: &mut App, action: i32, src: ActionSrc) -> bool {
         }
         SHORTCUT_LIGHT_DOWN | SHORTCUT_LIGHT_UP | SHORTCUT_WARMTH_DOWN | SHORTCUT_WARMTH_UP => {
             let warm = action == SHORTCUT_WARMTH_DOWN || action == SHORTCUT_WARMTH_UP;
+            if !light_available() {
+                // TRANSLATORS: also a toast, when a light or warmth action bound by hand is used on a
+                // device without a front light; 1700 px at 44 px.
+                app_toast(a, tr("Front light controls are not available here."), 2000);
+                return true;
+            }
             let (light, warmth) = light_cached();
+            if warm && light >= 0 && warmth < 0 {
+                // TRANSLATORS: also a toast, when Warmth down or up (a key or gesture) is used on a front
+                // light without warmth; 1700 px at 44 px.
+                app_toast(a, tr("This Kindle has no warmth control."), 2000);
+                return true;
+            }
             let level = if warm { warmth } else { light };
             if level < 0 {
                 // TRANSLATORS: light action before its cached level is known; toast, 1700 px at 44 px.

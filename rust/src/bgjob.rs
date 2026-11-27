@@ -578,7 +578,7 @@ fn is_import(kind: BgKind) -> bool {
 fn child_setup(keep_lock: bool) {
     work_pump_set(None); // the pens are Grimoire's to read (common.h), never a child's
     input_forget_signal_pipe(); // (its numbers are closed below, and the jobs' files take them)
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", feature = "linux-kernel"))]
     // SAFETY: prctl(PR_SET_NAME) reads a NUL-terminated name of at most 16 bytes; the other
     // arguments are unused.
     unsafe {

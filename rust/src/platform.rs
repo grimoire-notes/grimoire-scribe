@@ -47,6 +47,11 @@ pub trait Platform: Sync {
     fn display_fast_busy(&self) -> bool {
         false
     }
+    /// display_unasked: whether the next display_present is a refresh nobody asked for (a part of the screen
+    /// that fills in by itself, or redraws when its time comes, nobody having touched anything). It holds for
+    /// that one present. A platform that adds a cleaning flash of its own to large refreshes can leave it out
+    /// for this one. Nothing where a platform adds no flash of its own.
+    fn display_unasked(&self, _on: bool) {}
     /// display_last_fast_waiting: false where no refresh waits on the driver.
     fn display_last_fast_waiting(&self) -> bool {
         false
@@ -356,6 +361,10 @@ in_tree_platform!(
 in_tree_platform!(
     /// The headless runner.
     Sim, sim_sdl, sim_sdl, sim_sdl, {
+        #[inline]
+        fn display_unasked(&self, on: bool) {
+            crate::sim_sdl::display_unasked(on)
+        }
         #[inline]
         fn input_touch_trace_event(&self, line: &str) {
             crate::sim_sdl::input_touch_trace_event(line)

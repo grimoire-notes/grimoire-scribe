@@ -337,8 +337,62 @@ fn the_root_is_the_hooks() {
     check!(FS_KINDLE_ROOT == "/mnt/us");
 }
 
+// More of the system's folders off the Kindle (GRIMOIRE_STORAGE_SYSTEM, read once, so set as the test begins: names
+// separated by "/", an empty one and one that begins with a dot left out): at the root they are hidden and refused
+// as the built-in ones are, by name in any case and by identity under another spelling the storage takes for
+// theirs; the same names deeper down are folders like any other.
+fn more_system_folders_from_the_hook() {
+    use std::os::unix::fs::MetadataExt;
+    let (root, g) = tree();
+    for d in ["stock/x", "Apps", "documents/Stock"] {
+        std::fs::create_dir_all(format!("{root}/{d}")).unwrap();
+    }
+    let st = FsStorage::open(&root, &g).unwrap();
+    let l = list_all(&st, b"", false);
+    check!(names(&l) == ["Downloads", "documents", "fonts", "grimoire"]);
+    check!(l.hidden == 6); // system, koreader, .active, Book.sdr, stock, Apps
+    for p in [&b"stock"[..], b"STOCK/x", b"apps", b"Apps"] {
+        check!(st.zone(&sp(p), false) == FsZone::Refused);
+        check!(st.open_dir(&sp(p), false).err() == Some(FsErr::Refused));
+    }
+    check!(!sp(b"Stock/x").walked() && sp(b"documents/Stock").walked());
+    check!(st.zone(&sp(b"documents/Stock"), false) == FsZone::ReadOnly);
+    check!(st.open_dir(&sp(b"documents/Stock"), false).is_ok());
+    let l = list_all(&st, b"documents", false);
+    check!(names(&l).contains(&"Stock".to_string()));
+    // by identity, under another spelling
+    let ino = |p: &str| std::fs::metadata(format!("{root}/{p}")).map(|m| m.ino()).ok();
+    let alias = "\u{17f}tock";
+    let p = sp(alias.as_bytes());
+    check!(st.zone(&p, false) == FsZone::ReadOnly);
+    if ino(alias).is_some() && ino(alias) == ino("stock") {
+        check!(st.open_dir(&p, false).err() == Some(FsErr::Refused));
+        check!(st.open_dir(&sp(format!("{alias}/x").as_bytes()), false).is_err());
+    } else {
+        eprintln!("  (this storage does not take {alias:?} for stock: nothing to refuse)");
+        check!(st.open_dir(&p, false).err() == Some(FsErr::NotFound));
+    }
+}
+
+// The folders of Files' places at the storage root, off the Kindle: the variable's when it is set (one name; empty, or
+// no one name, and there is no such place), else the Kindle's name.
+fn the_place_folders_are_the_hooks() {
+    let var = "GRIMOIRE_PLACE_DOCUMENTS";
+    std::env::remove_var(var);
+    check!(fsview_place_folder(var, "documents") == Some(sp(b"documents")));
+    std::env::set_var(var, "Document");
+    check!(fsview_place_folder(var, "documents") == Some(sp(b"Document")));
+    for bad in ["", "Document/Books", "/Document", "Document/", ".", ".."] {
+        std::env::set_var(var, bad);
+        check!(fsview_place_folder(var, "documents").is_none());
+    }
+    std::env::remove_var(var);
+}
+
 #[test]
 fn test_fsview() {
+    // (read once, before anything asks: more_system_folders_from_the_hook)
+    std::env::set_var("GRIMOIRE_STORAGE_SYSTEM", "Stock//.Hidden/APPS/");
     run!(paths_are_checked);
     run!(zones_by_name_in_any_case);
     run!(the_walk_follows_no_link);
@@ -348,6 +402,8 @@ fn test_fsview() {
     run!(slices_keep_to_their_budget);
     run!(free_space);
     run!(the_root_is_the_hooks);
+    run!(more_system_folders_from_the_hook);
+    run!(the_place_folders_are_the_hooks);
     let _ = std::fs::remove_dir_all(format!("{}/fsview-storage", tl_tmp()));
     done();
 }

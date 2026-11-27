@@ -1,4 +1,5 @@
 # settings: status_mode=1
+# storage: 1
 # env: GRIMOIRE_LANG=es
 # env: GRIMOIRE_CHECK_FIT=1
 # Darker lines in imported PDFs (2.2, issue #173) in Spanish and Gothic, every text checked for fit

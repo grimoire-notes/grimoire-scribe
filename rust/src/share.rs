@@ -952,7 +952,7 @@ fn ask_answer(a: &mut App, import: bool) {
     draw(a);
     app_invalidate(a, k.rect, RefreshMode::Ui);
     match r {
-        Some(Ok(_)) => app_toast(a, &cformat!(tr("Copied to %s."), "grimoire/import"), 3000),
+        Some(Ok(_)) => app_toast(a, &cformat!(tr("Copied to %s."), crate::pdfimport::own_folder_shown("import").as_str()), 3000),
         Some(Err(libc::ENOSPC)) => app_toast(a, tr("Couldn't import PDF. Is the storage full?"), 4000),
         Some(Err(_)) => app_toast(a, &cformat!(tr("Couldn't import PDF (see %s)."), "grimoire.log"), 4000),
         None if import => app_toast(a, tr("Not imported."), 3000),

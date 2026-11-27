@@ -1251,7 +1251,7 @@ fn upload_box(b: &mut Buf) {
     json_str(b, token.as_bytes());
     buf_printf!(b, ",\"max\":%lld,\"words\":{", crate::upload::UPLOAD_MAX as i64);
     let big = cformat!(tr("PDF too big: over %d MB."), (crate::upload::UPLOAD_MAX >> 20) as i32);
-    let sent = cformat!(tr("Copied to %s."), "grimoire/import");
+    let sent = cformat!(tr("Copied to %s."), crate::pdfimport::own_folder_shown("import").as_str());
     let quiet_s = crate::upload::limit_ms("QUIET", crate::upload::UPLOAD_QUIET_MS).div_ceil(1000) as i32;
     let mut n = 0;
     // TRANSLATORS: the share index's button (a phone's or a computer's browser) that picks a PDF to send to the

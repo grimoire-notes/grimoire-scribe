@@ -24,6 +24,7 @@ expect library.ui_at.644.2375 is app.about
 tap library app.about
 wait 100
 expect library.sheet is about-device
+expect library.device.name is This computer
 shot 00-about
 tap library about-device.back
 wait 100
