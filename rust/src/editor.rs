@@ -2359,7 +2359,8 @@ fn blit_canvas(screen: &mut Canvas, pc: &Canvas, zoom: f32, ox: f32, oy: f32, r:
 // Beside other ink it never lightens: where the ink has less than half the weight and one of the four with any weight
 // is neither such ink nor its own paper (pencil, charcoal, a highlight, a pen given grain, under the stroke or over
 // it), blit_canvas's blend stays, which counts the ink as black and so is never lighter than the view without the
-// stroke. The paper is taken for the ink only where the page shows nothing but paper beside it.
+// stroke. The paper is taken for the ink only where the page shows nothing but paper beside it; the paper's own black
+// counts as paper there, so other ink the stroke covered beside a black line of the paper shows as that paper.
 fn blit_solid_edges(screen: &mut Canvas, pc: &Canvas, paper: Option<(&[u8], i32)>, zoom: f32, ox: f32, oy: f32, r: Rect) {
     if rect_is_empty(r) || pc.w <= 0 || pc.h <= 0 || zoom <= 0.0 {
         return;
@@ -12719,7 +12720,8 @@ fn settle_now_in(a: &mut App) {
 // very pass handled, when the loop comes to the pen's leaving SETTLE_LEFT_MS late), the settle stays due; the flush
 // sends the frames and empties App.dirty, and the next tick takes the settle. Taken at once it would find the panel
 // without those frames and send them again in grays, the second pass Solid is there to spare. Only the settle's own
-// rect is asked about: a refresh waiting elsewhere (a toolbar change) holds nothing back. Nothing is flushed from the
+// rect is asked about, but App.dirty is one rect: refreshes waiting elsewhere (a toolbar change and another beyond
+// the stroke) can span it together and hold the settle back one pass, never more. Nothing is flushed from the
 // tick. With Smooth the settle is not judged against the panel and goes out with the waiting frames as ever; a
 // settle an action forces (settle_now from Undo, a tap on the toolbar, Settings) is taken at once; and under the
 // Pages view nothing is settled at all (settle_now_in).
@@ -15572,11 +15574,13 @@ mod tests {
         }
     }
 
-    // A 640 x 420 page for the scaled view's tests: a paper with gray rules and a black block of its own; on it
-    // other ink (a highlight band, pencil shading, charcoal, a marker and a ballpoint given grain) and solid strokes
-    // through all of it (a ballpoint from light to full pressure, a fineliner, a fountain pen, a marker, a
-    // calligraphy diagonal, a dot, and a word along the highlight, the pencil and the charcoal). Drawn with Ink
-    // edges at Solid as the pen writes: `solid` the solid strokes, `other_first` the other ink under them or over them.
+    // A 640 x 420 page for the scaled view's tests: a paper with gray rules and black of its own (a block, and two
+    // 1 px lines through the other ink below, as a PDF page's text or a picture template's lines lie under a
+    // highlight); on it other ink (a highlight band, pencil shading, charcoal, a marker and a ballpoint given grain)
+    // and solid strokes through all of it (a ballpoint from light to full pressure, a fineliner, a fountain pen, a
+    // marker, a calligraphy diagonal, a dot, and a word along the highlight, the pencil and the charcoal). Drawn with
+    // Ink edges at Solid as the pen writes: `solid` the solid strokes, `other_first` the other ink under them or over
+    // them.
     fn scaled_view_paper() -> Canvas {
         let (w, h) = (640, 420);
         let mut paper = Canvas::default();
@@ -15584,7 +15588,9 @@ mod tests {
         for y in 0..h {
             for x in 0..w {
                 let block = (560..600).contains(&x) && (30..70).contains(&y);
-                paper.px[(y * paper.stride + x) as usize] = if block { 0 } else if y % 60 == 28 || y % 60 == 29 { 119 } else { 255 };
+                let line = (y == 104 && (40..600).contains(&x)) || (x == 500 && (80..400).contains(&y));
+                paper.px[(y * paper.stride + x) as usize] =
+                    if block || line { 0 } else if y % 60 == 28 || y % 60 == 29 { 119 } else { 255 };
             }
         }
         paper
@@ -15687,15 +15693,37 @@ mod tests {
         }
         sc
     }
+    // The four page pixels (their index in pc and their weight) that blit_canvas blends for screen pixel sx, sy of
+    // that view; on the desk, none with any weight.
+    fn scaled_four((zoom, ox, oy): (f32, f32, f32), sx: i32, sy: i32, pc: &Canvas) -> [(usize, u32); 4] {
+        let fx = (sx as f32 + 0.5) / zoom + ox - 0.5;
+        let fy = (sy as f32 + 0.5) / zoom + oy - 0.5;
+        let (px, py) = (fx.floor() as i32, fy.floor() as i32);
+        if px < -1 || px >= pc.w || py < -1 || py >= pc.h {
+            return [(0, 0); 4];
+        }
+        let wx = ((fx - px as f32) * 255.0) as u8 as u32;
+        let wy = ((fy - py as f32) * 255.0) as u32;
+        let at = |x: i32, y: i32| (clampi(y, 0, pc.h - 1) * pc.stride + clampi(x, 0, pc.w - 1)) as usize;
+        [
+            (at(px, py), (255 - wx) * (255 - wy)),
+            (at(px + 1, py), wx * (255 - wy)),
+            (at(px, py + 1), (255 - wx) * wy),
+            (at(px + 1, py + 1), wx * wy),
+        ]
+    }
 
     // Ink edges at Solid (#320) in a view that is not 1:1, where a solid stroke crosses or lies beside other ink,
     // drawn before it or after it: no screen pixel is lighter than the same view of the page without the solid
     // strokes, and none is darker unless it is black or what blit_canvas's blend gives. One kind of pixel is the
-    // paper's own instead: where the stroke's own pixels cover a speck of the other ink and the page shows nothing
-    // but paper beside them, a few pixels of a view (the page does not keep what a stroke covers). Over paper alone
-    // every pixel is black or the paper's. Taking each ink pixel as its paper whatever lies beside it puts a pale
-    // outline along the stroke over pencil, charcoal or a highlight instead (lighter than the view without the
-    // stroke, by up to 7 of the panel's 16 levels).
+    // paper's own instead: where the stroke's own pixels cover other ink and the four page pixels show nothing but
+    // the ink and paper beside them (the page does not keep what a stroke covers). Away from the paper's own black
+    // that is a few pixels of a view. The paper's own black counts as its paper, and other ink over it leaves it
+    // black, so where a stroke meets a black line of the paper under a highlight or pencil there are more of them
+    // (on this page 101 to 769 a view): they are counted apart. Over paper alone every pixel is black or the
+    // paper's. Taking each ink pixel as its paper whatever lies beside it puts a pale outline along the stroke over
+    // pencil, charcoal or a highlight instead (lighter than the view without the stroke, by up to 7 of the panel's
+    // 16 levels).
     #[test]
     fn solid_ink_on_a_scaled_view_never_lightens_other_ink() {
         let paper = scaled_view_paper();
@@ -15720,12 +15748,17 @@ mod tests {
                 }
                 let plain = scaled_view(&page, &paper, view, false);
                 let after = scaled_view(&page, &paper, view, true);
-                let (mut black, mut kept, mut covered) = (0, 0, 0);
+                let (mut black, mut kept, mut covered, mut covered_by_black) = (0, 0, 0, 0);
                 for i in 0..after.px.len() {
                     let (a, b) = (after.px[i], before.px[i]);
                     if a > b {
                         assert!(a == paper_view.px[i], "zoom {zoom} at {ox} {oy}, other ink first {other_first}: pixel {i} is {a}, lighter than {b} without the strokes (the paper there is {})", paper_view.px[i]);
-                        covered += 1;
+                        let (sx, sy) = (i as i32 % after.stride, i as i32 / after.stride);
+                        if scaled_four(view, sx, sy, &paper).iter().any(|&(j, wt)| wt != 0 && paper.px[j] == 0) {
+                            covered_by_black += 1;
+                        } else {
+                            covered += 1;
+                        }
                     }
                     assert!(a >= b || a == 0 || a == plain.px[i], "zoom {zoom} at {ox} {oy}, other ink first {other_first}: pixel {i} is {a}, darker than {b} and not blit_canvas's {}", plain.px[i]);
                     black += (a == 0 && b != 0) as u32;
@@ -15734,6 +15767,7 @@ mod tests {
                 assert!(black > 300, "zoom {zoom}: the ink shows ({black} px)");
                 assert!(kept > 50, "zoom {zoom}: beside other ink the blend stays ({kept} px)");
                 assert!(covered < 100, "zoom {zoom}, other ink first {other_first}: {covered} of {} pixels are the paper's over a covered speck", after.px.len());
+                assert!(covered_by_black < 1000, "zoom {zoom}, other ink first {other_first}: {covered_by_black} pixels beside the paper's own black are the paper's over covered ink");
             }
         }
     }

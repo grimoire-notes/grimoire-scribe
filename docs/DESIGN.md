@@ -111,21 +111,26 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   not taken for the ink: where the ink has less than half the weight and one of the four page pixels with any
   weight is neither such ink nor its own paper, the bilinear blend stays, which counts the ink as black and so is
   never lighter than the view without the stroke (taking the paper there left a pale outline along the stroke).
-  So the settle of a solid stroke that crosses other ink in such a view may send a small refresh, of the grays
-  beside it. Only the settle's rect is judged; anything else due goes out as it would. The settle follows the
-  flush of the stroke's own live frames, by order and not by time: the loop handles a batch of input, ticks, then
-  flushes, so a tick that comes to the pen's leaving 150 ms late finds the settle due while the stroke's last
-  frames still wait for the flush. While a refresh waits where the settle's rect is on screen, the tick leaves
-  the settle due (editor.rs `settle_waits_for_flush`); the flush sends the frames, and the next tick settles
-  against a panel that has them. Nothing is flushed from the tick, a refresh waiting elsewhere holds nothing
-  back, and a settle an action forces (Undo, a tap on the toolbar) is taken at once. The display's contract (display.rs): a platform
-  answers the whole rect unless it knows what it last gave the panel at every pixel of it, so one that keeps no
-  record (the default), or whose last frames may not all have reached the panel as written (a refresh refused or
-  failed, a rotation or inversion since, until a whole grayscale frame; a colour panel, whose live frames are not
-  waited for), refreshes all of it as before; one with a pen mode leaves it when it answers empty, as the
-  grayscale refresh would have (the status bar waits for it). display_fbink.rs answers from `g_shown`, the RAM
-  shadow of the bytes written to the framebuffer, row by row as `copy_row` writes them (`fbpack_level_span`);
-  the simulator from its panel. With Smooth the settle is the UI refresh of its whole rect, as before.
+  The page does not keep what a solid stroke covers, so where the four show only the ink and paper, other ink the
+  stroke covered there shows as paper, lighter than without the stroke: a few pixels of a view, more where the
+  stroke meets black of the paper's own (a PDF page's text, a template's lines) under a highlight or pencil, as
+  that black counts as paper. So the settle of a solid stroke that crosses other ink in such a view may send a
+  small refresh, of the grays beside it. Only the settle's rect is judged; anything else due goes out as it would.
+  The settle follows the flush of the stroke's own live frames, by order and not by time: the loop handles a batch
+  of input, ticks, then flushes, so a tick that comes to the pen's leaving 150 ms late finds the settle due while
+  the stroke's last frames still wait for the flush. While a refresh waits where the settle's rect is on screen,
+  the tick leaves the settle due (editor.rs `settle_waits_for_flush`); the flush sends the frames, and the next
+  tick settles against a panel that has them. Nothing is flushed from the tick; refreshes waiting elsewhere hold
+  the settle back one pass at most (what waits for the flush is one rect, which two of them can stretch across the
+  stroke); and a settle an action forces (Undo, a tap on the toolbar) is taken at once. The display's contract
+  (display.rs): a platform answers the whole rect unless it knows what it last gave the panel at every pixel of it,
+  so one that keeps no record (the default), or whose last frames may not all have reached the panel as written (a
+  refresh refused or failed, a rotation or inversion since, until a whole grayscale frame; a colour panel, whose
+  live frames are not waited for), refreshes all of it as before; one with a pen mode leaves it when it answers
+  empty, as the grayscale refresh would have (the status bar waits for it). display_fbink.rs answers from
+  `g_shown`, the RAM shadow of the bytes written to the framebuffer, row by row as `copy_row` writes them
+  (`fbpack_level_span`); the simulator from its panel. With Smooth the settle is the UI refresh of its whole rect,
+  as before.
 - The Kindle display keeps the previous logical frame in physical order (+4.6 MB at 1860x2480).
   `fbpack_row` dithers only changed pixels for a FAST refresh. Unchanged gray image paper stays
   gray in the framebuffer, which DU leaves alone; earlier dithered ink stays as it was until the
