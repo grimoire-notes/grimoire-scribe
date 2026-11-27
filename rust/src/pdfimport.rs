@@ -307,6 +307,21 @@ pub(crate) fn own_folder_shown(sub: &str) -> String {
     grimoire_rel().map_or_else(|| format!("grimoire/{sub}"), |g| format!("{g}/{sub}"))
 }
 
+/// A looked-up text that names one of Grimoire's own folders in its words, as the msgid and the catalogs spell it on
+/// the Kindle ("No pictures in grimoire/photos."), with the folder as found from the storage root (own_folder_shown)
+/// in that spelling's place, as i18n's device name takes the place of "Kindle": the msgids and the catalogs stay as
+/// they are, and a translator has nothing to do. The text itself, the same bytes, where the two spellings are one (on
+/// the Kindle), and in a translation that does not spell the folder so (it keeps its own words).
+pub(crate) fn with_own_folder<'a>(text: &'a str, sub: &str) -> std::borrow::Cow<'a, str> {
+    folder_in_text(text, sub, &own_folder_shown(sub)).map_or(std::borrow::Cow::Borrowed(text), std::borrow::Cow::Owned)
+}
+
+/// `text` with `shown` where it says "grimoire/<sub>": None when it does not say it, or `shown` is that spelling.
+fn folder_in_text(text: &str, sub: &str, shown: &str) -> Option<String> {
+    let kindle = format!("grimoire/{sub}");
+    (shown != kindle && text.contains(&kindle)).then(|| text.replace(&kindle, shown))
+}
+
 /// The StoragePath of `rel` inside Grimoire's import folder.
 pub(crate) fn import_storage_path(rel: &str) -> Option<StoragePath> {
     StoragePath::new(format!("{}/import/{}", grimoire_rel()?, rel).as_bytes())
@@ -4371,6 +4386,82 @@ mod tests {
         let _ = std::fs::remove_dir_all(&st);
         let _ = std::fs::remove_dir_all(&near);
         let _ = std::fs::remove_dir_all(&out);
+    }
+
+    // A text whose words name one of Grimoire's folders as the Kindle spells it takes the folder as found from the
+    // storage root in that spelling's place, and nothing else changes: not a text that does not say it (a
+    // translation in other words keeps them), not on a root where the two spellings are one.
+    #[test]
+    fn a_text_that_names_a_folder_takes_it_as_found_from_the_storage_root() {
+        assert_eq!(folder_in_text("No pictures in grimoire/photos.", "photos", "Books/Grimoire/photos").as_deref(), Some("No pictures in Books/Grimoire/photos."));
+        assert_eq!(folder_in_text("grimoire/photos, grimoire/photos", "photos", "x/photos").as_deref(), Some("x/photos, x/photos"));
+        // the Kindle's own spelling: the text as it is
+        assert_eq!(folder_in_text("No pictures in grimoire/photos.", "photos", "grimoire/photos"), None);
+        // a translation that does not spell the folder so, or names another folder: as it is
+        assert_eq!(folder_in_text("Brak obraz\u{f3}w w folderze zdj\u{119}\u{107}.", "photos", "Books/Grimoire/photos"), None);
+        assert_eq!(folder_in_text("No pictures in grimoire/templates.", "photos", "Books/Grimoire/photos"), None);
+        assert_eq!(folder_in_text("", "photos", "Books/Grimoire/photos"), None);
+    }
+
+    // The folder picture sheet's line with no picture there (library.rs, draw_folder_picture) keeps its msgid, and
+    // with_own_folder puts the photos folder where the looked-up text says "grimoire/photos", as i18n puts a
+    // device's name where it says "Kindle". In `lang`: on a data root laid out as the Kindle's (the storage's folder
+    // "grimoire"), the very text that main draws, the same bytes (`kindle`); deeper in the storage, the path from its
+    // root (`deeper`, Books/Grimoire); with no storage root set, from the folder around the data root (`around`, the
+    // data root Notes).
+    fn the_folder_picture_line_in(lang: &str, kindle: &str, deeper: &str, around: &str) {
+        let base = std::env::var("GRIMOIRE_TEST_TMP").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+        let st = base.join(format!("grimoire-photos-line-{lang}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&st);
+        let was = std::env::var_os("GRIMOIRE_STORAGE");
+        let data = |r: std::path::PathBuf| assert_eq!(store_init(r.to_str().unwrap()), 0);
+        assert!(i18n_set(lang) && i18n_current() == lang);
+        // (tr's own lookup, by its other name: a tr( here would put this file in po/grimoire.pot's line for it)
+        let text = i18n_get("No pictures in grimoire/photos.");
+        assert_eq!(text, kindle);
+        std::env::set_var("GRIMOIRE_STORAGE", &st);
+        data(st.join("grimoire"));
+        let shown = with_own_folder(text, "photos");
+        assert!(matches!(shown, std::borrow::Cow::Borrowed(s) if std::ptr::eq(s, text)), "{shown}");
+        data(st.join("Books/Grimoire"));
+        assert_eq!(with_own_folder(text, "photos"), deeper);
+        std::env::remove_var("GRIMOIRE_STORAGE");
+        data(st.join("Notes"));
+        assert_eq!(with_own_folder(text, "photos"), around);
+        // (the tests' and the scenarios' own layout: the data root "grimoire" with no storage root set)
+        data(st.join("grimoire"));
+        assert!(matches!(with_own_folder(text, "photos"), std::borrow::Cow::Borrowed(s) if std::ptr::eq(s, text)));
+        i18n_set("en");
+        if let Some(v) = was {
+            std::env::set_var("GRIMOIRE_STORAGE", v);
+        }
+        let _ = std::fs::remove_dir_all(&st);
+    }
+
+    #[test]
+    fn the_folder_picture_line_names_its_folder_in_english() {
+        the_folder_picture_line_in("en", "No pictures in grimoire/photos.", "No pictures in Books/Grimoire/photos.", "No pictures in Notes/photos.");
+    }
+
+    // (po/es.po does not translate it: a Spanish Kindle reads the English, on main as here)
+    #[test]
+    fn the_folder_picture_line_names_its_folder_in_spanish() {
+        the_folder_picture_line_in("es", "No pictures in grimoire/photos.", "No pictures in Books/Grimoire/photos.", "No pictures in Notes/photos.");
+    }
+
+    #[test]
+    fn the_folder_picture_line_names_its_folder_in_japanese() {
+        the_folder_picture_line_in(
+            "ja",
+            "grimoire/photos \u{306b}\u{753b}\u{50cf}\u{304c}\u{3042}\u{308a}\u{307e}\u{305b}\u{3093}\u{3002}",
+            "Books/Grimoire/photos \u{306b}\u{753b}\u{50cf}\u{304c}\u{3042}\u{308a}\u{307e}\u{305b}\u{3093}\u{3002}",
+            "Notes/photos \u{306b}\u{753b}\u{50cf}\u{304c}\u{3042}\u{308a}\u{307e}\u{305b}\u{3093}\u{3002}",
+        );
+    }
+
+    #[test]
+    fn the_folder_picture_line_names_its_folder_in_polish() {
+        the_folder_picture_line_in("pl", "Brak obraz\u{f3}w w grimoire/photos.", "Brak obraz\u{f3}w w Books/Grimoire/photos.", "Brak obraz\u{f3}w w Notes/photos.");
     }
 
     fn sample_state() -> State {

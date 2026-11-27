@@ -1810,9 +1810,8 @@ fn draw_folder_picture(a: &mut App) {
     let gx = in_.x + (in_.w - gridw) / 2;
     let want = s.look_picture.clone();
     if s.look_photos.is_empty() {
-        // TRANSLATORS: the folder picture sheet, with no picture there: where its pictures are copied in. %s is the
-        // folder on the Kindle's storage, grimoire/photos.
-        let none = cformat!(tr("No pictures in %s."), crate::pdfimport::own_folder_shown("photos").as_str());
+        // TRANSLATORS: the folder picture sheet, with no picture there: where its pictures are copied in.
+        let none = crate::pdfimport::with_own_folder(tr("No pictures in grimoire/photos."), "photos");
         font_draw_centered(c, FontFace::Regular, ui_text_size(), Rect::new(in_.x, top, in_.w, row_h), &none, 60);
     }
     for k in 0..FOLDER_PHOTO_PER {
@@ -11793,6 +11792,16 @@ mod tests {
             seen.push(v);
         }
         assert!(seen.len() >= 20 && seen.contains(&300));
+    }
+
+    // The folder picture sheet's line with no picture there keeps the msgid every catalog translates, and names the
+    // photos folder as found from the storage root by putting it in the looked-up text (pdfimport::with_own_folder,
+    // whose tests hold each language's text), so a Kindle reads it as before in every language.
+    #[test]
+    fn the_folder_picture_line_keeps_its_msgid() {
+        let src = include_str!("library.rs");
+        let body = src.split_once("fn draw_folder_picture(").unwrap().1.split_once("\n}\n").unwrap().0;
+        assert!(body.contains("crate::pdfimport::with_own_folder(tr(\"No pictures in grimoire/photos.\"), \"photos\")"));
     }
 
     // The home's view applies the filter chips, the sort and the global search from the lists it
