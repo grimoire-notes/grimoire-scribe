@@ -148,6 +148,18 @@ Kindle; on a platform with another name every looked-up text has that name in it
 Scribe" as a whole (i18n.rs, the device's name). No string changes for it. The simulator's
 `GRIMOIRE_SIM_DEVICE_NAME` is that name for the scenarios.
 
+A platform whose data root sits inside a larger storage, one the user's other files are in, sets
+`GRIMOIRE_STORAGE` to that storage: the root of Files' All storage and of every storage path Grimoire keeps
+(fsview.rs, docs/SIM.md). Files' places at that root have the Kindle's folder names unless the platform names its
+own: `GRIMOIRE_PLACE_DOCUMENTS`, `GRIMOIRE_PLACE_DOWNLOADS` and `GRIMOIRE_PLACE_FONTS`, one name each (set empty:
+no such place). `GRIMOIRE_STORAGE_SYSTEM` names the storage's own system folders at its root, separated by `/`;
+Files lists none of them and refuses them as it does the Kindle's. Grimoire's folder may be more than one level
+down (`Shelf/Grimoire`): the Go to sheet then lists the folder that holds it as any other top folder. These hooks
+are compiled out of the Kindle build, as `GRIMOIRE_STORAGE` is. What Grimoire keeps by a path under the storage
+root (an import's marks and its cut-off work, the keys of Files' Covers previews) does not follow a change of that
+root: a platform sets `GRIMOIRE_STORAGE` first, or changes it, while no import runs or waits, and the Covers
+previews are made again once.
+
 A platform reads its own system files (under /proc or /sys, a locale file) with
 `util::read_system_file`, which follows links as any read does. `util::read_file` is for the data
 folder: since 2.2.0 it takes a plain file at the name itself (a link there reads as a file that is
