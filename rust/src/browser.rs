@@ -10,7 +10,8 @@
 //! user's files (import, templates, photos, fonts) a card renames a file or folder, with the rename keyboard, or
 //! moves it to the trash after asking as the Library asks before a notebook goes (the font Settings names is not
 //! deleted, and renamed it stays the font); the Trash place puts an entry back (Restore) and shows each entry's
-//! size and the trash's own (issue #144). After such a write the rows follow from the listing held: the folder
+//! size and the trash's own (issue #144), and its Empty trash chip deletes every entry it lists for good, after its
+//! question, in a background job (2.3, issue #330: bgwork_empty.rs). After such a write the rows follow from the listing held: the folder
 //! shown is not read again (a font renamed has its check's results and its setting follow, and a notebook restored
 //! has the Library read: DESIGN.md says what each reads). A picture's card copies it into Grimoire's templates or
 //! photos (Use as template, Use as photo: the copy job, bgwork_copy.rs), and the Templates and Photos sheets' From
@@ -76,6 +77,10 @@ const B_HOME_SET: i32 = B_HOME + 1;
 const B_HOME_RESET: i32 = B_HOME + 2;
 // A font's card (2.2, issue #161): Add to fonts. This work's ids are numbered from 90 (the runner taps `card.add`).
 const B_CARD_FONT: i32 = 90;
+// Empty trash (2.3, issue #330): the Trash place's chip, and its question's Empty trash. A block of their own, from 100
+// (the runner taps `empty` and `card.empty`).
+const B_EMPTY: i32 = 100;
+const B_EMPTY_YES: i32 = B_EMPTY + 1;
 
 /// What a task can pick, or Files lists as usable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -481,6 +486,11 @@ struct Card {
     /// the Delete question in place of the row's card (issue #144): `Delete "name"?`, asked as the Library asks it
     /// of a notebook, after the card's Delete and before anything is moved
     confirm: bool,
+    /// the Empty trash question (2.3, issue #330), from the Trash place's chip: no row's; how many entries the place
+    /// lists and their bytes, as it opened
+    empty: bool,
+    empty_n: usize,
+    empty_bytes: u64,
     /// the question: the card row whose tap opened it (the card's Delete, where the finger was; empty when no tap
     /// did), which the question's Delete is never drawn under; and where the question was when the app was last
     /// told it had been drawn (app_ask: it takes no answer before it has been shown), empty before
@@ -598,6 +608,11 @@ pub struct Browser {
     /// (`home_follows`)
     home: Home,
     home_moved: Option<Home>,
+    /// Empty trash (2.3, issue #330): whether its chip was on the path bar as last drawn (it comes once the trash's
+    /// size is known, and goes while the job runs: the bar is drawn again then), and whether the staying notice says
+    /// the job is at work
+    empty_drawn: bool,
+    empty_notice: bool,
 }
 
 /// Covers: while a screen's previews are still coming, the tiles that changed are drawn together at most once this
@@ -734,9 +749,10 @@ impl Browser {
         *self = Browser::default();
         self.prefs = prefs;
         let Some((root, grimoire)) = root_dir() else { return false };
-        // Files deletes into Grimoire's trash, which is cleaned over USB. A trash removed whole there is made again
-        // as Files opens, as every start makes it: without it each Delete (the Library's too) would fail until
-        // Grimoire started again. Made only where nothing stands (a link there is left alone, and refused later).
+        // Files deletes into Grimoire's trash, which its Trash place empties (or the owner over USB). A trash removed
+        // whole over USB is made again as Files opens, as every start makes it: without it each Delete (the Library's
+        // too) would fail until Grimoire started again. Made only where nothing stands (a link there is left alone,
+        // and refused later).
         if spec.mode == BrowseMode::Place {
             let _ = std::fs::create_dir(format!("{}/trash", grimoire.trim_end_matches('/')));
         }
@@ -1240,7 +1256,7 @@ impl Browser {
             let old = self.card_row(&c).cloned();
             let same = |r: &Row| r.path == c.path && c.stat.zip(r.stat).is_none_or(|(a, b)| (a.dev, a.ino) == (b.dev, b.ino));
             match rows.iter().position(same) {
-                _ if c.goto => self.card = Some(c),
+                _ if c.goto || c.empty => self.card = Some(c),
                 Some(j) => {
                     if let Some(o) = old {
                         let stat = rows[j].stat.or(o.stat);
@@ -1264,9 +1280,10 @@ impl Browser {
         self.pressed_rect = None;
     }
 
-    /// The row the open card is for, while that row is still its file's.
+    /// The row the open card is for, while that row is still its file's (the Go to sheet and the Empty trash question
+    /// have none).
     fn card_row(&self, c: &Card) -> Option<&Row> {
-        self.rows.get(c.row).filter(|r| !c.goto && r.path == c.path)
+        self.rows.get(c.row).filter(|r| !c.goto && !c.empty && r.path == c.path)
     }
 
     /// One slice of stats for the rows being made ready (Sort by newest or size, at most `budget_ms`); once each has
@@ -1519,7 +1536,7 @@ impl Browser {
             RowKind::Place => match r.place {
                 Some(PlaceKind::Import) => format!("{}", String::from_utf8_lossy(r.path.as_bytes())),
                 Some(PlaceKind::All) => String::new(),
-                // (the trash's size beside its path, once its walk is through: it is cleaned over USB; an empty
+                // (the trash's size beside its path, once its walk is through: what its Empty trash frees; an empty
                 // trash has none to say, where a size label would round it up to "1 KB")
                 Some(PlaceKind::Trash) if r.size.is_some_and(|b| b > 0) => format!("{}, {}", r.path.to_string_lossy(), size_label(r.size.unwrap_or(0))),
                 _ => String::from_utf8_lossy(r.path.as_bytes()).into_owned(),
@@ -1942,6 +1959,14 @@ impl Browser {
             // places and the Kindle's top folders, one a row (34 px, at the sheet's top).
             return (tr("Go to").to_string(), rows);
         }
+        if card.empty {
+            // the Empty trash question (2.3, issue #330): its title, then (drawn under it) what goes and how much
+            // (`empty_text`), the act named for what it does, and Cancel
+            let rows = vec![(B_EMPTY_YES, 0, IconKind::Trash, Self::empty_word().to_string()), (B_CARD_CANCEL, 0, IconKind::Close, tr("Cancel").to_string())];
+            // TRANSLATORS: the title of the question Files' Trash asks before Empty trash deletes its entries for good
+            // (the sheet's title, at most about 1400 px at 56 px in bold).
+            return (tr("Empty the trash?").to_string(), rows);
+        }
         let Some(r) = self.card_row(card) else { return (String::new(), Vec::new()) };
         let mut rows: Vec<(i32, i32, IconKind, String)> = Vec::new();
         if card.confirm {
@@ -2016,8 +2041,8 @@ impl Browser {
                     rows.push((B_CARD_TEMPLATE, 0, IconKind::Paper, tr("Use as template").to_string()));
                 }
             }
-            // a trash entry's (2.2, issue #144): what it is, its size and date, and Restore alone (no Empty, no delete:
-            // the trash is cleaned over USB)
+            // a trash entry's (2.2, issue #144): what it is, its size and date, and Restore alone (no delete of one
+            // entry: the Trash place's Empty trash deletes them all, 2.3, issue #330)
             RowKind::Trashed => {
                 let sub = self.row_sub(r);
                 let label = self.row_label(r);
@@ -2386,6 +2411,10 @@ impl Browser {
     /// the store when its name is taken); its row is gone from the Trash place's rows (`entry_changed`). The toast
     /// (none when the entry held nothing to put back), and the notebook put back, for the host.
     fn restore_card(&mut self) -> Result<(Option<String>, Option<String>), (String, Then)> {
+        // (never while Empty trash is at work on the rows: the screen offers no card then)
+        if crate::bgwork_empty::empty_pending() {
+            return Err((tr("Couldn't restore.").to_string(), Then::Relist));
+        }
         let (path, _) = self.card_item()?;
         let entry = path.split_last().map(|(_, n)| n.to_vec()).unwrap_or_default();
         let st = self.storage.as_ref().ok_or((tr("Couldn't restore.").to_string(), Then::Nothing))?;
@@ -2463,6 +2492,96 @@ impl Browser {
         read
     }
 
+    // ---- Empty trash (2.3, issue #330) ----
+
+    /// Whether the Trash place offers Empty trash now: Files, the Trash place read, an entry listed, the trash's size
+    /// known (the question says it), and no Empty trash queued or running (the rows are being deleted then). An empty
+    /// trash has none.
+    fn empty_offered(&self) -> bool {
+        self.mode == BrowseMode::Place
+            && self.in_trash_place()
+            && self.ready
+            && self.rows.iter().any(|r| r.kind == RowKind::Trashed)
+            && self.sizes.as_ref().is_some_and(|s| s.done)
+            && !crate::bgwork_empty::empty_pending()
+    }
+
+    /// The chip's word, and the question's act.
+    fn empty_word() -> &'static str {
+        // TRANSLATORS: Files' Trash: the chip on its path bar (one or two words of at most about 400 px at 34 px in
+        // bold), and the first answer of the question it opens (1470 px at 44 px in bold): every entry the Trash
+        // lists is deleted for good, it cannot be restored.
+        tr("Empty trash")
+    }
+
+    /// What the question says under its title: how many entries go, and their bytes.
+    fn empty_text(card: &Card) -> String {
+        let size = Self::empty_size(card.empty_bytes);
+        // TRANSLATORS: Files' Trash: the line under the title of the question Empty trash asks (on two lines at most
+        // of about 1400 px at 44 px): %d is how many entries it lists, %s their size ("12 entries (3.4 MB) will be
+        // deleted for good."); they cannot be restored after.
+        let text = ng_("%d entry (%s) will be deleted for good.", "%d entries (%s) will be deleted for good.", card.empty_n as i64);
+        cformat!(text, card.empty_n as i32, size.as_str())
+    }
+
+    /// A size as Empty trash says it: 0 KB for nothing (a size label rounds every size up to at least 1 KB).
+    fn empty_size(b: u64) -> String {
+        if b == 0 {
+            // TRANSLATORS: (also) Empty trash's question and its toast, for a size of nothing: "0 KB".
+            cformat!(tr("%d KB"), 0)
+        } else {
+            size_label(b)
+        }
+    }
+
+    /// The chip's tap: the question, with the entries the place lists now and their bytes (the size walk's). Nothing
+    /// when Empty trash is not offered. False when it did nothing.
+    fn empty_ask(&mut self, opener: Rect) -> bool {
+        if !self.empty_offered() {
+            return false;
+        }
+        let names: Vec<&[u8]> = self.rows.iter().filter(|r| r.kind == RowKind::Trashed).map(|r| r.name.as_bytes()).collect();
+        let bytes = self.sizes.as_ref().and_then(|s| s.sum_of(names.iter().copied())).unwrap_or(0);
+        self.card = Some(Card { empty: true, empty_n: names.len(), empty_bytes: bytes, opener, ..Default::default() });
+        true
+    }
+
+    /// The question's Empty trash: the entries the place lists now, by name (the rows the question counted: nothing
+    /// else, and nothing that comes into the trash after), asked of the job (bgwork_empty.rs). The question closes;
+    /// the rows stay, with no card and no chip, until the job has ended (`trash_emptied`). False when nothing was
+    /// asked (not offered any more, or one is queued already).
+    fn empty_confirm(&mut self) -> bool {
+        self.card = None;
+        if !self.empty_offered() {
+            return false;
+        }
+        let names: Vec<Vec<u8>> = self.rows.iter().filter(|r| r.kind == RowKind::Trashed).map(|r| r.name.as_bytes().to_vec()).collect();
+        crate::bgwork_empty::empty_request(names)
+    }
+
+    /// Empty trash has ended (the host's, from the job's end, whatever screen Files is on): the trash's sizes are read
+    /// again, the free space, and the folder shown (the Trash place's rows, in its listing's slices; the root's Trash
+    /// row's size). Drawn when the Library is in front.
+    pub fn trash_emptied(&mut self, a: &mut App) {
+        if !self.open {
+            return;
+        }
+        self.sizes_again();
+        if let Some(st) = self.storage.as_ref() {
+            self.free = st.free_bytes().zip(st.total_bytes());
+        }
+        if self.in_trash_place() {
+            self.reread();
+        }
+        // (the root's Trash row says the trash's size again once the new walk is through)
+        for r in self.rows.iter_mut().filter(|r| r.place == Some(PlaceKind::Trash)) {
+            r.size = None;
+        }
+        if a.scr == ScreenId::Library && !a.asleep && !self.kb.open {
+            self.redraw_full(a);
+        }
+    }
+
     // ---- drawing ----
 
     /// The screen: header, path line, rows, pager, and the card when one is open.
@@ -2470,6 +2589,7 @@ impl Browser {
         hits_clear(&mut self.hits);
         self.row_rects.clear();
         self.drawn.clear();
+        self.empty_drawn = false;
         let (aw, ah) = (a.w, a.h);
         self.aw = aw;
         let per = self.per_page(ah);
@@ -2522,9 +2642,8 @@ impl Browser {
         let first = self.screen * per;
         let y0 = band.y + band.h + u(10.0);
         let c = &mut a.screen;
-        if self.rows.is_empty() && self.ready {
-            // TRANSLATORS: a folder in the file picker with nothing in it a PDF import can use (one line, 44 px, centred).
-            font_draw_centered(c, FontFace::Bold, ui_text_size(), Rect::new(m, y0 + u(120.0), aw - 2 * m, u(100.0)), tr("Nothing here to use."), 0);
+        if let Some(none) = self.none_text() {
+            font_draw_centered(c, FontFace::Bold, ui_text_size(), Rect::new(m, y0 + u(120.0), aw - 2 * m, u(100.0)), none, 0);
         }
         let covers = self.in_covers();
         // (Covers: what the tiles were drawn showing before this draw; the ones that changed are its stale ones)
@@ -2584,6 +2703,23 @@ impl Browser {
         }
     }
 
+    /// What the screen says in place of rows when the folder shown, read, has none: the Trash place that the trash is
+    /// empty (2.3, issue #330: after Empty trash, or before anything was deleted), any other folder that it holds
+    /// nothing to use. None while there are rows, or the folder is still being read.
+    fn none_text(&self) -> Option<&'static str> {
+        if !self.rows.is_empty() || !self.ready {
+            return None;
+        }
+        Some(if self.in_trash_place() {
+            // TRANSLATORS: Files' Trash with no entry in it (after Empty trash, or before anything was deleted): one
+            // line, 44 px in bold, centred, at most about 1400 px.
+            tr("The trash is empty.")
+        } else {
+            // TRANSLATORS: a folder in the file picker with nothing in it a PDF import can use (one line, 44 px, centred).
+            tr("Nothing here to use.")
+        })
+    }
+
     /// The rename keyboard's area while it is up (where a hardware key's input goes, app_type_text), None otherwise.
     pub fn keyboard_area(&self) -> Option<Rect> {
         (self.open && self.kb.open && !rect_is_empty(self.kb.area)).then_some(self.kb.area)
@@ -2608,9 +2744,17 @@ impl Browser {
             font_draw_left(c, FontFace::Bold, small, Rect::new(tx, r.y, r.x + r.w - tx - u(20.0), r.h), label, 0);
             r
         };
-        // (none in the trash: it keeps its own order, by the time in each name, and lists all it holds)
+        // (none in the trash: it keeps its own order, by the time in each name, and lists all it holds. Its one chip
+        // there is Empty trash, 2.3, issue #330, once there is an entry and the trash's size is known)
+        self.empty_drawn = self.empty_offered();
         let room_end = if self.in_trash_place() {
-            band.x + band.w
+            if self.empty_drawn {
+                let empty = chip(c, band.x + band.w, IconKind::Trash, Self::empty_word());
+                hits_add(&mut self.hits, empty, B_EMPTY, 0);
+                empty.x - u(30.0)
+            } else {
+                band.x + band.w
+            }
         } else {
             let show = chip(c, band.x + band.w, IconKind::Eye, self.show_label());
             let sort = chip(c, show.x - u(20.0), IconKind::Sort, self.sort_label());
@@ -2716,8 +2860,12 @@ impl Browser {
         }
     }
 
+    /// Whether row `i` has a card (its `...`, a tap or a hold opens it). A trash entry's (Restore) none while an Empty
+    /// trash is queued or running (2.3, issue #330): its rows are being deleted.
     fn has_card(&self, i: usize) -> bool {
-        self.rows.get(i).is_some_and(|r| matches!(r.kind, RowKind::Pdf | RowKind::Dir | RowKind::Picture | RowKind::Font | RowKind::Other) || Self::restorable(r))
+        self.rows.get(i).is_some_and(|r| {
+            matches!(r.kind, RowKind::Pdf | RowKind::Dir | RowKind::Picture | RowKind::Font | RowKind::Other) || (Self::restorable(r) && !crate::bgwork_empty::empty_pending())
+        })
     }
 
     /// A row's icon (a list row's, a Covers tile's without a preview).
@@ -2884,31 +3032,38 @@ impl Browser {
 
     fn draw_card(&mut self, a: &mut App) {
         let Some(card) = self.card.take() else { return };
-        if !card.goto && self.card_row(&card).is_none() {
+        if !card.goto && !card.empty && self.card_row(&card).is_none() {
             return; // (its file is not listed now: no card)
         }
         let (details, mut lines) = self.card_lines(&card);
         let (aw, ah) = (a.w, a.h);
-        if card.confirm {
-            // the Delete question, drawn as the Library draws it for a notebook: its sheet, its title, its two rows
+        if card.confirm || card.empty {
+            // the Delete question, drawn as the Library draws it for a notebook: its sheet, its title, its two rows;
+            // the Empty trash question (2.3, issue #330) the same, with what goes and how much under its title
             let (rh, gap) = (u(140.0), u(20.0));
-            let mut rect = crate::library::sheet_rect(aw, ah, u(120.0) + u(72.0) + lines.len() as i32 * (rh + gap));
+            let says = if card.empty { Self::empty_text(&card) } else { String::new() };
+            let says_h = if says.is_empty() { 0 } else { u(150.0) };
+            let mut rect = crate::library::sheet_rect(aw, ah, u(120.0) + u(72.0) + says_h + lines.len() as i32 * (rh + gap));
             // (its Delete, the first row, clear of the card row that opened it: question_dy)
             let first = ui_sheet_inner(rect, true);
-            rect.y += Self::question_dy(rect, Rect::new(first.x, first.y, first.w, rh), card.opener, ah);
+            rect.y += Self::question_dy(rect, Rect::new(first.x, first.y + says_h, first.w, rh), card.opener, ah);
             // Drawn for the first time, or at a new place (the screen turned): not shown yet, and no contact answers
             // it until it has been (card_pointer). Every draw of it is invalidated in the same call.
             if rect != card.asked {
                 app_ask(a);
             }
-            let name = self.card_row(&card).map_or(String::new(), |r| r.name.clone());
+            let title = if card.empty { details.clone() } else { Self::delete_title(&self.card_row(&card).map_or(String::new(), |r| r.name.clone()), rect.w - u(160.0)) };
             let c = &mut a.screen;
-            let inner = ui_sheet(c, rect, &Self::delete_title(&name, rect.w - u(160.0)));
+            let mut inner = ui_sheet(c, rect, &title);
+            if says_h > 0 {
+                ui_text(c, FontFace::Regular, ui_text_size(), ui_small_size(), Rect::new(inner.x, inner.y, inner.w, says_h - u(20.0)), &says, 2, false, 0);
+                inner.y += says_h;
+            }
             let mut hits = HitList::default();
             for (i, (id, arg, icon, label)) in lines.iter().enumerate() {
                 let r = Rect::new(inner.x, inner.y + i as i32 * (rh + gap), inner.w, rh);
                 ui_frame(c, r, u(16.0), 255, true, 0);
-                ui_frame(c, r, u(16.0), 0, false, if *id == B_DELETE_YES { u(6.0) } else { u(3.0) });
+                ui_frame(c, r, u(16.0), 0, false, if matches!(*id, B_DELETE_YES | B_EMPTY_YES) { u(6.0) } else { u(3.0) });
                 ui_icon(c, *icon, Rect::new(r.x + u(20.0), r.y + u(15.0), rh - u(30.0), rh - u(30.0)), 0);
                 font_draw_left(c, FontFace::Bold, ui_text_size(), Rect::new(r.x + rh + u(10.0), r.y, r.w - rh - u(30.0), r.h), label, 0);
                 hits_add(&mut hits, r, *id, *arg);
@@ -3079,6 +3234,12 @@ impl Browser {
                 self.redraw(a, RefreshMode::Ui);
                 return BrowserResult::Prefs;
             }
+            // the Trash place's Empty trash (2.3, issue #330): it asks first, in the question's sheet
+            B_EMPTY => {
+                if self.empty_ask(h.r) {
+                    self.show_card(a);
+                }
+            }
             B_SORT | B_SHOW => {
                 if h.id == B_SORT {
                     self.prefs.sort = (self.prefs.sort.clamp(0, 2) + 1) % 3;
@@ -3131,8 +3292,9 @@ impl Browser {
                         self.open_card(i);
                         self.show_card(a);
                     }
-                    // a trash entry Restore can put back: its card (a page, and a name of no known form, do nothing)
-                    RowKind::Trashed if Self::restorable(&row) => {
+                    // a trash entry Restore can put back: its card (a page, and a name of no known form, do nothing; nor
+                    // any entry while Empty trash is at work)
+                    RowKind::Trashed if self.has_card(i) => {
                         self.open_card(i);
                         self.show_card(a);
                     }
@@ -3161,10 +3323,10 @@ impl Browser {
             return BrowserResult::None;
         }
         let Some(card) = self.card.as_mut() else { return BrowserResult::None };
-        if ph == 0 && card.confirm && !app_asked_seen(a, ev) {
-            // The Delete question has not been shown, or only just: this contact came down on what was there before it
-            // (the second of two taps on the card's Delete). It answers nothing, down to its lift, wherever it
-            // landed: not Delete, not Keep it, and outside the sheet it does not close the question.
+        if ph == 0 && (card.confirm || card.empty) && !app_asked_seen(a, ev) {
+            // The Delete question (or Empty trash's) has not been shown, or only just: this contact came down on what
+            // was there before it (the second of two taps on the card's Delete). It answers nothing, down to its lift,
+            // wherever it landed: not Delete, not Keep it, and outside the sheet it does not close the question.
             self.swallow = true;
             return BrowserResult::None;
         }
@@ -3284,6 +3446,13 @@ impl Browser {
                     }
                     Err((msg, then)) => self.refused(a, &msg, then),
                 }
+                BrowserResult::None
+            }
+            // Empty trash's question answered (2.3, issue #330): the job asked for; the rows stay, with no card and
+            // no chip, and the staying notice says it is at work (`tick`) until its end reads the trash again
+            B_EMPTY_YES => {
+                self.empty_confirm();
+                self.redraw(a, RefreshMode::Ui);
                 BrowserResult::None
             }
             // Home (2.2, issue #160), each the host's to do and to draw: go home (the Go to sheet's first row); the
@@ -3556,6 +3725,7 @@ impl Browser {
             self.flush_toast(a);
         }
         self.previews_notice(a, now);
+        self.empty_tick(a);
         // (busy: a folder being read, or Files' rows being sorted by newest or size)
         let busy = !self.ready || self.next.is_some();
         // (the Loading notice goes once a folder is read, whichever: Back during a slow listing shows another)
@@ -3604,6 +3774,25 @@ impl Browser {
         }
         if !rect_is_empty(d) {
             app_invalidate(a, d, RefreshMode::Ui);
+        }
+    }
+
+    /// Empty trash at each tick (2.3, issue #330): the staying notice while its job is queued or running (between two of
+    /// its runs too), and the path bar drawn again when its chip comes (the trash's size is known now) or goes.
+    fn empty_tick(&mut self, a: &mut App) {
+        let working = crate::bgwork_empty::empty_pending();
+        if working && !self.empty_notice {
+            self.empty_notice = true;
+            // TRANSLATORS: the staying notice while Empty trash deletes the entries of Files' Trash for good (one line,
+            // about 700 px at 44 px).
+            app_notice(a, NoticeKey::Trash, tr("Emptying the trash..."));
+        } else if !working && self.empty_notice {
+            self.empty_notice = false;
+            app_notice_clear(a, NoticeKey::Trash);
+        }
+        if self.at.is_some() && self.mode == BrowseMode::Place && self.card.is_none() && !self.kb.open && self.empty_offered() != self.empty_drawn {
+            self.draw(a);
+            app_invalidate(a, rect_inflate(self.path_bar, u(4.0)), RefreshMode::Ui);
         }
     }
 
@@ -3684,6 +3873,7 @@ impl Browser {
             "card" => out.push_str(&match &self.card {
                 None => String::new(),
                 Some(c) if c.goto => "goto".to_string(),
+                Some(c) if c.empty => "empty".to_string(),
                 Some(c) if c.confirm && self.card_row(c).is_some() => "delete".to_string(),
                 Some(c) => match self.card_row(c).map(|r| r.kind) {
                     None => String::new(),
@@ -3708,6 +3898,16 @@ impl Browser {
                     out.push_str(&self.card_lines(c).1.iter().map(|l| l.3.clone()).collect::<Vec<_>>().join("|"));
                 }
             }
+            // Empty trash (2.3, issue #330): what its question says under its title, and whether its chip was on the
+            // path bar as last drawn
+            "card.text" => {
+                if let Some(c) = self.card.as_ref().filter(|c| c.empty) {
+                    out.push_str(&Self::empty_text(c));
+                }
+            }
+            "empty" => out.push_str(if self.empty_drawn { "1" } else { "0" }),
+            // (what the screen says in place of rows: "The trash is empty." in the Trash place)
+            "none" => out.push_str(self.none_text().unwrap_or("")),
             "sort" => out.push_str(FILES_SORT_NAMES[self.prefs.sort.clamp(0, 2) as usize]),
             "show" => out.push_str(FILES_SHOW_NAMES[self.prefs.show.clamp(0, 1) as usize]),
             "sorting" => out.push_str(if self.next.is_some() { "1" } else { "0" }),
@@ -3787,7 +3987,7 @@ impl Browser {
     /// rename, trash, restore and cancel; the Delete question's delete (its Keep it is cancel) and, while the
     /// question is up, opener: where the card's Delete that opened it was tapped (a second tap at the first's place).
     /// Home's rows: the Go to sheet's goto.home, and card.sethome and card.resethome (the sheet's and a folder's
-    /// card's).
+    /// card's). Empty trash: the Trash place's chip, empty, and its question's card.empty (its Cancel is cancel).
     pub fn point(&self, name: &str) -> Option<(f32, f32)> {
         let centre = |h: &Hit| ((h.r.x + h.r.w / 2) as f32, (h.r.y + h.r.h / 2) as f32);
         if let Some(c) = &self.card {
@@ -3810,6 +4010,7 @@ impl Browser {
                 "card.resethome" => B_HOME_RESET,
                 "goto.home" => B_HOME_GO,
                 "card.add" => B_CARD_FONT,
+                "card.empty" => B_EMPTY_YES,
                 _ => 0,
             };
             if id != 0 {
@@ -3828,6 +4029,7 @@ impl Browser {
             "sort" => find(B_SORT, 0),
             "show" => find(B_SHOW, 0),
             "view" => find(B_VIEW, 0),
+            "empty" => find(B_EMPTY, 0),
             _ => {
                 let (what, n) = name.split_once('.')?;
                 // the rows on screen, in order: their B_ROW hits
@@ -4343,6 +4545,89 @@ mod tests {
         assert!(b.rows.iter().all(|r| r.kind == RowKind::Trashed));
         let cards: Vec<bool> = (0..b.rows.len()).map(|i| b.has_card(i)).collect();
         assert_eq!(cards, [true, true, true, true, false, false]);
+    }
+
+    // Empty trash (2.3, issue #330) is offered in the Trash place only, with an entry listed and once the trash's size
+    // is known (its question says it): an empty trash has no Empty trash, nor does a trash whose walk is still to come,
+    // nor any other place.
+    #[test]
+    fn an_empty_trash_has_no_empty_trash() {
+        let (base, _g) = storage("emptyoffer");
+        let t = format!("{base}/grimoire/trash");
+        std::fs::create_dir_all(&t).unwrap();
+        let mut b = Browser::default();
+        assert!(b.open(PickSpec::place(), FilesPrefs { card: true, ..Default::default() }));
+        assert!(b.go(sp("grimoire/trash")));
+        for _ in 0..8 {
+            b.work(2480, now_ms());
+        }
+        assert!(b.ready && b.rows.is_empty() && b.sizes.as_ref().is_some_and(|s| s.done));
+        assert!(!b.empty_offered(), "an empty trash");
+        assert!(!b.empty_ask(RECT_EMPTY) && b.card.is_none());
+        // an entry, the place read again: not before its size is known, then offered
+        std::fs::write(format!("{t}/20261101-000000-0001-p3-1790000500"), vec![b'p'; 2048]).unwrap();
+        b.sizes_again();
+        b.relist(now_ms());
+        assert_eq!(b.rows.len(), 1);
+        assert!(!b.empty_offered(), "the trash's size is not known yet");
+        for _ in 0..8 {
+            b.work(2480, now_ms());
+        }
+        assert!(b.empty_offered());
+        // (never anywhere else: the root, another place)
+        b.show_root();
+        assert!(!b.empty_offered());
+        std::fs::create_dir_all(format!("{base}/grimoire/templates")).unwrap();
+        std::fs::write(format!("{base}/grimoire/templates/a.png"), b"x").unwrap();
+        assert!(b.go(sp("grimoire/templates")));
+        assert!(!b.empty_offered());
+    }
+
+    // Empty trash's question counts the entries the place lists and their bytes, and says so; closing it (its Cancel,
+    // or a tap outside) asks nothing of the job and deletes nothing. Its Empty trash asks the job for the names listed,
+    // and while that is queued the place offers no Empty trash and no entry's card (Restore). No child is forked: the
+    // first child counts as busy (bg_test_hold), so the job waits in the queue.
+    #[test]
+    fn cancel_deletes_nothing_and_the_job_is_asked_for_the_rows() {
+        let (base, _g) = storage("emptyask");
+        let t = format!("{base}/grimoire/trash");
+        std::fs::create_dir_all(format!("{t}/20261001-000000-0001-1793000000")).unwrap();
+        std::fs::write(format!("{t}/20261001-000000-0001-1793000000/notebook.ini"), vec![b'n'; 5 * 1024]).unwrap();
+        std::fs::write(format!("{t}/20261101-000000-0001-p3-1790000500"), vec![b'p'; 2048]).unwrap();
+        std::fs::write(format!("{t}/notes"), b"").unwrap();
+        i18n_set("en");
+        let mut b = Browser::default();
+        assert!(b.open(PickSpec::place(), FilesPrefs { card: true, ..Default::default() }));
+        assert!(b.go(sp("grimoire/trash")));
+        for _ in 0..8 {
+            b.work(2480, now_ms());
+        }
+        assert!(b.empty_ask(RECT_EMPTY));
+        let card = b.card.clone().unwrap();
+        assert!(card.empty && card.empty_n == 3 && card.empty_bytes == 7 * 1024);
+        assert_eq!(Browser::empty_text(&card), "3 entries (7 KB) will be deleted for good.");
+        let (title, rows) = b.card_lines(&card);
+        assert_eq!(title, "Empty the trash?");
+        assert_eq!(rows.iter().map(|r| (r.0, r.3.as_str())).collect::<Vec<_>>(), [(B_EMPTY_YES, "Empty trash"), (B_CARD_CANCEL, "Cancel")]);
+        // Cancel: the question goes (close_card), and nothing else happens
+        crate::bgjob::bg_test_hold(true);
+        b.card = None;
+        assert_eq!(bg_kind_count(BgKind::EmptyTrash), 0);
+        assert_eq!(names_in(&t).len(), 3);
+        assert!(b.empty_offered() && b.has_card(0));
+        // Empty trash: the job, for the names listed, and the place waits on it
+        assert!(b.empty_ask(RECT_EMPTY) && b.empty_confirm());
+        assert!(b.card.is_none());
+        assert_eq!(bg_kind_count(BgKind::EmptyTrash), 1);
+        assert!(!b.empty_offered() && !b.has_card(0));
+        assert!(!b.empty_ask(RECT_EMPTY) && !b.empty_confirm(), "one at a time");
+        crate::bgjob::bg_test_hold(false);
+        assert!(b.empty_offered() && b.has_card(0));
+        assert_eq!(names_in(&t).len(), 3);
+    }
+
+    fn names_in(dir: &str) -> Vec<String> {
+        std::fs::read_dir(dir).map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default()
     }
 
     // Show all in a folder of 6,000 links (the listing keeps 5,000 of their names): no more than 5,000 rows, and
