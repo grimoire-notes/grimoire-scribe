@@ -1,6 +1,7 @@
 # rust-only
 # generate: tests/lasso_more_fixture.py
 # settings: eraser_mode=1
+# settings: ink_edges=smooth
 # A paste scaled down to fit a smaller page scales the widths with the points, as a resize does (the owner's ruling
 # of 2026-11-23, after issue #204: lasso.rs lasso_scale_widths, called from sel_paste with paste_spot's scale):
 # black ink, white ink and the erasing carried with the ink alike, kept as scaled in memory and drawn and stored

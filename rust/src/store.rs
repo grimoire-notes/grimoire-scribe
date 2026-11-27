@@ -227,8 +227,9 @@ pub struct Settings {
     /// this build does not have is Off and is written back as it was).
     pub pdf_gamma: i32,
     /// Ink edges (2.3, #320): how the solid pens draw, by `InkEdges`' index (settings.ini `ink_edges`,
-    /// `InkEdges::NAMES`: absent at smooth, the default; a value this build does not have is Smooth and is written back
-    /// as it was). brush.rs reads it from ink_edges(), which app_init and the Settings row set.
+    /// `InkEdges::NAMES`: absent at solid, the default (#329), so a file without the line, 2.2's among them, reads as
+    /// Solid; a value this build does not have is Smooth and is written back as it was). brush.rs reads it from
+    /// ink_edges(), which app_init and the Settings row set.
     pub ink_edges: i32,
 }
 
@@ -5038,7 +5039,7 @@ pub fn settings_default(s: &mut Settings) {
     s.hints = 0;
     s.recent_apps.set("files,share,settings,store");
     s.link_areas = false;
-    s.ink_edges = 0; // Smooth: as before 2.3
+    s.ink_edges = 1; // Solid (2.3, #329)
 }
 
 /// pen.panel / touch.panel: the panel the calibration was made on, "WxH" (1.1 on). A value that does
@@ -5847,8 +5848,9 @@ pub fn settings_save(s: &Settings) -> i32 {
     } else {
         put(&mut b, "recent_apps", s.recent_apps.as_str());
     }
-    // 2.3: Ink edges (#320), a line only at Solid (or a value this build does not have, written back as it was).
-    put_unless_default(&mut b, "ink_edges", InkEdges::from_index(s.ink_edges).name(), InkEdges::Smooth.name());
+    // 2.3: Ink edges (#320), a line only at Smooth, Solid being the default (#329) (or a value this build does not
+    // have, written back as it was).
+    put_unless_default(&mut b, "ink_edges", InkEdges::from_index(s.ink_edges).name(), InkEdges::Solid.name());
     // Lines this build does not know, as they were; but a pen.panel or touch.panel this build could
     // not read goes once the calibration's panel is recorded (written above in its place).
     let unknown = with(|st| st.g_set_unknown.clone());

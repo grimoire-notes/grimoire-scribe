@@ -989,24 +989,24 @@ fn pdf_gamma_key() {
     unlink(&path);
 }
 
-// Ink edges (2.3, #320): ink_edges is absent at smooth and written only at solid, after recent_apps; it is read strictly,
-// so only the two known values are taken, and anything else is Smooth, written back as it was until the setting
-// changes. A file of a version without it reads as Smooth.
+// Ink edges (2.3, #320): ink_edges is absent at solid, the default since #329, and written only at smooth, after
+// recent_apps; it is read strictly, so only the two known values are taken, and anything else is Smooth, written back
+// as it was until the setting changes. A file of a version without it reads as Solid.
 fn ink_edges_key() {
     let path = format!("{}/settings.ini", store_root());
     let mut s = Settings::default();
     let any_line = |p: &str| read_file(p).is_some_and(|t| find(&t, "\nink_edges=").is_some());
     check!(write_file_atomic(&path, b"invert=1\n") == 0);
-    check!(settings_load(&mut s) == 0 && s.ink_edges == 0);
-    check!(settings_save(&s) == 0 && !any_line(&path));
-    check!(write_file_atomic(&path, b"ink_edges=solid\n") == 0);
     check!(settings_load(&mut s) == 0 && s.ink_edges == 1);
-    check!(settings_save(&s) == 0 && has_pins_line(&path, "ink_edges=solid"));
-    let text = read_file(&path).unwrap_or_default();
-    check!(find(&text, "\nrecent_apps=").is_some_and(|a| find(&text, "\nink_edges=").is_some_and(|b| a < b)));
-    // Smooth, said as the file says it, is no line
+    check!(settings_save(&s) == 0 && !any_line(&path));
     check!(write_file_atomic(&path, b"ink_edges=smooth\n") == 0);
     check!(settings_load(&mut s) == 0 && s.ink_edges == 0);
+    check!(settings_save(&s) == 0 && has_pins_line(&path, "ink_edges=smooth"));
+    let text = read_file(&path).unwrap_or_default();
+    check!(find(&text, "\nrecent_apps=").is_some_and(|a| find(&text, "\nink_edges=").is_some_and(|b| a < b)));
+    // Solid, said as the file says it, is no line
+    check!(write_file_atomic(&path, b"ink_edges=solid\n") == 0);
+    check!(settings_load(&mut s) == 0 && s.ink_edges == 1);
     check!(settings_save(&s) == 0 && !any_line(&path));
     // anything else is Smooth, and goes back as it was
     for v in ["1", "Solid", "solid ", "hard", ""] {
@@ -1014,11 +1014,35 @@ fn ink_edges_key() {
         check!(settings_load(&mut s) == 0 && s.ink_edges == 0);
         check!(settings_save(&s) == 0 && has_pins_line(&path, &format!("ink_edges={v}")));
     }
-    // changed, it is written as set; set back to Smooth, its line goes
+    // changed, it is written as set (the value kept from the file goes with it); Smooth, its line; Solid again, no
+    // line
     s.ink_edges = 1;
     check!(settings_save(&s) == 0 && has_pins_line(&path, "ink_edges=solid"));
     s.ink_edges = 0;
+    check!(settings_save(&s) == 0 && has_pins_line(&path, "ink_edges=smooth"));
+    s.ink_edges = 1;
     check!(settings_save(&s) == 0 && !any_line(&path));
+    unlink(&path);
+}
+
+// A save writes ink_edges=smooth for Smooth and no line for Solid, the default, whatever the file said before.
+fn ink_edges_saved_only_at_smooth() {
+    let path = format!("{}/settings.ini", store_root());
+    let lines = |p: &str| read_file(p).map_or(0, |f| String::from_utf8_lossy(&f).lines().filter(|l| l.starts_with("ink_edges")).count());
+    let mut s = Settings::default();
+    settings_default(&mut s);
+    s.ink_edges = 0;
+    check!(settings_save(&s) == 0 && has_pins_line(&path, "ink_edges=smooth") && lines(&path) == 1);
+    s.ink_edges = 1;
+    check!(settings_save(&s) == 0 && lines(&path) == 0);
+    for (before, e, want) in [("ink_edges=smooth\n", 1, 0), ("ink_edges=solid\n", 0, 1), ("ink_edges=solid\n", 1, 0)] {
+        check!(write_file_atomic(&path, before.as_bytes()) == 0);
+        let mut t = Settings::default();
+        check!(settings_load(&mut t) == 0);
+        t.ink_edges = e;
+        check!(settings_save(&t) == 0 && lines(&path) == want);
+        check!(want == 0 || has_pins_line(&path, "ink_edges=smooth"));
+    }
     unlink(&path);
 }
 
@@ -1514,6 +1538,7 @@ fn test_store() {
     run!(home_key);
     run!(pdf_gamma_key);
     run!(ink_edges_key);
+    run!(ink_edges_saved_only_at_smooth);
     run!(whatsnew_due_after_every_update);
     run!(gesture_keys);
     run!(rotation_lock_key);

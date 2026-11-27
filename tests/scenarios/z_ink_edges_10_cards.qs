@@ -1,4 +1,5 @@
 # settings: status_mode=1
+# settings: ink_edges=smooth
 # env: GRIMOIRE_BG_DELAY_MS=3000
 # Ink edges (2.3, #320): the Library's cards follow a change of the setting lazily, as they follow the darker paper
 # lines. After a switch a card is not drawn again by itself: the switch starts no background work (bg.busy is 0 right

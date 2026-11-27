@@ -14405,7 +14405,7 @@ mod tests {
 
     // Settings > Pen > Ink edges (2.3, #320): the Pen category's last row shows the setting in use and opens its list as
     // the eraser's does; a pick is saved, is what every brush begun from then on follows, and comes back to Settings.
-    // Back changes nothing; Smooth again leaves no line in settings.ini.
+    // Back changes nothing; Solid, the default since #329, leaves no line in settings.ini, Smooth is ink_edges=smooth.
     #[test]
     fn ink_edges_row_opens_its_list_and_a_pick_is_kept() {
         let root = std::env::temp_dir().join(format!("grimoire-ink-edges-{}", std::process::id()));
@@ -14436,13 +14436,13 @@ mod tests {
         act(&mut a, &Hit { r: RECT_EMPTY, id: H_INK_PICK, arg: 1 });
         assert_eq!((a.settings.ink_edges, lib(&mut a).modal, ink_edges()), (1, Modal::Settings, InkEdges::Solid));
         let ini = std::fs::read_to_string(root.join("settings.ini")).unwrap_or_default();
-        assert!(ini.lines().any(|l| l == "ink_edges=solid"), "saved when picked:\n{ini}");
-        // Smooth again: no line
+        assert!(ini.lines().any(|l| l.starts_with("settings_version=")) && !ini.contains("ink_edges"), "saved when picked, no line:\n{ini}");
+        // Smooth again: its line
         act(&mut a, &Hit { r: RECT_EMPTY, id: H_SET_INK, arg: 0 });
         act(&mut a, &Hit { r: RECT_EMPTY, id: H_INK_PICK, arg: 0 });
         assert_eq!((a.settings.ink_edges, ink_edges()), (0, InkEdges::Smooth));
         let ini = std::fs::read_to_string(root.join("settings.ini")).unwrap_or_default();
-        assert!(!ini.contains("ink_edges"), "{ini}");
+        assert!(ini.lines().any(|l| l == "ink_edges=smooth"), "saved when picked:\n{ini}");
         library_free(&mut a);
         canvas_free(&mut a.screen);
         i18n_set("en");

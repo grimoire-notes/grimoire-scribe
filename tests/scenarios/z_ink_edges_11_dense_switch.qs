@@ -1,6 +1,7 @@
 # rust-only
 # generate: tests/previews_fixture.py
 # settings: status_mode=1
+# settings: ink_edges=smooth
 # Ink edges (2.3, #320) changed over a notebook open on a dense page (its file 1280 KB): the page is drawn again with
 # the new setting at once, and as it takes seconds on the Kindle, "Loading page..." goes up first, as when the page
 # opens (the drawing kept under Smooth is not read under Solid). The page is the strokes drawn afresh.
