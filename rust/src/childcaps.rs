@@ -41,6 +41,9 @@ pub fn child_margin(kind: BgKind) -> u64 {
         // worker, a gray picture of at most 2560 x 2560 back and its cache file's bytes beside it. The worker it
         // execs sets its own RLIMIT_AS (sandbox.rs).
         BgKind::PackagePictures => 64 * MIB,
+        // Empty trash (bgwork_empty.rs): the names it was given (5,000 at most) and one folder's names at a time for
+        // each level it is inside, nothing read from a file
+        BgKind::EmptyTrash => 64 * MIB,
         _ => 256 * MIB,
     }
 }

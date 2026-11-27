@@ -66,11 +66,13 @@ root/fonts/                             font files the owner copies in, for Clas
 root/.font-inuse                        the crash guard of a font of the owner's own (2.1.0-beta.2; Your own fonts)
 root/import/<Name>/                     page pictures to become a notebook at the next start (Imports)
 root/import/.annotate/                  a page KOReader sends to annotate, and its request (Annotated pages)
-root/trash/                             deleted notebooks and pages, moved here, never unlinked; from 2.2 also files and folders of import/, templates/, photos/ and fonts/, each with its record (The trash)
+root/trash/                             deleted notebooks and pages, moved here, unlinked only by Files' Empty trash (2.3); from 2.2 also files and folders of import/, templates/, photos/ and fonts/, each with its record (The trash)
+root/trash/.grimoire-emptying/          what Empty trash is removing, out of every listing; gone when it ends (2.3; The trash)
 root/PDFs/                              the PDF mirror (an export, not data)
 root/.cache/pdf/<id>/                   the notebook PDF's page streams, disposable (2.1.0-beta.2)
 root/.cache/files/                      Files' previews of the files its Covers view shows, disposable (2.2; Files' previews)
 root/.cache/packages/                   the worker's pictures of installed apps' icons and of the Package Store's icons and screenshots, disposable (2.3; Packages' pictures)
+root/.cache/trash-emptied               Empty trash's count while it runs, read and removed at its end (2.3; The trash)
 ```
 
 `root` is `/mnt/us/grimoire` on the Kindle. A notebook id is the folder's name: letters, digits,
@@ -2194,9 +2196,9 @@ older Grimoire keeps this file as it is.
 
 ## The trash: `root/trash/`
 
-Nothing put here is ever unlinked by Grimoire: there is no Empty (the owner cleans it over USB). Each entry is
-one rename on the same storage, so it is instant at any size. Three kinds of entry, told apart by the name
-alone:
+Grimoire unlinks nothing put here but what Files' Trash place empties (Empty trash, 2.3, below): the entries it
+listed when the user confirmed. Each entry is one rename on the same storage, so it is instant at any size. Three
+kinds of entry, told apart by the name alone:
 
 | entry | what it is | written by |
 |---|---|---|
@@ -2230,7 +2232,7 @@ Restore puts a file or folder back in the folder `from=` names, when that folder
 holds it, and it is inside Grimoire's `import/`, `templates/`, `photos/` or `fonts/` (never the folder itself,
 never `import/done` itself); a name taken there gets " 2", " 3" and so on up to " 99" (before a file's
 extension: `Holiday 2.png`). Then the record and the emptied `files-...` folder are removed: the only removal
-the trash ever sees. Anything put into that folder by hand stays there, in a folder with no record. A record
+the trash sees but Empty trash's. Anything put into that folder by hand stays there, in a folder with no record. A record
 whose `from=` is `grimoire/notebooks/<id>` over a folder named `<id>` restores that notebook, as `<id>-<time>`
 does (2.2 writes notebooks in the old form; the record form is read so a later version may write it).
 
@@ -2238,6 +2240,18 @@ A trash cut off by a crash before its rename leaves a `files-...` folder holding
 while the item is still where it was. Such a folder is listed like any other; Restore removes it (the record,
 then the folder) and puts nothing back. A folder holding anything else and no record that reads is left as it
 is (not restorable from Grimoire).
+
+Empty trash (2.3) deletes the entries the Trash place listed, by name, and nothing else: an entry that comes in
+while it runs stays, and so does every dot-name. A page's file, or an entry that is a link, is one unlink of the
+name itself (a link is never followed). A folder entry is first moved, in one rename, into
+`trash/.grimoire-emptying/` under a number, and only there emptied and removed, its links removed as links; so a
+run cut short (the power, a killed process) leaves the trash with fewer entries, each listed whole, and what was
+half removed in that folder, which no listing shows and nothing restores from; the next Empty trash removes it
+first. While a restore, a delete writing a `files-...` folder or Empty trash works on a folder entry it holds an
+advisory lock on that folder (`flock`), and the others leave an entry whose lock is held; on a storage with no such
+locks nothing is held. Its count while it runs is `root/.cache/trash-emptied`, plain lines `entries=`, `bytes=`,
+`left=` and `next=` (the entries removed, the bytes of their files, the names left, the next name to look at),
+read and removed when it ends. An older version lists no dot-name, so it never shows the folder or the file.
 
 What older versions do with the trash as 2.2 leaves it: none of them reads `trash/` at all (they only rename
 into it), so a `files-...` folder is never looked at, moved or changed by them, and their own deletes go on
