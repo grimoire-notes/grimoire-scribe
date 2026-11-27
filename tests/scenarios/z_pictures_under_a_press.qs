@@ -24,7 +24,7 @@ shot 00-home-held
 touch move 900 1500
 touch up 900 1500
 wait 300
-expect display.presents is ui 1188 252 622 200
+expect display.presents is ui 924 252 886 200
 shot 01-home-lifted
 waitbg
 tap library app.store

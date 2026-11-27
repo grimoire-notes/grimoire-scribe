@@ -835,6 +835,7 @@ mod tests {
         assert!(h.pages >= 1);
     }
 
+    // Every version's notes fit the reader on one page, signed, in Gothic and Classic, upright and sideways.
     #[test]
     fn every_versions_notes_read_whole_and_signed() {
         for theme in [UiTheme::Gothic, UiTheme::Classic] {
@@ -844,14 +845,10 @@ mod tests {
                 for (i, e) in notes().iter().enumerate() {
                     let h = draw_browser(&mut c, aw, ah, notes(), i, 0, 0);
                     let what = format!("{theme:?} {aw}x{ah} {}", e.label());
-                    assert!(h.pages >= 1, "{what}");
+                    assert_eq!(h.pages, 1, "{what}: its notes fit the reader on one page");
                     assert!(h.signed, "{what}: its notes end with the signature");
                     assert!(!rect_is_empty(h.close), "{what}");
-                    if h.pages > 1 {
-                        assert!(!rect_is_empty(h.next) && !rect_is_empty(h.prev), "{what}");
-                    } else {
-                        assert!(rect_is_empty(h.next) && rect_is_empty(h.prev), "{what}");
-                    }
+                    assert!(rect_is_empty(h.next) && rect_is_empty(h.prev), "{what}");
                 }
                 let h = draw_browser(&mut c, aw, ah, notes(), 0, 99, 0);
                 assert_eq!(h.page, h.pages - 1);

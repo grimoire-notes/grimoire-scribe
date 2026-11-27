@@ -3,7 +3,7 @@
 
 use crate::prelude::*;
 use crate::appicon::AppIcon;
-use crate::globalui::{gui_app_tile, gui_button, gui_chip, gui_chip_h, gui_fab, gui_gap, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_row_h, gui_row_min_h, gui_select, gui_select_h, gui_status_bar, gui_status_h, gui_top_button_h, GuiPopupItem};
+use crate::globalui::{gui_app_tile, gui_button, gui_chip, gui_chip_h, gui_fab, gui_gap, gui_head_h, gui_header, gui_header_lead, gui_icon_button, gui_margin, gui_page_title_px, gui_popup, gui_radius, gui_row_h, gui_row_min_h, gui_select, gui_select_h, gui_status_bar, gui_status_h, gui_top_button_h, GuiPopupItem};
 use crate::settingsmenu;
 use crate::ui::{ui_row, ui_row_page, ui_row_pager, Row as UiRow};
 use crate::browser::{BrowseMode, Browser, BrowserResult, FilesPrefs, PickSpec};
@@ -614,6 +614,11 @@ pub(crate) fn bottom_h() -> i32 {
 fn margin() -> i32 {
     gui_margin()
 }
+/// The size of one of the bat's blocks in the home's header (bat.rs draw_bat): 3 px, as the Library's
+/// bar drew it through 2.2, so the bat is 129 x 42 px at 300 dpi.
+fn home_bat_k() -> i32 {
+    ui_px(3.0)
+}
 /// The app row's height, and the width of one small app launcher in it.
 fn apps_h() -> i32 {
     ui_px(200.0)
@@ -636,45 +641,45 @@ fn card_label_h() -> i32 {
 struct HomeApp {
     icon: AppIcon,
     label: String,
-    /// 0 Files, 1 Share, 2 Settings, 3 Package Store, or H_APP_PKG_BASE + an index into
-    /// app_package_list().
+    /// 0 Files, 1 Share, 3 Package Store, or H_APP_PKG_BASE + an index into app_package_list(). (2 was
+    /// Settings, which the header's gear and Quick settings open: it has no launcher.)
     arg: i32,
 }
 
-/// The installed apps, most recently used first: the four built-ins and every installed app
-/// package, interleaved by settings.ini recent_apps. Packages the index no longer has are dropped;
-/// installed packages the line has not seen follow in name order. Exit is in Settings' sidebar and
-/// What's new/About are utility links on the All apps page.
+/// The home app row's and the Apps page's launchers, in order (#319): Files, Package Store and Share
+/// first, always, whatever was used last; then the installed app packages, most recently used first
+/// by settings.ini recent_apps' `pkg:` tokens, then the installed packages not used yet, in name
+/// order. recent_apps' built-in tokens are still written (store.rs settings_app_used) but order
+/// nothing; packages the index no longer has are dropped. Settings is the header's gear, Exit is in
+/// Settings' sidebar, and What's new and About are the Apps page's foot buttons.
 fn home_apps(s: &Settings) -> Vec<HomeApp> {
-    let installed = crate::apppkg::app_package_list();
-    let core = [
+    home_apps_of(s, &crate::apppkg::app_package_list())
+}
+
+/// `home_apps` over the installed packages given (app_package_list(): in name order, and the index a
+/// package launcher's arg names).
+fn home_apps_of(s: &Settings, installed: &[crate::widgetpkg::WidgetInstall]) -> Vec<HomeApp> {
+    let mut out = vec![
         HomeApp { icon: AppIcon::glyph(IconKind::Browser), label: tr("Files").to_string(), arg: 0 },
-        HomeApp { icon: AppIcon::glyph(IconKind::Share), label: tr("Share").to_string(), arg: 1 },
-        HomeApp { icon: AppIcon::glyph(IconKind::Gear), label: tr("Settings").to_string(), arg: 2 },
         HomeApp { icon: AppIcon::glyph(IconKind::Package), label: tr("Package Store").to_string(), arg: 3 },
+        HomeApp { icon: AppIcon::glyph(IconKind::Share), label: tr("Share").to_string(), arg: 1 },
     ];
-    let mut out: Vec<HomeApp> = Vec::new();
     let mut seen_pkg: Vec<usize> = Vec::new();
-    for item in settings_recent_apps(s) {
-        match item {
-            RecentApp::Core(id) => out.push(core[id as usize].clone()),
-            RecentApp::Package(id) => {
-                if let Some(i) = installed.iter().position(|p| p.id == id) {
-                    if !seen_pkg.contains(&i) {
-                        seen_pkg.push(i);
-                        let it = &installed[i];
-                        let icon = AppIcon::for_install(it);
-                        out.push(HomeApp { icon, label: it.name.clone(), arg: H_APP_PKG_BASE + i as i32 });
-                    }
-                }
+    for id in settings_package_order(s) {
+        if let Some(i) = installed.iter().position(|p| p.id == id) {
+            if !seen_pkg.contains(&i) {
+                seen_pkg.push(i);
             }
         }
     }
-    for (i, it) in installed.iter().enumerate() {
+    for i in 0..installed.len() {
         if !seen_pkg.contains(&i) {
-            let icon = AppIcon::for_install(it);
-            out.push(HomeApp { icon, label: it.name.clone(), arg: H_APP_PKG_BASE + i as i32 });
+            seen_pkg.push(i);
         }
+    }
+    for i in seen_pkg {
+        let it = &installed[i];
+        out.push(HomeApp { icon: AppIcon::for_install(it), label: it.name.clone(), arg: H_APP_PKG_BASE + i as i32 });
     }
     out
 }
@@ -1955,12 +1960,18 @@ fn draw_base(a: &mut App) {
         tr("Library")
     };
     // The one header: title at the left, its round actions right to left. Search opens the keyboard
-    // over the Library, and the filtered grid follows each key typed.
-    let (head, actions) = gui_header(
+    // over the Library, and the filtered grid follows each key typed. At the top level Grimoire's bat
+    // stands left of the title, as it did in the Library's bar through 2.2 (#319), and a tap on the
+    // bat or the title opens What's new; in a folder, Back and the folder's name are there instead.
+    let top_level = s.cur_folder.is_empty();
+    let k = home_bat_k();
+    let lead = if top_level { (BAT_W * k, BAT_H * k) } else { (0, 0) };
+    let (head, actions) = gui_header_lead(
         c,
         aw,
         title,
-        !s.cur_folder.is_empty(),
+        !top_level,
+        lead,
         &[(IconKind::Gear, H_SETTINGS), (IconKind::Search, H_SEARCH)],
     );
     if !rect_is_empty(head.back) {
@@ -1969,10 +1980,15 @@ fn draw_base(a: &mut App) {
     for (r, id) in actions {
         hits_add(&mut s.hits, r, id, 0);
     }
+    if !rect_is_empty(head.lead) {
+        draw_bat(c, head.lead.x, head.lead.y, k);
+        let title_w = font_measure(FontFace::Title, gui_page_title_px(), title).min(head.title.w);
+        hits_add(&mut s.hits, Rect::new(0, head.title.y, head.title.x + title_w + ui_px(20.0), head.title.h), H_ABOUT, 0);
+    }
 
     // The app row: small launchers with the icon in a rectangle and its name below, as a phone
-    // lays them out, most recently used first. Show All is a plain text link at the row's right
-    // margin, opening the Apps page.
+    // lays them out: Files, Package Store and Share, then the apps, most recently used first
+    // (home_apps). Show All is a plain text link at the row's right margin, opening the Apps page.
     let ay = top_h() + gap;
     let (ts, tw) = (apps_h(), app_tile_w());
     let show = tr("Show All");
@@ -6648,8 +6664,9 @@ pub(crate) fn library_app_used(a: &mut App, app: i32) {
     }
 }
 
-/// What the home's app tiles do: Files, Share, Settings and Package Store are the four installed
-/// apps. What's new and About are the All apps page's links at the foot, not app tiles.
+/// What the home's app tiles do: Files, Share and Package Store are the three built-in apps, the
+/// rest installed app packages. What's new and About are the All apps page's links at the foot, not
+/// app tiles.
 fn home_app(a: &mut App, app: i32) {
     if app >= H_APP_PKG_BASE {
         let i = (app - H_APP_PKG_BASE) as usize;
@@ -6669,10 +6686,6 @@ fn home_app(a: &mut App, app: i32) {
         1 => {
             lib(a).modal = Modal::None;
             share_open(a);
-        }
-        2 => {
-            lib(a).modal = Modal::None;
-            act(a, &Hit { id: H_SETTINGS, ..Default::default() });
         }
         3 => {
             // The Package Store is a Library sheet of its own: it opens without the Settings stack.
@@ -6700,9 +6713,10 @@ fn home_app(a: &mut App, app: i32) {
     }
 }
 
-/// The home's All apps page (2.3, issue #209): every built-in and installed app, most recently
-/// used first, over as many pages as it takes, then What's new and About as the two foot buttons.
-/// Exit is in Settings' sidebar.
+/// The home's All apps page (2.3, issue #209): every launcher of the home's row, in its order
+/// (home_apps: Files, Package Store and Share, then the apps, most recently used first), over as
+/// many pages as it takes, then What's new and About as the two foot buttons. Exit is in Settings'
+/// sidebar.
 fn draw_apps(a: &mut App) {
     let (aw, ah) = (a.w, a.h);
     let apps = home_apps(&a.settings);
@@ -11092,7 +11106,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
         return 0;
     }
     // The full-screen app (2.3): its id, status line, drawn text, error and status-bar choice. "apps"
-    // lists installed app package ids in launcher order; "recent-apps" is the home row's token order.
+    // lists installed app package ids in launcher order; "recent-apps" is settings.ini recent_apps.
     if key == "apps" {
         let ids: Vec<String> = crate::apppkg::app_package_list().into_iter().map(|p| p.id).collect();
         csnprintf!(out, cap, "%s", &ids.join(" "));
@@ -11106,7 +11120,8 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
         return 0;
     }
     if key == "recent-apps" {
-        // The home row's order as settings.ini recent_apps keeps it: built-in names and pkg:<id> tokens.
+        // settings.ini recent_apps as it is kept: built-in names and pkg:<id> tokens, most recently used
+        // first. The home row takes only the packages' order from it, after its pinned three (#319).
         csnprintf!(out, cap, "%s", a.settings.recent_apps.as_str());
         return 0;
     }
@@ -11491,6 +11506,8 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                         name.push_str(&it.id);
                     }
                 } else {
+                    // (arg 2, Settings, has no launcher since #319; it keeps its name, so a check that the row
+                    // has no `app.settings` sees one that came back)
                     name.push_str(["files", "share", "settings", "store", "", "", "whats-new", "about"].get(hit.arg as usize).copied().unwrap_or(""));
                 }
             }
@@ -11844,6 +11861,161 @@ mod tests {
         let mut out = String::new();
         assert_eq!(library_probe(a, key, &mut out, 512), 0, "{key}");
         out
+    }
+
+    // The home row's order (#319): Files, Package Store and Share first, in that order, however the built-ins were
+    // used; then the installed apps, most recently used first by recent_apps' pkg: tokens, then the ones not used
+    // yet in name order (app_package_list's). Settings is never a launcher.
+    #[test]
+    fn the_home_row_pins_files_the_store_and_share_then_the_apps_by_use() {
+        i18n_set("en");
+        let pkg = |id: &str, name: &str| crate::widgetpkg::WidgetInstall { id: id.into(), name: name.into(), ..Default::default() };
+        // (in name order, as app_package_list gives them)
+        let installed = [
+            pkg("com.example.alpha", "Alpha"),
+            pkg("com.example.beta", "Beta"),
+            pkg("com.example.delta", "Delta"),
+            pkg("com.example.gamma", "Gamma"),
+        ];
+        let p = |i: i32| H_APP_PKG_BASE + i;
+        let order = |recent: &str| {
+            let mut s = Settings::default();
+            settings_default(&mut s);
+            s.recent_apps.set(recent);
+            home_apps_of(&s, &installed).iter().map(|h| h.arg).collect::<Vec<i32>>()
+        };
+        assert_eq!(order("files,share,settings,store"), [0, 3, 1, p(0), p(1), p(2), p(3)], "nothing used: the apps by name");
+        for recent in ["settings,store,share,files", "share,files,store,settings", "store,settings,files,share"] {
+            assert_eq!(order(recent), [0, 3, 1, p(0), p(1), p(2), p(3)], "{recent}: the three stay first, in order");
+        }
+        assert_eq!(
+            order("pkg:com.example.gamma,settings,pkg:com.example.gone,share,pkg:com.example.beta,store,files"),
+            [0, 3, 1, p(3), p(1), p(0), p(2)],
+            "the apps used, last used first (one no longer installed left out), then the rest by name"
+        );
+        let mut s = Settings::default();
+        settings_default(&mut s);
+        let apps = home_apps_of(&s, &[]);
+        assert_eq!(apps.iter().map(|h| h.label.as_str()).collect::<Vec<_>>(), ["Files", "Package Store", "Share"]);
+        assert!(!apps.iter().any(|h| h.arg == 2), "no Settings launcher");
+    }
+
+    // The row as the home draws it and the Apps page as Show All draws it follow home_apps (#319): the pinned three,
+    // left to right, and no Settings tile, whatever recent_apps says.
+    #[test]
+    fn the_home_row_and_the_apps_page_draw_the_pinned_three_and_no_settings() {
+        let root = std::env::temp_dir().join(format!("grimoire-home-row-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        let mut a = pen_record_app();
+        a.scr = ScreenId::Library;
+        settings_default(&mut a.settings);
+        a.settings.recent_apps.set("settings,store,share,files");
+        lib(&mut a).modal = Modal::None;
+        reload(&mut a);
+        let launchers = |a: &mut App| lib(a).hits.h.iter().filter(|h| h.id == H_APP).map(|h| (h.arg, h.r)).collect::<Vec<_>>();
+        for (w, h) in [(1860, 2480), (2480, 1860)] {
+            a.w = w;
+            a.h = h;
+            canvas_free(&mut a.screen);
+            assert_eq!(canvas_init(&mut a.screen, w, h), 0);
+            lib(&mut a).modal = Modal::None;
+            redraw(&mut a, RefreshMode::Ui);
+            let row = launchers(&mut a);
+            assert_eq!(row.iter().map(|l| l.0).collect::<Vec<_>>(), [0, 3, 1], "{w}x{h}: Files, Package Store, Share");
+            assert!(row.windows(2).all(|p| p[0].1.x < p[1].1.x && p[0].1.y == p[1].1.y), "{w}x{h}: in a row, left to right");
+            act(&mut a, &Hit { id: H_APPS, ..Default::default() });
+            assert_eq!(lib(&mut a).modal, Modal::Apps);
+            let page = launchers(&mut a);
+            assert_eq!(page.iter().map(|l| l.0).collect::<Vec<_>>(), [0, 3, 1, 6, 7], "{w}x{h}: the three, then What's new and About");
+            assert_eq!(page[..3].iter().map(|l| l.1.x).collect::<Vec<_>>(), row.iter().map(|l| l.1.x).collect::<Vec<_>>());
+            close_modal(&mut a);
+        }
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The bat (#319): at the home's top level Grimoire's bat stands left of the title, in Gothic and Classic, as
+    // bat.rs draws it, 3 px a block; a tap on it or on the title opens What's new, as Apps > What's new does. In a
+    // folder it is not there: Back and the folder's name are, and nothing there opens What's new.
+    #[test]
+    fn the_bat_is_on_the_homes_top_level_and_opens_whats_new() {
+        let root = std::env::temp_dir().join(format!("grimoire-home-bat-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        let mut nb = NotebookInfo::default();
+        assert_eq!(store_create("A", "School", PAPER_BLANK, &mut nb), 0);
+        let mut a = pen_record_app();
+        a.scr = ScreenId::Library;
+        settings_default(&mut a.settings);
+        lib(&mut a).modal = Modal::None;
+        reload(&mut a);
+        let k = home_bat_k();
+        assert_eq!(k, 3);
+        let bat = Rect::new(gui_margin(), gui_status_h() + (gui_head_h() - BAT_H * k) / 2, BAT_W * k, BAT_H * k);
+        let mut want = Canvas::default();
+        assert_eq!(canvas_init(&mut want, bat.w, bat.h), 0);
+        canvas_fill(&mut want, Rect::new(0, 0, bat.w, bat.h), 255);
+        draw_bat(&mut want, 0, 0, k);
+        let is_bat = |c: &Canvas| (0..bat.h).all(|y| {
+            let at = ((bat.y + y) * c.stride + bat.x) as usize;
+            c.px[at..at + bat.w as usize] == want.px[(y * want.stride) as usize..(y * want.stride + bat.w) as usize]
+        });
+        let tap = |a: &mut App, x: i32, y: i32, t_ms: u32| {
+            for type_ in [InType::TouchDown, InType::TouchUp] {
+                library_event_in(a, &InEvent { type_, x: x as f32, y: y as f32, t_ms, ..Default::default() });
+            }
+        };
+        let about = |a: &mut App| lib(a).hits.h.iter().find(|h| h.id == H_ABOUT).map(|h| h.r);
+        // (Apps > What's new: the note it opens on)
+        act(&mut a, &Hit { id: H_APPS, ..Default::default() });
+        act(&mut a, &Hit { id: H_APP, arg: 6, ..Default::default() });
+        assert_eq!(lib(&mut a).modal, Modal::About);
+        let note = lib(&mut a).about_note;
+        close_modal(&mut a);
+        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+            ui_set_theme(theme);
+            lib(&mut a).cur_folder.clear();
+            reload(&mut a);
+            redraw(&mut a, RefreshMode::Ui);
+            assert!(is_bat(&a.screen), "{theme:?}: the bat left of the title");
+            let r = about(&mut a).unwrap_or_else(|| panic!("{theme:?}: no hit on the bat and the title"));
+            assert!(rect_contains_rect(r, bat), "{theme:?}: {r:?}");
+            let title_x = bat.x + bat.w + ui_px(34.0);
+            assert!(r.x + r.w > title_x + ui_px(200.0), "{theme:?}: the title is in it: {r:?}");
+            for (i, (x, y)) in [(bat.x + bat.w / 2, bat.y + bat.h / 2), (title_x + ui_px(100.0), r.y + r.h / 2)].into_iter().enumerate() {
+                assert_eq!(probe(&mut a, &format!("ui_at.{x}.{y}")), "about", "{theme:?}");
+                tap(&mut a, x, y, 1000 + 100 * i as u32);
+                assert_eq!(lib(&mut a).modal, Modal::About, "{theme:?}: tap {i} opens What's new");
+                assert_eq!(lib(&mut a).about_note, note, "{theme:?}: on the note Apps > What's new opens on");
+                close_modal(&mut a);
+                assert_eq!(lib(&mut a).modal, Modal::None);
+            }
+            // In a folder: Back and the folder's name, no bat and nothing that opens What's new.
+            lib(&mut a).cur_folder.set("School");
+            reload(&mut a);
+            redraw(&mut a, RefreshMode::Ui);
+            assert!(about(&mut a).is_none(), "{theme:?}: no What's new in a folder");
+            assert!(lib(&mut a).hits.h.iter().any(|h| h.id == H_BACK), "{theme:?}: Back");
+            assert!(!is_bat(&a.screen), "{theme:?}: no bat in a folder");
+            // (nowhere in the header: its band is the plain header's, Back and then the folder's name where
+            // gui_header puts it)
+            let (w, h) = (a.w, gui_status_h() + gui_head_h());
+            let mut plain = Canvas::default();
+            assert_eq!(canvas_init(&mut plain, w, h), 0);
+            canvas_fill(&mut plain, Rect::new(0, 0, w, h), 255);
+            gui_header(&mut plain, w, "School", true, &[(IconKind::Gear, H_SETTINGS), (IconKind::Search, H_SEARCH)]);
+            let row = |c: &Canvas, y: i32| (y * c.stride) as usize..(y * c.stride + w) as usize;
+            let same = (gui_status_h()..gui_status_h() + gui_head_h()).all(|y| a.screen.px[row(&a.screen, y)] == plain.px[row(&plain, y)]);
+            assert!(same, "{theme:?}: a folder's header is a plain one");
+            canvas_free(&mut plain);
+        }
+        ui_set_theme(UiTheme::Gothic);
+        canvas_free(&mut want);
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // The home is drawn with its bar's minute recorded, so a tick in that minute draws nothing again.
