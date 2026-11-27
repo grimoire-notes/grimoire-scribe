@@ -66,18 +66,6 @@ pub fn look() -> &'static dyn Look {
     ui_theme().look()
 }
 
-/// What the Library's shelf holds, for a theme's readout under its header (Look::library_readout).
-pub struct ShelfInfo<'a> {
-    /// the screen's side margin, its width, and the header's height (where its rule is)
-    pub margin: i32,
-    pub w: i32,
-    pub header_h: i32,
-    pub notebooks: usize,
-    pub folders: usize,
-    /// the folder open, empty for the Library's top
-    pub folder: &'a str,
-}
-
 /// A screen as a theme frames it on a whole redraw (Look::screen_overlay): the Library and its Settings, Files,
 /// Pen feel, the editor with a sheet up.
 pub struct ScreenInfo {
@@ -106,6 +94,27 @@ pub struct NewFoot {
     pub more: Rect,
     pub file: Rect,
     pub create: Rect,
+}
+
+/// A corner the shared drawing asks a theme for (Look::corner): what is drawn with it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Corner {
+    /// a button and a Settings card (ui.rs)
+    Card,
+    /// the kit's surfaces (globalui.rs): a popup, an app tile, a classic icon button, a Package Store card
+    Surface,
+    /// a chip, a text field and a select, h px tall
+    Pill(i32),
+    /// a Package Store card's tag, h px tall
+    Tag(i32),
+    /// a popup's row
+    PopupRow,
+    /// a slide-up sheet's row
+    SheetRow,
+    /// a tooltip
+    Tooltip,
+    /// the status bar's battery, its art k px a unit
+    Battery(i32),
 }
 
 pub trait Look: Sync {
@@ -137,14 +146,6 @@ pub trait Look: Sync {
     fn heading_face(&self) -> FontFace {
         FontFace::Bold
     }
-    /// The Library's name in its header, times the title size.
-    fn mark_scale(&self) -> f32 {
-        1.25
-    }
-    /// The air the Library's grid keeps under its header besides the margin (Gothic's frieze hangs there).
-    fn header_drop(&self) -> i32 {
-        0
-    }
     /// Whether a button w by h px has the inner line of a carved panel.
     fn carved(&self, _w: i32, _h: i32) -> bool {
         false
@@ -157,9 +158,30 @@ pub trait Look: Sync {
     fn caps_labels(&self) -> bool {
         false
     }
-    /// The corners of a button and of a Settings card (Classic's modern rounded design, 2.3, issue #209).
-    fn corner_radius(&self) -> i32 {
-        ui_px(22.0)
+    /// The radius of a corner (Classic's modern rounded design, 2.3, issue #209): the theme's frame draws it
+    /// its way (Gothic cuts it).
+    fn corner(&self, k: Corner) -> i32 {
+        match k {
+            Corner::Card => ui_px(22.0),
+            Corner::Surface => ui_px(24.0),
+            Corner::Pill(h) | Corner::Tag(h) => h / 2,
+            Corner::PopupRow => ui_px(18.0),
+            Corner::SheetRow => ui_px(20.0),
+            Corner::Tooltip => ui_px(16.0),
+            Corner::Battery(k) => (10 * k).max(1),
+        }
+    }
+    /// A screen's title (the header's, gui_page_title), times the title size.
+    fn page_title_scale(&self) -> f32 {
+        1.1
+    }
+    /// A slide-up sheet's title, times the title size.
+    fn slide_up_title_scale(&self) -> f32 {
+        0.72
+    }
+    /// The outline of a text field (a select's is GUI_GRAY_RULE in every theme).
+    fn field_rule_gray(&self) -> u8 {
+        crate::globalui::GUI_GRAY_RULE
     }
     /// A list row's icon.
     fn row_icon_px(&self) -> i32 {
@@ -293,9 +315,9 @@ pub trait Look: Sync {
     fn sheet(&self, c: &mut Canvas, card: Rect, title: &str) -> Rect {
         classic::sheet(c, card, title)
     }
-    /// A page's heading (Settings and its submenus), in r.
-    fn page_title(&self, c: &mut Canvas, r: Rect, title: &str) {
-        font_draw_left(c, FontFace::Title, ui_title_size(), r, title, 0);
+    /// A screen's title in its header (gui_header: the home, Apps, Files, every Settings page), in r at px.
+    fn page_title(&self, c: &mut Canvas, r: Rect, px: f32, title: &str) {
+        ui_text(c, FontFace::Title, px, ui_small_size(), r, title, 1, false, 0);
     }
     /// A toast's box (its ends `ends` deep), under its white text.
     fn toast_plate(&self, c: &mut Canvas, r: Rect, ends: i32) {
@@ -316,6 +338,48 @@ pub trait Look: Sync {
     /// A menu row's card in style st. true: drawn (else the menu draws its own).
     fn menu_row_card(&self, _c: &mut Canvas, _r: Rect, _st: ButtonStyle) -> bool {
         false
+    }
+
+    // ---- the kit's elements (globalui.rs, 2.3, issue #209; the package kit draws them too) ----
+
+    /// A surface the kit's rows and cards sit on: filled black when chosen, else white in an outline thick px.
+    fn surface(&self, c: &mut Canvas, r: Rect, filled: bool, thick: i32) {
+        let rad = self.corner(Corner::Surface);
+        if filled {
+            self.frame(c, r, rad, 0, true, 0);
+        } else {
+            self.frame(c, r, rad, 255, true, 0);
+            self.frame(c, r, rad, 0, false, thick);
+        }
+    }
+    /// The kit's text button (gui_button): an icon and a label, or either alone.
+    fn kit_button(&self, c: &mut Canvas, r: Rect, icon: IconKind, label: &str, st: ButtonStyle) {
+        classic::kit_button(self, c, r, icon, label, st);
+    }
+    /// The kit's button with its label beside its icon (gui_button_row: the Package Store's actions).
+    fn kit_button_row(&self, c: &mut Canvas, r: Rect, icon: IconKind, label: &str, st: ButtonStyle) {
+        self.kit_button(c, r, icon, label, st);
+    }
+    /// The width the package kit's button h px tall needs for its label (and an icon), as it draws it:
+    /// kit_button_row with both, kit_button with one (0: no more than a square).
+    fn kit_button_need_w(&self, h: i32, icon: bool, label: &str) -> i32 {
+        classic::kit_button_need_w(h, icon, label)
+    }
+    /// A round icon button (gui_icon_button): the header's actions, a sheet's close, a card's `...`.
+    fn icon_button(&self, c: &mut Canvas, r: Rect, icon: IconKind, st: ButtonStyle) {
+        classic::icon_button(self, c, r, icon, st);
+    }
+    /// The floating action button's plate, under its white icon.
+    fn fab_plate(&self, c: &mut Canvas, r: Rect) {
+        let rad = r.w.min(r.h) as f32 / 2.0;
+        canvas_disc_aa(c, r.x as f32 + r.w as f32 / 2.0, r.y as f32 + r.h as f32 / 2.0, rad, 0, 1.0);
+    }
+    /// A slide-up sheet's card, with its grabber (its title is drawn after).
+    fn slide_up_card(&self, c: &mut Canvas, card: Rect) {
+        self.frame(c, card, ui_px(28.0), 255, true, 0);
+        self.frame(c, card, ui_px(28.0), 0, false, ui_px(4.0));
+        let gw = ui_px(100.0);
+        canvas_round_rect(c, Rect::new(card.x + (card.w - gw) / 2, card.y + ui_px(14.0), gw, ui_px(8.0)), ui_px(4.0), 170, true, 0);
     }
 
     // ---- paper tiles (New notebook, the editor's paper sheet, Templates) ----
@@ -346,15 +410,6 @@ pub trait Look: Sync {
         self.frame(c, r, ui_px(12.0), 0, false, if st == ButtonStyle::Primary { ui_px(6.0) } else { ui_px(3.0) });
         if st == ButtonStyle::Selected { 255 } else { 0 }
     }
-    /// The clock and battery corner's box.
-    fn status_box(&self, c: &mut Canvas, r: Rect) {
-        self.frame(c, r, ui_px(8.0), 255, true, 0);
-        self.frame(c, r, ui_px(8.0), 0, false, ui_px(2.0));
-    }
-    /// Lit units of the battery's pixel art, r in screen pixels (u: a unit).
-    fn battery_units(&self, c: &mut Canvas, r: Rect, _u: i32, gray: u8) {
-        canvas_fill(c, r, gray);
-    }
     /// The ring round the chosen node or the open page (t: its stroke). true: drawn.
     fn map_ring(&self, _c: &mut Canvas, _x: f32, _y: f32, _r: f32, _t: f32) -> bool {
         false
@@ -372,13 +427,6 @@ pub trait Look: Sync {
 
     // ---- the Library's screens ----
 
-    /// The app's name at the Library's top, after its mark (x0: the mark's left, x: the name's).
-    /// Some(the name's width): drawn.
-    fn library_mark(&self, _c: &mut Canvas, _r: Rect, _title: &str, _x0: i32, _x: i32, _header_h: i32) -> Option<i32> {
-        None
-    }
-    /// Anything under the Library's header rule.
-    fn library_readout(&self, _c: &mut Canvas, _shelf: &ShelfInfo) {}
     /// The Library's page count between its arrows (pr, nr). true: drawn.
     fn library_pager(&self, _c: &mut Canvas, _pr: Rect, _nr: Rect, _page: i32, _pages: i32) -> bool {
         false

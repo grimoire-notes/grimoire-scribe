@@ -13707,7 +13707,7 @@ mod tests {
                     let want: Vec<i32> = cat
                         .items
                         .iter()
-                        .filter(|it| it.show.visible(theme == UiTheme::Classic, sys_services()))
+                        .filter(|it| it.show.visible(theme.look().faces().is_none(), sys_services()))
                         .map(|it| setting_hit(it.id))
                         .collect();
                     let mut got: Vec<i32> = Vec::new();

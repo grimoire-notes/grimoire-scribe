@@ -1615,18 +1615,20 @@ mod tests {
             a.pkg = ui;
             error
         };
-        // The page drawn in its Error view with this text, in both themes.
+        // The page drawn in its Error view with this text, in every theme.
         let drawn = |a: &mut App, error: &str| -> Vec<Vec<u8>> {
             a.pkg.open = true;
             a.pkg.view = PkgView::Error;
             a.pkg.error = error.to_string();
-            let pages = [UiTheme::Gothic, UiTheme::Classic].map(|theme| {
-                ui_set_theme(theme);
-                packages_ui_draw(a);
-                a.screen.px.clone()
-            });
+            let pages: Vec<Vec<u8>> = UiTheme::all()
+                .map(|theme| {
+                    ui_set_theme(theme);
+                    packages_ui_draw(a);
+                    a.screen.px.clone()
+                })
+                .collect();
             ui_set_theme(UiTheme::Gothic);
-            pages.to_vec()
+            pages
         };
         // An ordinary error is shown whole: the page without its last character is another.
         let ordinary = fetched(&mut a, "name: Test\nhello\n");

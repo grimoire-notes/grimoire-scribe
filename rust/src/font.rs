@@ -2381,8 +2381,8 @@ mod tests {
                 assert!(width_far as f32 > px, "{f:?} at {px} px: ten letters are {width_far} px wide");
             }
         }
-        // A text that is fitted to a rectangle at such a height draws nothing, in either theme.
-        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+        // A text that is fitted to a rectangle at such a height draws nothing, in any theme.
+        for theme in UiTheme::all() {
             ui_set_theme(theme);
             for px in far {
                 c.px.fill(255);

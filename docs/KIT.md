@@ -132,7 +132,7 @@ which no screen draws yet, is the kit's own.
 | 25 | LINE | 3 | a card's outline |
 | 30 | SCALE_MILLI | 1000 | the UI scale times 1000 |
 | 31 | DPI | 300 | the panel's |
-| 32 | THEME | 0 Gothic, 1 Classic | |
+| 32 | THEME | 0 Gothic, 1 Classic, 2 and up another theme (its place in Settings > Display > Style) | |
 | 33 | FONT | Classic: 0 Terminess, 1 Atkinson Hyperlegible Next, 2 Noto Sans, 3 Literata, 4 the reader's own font; Gothic: 5 | Settings > Font |
 | 34 | STATUS_BAR_H | 78 at the medium size (64 small, 92 large); an app that hides the bar: 0 | the status bar |
 | 35 | KEYBOARD_TOP | -1: no keyboard of the kit's is open in this level | |

@@ -499,7 +499,7 @@ pub fn ui_row_icon() -> i32 {
 }
 /// The radius of a Settings card's corners (`ui_card`), in the theme's shape.
 pub fn ui_card_radius() -> i32 {
-    look().corner_radius()
+    look().corner(Corner::Card)
 }
 /// The width of a card's outline.
 pub fn ui_line() -> i32 {
@@ -847,9 +847,6 @@ pub fn ui_sheet_inner(card: Rect, titled: bool) -> Rect {
 
 
 /// A page's heading (Settings and its submenus) in r, left-aligned.
-pub fn ui_page_title(c: &mut Canvas, r: Rect, title: &str) {
-    look().page_title(c, r, title);
-}
 
 /// Modal sheet: dims nothing (e-ink), draws a white card with a thick border + title bar.
 /// Returns the content rect inside the card (ui_sheet_inner's).

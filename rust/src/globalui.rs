@@ -1,8 +1,9 @@
 //! globalui.rs: the global UI elements (2.3, issue #209). One set of controls for every screen and
 //! sheet, in the theme in use: Classic draws the modern rounded design (filled white surfaces, large
 //! radii, pill chips and fields), Gothic draws the carved one (chamfered corners, inner rules and
-//! lozenges). A screen never draws a Classic and a Gothic version of the same control: it calls the
-//! element here, or the one in ui.rs built from the same pieces, and the theme is picked once.
+//! lozenges). A screen never draws a version of the same control per theme: it calls the element here,
+//! or the one in ui.rs built from the same pieces, and the element asks the theme in use (`look()`,
+//! rust/src/looks/) for its corners and for whatever it draws its own way.
 //!
 //! The elements are stateless, as ui.rs's are: a screen owns its layout, hits and pressed look, draws
 //! a `gui_*` element where a control belongs, and adds the hit for its rect. That keeps a new menu
@@ -19,22 +20,13 @@ use crate::appicon::AppIcon;
 use crate::status::{battery_from_sysfs, Battery, STATUS_SIZES};
 use std::cell::{Cell, RefCell};
 use crate::ui::{
-    ui_button, ui_card, ui_frame, ui_icon, ui_slider_draw, ui_small_size, ui_text,
+    ui_card, ui_frame, ui_icon, ui_slider_draw, ui_small_size, ui_text,
     ui_text_size, ui_title_size, ButtonStyle, IconKind, Slider,
 };
 
-/// Whether the theme is the carved one.
-pub fn gui_gothic() -> bool {
-    ui_theme() == UiTheme::Gothic
-}
-
 /// The one corner radius of the kit's cards and fields.
 pub fn gui_radius() -> i32 {
-    if gui_gothic() {
-        ui_px(16.0)
-    } else {
-        ui_px(24.0)
-    }
+    look().corner(Corner::Surface)
 }
 
 /// The room between two elements of a screen, and around them.
@@ -197,114 +189,40 @@ pub fn gui_header(
     (GuiHeader { back: back_r, title: title_r, foot: top + th }, rects)
 }
 
-/// The size of a screen's title (`gui_page_title`): the title size, larger in Gothic's blackletter.
+/// The size of a screen's title (`gui_page_title`): the title size, as the theme scales it (larger in
+/// Gothic's blackletter).
 pub fn gui_page_title_px() -> f32 {
-    ui_title_size() * if gui_gothic() { 1.75 } else { 1.1 }
+    ui_title_size() * look().page_title_scale()
 }
 
 /// A screen's title in the modern header's type: the same size and position on the home, Apps,
 /// Files and every Settings page.
 pub fn gui_page_title(c: &mut Canvas, r: Rect, title: &str) {
-    let px = gui_page_title_px();
-    if gui_gothic() {
-        font_draw_left_name(c, FontFace::Title, px, r, title, 0);
-    } else {
-        ui_text(c, FontFace::Title, px, ui_small_size(), r, title, 1, false, 0);
-    }
+    look().page_title(c, r, gui_page_title_px(), title);
 }
 
 /// A surface the kit's rows and cards sit on. `filled` is the black of a chosen element; the outline
 /// is the theme's (a cut corner in Gothic, a round one in Classic).
 pub fn gui_surface(c: &mut Canvas, r: Rect, filled: bool, thick: i32) {
-    if filled {
-        ui_frame(c, r, gui_radius(), 0, true, 0);
-        if gui_gothic() {
-            ui_frame(c, rect_inflate(r, -ui_px(10.0)), gui_radius(), 255, false, ui_px(2.0));
-        }
-    } else {
-        ui_frame(c, r, gui_radius(), 255, true, 0);
-        ui_frame(c, r, gui_radius(), 0, false, thick);
-    }
+    look().surface(c, r, filled, thick);
 }
 
 /// The kit's text button: an icon and a label, or either alone. Classic is a rounded pill with the
 /// label in the modern face; Gothic is ui.rs's carved button, so every Gothic menu stays carved.
 pub fn gui_button(c: &mut Canvas, r: Rect, icon: IconKind, label: &str, st: ButtonStyle) {
-    if gui_gothic() {
-        ui_button(c, r, icon, label, st);
-        return;
-    }
-    if r.w <= 0 || r.h <= 0 {
-        return;
-    }
-    let filled = matches!(st, ButtonStyle::Selected | ButtonStyle::Primary);
-    let fg: u8 = if st == ButtonStyle::Disabled {
-        GUI_GRAY_DISABLED
-    } else if filled {
-        255
-    } else {
-        0
-    };
-    let edge = if st == ButtonStyle::Disabled { GUI_GRAY_DISABLED } else { 0 };
-    let rad = (r.h / 2).min(ui_px(30.0));
-    ui_frame(c, r, rad, if filled { 0 } else { 255 }, true, 0);
-    ui_frame(c, r, rad, edge, false, if st == ButtonStyle::Primary { ui_px(5.0) } else { ui_px(3.0) });
-    let pad = ui_px(22.0);
-    let has_label = !label.is_empty();
-    let inner_h = r.h - 2 * ui_px(8.0);
-    let ts = ui_text_size().min(inner_h as f32 * 0.46);
-    if icon != IconKind::None && has_label {
-        let isz = (inner_h.min(ui_px(70.0))).max(ui_px(30.0));
-        ui_icon(c, icon, Rect::new(r.x + pad, r.y + (r.h - isz) / 2, isz, isz), fg);
-        let lx = r.x + pad + isz + ui_px(18.0);
-        let lw = (r.x + r.w - pad - lx).max(0);
-        ui_text(c, FontFace::Bold, ts, ui_small_size(), Rect::new(lx, r.y, lw, r.h), label, 1, false, fg);
-    } else if icon != IconKind::None {
-        let isz = inner_h.min(ui_px(80.0));
-        ui_icon(c, icon, Rect::new(r.x + (r.w - isz) / 2, r.y + (r.h - isz) / 2, isz, isz), fg);
-    } else if has_label {
-        ui_text(
-            c,
-            FontFace::Bold,
-            ts,
-            ui_small_size(),
-            Rect::new(r.x + pad, r.y, (r.w - 2 * pad).max(0), r.h),
-            label,
-            1,
-            true,
-            fg,
-        );
-    }
+    look().kit_button(c, r, icon, label, st);
 }
 
 /// The kit's button with its icon at the left and its label beside it on the right, in both themes.
 /// ui_button puts a Gothic label under the icon (carved buttons); a row of actions whose names must
 /// be read beside their icons (the Store's Install, Uninstall, Repository URL) needs this instead.
 pub fn gui_button_row(c: &mut Canvas, r: Rect, icon: IconKind, label: &str, st: ButtonStyle) {
-    if r.w <= 0 || r.h <= 0 {
-        return;
-    }
-    if !gui_gothic() {
-        gui_button(c, r, icon, label, st);
-        return;
-    }
-    // The carved frame alone, then the glyph and the label on one line.
-    ui_button(c, r, IconKind::None, "", st);
-    let fg: u8 = match st {
-        ButtonStyle::Disabled => 170,
-        ButtonStyle::Selected => 255,
-        _ => 0,
-    };
-    let (pad, isz, gap, ts) = button_row_parts(r.h);
-    ui_icon(c, icon, Rect::new(r.x + pad, r.y + (r.h - isz) / 2, isz, isz), fg);
-    let lx = r.x + pad + isz + gap;
-    let lw = (r.x + r.w - pad - lx).max(0);
-    ui_text(c, FontFace::Caps, ts, ui_small_size().min(ts), Rect::new(lx, r.y, lw, r.h), label, 1, false, fg);
+    look().kit_button_row(c, r, icon, label, st);
 }
 
 /// Gothic's `gui_button_row` `h` high: the room at its ends, its icon's side, the room between the icon and the
 /// label, and the label's size.
-fn button_row_parts(h: i32) -> (i32, i32, i32, f32) {
+pub(crate) fn button_row_parts(h: i32) -> (i32, i32, i32, f32) {
     let inner_h = h - 2 * ui_px(8.0);
     (ui_px(24.0), inner_h.min(ui_px(70.0)).max(ui_px(30.0)), ui_px(18.0), ui_small_size().min(inner_h as f32 * 0.34))
 }
@@ -319,28 +237,12 @@ pub fn gui_button_row_need_w(h: i32, label: &str) -> i32 {
 /// A round icon button (Classic) or the carved square one (Gothic): the header's search, apps and
 /// settings, a sheet's close, a card's `...`.
 pub fn gui_icon_button(c: &mut Canvas, r: Rect, icon: IconKind, st: ButtonStyle) {
-    if gui_gothic() {
-        ui_button(c, r, icon, "", st);
-        return;
-    }
-    let filled = st == ButtonStyle::Selected;
-    let fg: u8 = if st == ButtonStyle::Disabled {
-        170
-    } else if filled {
-        255
-    } else {
-        0
-    };
-    let edge = if st == ButtonStyle::Disabled { 170 } else { 0 };
-    ui_frame(c, r, gui_radius(), if filled { 0 } else { 255 }, true, 0);
-    ui_frame(c, r, gui_radius(), edge, false, ui_px(3.0));
-    let isz = r.w.min(r.h) - 2 * ui_px(22.0);
-    ui_icon(c, icon, Rect::new(r.x + (r.w - isz) / 2, r.y + (r.h - isz) / 2, isz, isz), fg);
+    look().icon_button(c, r, icon, st);
 }
 
 /// A filter chip: a pill in Classic, a cut-cornered tab in Gothic. The chosen one is filled.
 pub fn gui_chip(c: &mut Canvas, r: Rect, label: &str, selected: bool) {
-    let rad = if gui_gothic() { ui_px(14.0) } else { r.h / 2 };
+    let rad = look().corner(Corner::Pill(r.h));
     ui_frame(c, r, rad, if selected { 0 } else { 255 }, true, 0);
     ui_frame(c, r, rad, 0, false, if selected { ui_px(3.0) } else { ui_px(3.0) });
     ui_text(
@@ -359,9 +261,9 @@ pub fn gui_chip(c: &mut Canvas, r: Rect, label: &str, selected: bool) {
 /// A text field with a leading icon: the search box, a name field. Returns the clear button's rect
 /// when there is text (RECT_EMPTY when there is not), for the caller's hit.
 pub fn gui_text_field(c: &mut Canvas, r: Rect, icon: IconKind, text: &str, hint: &str) -> Rect {
-    let rad = if gui_gothic() { ui_px(14.0) } else { r.h / 2 };
+    let rad = look().corner(Corner::Pill(r.h));
     ui_frame(c, r, rad, 255, true, 0);
-    ui_frame(c, r, rad, if gui_gothic() { 0 } else { GUI_GRAY_RULE }, false, ui_px(3.0));
+    ui_frame(c, r, rad, look().field_rule_gray(), false, ui_px(3.0));
     let pad = ui_px(24.0);
     let isz = (r.h - ui_px(34.0)).max(ui_px(24.0));
     ui_icon(c, icon, Rect::new(r.x + pad, r.y + (r.h - isz) / 2, isz, isz), 0);
@@ -393,7 +295,7 @@ pub fn gui_text_field(c: &mut Canvas, r: Rect, icon: IconKind, text: &str, hint:
 /// A select: a caption over the current value, with the theme's chevron. The tap opens the caller's
 /// choice sheet, which is a `gui_slide_up` of `gui_sheet_row`s.
 pub fn gui_select(c: &mut Canvas, r: Rect, caption: &str, value: &str) {
-    let rad = if gui_gothic() { ui_px(14.0) } else { r.h / 2 };
+    let rad = look().corner(Corner::Pill(r.h));
     ui_frame(c, r, rad, 255, true, 0);
     ui_frame(c, r, rad, GUI_GRAY_RULE, false, ui_px(3.0));
     let pad = ui_px(24.0);
@@ -423,13 +325,7 @@ pub fn gui_select(c: &mut Canvas, r: Rect, caption: &str, value: &str) {
 /// The floating action button: a black disc in Classic, a carved black square in Gothic, with the
 /// icon in white.
 pub fn gui_fab(c: &mut Canvas, r: Rect, icon: IconKind) {
-    if gui_gothic() {
-        ui_frame(c, r, ui_px(18.0), 0, true, 0);
-        ui_frame(c, rect_inflate(r, -ui_px(9.0)), ui_px(12.0), 255, false, ui_px(2.0));
-    } else {
-        let rad = r.w.min(r.h) as f32 / 2.0;
-        canvas_disc_aa(c, r.x as f32 + r.w as f32 / 2.0, r.y as f32 + r.h as f32 / 2.0, rad, 0, 1.0);
-    }
+    look().fab_plate(c, r);
     let isz = ((r.w.min(r.h) as f32 * 0.44) as i32).max(ui_px(30.0));
     ui_icon(c, icon, Rect::new(r.x + (r.w - isz) / 2, r.y + (r.h - isz) / 2, isz, isz), 255);
 }
@@ -545,7 +441,7 @@ pub fn gui_popup(
 }
 
 fn gui_popup_row(c: &mut Canvas, r: Rect, icon: IconKind, label: &str, selected: bool, disabled: bool) {
-    let rad = if gui_gothic() { ui_px(12.0) } else { ui_px(18.0) };
+    let rad = look().corner(Corner::PopupRow);
     if selected {
         ui_frame(c, r, rad, 0, true, 0);
     }
@@ -583,22 +479,14 @@ pub fn gui_slide_up(c: &mut Canvas, aw: i32, ah: i32, h: i32, title: &str) -> Re
     let w = (aw - 2 * m).min(ui_px(1780.0));
     let h = h.min(ah - 2 * m);
     let card = Rect::new((aw - w) / 2, ah - h - m, w, h);
-    ui_frame(c, card, ui_px(28.0), 255, true, 0);
-    ui_frame(c, card, ui_px(28.0), 0, false, ui_px(4.0));
-    if gui_gothic() {
-        ui_frame(c, rect_inflate(card, -ui_px(12.0)), ui_px(22.0), 0, false, ui_px(2.0));
-        canvas_lozenge(c, card.x as f32 + card.w as f32 / 2.0, card.y as f32 + ui_px(20.0) as f32, ui_px(8.0) as f32, 0);
-    } else {
-        let gw = ui_px(100.0);
-        canvas_round_rect(c, Rect::new(card.x + (card.w - gw) / 2, card.y + ui_px(14.0), gw, ui_px(8.0)), ui_px(4.0), 170, true, 0);
-    }
+    look().slide_up_card(c, card);
     let inner = ui_px(34.0);
     let title_h = ui_px(104.0);
     if !title.is_empty() {
         font_draw_left(
             c,
             FontFace::Title,
-            ui_title_size() * if gui_gothic() { 1.0 } else { 0.72 },
+            ui_title_size() * look().slide_up_title_scale(),
             Rect::new(card.x + inner, card.y + ui_px(28.0), (card.w - 2 * inner).max(0), title_h),
             title,
             0,
@@ -610,7 +498,7 @@ pub fn gui_slide_up(c: &mut Canvas, aw: i32, ah: i32, h: i32, title: &str) -> Re
 /// One row of a slide-up sheet: the kit's list row. `selected` fills it; `disabled` grays it and
 /// the caller adds no hit.
 pub fn gui_sheet_row(c: &mut Canvas, r: Rect, icon: IconKind, label: &str, selected: bool, disabled: bool) {
-    let rad = if gui_gothic() { ui_px(14.0) } else { ui_px(20.0) };
+    let rad = look().corner(Corner::SheetRow);
     ui_frame(c, r, rad, if selected { 0 } else { 255 }, true, 0);
     ui_frame(c, r, rad, if disabled { 170 } else { 0 }, false, ui_px(3.0));
     let fg: u8 = if disabled {
@@ -649,8 +537,9 @@ pub fn gui_tooltip(c: &mut Canvas, screen: Rect, anchor: Rect, text: &str) -> Re
     let w = tw.min(screen.w - 2 * ui_px(20.0));
     let h = (ts * 1.6) as i32 + ui_px(16.0);
     let r = tooltip_place(screen, anchor, w, h);
-    ui_frame(c, r, if gui_gothic() { ui_px(12.0) } else { ui_px(16.0) }, 255, true, 0);
-    ui_frame(c, r, if gui_gothic() { ui_px(12.0) } else { ui_px(16.0) }, 0, false, ui_px(3.0));
+    let rad = look().corner(Corner::Tooltip);
+    ui_frame(c, r, rad, 255, true, 0);
+    ui_frame(c, r, rad, 0, false, ui_px(3.0));
     ui_text(c, FontFace::Regular, ts, ts * 0.8, rect_inflate(r, -pad), text, 1, true, 0);
     // The little stem between the bubble and its control.
     let cx = anchor.x + anchor.w / 2;
@@ -719,7 +608,7 @@ fn battery_cached() -> Option<Battery> {
 pub fn gui_battery(c: &mut Canvas, r: Rect, percent: i32) {
     // The art keeps its proportions at every status bar size (34 px tall is the medium bar's).
     let k = r.h.max(1) / 34;
-    let rad = (if gui_gothic() { 5 * k } else { 10 * k }).max(1);
+    let rad = look().corner(Corner::Battery(k));
     let tw = (8 * k).max(2);
     let gap = (5 * k).max(1);
     let body = Rect::new(r.x, r.y, r.w - tw - gap, r.h);
@@ -954,10 +843,8 @@ mod tests {
         ui_init(300.0);
         ui_set_theme(UiTheme::Classic);
         assert_eq!(gui_radius(), 24);
-        assert!(!gui_gothic());
         ui_set_theme(UiTheme::Gothic);
         assert_eq!(gui_radius(), 16);
-        assert!(gui_gothic());
         ui_set_theme(UiTheme::Gothic);
     }
 }

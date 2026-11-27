@@ -319,6 +319,9 @@ theme() -> i32
 status_bar_height() -> i32
 ```
 
+`theme` is the theme in use: 0 Gothic, 1 Classic, 2 and up another (its place in Settings > Display >
+Style).
+
 `state_get`/`state_set` read and write `state/runtime.bin`, capped at 256 KiB; they need
 `storage:app-local` ([Capabilities](#capabilities)). `setting` returns the
 saved value for one manifest setting; a missing or invalid value reads as its default. `status`

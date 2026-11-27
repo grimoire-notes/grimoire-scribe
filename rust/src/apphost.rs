@@ -1696,7 +1696,7 @@ fn install_imports(linker: &mut Linker<HostState>) -> Result<(), String> {
     }).map_err(e)?;
     linker.func_wrap(ABI, "theme", |mut caller: Caller<'_, HostState>| -> Result<i32, wasmi::Error> {
         called(&mut caller)?;
-        Ok(matches!(ui_theme(), UiTheme::Classic) as i32)
+        Ok(ui_theme().index())
     }).map_err(e)?;
     linker.func_wrap(ABI, "status_bar_height", |mut caller: Caller<'_, HostState>| -> Result<i32, wasmi::Error> {
         called(&mut caller)?;
@@ -2310,7 +2310,7 @@ mod tests {
         };
         let inked = |c: &Canvas| c.px[(body.y * c.stride) as usize..].iter().filter(|p| **p != 255).count();
         let most = i32::MAX;
-        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+        for theme in UiTheme::all() {
             ui_set_theme(theme);
             // An icon by itself, and a letter at a place: drawn by the host at its own greatest sizes, and not
             // at all once those are aside.

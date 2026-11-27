@@ -2622,7 +2622,7 @@ mod tests {
     #[test]
     fn caps_on_draws_a_bar_under_the_shift_label() {
         assert_eq!(font_init(), 0);
-        for th in [UiTheme::Gothic, UiTheme::Classic] {
+        for th in UiTheme::all() {
             ui_set_theme(th);
             for screen in [Rect { x: 0, y: 0, w: 1860, h: 2480 }, Rect { x: 0, y: 0, w: 2480, h: 1860 }] {
                 let shot = |shift: KbShift, pressed: bool| {

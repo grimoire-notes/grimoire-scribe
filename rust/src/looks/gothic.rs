@@ -1,7 +1,8 @@
 //! Gothic: book and blackletter pixel type, cut-stone corners, double rules, lozenges and pointed
 //! arches. Classic's drawing with Gothic's shapes and faces.
 
-use super::Look;
+use super::{Corner, Look};
+use crate::globalui::button_row_parts;
 use crate::font::{fm, FaceMap, TTF_JACQUARD, TTF_JERSEY, TTF_TERM, TTF_TERM_BOLD};
 use crate::prelude::*;
 
@@ -41,15 +42,24 @@ impl Look for Gothic {
         FontFace::Title
     }
     // (Gothic keeps its carved corners where Classic rounds them wider, issue #209)
-    fn corner_radius(&self) -> i32 {
-        ui_px(16.0)
+    fn corner(&self, k: Corner) -> i32 {
+        match k {
+            Corner::Card | Corner::Surface => ui_px(16.0),
+            Corner::Pill(_) | Corner::SheetRow => ui_px(14.0),
+            Corner::Tag(_) => ui_px(10.0),
+            Corner::PopupRow | Corner::Tooltip => ui_px(12.0),
+            Corner::Battery(k) => (5 * k).max(1),
+        }
     }
-    fn mark_scale(&self) -> f32 {
-        1.8
+    // (larger in its blackletter)
+    fn page_title_scale(&self) -> f32 {
+        1.75
     }
-    // The frieze hangs below the header rule; leave air under its drops.
-    fn header_drop(&self) -> i32 {
-        ui_px(24.0)
+    fn slide_up_title_scale(&self) -> f32 {
+        1.0
+    }
+    fn field_rule_gray(&self) -> u8 {
+        0
     }
     // A button big enough for one has the inner line of a carved panel, 2 px wide, inside its edge.
     fn carved(&self, w: i32, h: i32) -> bool {
@@ -136,6 +146,60 @@ impl Look for Gothic {
             return ui_sheet_inner(card, true);
         }
         ui_sheet_inner(card, false)
+    }
+    fn page_title(&self, c: &mut Canvas, r: Rect, px: f32, title: &str) {
+        font_draw_left_name(c, FontFace::Title, px, r, title, 0);
+    }
+    // A chosen surface keeps the inner line of a carved panel.
+    fn surface(&self, c: &mut Canvas, r: Rect, filled: bool, thick: i32) {
+        let rad = self.corner(Corner::Surface);
+        if filled {
+            self.frame(c, r, rad, 0, true, 0);
+            self.frame(c, rect_inflate(r, -ui_px(10.0)), rad, 255, false, ui_px(2.0));
+        } else {
+            self.frame(c, r, rad, 255, true, 0);
+            self.frame(c, r, rad, 0, false, thick);
+        }
+    }
+    // The kit's buttons are the carved ones, so every Gothic menu stays carved.
+    fn kit_button(&self, c: &mut Canvas, r: Rect, icon: IconKind, label: &str, st: ButtonStyle) {
+        self.button(c, r, icon, label, st, 0.0);
+    }
+    // The carved frame alone, then the glyph and the label on one line (the carved button puts its label
+    // under its icon).
+    fn kit_button_row(&self, c: &mut Canvas, r: Rect, icon: IconKind, label: &str, st: ButtonStyle) {
+        if r.w <= 0 || r.h <= 0 {
+            return;
+        }
+        self.button(c, r, IconKind::None, "", st, 0.0);
+        let fg = self.style_fg(st);
+        let (pad, isz, gap, ts) = button_row_parts(r.h);
+        ui_icon(c, icon, Rect::new(r.x + pad, r.y + (r.h - isz) / 2, isz, isz), fg);
+        let lx = r.x + pad + isz + gap;
+        let lw = (r.x + r.w - pad - lx).max(0);
+        ui_text(c, FontFace::Caps, ts, ui_small_size().min(ts), Rect::new(lx, r.y, lw, r.h), label, 1, false, fg);
+    }
+    fn kit_button_need_w(&self, h: i32, icon: bool, label: &str) -> i32 {
+        if icon && !label.is_empty() {
+            crate::globalui::gui_button_row_need_w(h, label)
+        } else {
+            ui_button_need_w(h, if icon { IconKind::Grid } else { IconKind::None }, label, ButtonStyle::Plain)
+        }
+    }
+    fn icon_button(&self, c: &mut Canvas, r: Rect, icon: IconKind, st: ButtonStyle) {
+        self.button(c, r, icon, "", st, 0.0);
+    }
+    // A carved black square.
+    fn fab_plate(&self, c: &mut Canvas, r: Rect) {
+        self.frame(c, r, ui_px(18.0), 0, true, 0);
+        self.frame(c, rect_inflate(r, -ui_px(9.0)), ui_px(12.0), 255, false, ui_px(2.0));
+    }
+    // An inner line, and a lozenge for the grabber.
+    fn slide_up_card(&self, c: &mut Canvas, card: Rect) {
+        self.frame(c, card, ui_px(28.0), 255, true, 0);
+        self.frame(c, card, ui_px(28.0), 0, false, ui_px(4.0));
+        self.frame(c, rect_inflate(card, -ui_px(12.0)), ui_px(22.0), 0, false, ui_px(2.0));
+        canvas_lozenge(c, card.x as f32 + card.w as f32 / 2.0, card.y as f32 + ui_px(20.0) as f32, ui_px(8.0) as f32, 0);
     }
     // A black banner with pointed ends and a white inner line.
     fn toast_plate(&self, c: &mut Canvas, r: Rect, ends: i32) {

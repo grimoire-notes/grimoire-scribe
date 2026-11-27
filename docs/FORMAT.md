@@ -1799,7 +1799,7 @@ owner's to copy back or delete. Older versions ignore it.
 | `http_port` | the share server's port, 1024 to 65535 (the launcher reads it too, the last such line) |
 | `passcode_told` | 0 or 1: legacy notice flag from releases that paused the Kindle passcode; no longer used by native PIN support (since 1.1.0-beta.1; 1.0.0-beta drops it, and the notice shows once more) |
 | `music_layout` | the last custom music layout built: a paper value (decimal) |
-| `theme` | `gothic` or `classic` |
+| `theme` | the theme's id: `gothic`, `classic`, or another theme's (its file in rust/src/looks/) |
 | `language` | the language of the screens (since 1.1): `auto` (the default, also when the key is missing: the Kindle's own language if Grimoire speaks it, else English), `en` or `es`. A code this version does not speak (a later one's) acts as `auto` and is written back as it was (below). 1.0.0-beta drops it on its next save, so a language picked in Settings goes back to Automatic |
 | `status_on` | 0 or 1: the small clock and battery in a corner of the notebook page (`status_corner`; a tap there turns it on and off, and it shows on the page only, never on the Library or a sheet; docs/KINDLE.md, The clock and battery corner), on by default, small and top left. Since 2.0.0-beta.5; older versions keep the line as one they do not know |
 | `status_size` | its size, 0 small, 1 medium, 2 large (the Display sheet's row), 1 (medium) by default since 2.0.0-rc.12 (0 before), and clamped to 0..2. Since 2.0.0-beta.5, as `status_on` |

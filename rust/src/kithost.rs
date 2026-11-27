@@ -22,7 +22,7 @@ use crate::apphost::{
     APP_ICON_NAME_MAX, APP_ICON_PX_MAX, APP_LINE_WIDTH_MAX, APP_TEXT_PX_MAX,
 };
 use crate::globalui::{
-    gui_button, gui_button_h, gui_button_row, gui_button_row_need_w, gui_chip, gui_chip_h, gui_chip_w, gui_field_h, gui_gap, gui_gothic, gui_head_h,
+    gui_button, gui_button_h, gui_button_row, gui_chip, gui_chip_h, gui_chip_w, gui_field_h, gui_gap, gui_head_h,
     gui_icon_button, gui_margin, gui_page_title_px, gui_row_h, gui_row_min_h, gui_select, gui_select_h, gui_text_field,
     gui_top_button_h, GUI_GRAY_DISABLED, GUI_GRAY_MUTED, GUI_GRAY_RULE,
 };
@@ -167,10 +167,12 @@ pub fn kit_metric(id: i32, body: (i32, i32), status_bar_h: i32) -> i32 {
         M_LINE => ui_line(),
         M_SCALE_MILLI => ui_px(1000.0),
         M_DPI => ui_px(300.0),
-        M_THEME => (ui_theme() == UiTheme::Classic) as i32,
-        // (Classic's family of Settings > Font, 4 for the reader's own font, and 5 for Gothic's faces)
+        // (the theme's place in Settings' Style list: 0 Gothic, 1 Classic, then the others, rust/src/looks/)
+        M_THEME => ui_theme().index(),
+        // (Classic's family of Settings > Font, 4 for the reader's own font, and 5 for a theme's own faces,
+        // Gothic's)
         M_FONT => {
-            if gui_gothic() {
+            if font_theme_faces() {
                 5
             } else if font_own() {
                 4
@@ -1231,19 +1233,7 @@ fn text_lines(cx: &mut dyn Call, [x, y, w, h, ptr, len, role, flags, first]: [i3
 
 /// The width a button `h` high needs for its label and icon as the kit draws it, at least `h` (a square).
 pub fn button_need_w(h: i32, icon: bool, label: &str) -> i32 {
-    let need = if gui_gothic() && icon && !label.is_empty() {
-        gui_button_row_need_w(h, label)
-    } else if gui_gothic() {
-        ui_button_need_w(h, if icon { IconKind::Grid } else { IconKind::None }, label, ButtonStyle::Plain)
-    } else if label.is_empty() {
-        0
-    } else {
-        // (gui_button's pill: its label in the bold face, its icon beside it, padded at both ends)
-        let inner_h = h - 2 * ui_px(8.0);
-        let ts = ui_text_size().min(inner_h as f32 * 0.46);
-        let isz = if icon { inner_h.min(ui_px(70.0)).max(ui_px(30.0)) + ui_px(18.0) } else { 0 };
-        font_measure(FontFace::Bold, ts, label) + isz + 2 * ui_px(22.0)
-    };
+    let need = look().kit_button_need_w(h, icon, label);
     need.max(h)
 }
 
