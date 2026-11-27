@@ -151,14 +151,18 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   put over the result; a byte kept for each pixel that reads such ink). So over its paper a solid stroke changes
   screen pixels only to black there as well, and the frames drawn while writing are the frame the settle
   composes. Beside other ink (pencil, charcoal, a highlight, a pen given grain, drawn before the stroke or after
-  it) the paper is not taken for the ink: where the ink has less than half the weight and one of the four page
-  pixels with any weight is neither such ink nor its own paper, the view's own pixel stays, which counts the ink
-  as black and so is never lighter than the view without the stroke (taking the paper there left a pale outline
-  along the stroke). The page does not keep what a solid stroke covers, so where the four show only the ink and
-  paper, other ink the stroke covered there shows as paper, lighter than without the stroke: a few pixels of a
-  view, more where the stroke meets black of the paper's own (a PDF page's text, a template's lines) under a
-  highlight or pencil, as that black counts as paper. So the settle of a solid stroke that crosses other ink in
-  such a view may send a small refresh, of the grays beside it. A view at 100% on whole pixels copies the page (a
+  it) the paper is not taken for the ink alone: where the ink has less than half the weight and one of the four
+  page pixels with any weight is neither such ink nor its own paper, the pixel is the darker of the view's own,
+  which counts the ink as it is, and the view without the stroke (taking only the paper there left a pale outline
+  along the stroke). In the sampled view that is always the bilinear blend, which counts the ink as black. The
+  ruled view's own sampling can be the lighter of the two: it takes the darkest ink among a pixel's page pixels,
+  there the stroke's black, as the gray of all of them, and lays the others over the paper it drew by that. The
+  page does not keep what a solid stroke covers, so where the four show only the ink and paper, other ink the
+  stroke covered there shows as paper, lighter than without the stroke (and in the ruled view a few pixels beside
+  other ink, whose sampling the covered ink would have changed): a few pixels of a view, more where the stroke
+  meets black of the paper's own (a PDF page's text, a template's lines) under a highlight or pencil, as that
+  black counts as paper. So the settle of a solid stroke that crosses other ink in such a view may send a small
+  refresh, of the grays beside it. A view at 100% on whole pixels copies the page (a
   page of the screen's size scrolled, or one a little smaller at rest, issue #303) and has no such pass: nothing
   is blended there, and the desk comes right up to the page (`view_copies`). The Links bar's view of another page
   follows the same rule, ruled or sampled, where the open page's paper alone is that page's paper too

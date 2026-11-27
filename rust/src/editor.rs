@@ -2107,9 +2107,10 @@ fn zoomed(a: &App) -> bool {
 //
 // With Ink edges at Solid (#320) a grayscale frame of a view that is not 1:1 follows one rule (solid_px), in the
 // sampled view and the ruled one alike: a screen pixel that reads a solid stroke's ink is black where the ink has
-// half of the pixel's weight or more, and elsewhere what the same view shows with that stroke absent. So a solid
+// half of the pixel's weight or more; elsewhere, with nothing but paper beside the ink, what the same view shows with
+// that stroke absent, and beside other ink the darker of that and the view's own pixel. So over its paper a solid
 // stroke changes screen pixels only to black, the rulings beside and under it are the view's own, and the frames
-// drawn while writing are the frame the settle composes.
+// drawn while writing are the frame the settle composes; beside other ink nothing is lighter than without it.
 fn blit_view(a: &mut App, r: Rect) {
     let top = status_reserved(a);
     let r = rect_intersect(r, Rect { x: 0, y: top, w: a.w, h: a.h - top ,
@@ -2233,12 +2234,15 @@ fn view_span(zoom: f32, o: f32, n: i32) -> (i32, i32) {
 // ink sampled over it (blit_over_paper). The desk is blit_canvas's, and so is all of r for a paper drawn otherwise.
 //
 // `solid`, with Ink edges at Solid (#320): the rule of every scaled view (solid_px) over this one. A screen pixel
-// that reads a solid stroke's ink is black where the ink has half of its weight or more, else what this view shows
-// with the stroke absent: the ink that is left sampled over the paper drawn here, which is that paper itself where
-// nothing else is written (the rulings as drawn, whole and even, up to the stroke and under its edge). That paper is
-// on the screen only until the ink is sampled over it, so the rule's answers are worked out first, read from the
-// screen as paper_render_view left it, kept (SolidKept), and put over the sampled ink. Not `solid`, nothing here
-// runs but what #308 wrote.
+// that reads a solid stroke's ink is black where the ink has half of its weight or more. With less and nothing but
+// the ink and paper beside it, it is the paper drawn here (the rulings as drawn, whole and even, up to the stroke and
+// under its edge), which is what this view shows there with the stroke absent. With other ink beside it, the darker
+// of what blit_over_paper samples there and what it would sample with the ink's taps taken as their paper: its own
+// value can be the lighter one (it takes the darkest ink among a pixel's taps, here the stroke's 0, as the gray of
+// all of them, and lays a gray tap over the paper drawn here by that), and the darker of the two never is. The
+// paper drawn here is on the screen only until the ink is sampled over it, so the rule's answers are worked out
+// first, read from the screen as paper_render_view left it, kept (SolidKept), and put over the sampled ink. Not
+// `solid`, nothing here runs but what #308 wrote.
 fn blit_canvas_ruled(screen: &mut Canvas, pc: &Canvas, paper: &[u8], pstride: i32, k: PaperKind, dpi: f32, zoom: f32, ox: f32, oy: f32, r: Rect, solid: bool) {
     if rect_is_empty(r) {
         return;
@@ -2267,27 +2271,43 @@ fn blit_canvas_ruled(screen: &mut Canvas, pc: &Canvas, paper: &[u8], pstride: i3
     }
     let mut kept = SOLID_KEPT.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
     kept.clear();
-    solid_edges(pc, Some((paper, pstride)), screen.stride, zoom, ox, oy, r, |at, px, q, wf, wy, bottom| {
-        kept.push(at, match px {
-            SolidPx::Black => 0,
-            SolidPx::Under(u) => over_paper_px(screen.px[at], u, q, wf, wy, bottom),
-        });
+    solid_edges(pc, Some((paper, pstride)), screen.stride, zoom, ox, oy, r, |at, px, q, wf, wy, bottom| match px {
+        SolidPx::Black => kept.over.push(at, 0),
+        // (the taps that weigh are each the ink or its paper: what over_paper_px makes of them is the paper drawn)
+        SolidPx::Under(_) => kept.over.push(at, screen.px[at]),
+        SolidPx::Beside(u) => kept.darker.push(at, over_paper_px(screen.px[at], u, q, wf, wy, bottom)),
     });
     blit_over_paper(screen, pc, paper, pstride, zoom, ox, oy, r);
-    kept.put(screen);
+    kept.over.put(screen, false);
+    kept.darker.put(screen, true);
     SOLID_KEPT.with(|cell| *cell.borrow_mut() = kept);
 }
 
 // What the Solid rule answered for a ruled view's pixels (blit_canvas_ruled), kept while the ink is sampled over the
-// drawn paper: runs of pixels, each its first index in the screen and its length, and every pixel's value in order.
-// A byte for each pixel that reads a solid stroke's ink, eight more for each run of them.
+// drawn paper: `over` what is put over the sampled ink (black, or the paper drawn), `darker` what is put where it is
+// darker than the sampled ink (the view without the stroke, beside other ink). A byte for each pixel that reads a
+// solid stroke's ink, eight more for each run of them.
 #[derive(Default)]
 struct SolidKept {
+    over: SolidRuns,
+    darker: SolidRuns,
+}
+
+impl SolidKept {
+    fn clear(&mut self) {
+        self.over.clear();
+        self.darker.clear();
+    }
+}
+
+// Runs of pixels, each its first index in the screen and its length, and every pixel's value in order.
+#[derive(Default)]
+struct SolidRuns {
     runs: Vec<(u32, u32)>,
     px: Vec<u8>,
 }
 
-impl SolidKept {
+impl SolidRuns {
     fn clear(&mut self) {
         self.runs.clear();
         self.px.clear();
@@ -2300,11 +2320,18 @@ impl SolidKept {
         }
         self.px.push(v);
     }
-    fn put(&self, screen: &mut Canvas) {
+    // Each kept value put on the screen, or (`darker`) only where it is darker than what is there.
+    fn put(&self, screen: &mut Canvas, darker: bool) {
         let mut i = 0;
         for &(at, n) in &self.runs {
             let (at, n) = (at as usize, n as usize);
-            screen.px[at..at + n].copy_from_slice(&self.px[i..i + n]);
+            if darker {
+                for (d, &v) in screen.px[at..at + n].iter_mut().zip(&self.px[i..i + n]) {
+                    *d = (*d).min(v);
+                }
+            } else {
+                screen.px[at..at + n].copy_from_slice(&self.px[i..i + n]);
+            }
             i += n;
         }
     }
@@ -3004,27 +3031,33 @@ fn blit_canvas(screen: &mut Canvas, pc: &Canvas, zoom: f32, ox: f32, oy: f32, r:
     });
 }
 
-/// What Ink edges at Solid shows at a screen pixel that reads a solid stroke's ink (solid_px).
+/// What Ink edges at Solid shows at a screen pixel that reads a solid stroke's ink (solid_px). Each answer that is
+/// not black carries the four taps with each of the stroke's taken as its paper: what the view makes of them is its
+/// pixel with the stroke absent, as far as the page can tell (it does not keep what a stroke covers).
 enum SolidPx {
-    /// The ink has half of the pixel's weight or more.
+    /// The ink has half of the pixel's weight or more: black.
     Black,
-    /// Less, with nothing but the ink and paper among the taps that weigh: the view's pixel with the stroke absent,
-    /// made from these, the four taps with each of the stroke's taken as its paper.
+    /// Less, with nothing but the ink and paper among the taps that weigh: the view's pixel with the stroke absent.
     Under([u8; 4]),
+    /// Less, with other ink among the taps that weigh: the darker of the view's own pixel (the ink counted as it is)
+    /// and its pixel with the stroke absent.
+    Beside([u8; 4]),
 }
 
 // Ink edges at Solid (#320) in a view that is not 1:1 (zoomed, or a page fitted sideways), where a blend of the
 // page's pixels would give a solid stroke a gray rim that the live frames dither and the settle then sends again:
 // the one rule for a screen pixel, whichever way the view is drawn. p is the page at the bilinear's four taps (top
 // left, top right, bottom left, bottom right), q its paper alone there, wf and wy blit_canvas's weights. A tap holds
-// a solid stroke's ink where the page is 0 and its paper is not (the paper's own black is no ink). With no such tap
-// that weighs, None: the pixel is the view's own. With half of the weight or more on them, black. With less, and a
-// tap that weighs holding other ink (neither the stroke's nor its own paper: pencil, charcoal, a highlight, a pen
-// given grain, under the stroke or over it), None: the view's own pixel, which counts the ink as black, so the
-// stroke never lightens what is beside it. Else the view's pixel with the stroke absent, which the view makes from
-// the taps with each ink tap taken as its paper: the sampled view their blend (blit_solid_edges), the ruled view
-// what is left of them over the paper it drew (blit_canvas_ruled). So over its paper a solid stroke changes a screen
-// pixel only to black, at any zoom, and leaves the others as they were.
+// a solid stroke's ink where the page is 0 and its paper is not (the paper's own black is no ink); a tap that weighs
+// holds other ink where it is neither that nor its own paper (pencil, charcoal, a highlight, a pen given grain,
+// under the stroke or over it). With no ink that weighs, None: the pixel is the view's own. With half of the weight
+// or more on the ink, black. With less and other ink beside it, the darker of the view's own pixel, which counts the
+// ink as it is, and the view's pixel with the stroke absent: so the stroke never lightens what is beside it. Else
+// the view's pixel with the stroke absent, which over its paper is the paper as the view draws it. So over its paper
+// a solid stroke changes a screen pixel only to black, at any zoom, and leaves the others as they were; beside other
+// ink nothing is lighter than without it. (The sampled view's pixel with the stroke absent is the blend of the taps
+// with the ink's taken as their paper, blit_solid_edges; the ruled view's is what is left of them over the paper it
+// drew, blit_canvas_ruled.)
 #[inline]
 fn solid_px(p: [u8; 4], q: [u8; 4], wf: u32, wy: u32) -> Option<SolidPx> {
     let wt = [(255 - wf) * (255 - wy), wf * (255 - wy), (255 - wf) * wy, wf * wy];
@@ -3042,7 +3075,7 @@ fn solid_px(p: [u8; 4], q: [u8; 4], wf: u32, wy: u32) -> Option<SolidPx> {
     } else if 2 * ink >= 65025 {
         Some(SolidPx::Black)
     } else if other {
-        None // (the page no longer holds what lay under the stroke, and its paper there would be lighter than the ink beside it)
+        Some(SolidPx::Beside(under))
     } else {
         Some(SolidPx::Under(under))
     }
@@ -3050,20 +3083,20 @@ fn solid_px(p: [u8; 4], q: [u8; 4], wf: u32, wy: u32) -> Option<SolidPx> {
 
 // Ink edges at Solid over the sampled view, after blit_canvas drew r (`paper`: the page's paper alone and its
 // stride; None: white): each screen pixel of r that reads a solid stroke's ink made again by the rule (solid_px),
-// black, or the blend of its four taps with the ink's taken as their paper. Every other pixel is blit_canvas's, the
-// same bytes: beside other ink that blend counts the ink as black and so is never lighter than the view without the
-// stroke. The paper is taken for the ink only where the page shows nothing but paper beside it; the paper's own
-// black counts as paper there, so other ink the stroke covered beside a black line of the paper shows as that paper.
+// black, or the blend of its four taps with the ink's taken as their paper. Beside other ink the darker of
+// blit_canvas's blend and that one is blit_canvas's, always (the blend is the same arithmetic over taps no lighter),
+// so those pixels are left as they are. Every pixel the pass does not write is blit_canvas's, the same bytes. The
+// paper is taken for the ink only where the page shows nothing but paper beside it; the paper's own black counts as
+// paper there, so other ink the stroke covered beside a black line of the paper shows as that paper.
 fn blit_solid_edges(screen: &mut Canvas, pc: &Canvas, paper: Option<(&[u8], i32)>, zoom: f32, ox: f32, oy: f32, r: Rect) {
     let stride = screen.stride;
-    solid_edges(pc, paper, stride, zoom, ox, oy, r, |at, px, _, wf, wy, _| {
-        screen.px[at] = match px {
-            SolidPx::Black => 0,
-            SolidPx::Under(u) => {
-                let (u, iwf, iwy) = (u.map(|v| v as u32), 255 - wf, 255 - wy);
-                ((u[0] * iwf * iwy + u[1] * wf * iwy + u[2] * iwf * wy + u[3] * wf * wy + 32512) / 65025) as u8
-            }
-        };
+    solid_edges(pc, paper, stride, zoom, ox, oy, r, |at, px, _, wf, wy, _| match px {
+        SolidPx::Black => screen.px[at] = 0,
+        SolidPx::Under(u) => {
+            let (u, iwf, iwy) = (u.map(|v| v as u32), 255 - wf, 255 - wy);
+            screen.px[at] = ((u[0] * iwf * iwy + u[1] * wf * iwy + u[2] * iwf * wy + u[3] * wf * wy + 32512) / 65025) as u8;
+        }
+        SolidPx::Beside(_) => {}
     });
 }
 
@@ -16337,13 +16370,33 @@ mod tests {
         n
     }
 
+    // A view at Ink edges at Solid of a page whose solid marks lie only where it held its paper alone (solid_marks),
+    // other ink beside them, against `without` (the same view of the page without the marks, which is there the
+    // view's pixel with the stroke absent) and `plain` (the view of the page with the marks and no rule): every pixel
+    // is black, or `without`, or `plain` where that is darker (beside other ink, the view's own pixel), and none is
+    // lighter than `without`. Counted: the pixels left as `plain` beside the ink, and those where `plain` alone would
+    // have been lighter than `without`.
+    fn solid_over_marks(after: &[u8], without: &[u8], plain: &[u8], what: &str) -> (u32, u32) {
+        let (mut kept, mut lighter) = (0, 0);
+        for i in 0..after.len() {
+            let (a, b, p) = (after[i], without[i], plain[i]);
+            assert!(a <= b && (a == 0 || a == b || a == p), "{what}: pixel {i} is {a}, without the marks {b}, the view's own {p}");
+            kept += (a != 0 && a != b) as u32;
+            lighter += (a == b && p > b) as u32;
+        }
+        (kept, lighter)
+    }
+
     // Ink edges at Solid (#320) in a view #308 rules (a paper of rulings below 100%, to half): a solid stroke changes
-    // screen pixels only to black, and every other pixel is what blit_canvas_ruled draws of the page without that
-    // stroke, the rulings drawn at the screen's scale beside the ink and under its edge and the other ink sampled over
-    // them. With no solid ink the bytes are blit_canvas_ruled's, and a rect drawn in parts is the rect drawn whole. The
-    // pixels made black are the ones the sampled view makes black (one rule, solid_px). Without the rule the ruled
-    // view gives the stroke a gray rim; with the sampled view's pass run over it instead, a pixel beside the ink
-    // would hold a blend of the page's paper where the view drew a ruling whole.
+    // screen pixels only to black where nothing but paper is beside it, and every such pixel is what blit_canvas_ruled
+    // draws of the page without that stroke, the rulings drawn at the screen's scale beside the ink and under its edge.
+    // Beside other ink a pixel is the ruled view's own where that is darker, and never lighter than the page without
+    // the stroke (solid_over_marks); here the ruled view's own is the lighter one at some pixels (its sampling takes
+    // the stroke's 0 as the gray of the other ink beside it). With no solid ink the bytes are blit_canvas_ruled's, and
+    // a rect drawn in parts is the rect drawn whole. The pixels made black are the ones the sampled view makes black
+    // (one rule, solid_px). Without the rule the ruled view gives the stroke a gray rim; with the sampled view's pass
+    // run over it instead, a pixel beside the ink would hold a blend of the page's paper where the view drew a ruling
+    // whole.
     #[test]
     fn solid_ink_on_a_ruled_view_is_black_or_the_view_without_it() {
         let _panel = paper_panel_lock();
@@ -16364,6 +16417,7 @@ mod tests {
             (PAPER_MUSIC, 0.9, 3.3, 310.0),
             (PAPER_SEYES, 0.97, -4.0, 290.0),
         ];
+        let mut lighters = 0;
         for (k, zoom, ox, oy) in cases {
             let canvas = |w: i32, h: i32| {
                 let mut c = Canvas::default();
@@ -16390,12 +16444,11 @@ mod tests {
             assert!(ruled(&free, true, &[whole]) == before, "paper {} zoom {zoom}: a page with no solid ink", k.0);
             let plain = ruled(&page, false, &[whole]);
             let after = ruled(&page, true, &[whole]);
-            let mut black = 0;
-            for i in 0..after.len() {
-                assert!(after[i] == before[i] || after[i] == 0, "paper {} zoom {zoom}: pixel {i} is {} over {}", k.0, after[i], before[i]);
-                black += (after[i] == 0 && before[i] != 0) as u32;
-            }
+            let (kept, lighter) = solid_over_marks(&after, &before, &plain, &format!("paper {} zoom {zoom}", k.0));
+            let black = (0..after.len()).filter(|&i| after[i] == 0 && before[i] != 0).count();
             assert!(black > 500, "paper {} zoom {zoom}: the ink shows ({black} px)", k.0);
+            assert!(kept > 0, "paper {} zoom {zoom}: beside other ink the view's own pixel stays ({kept} px)", k.0);
+            lighters += lighter;
             let grays = (0..after.len()).filter(|&i| plain[i] != before[i] && plain[i] != 0).count();
             assert!(grays > 0, "paper {} zoom {zoom}: sampled over the paper alone, the ink has a gray rim", k.0);
             // in parts, as a pen's dabs and the settle draw it again
@@ -16425,6 +16478,7 @@ mod tests {
             }
             assert!(blends > 0, "paper {} zoom {zoom}: the sampled pass would not give the ruled view's pixels", k.0);
         }
+        assert!(lighters > 0, "the ruled view's own pixel beside the ink is lighter than without it somewhere ({lighters} px)");
     }
 
     // A 640 x 420 page for the scaled view's tests: a paper with gray rules and black of its own (a block, and two
@@ -16689,7 +16743,9 @@ mod tests {
     // solid stroke across graph paper's gray lines leaves every screen pixel black or the paper's, and a black of
     // the paper's own (a picture's, as a PDF page or a template has: here put into the kept paper and the page, which
     // no built-in paper has) keeps blit_canvas's edges. Handed no paper the pass takes white for it: the ink over a
-    // line then counts as white there, and the paper's black as ink.
+    // line then counts as white there, and the paper's black as ink. (Below 100%, to half, graph paper is drawn at
+    // the screen's scale, #308: there the paper's is that view's paper alone. A picture's paper never is, so its
+    // black is looked at in the sampled views.)
     #[cfg(feature = "sim")]
     #[test]
     fn blit_view_hands_the_solid_pass_the_pages_own_paper() {
@@ -16721,13 +16777,19 @@ mod tests {
         s.hist[ip].page = Some(page);
         render_page_full(&mut a);
         let whole = Rect::new(0, 0, w, h);
+        let dpi = a.dpi;
+        let ruled_view = |zoom: f32| (RULES_MIN_ZOOM..1.0).contains(&zoom);
         let view_of = |c: &Canvas, zoom: f32, ox: f32, oy: f32| {
             let mut sc = Canvas::default();
             assert_eq!(canvas_init(&mut sc, w, h), 0);
-            blit_canvas(&mut sc, c, zoom, ox, oy, whole);
+            if ruled_view(zoom) {
+                blit_canvas_ruled(&mut sc, c, &c.px, c.stride, PAPER_GRID, dpi, zoom, ox, oy, whole, false);
+            } else {
+                blit_canvas(&mut sc, c, zoom, ox, oy, whole);
+            }
             sc
         };
-        let views = [(2.0f32, 100.0f32, 60.0f32), (0.75, -20.333334, 0.0), (1.3333334, 40.0, 12.0)];
+        let views = [(2.0f32, 100.0f32, 60.0f32), (0.75, -20.333334, 0.0), (1.3333334, 40.0, 12.0), (0.48, -100.0, -60.0)];
         for (zoom, ox, oy) in views {
             let s = ed(&mut a);
             (s.zoom, s.ox, s.oy) = (zoom, ox, oy);
@@ -16748,7 +16810,7 @@ mod tests {
         canvas_fill(&mut paper, block, 0);
         canvas_fill(&mut s.page_canvas, block, 0);
         s.paper.px = Some(Rc::new(paper.px.clone()));
-        for (zoom, ox, oy) in views {
+        for (zoom, ox, oy) in views.into_iter().filter(|v| !ruled_view(v.0)) {
             let s = ed(&mut a);
             (s.zoom, s.ox, s.oy) = (zoom, ox, oy);
             blit_view(&mut a, whole);
@@ -16760,6 +16822,173 @@ mod tests {
                 assert!(a.screen.px[i] == 0 || a.screen.px[i] == paper_view.px[i], "zoom {zoom}, the paper's black: pixel {i} is {} over the paper's {}", a.screen.px[i], paper_view.px[i]);
             }
         }
+    }
+
+    // The ruled view (#308) of the scaled view's test page above, drawn on a paper of rulings, below 100% to half,
+    // on a 640 x 420 screen: the page whole with the desk around it, fitted sideways, notebooks of other sizes, and
+    // pinches between.
+    const RULED_VIEWS: [(f32, f32, f32); 8] = [
+        (0.5, -320.0, -210.0),
+        (0.56, -100.25, -50.0),
+        (0.62, 12.3, 10.7),
+        (0.75, -20.333334, 0.0),
+        (0.774, -60.0, -40.5),
+        (0.9, 3.3, 5.0),
+        (0.9366, -3.2, -1.1),
+        (0.97, -4.0, 2.0),
+    ];
+    const RULED_PAPERS: [PaperKind; 3] = [PAPER_SEYES, PAPER_MEDIUM, PAPER_GRID];
+    fn ruled_page_paper(k: PaperKind) -> Canvas {
+        let mut paper = Canvas::default();
+        assert_eq!(canvas_init(&mut paper, 640, 420), 0);
+        paper_render(&mut paper, k, Rect::new(0, 0, 640, 420), 300.0);
+        paper
+    }
+    fn ruled_view_of(pc: &Canvas, paper: &Canvas, k: PaperKind, (zoom, ox, oy): (f32, f32, f32), solid: bool) -> Vec<u8> {
+        let mut sc = Canvas::default();
+        assert_eq!(canvas_init(&mut sc, 640, 420), 0);
+        blit_canvas_ruled(&mut sc, pc, &paper.px, paper.stride, k, 300.0, zoom, ox, oy, Rect::new(0, 0, 640, 420), solid);
+        sc.px
+    }
+    // The page with each solid stroke's black taken back to its paper: its ruled view is, pixel for pixel, what the
+    // view makes of the taps with the ink's taken as their paper.
+    fn ink_as_paper(page: &Canvas, paper: &Canvas) -> Canvas {
+        let mut u = page.clone();
+        for i in 0..u.px.len() {
+            if u.px[i] == 0 && paper.px[i] != 0 {
+                u.px[i] = paper.px[i];
+            }
+        }
+        u
+    }
+    // For screen pixel i of a view: the weight of the solid ink among its four page pixels, and whether one of them
+    // with any weight is other ink (solid_px's two questions, asked of the page and its paper).
+    fn solid_weight(view: (f32, f32, f32), i: usize, page: &Canvas, paper: &Canvas) -> (u32, bool) {
+        let (sx, sy) = (i as i32 % 640, i as i32 / 640);
+        let four = scaled_four(view, sx, sy, page);
+        let ink = |j: usize| page.px[j] == 0 && paper.px[j] != 0;
+        let weight = four.iter().filter(|&&(j, _)| ink(j)).map(|&(_, wt)| wt).sum();
+        (weight, four.iter().any(|&(j, wt)| wt != 0 && !ink(j) && page.px[j] != paper.px[j]))
+    }
+
+    // Ink edges at Solid (#320) in a view #308 rules, where a solid stroke crosses or lies beside other ink (a
+    // highlight band, pencil shading, charcoal, a marker and a pen given grain across the rulings), drawn before it or
+    // after it: beside other ink no screen pixel is lighter than the ruled view's own sampling of the page, and none
+    // is lighter than the same ruled view of the page without the solid strokes but over other ink the stroke covered
+    // (the page does not keep what a stroke covers, so the rule takes paper for it there): those are counted apart,
+    // the paper drawn where nothing but the ink and paper shows, and a few beside other ink, whose sampling the covered
+    // ink would have changed. Over paper alone every pixel is black or the paper drawn. Writing the view without the
+    // stroke beside other ink (each ink pixel taken as its paper) puts a pale outline along the stroke over the pencil
+    // and the highlight; leaving the ruled view's own pixel there lightens other ink at some pixels.
+    #[test]
+    fn solid_ink_on_a_ruled_view_never_lightens_other_ink() {
+        let _panel = paper_panel_lock();
+        paper_set_panel_ppi(0.0, 300.0);
+        ui_init(300.0);
+        assert_eq!(font_init(), 0);
+        for k in RULED_PAPERS {
+            let paper = ruled_page_paper(k);
+            let under = scaled_view_page(&paper, false, true, true);
+            assert!((0..under.px.len()).all(|i| under.px[i] != 0 || paper.px[i] == 0), "paper {}: the other ink never reaches black", k.0);
+            let alone = scaled_view_page(&paper, true, false, true);
+            for view in RULED_VIEWS {
+                let (zoom, ox, oy) = view;
+                let paper_view = ruled_view_of(&paper, &paper, k, view, false);
+                let before = ruled_view_of(&under, &paper, k, view, true);
+                assert!(before == ruled_view_of(&under, &paper, k, view, false), "paper {} zoom {zoom}: a page with no solid ink", k.0);
+                let on_paper = ruled_view_of(&alone, &paper, k, view, true);
+                for i in 0..on_paper.len() {
+                    assert!(on_paper[i] == 0 || on_paper[i] == paper_view[i], "paper {} zoom {zoom} at {ox} {oy}, over paper alone: pixel {i} is {} over {}", k.0, on_paper[i], paper_view[i]);
+                }
+                for other_first in [true, false] {
+                    let page = scaled_view_page(&paper, true, true, other_first);
+                    for i in 0..page.px.len() {
+                        assert!(page.px[i] == under.px[i] || page.px[i] == 0, "paper {}, the page, other ink first {other_first}: pixel {i}", k.0);
+                    }
+                    let plain = ruled_view_of(&page, &paper, k, view, false);
+                    let without = ruled_view_of(&ink_as_paper(&page, &paper), &paper, k, view, false);
+                    let after = ruled_view_of(&page, &paper, k, view, true);
+                    let what = format!("paper {} zoom {zoom} at {ox} {oy}, other ink first {other_first}", k.0);
+                    let (mut black, mut kept, mut covered, mut covered_beside) = (0, 0, 0, 0);
+                    for i in 0..after.len() {
+                        let (a, b) = (after[i], before[i]);
+                        let (weight, other) = solid_weight(view, i, &page, &paper);
+                        if weight > 0 && 2 * weight < 255 * 255 && other {
+                            assert!(a <= plain[i], "{what}: pixel {i} is {a}, beside other ink lighter than the ruled view's own {}", plain[i]);
+                        }
+                        if a > b {
+                            let (sx, sy) = (i as i32 % 640, i as i32 / 640);
+                            let over_covered = scaled_four(view, sx, sy, &page).iter().any(|&(j, wt)| wt != 0 && page.px[j] == 0 && paper.px[j] != 0 && under.px[j] != paper.px[j]);
+                            assert!(over_covered, "{what}: pixel {i} is {a}, lighter than {b} without the strokes, and no ink of its covers other ink");
+                            if other {
+                                covered_beside += 1;
+                            } else {
+                                assert!(a == paper_view[i], "{what}: pixel {i} is {a}, lighter than {b}, and not the paper drawn {}", paper_view[i]);
+                                covered += 1;
+                            }
+                        }
+                        assert!(a >= b || a == 0 || a == plain[i] || a == without[i], "{what}: pixel {i} is {a}, darker than {b} and neither the ruled view's own {} nor its value without the ink {}", plain[i], without[i]);
+                        black += (a == 0 && b != 0) as u32;
+                        kept += (a != 0 && a == plain[i] && a < b) as u32;
+                    }
+                    assert!(black > 300, "{what}: the ink shows ({black} px)");
+                    assert!(kept > 50, "{what}: beside other ink the ruled view's own pixel stays ({kept} px)");
+                    // (on this page 0 to 34 of the one kind a view, 0 to 19 of the other, at most 95 and 53 lighter)
+                    assert!(covered < 100 && covered_beside < 100, "{what}: {covered} and {covered_beside} of {} pixels are lighter over covered ink", after.len());
+                }
+            }
+        }
+    }
+
+    // The ruled view's rule at Solid written out pixel by pixel (blit_canvas_ruled with solid_px), on the page above
+    // drawn on three papers of rulings at the eight ruled views. With W the weight of the solid ink among a screen
+    // pixel's four page pixels: the ruled view's own value where W is 0; black where W is half the whole weight or
+    // more; where W is less and one of the four with any weight is other ink, the darker of the ruled view's own value
+    // and its value with the ink's pixels taken as their paper; else the paper drawn (what the view shows there
+    // without the stroke). Each of the four kinds is met.
+    #[test]
+    fn solid_ink_on_a_ruled_view_is_black_from_half_the_weight() {
+        let _panel = paper_panel_lock();
+        paper_set_panel_ppi(0.0, 300.0);
+        ui_init(300.0);
+        assert_eq!(font_init(), 0);
+        let (mut own, mut darker) = (0, 0);
+        for k in RULED_PAPERS {
+            let paper = ruled_page_paper(k);
+            for other_first in [true, false] {
+                let page = scaled_view_page(&paper, true, true, other_first);
+                let free = ink_as_paper(&page, &paper);
+                for view in RULED_VIEWS {
+                    let zoom = view.0;
+                    let plain = ruled_view_of(&page, &paper, k, view, false);
+                    let paper_view = ruled_view_of(&paper, &paper, k, view, false);
+                    let without = ruled_view_of(&free, &paper, k, view, false);
+                    let got = ruled_view_of(&page, &paper, k, view, true);
+                    let (mut black, mut papers) = (0, 0);
+                    for i in 0..got.len() {
+                        let (weight, other) = solid_weight(view, i, &page, &paper);
+                        let want = if weight == 0 {
+                            plain[i]
+                        } else if 2 * weight >= 255 * 255 {
+                            black += 1;
+                            0
+                        } else if other {
+                            own += (plain[i] < without[i]) as u32;
+                            darker += (without[i] < plain[i]) as u32;
+                            plain[i].min(without[i])
+                        } else {
+                            papers += 1;
+                            paper_view[i]
+                        };
+                        assert_eq!(got[i], want, "paper {} zoom {zoom}, other ink first {other_first}: pixel {},{}", k.0, i % 640, i / 640);
+                    }
+                    assert!(black > 300 && papers > 300, "paper {} zoom {zoom}: black {black}, the paper's {papers}", k.0);
+                }
+            }
+        }
+        // (beside other ink both of the darker of the two are met: the ruled view's own at thousands of pixels, its
+        // value without the ink where its own would be lighter at a few)
+        assert!(own > 10_000 && darker > 50, "the ruled view's own {own}, its value without the ink {darker}");
     }
 
     #[test]
@@ -17998,7 +18227,7 @@ mod tests {
         // is blit_canvas_ruled's, as on any page. At Solid every pixel of it is black or what the view shows of the
         // paper alone, each ruling as #308 draws it up to the ink; drawn in parts it is the whole; a pinch's fast
         // frames are sampled as ever. The Links bar looking at such a page on the open page's paper shows it the
-        // same way, at either setting.
+        // same way, at either setting (with other ink on it as well: never lighter beside it, solid_over_marks).
         let _panel = paper_panel_lock();
         let mut a = ruled_app(2480, 1860, 1860, 2480, PAPER_SEYES);
         let dpi = a.dpi;
@@ -18064,16 +18293,18 @@ mod tests {
         let _solid = InkEdgesScope::new(InkEdges::Solid);
         compose(&mut a, whole);
         assert!(a.screen.px == ruled(&a, &ed_ref(&a).ccache[0].canvas, true), "the bar at Solid");
-        assert!((0..without.len()).all(|i| a.screen.px[i] == 0 || a.screen.px[i] == without[i]), "the bar at Solid: black, or the page without the strokes");
+        let plain = ruled(&a, &ed_ref(&a).ccache[0].canvas, false);
+        let (kept, _) = solid_over_marks(&a.screen.px, &without, &plain, "the bar at Solid");
+        assert!(kept > 0);
     }
 
     #[test]
     fn with_ink_edges_at_solid_the_links_bar_shows_a_sampled_page_as_it_will_open() {
         // The bar looking at page 2 sideways (0.75), a page sampled as ever (blank paper, or dots), written with
         // solid strokes. At Smooth it is blit_canvas's. At Solid, on the open page's paper, it is what blit_view
-        // draws of the open page: the sampled view with the Solid pass, every pixel black or the page without the
-        // strokes. On another paper than the open page's (dots, from a blank page) no paper tells its ink by, and
-        // it is sampled with no pass.
+        // draws of the open page: the sampled view with the Solid pass, every pixel black, or the page without the
+        // strokes, or beside other ink blit_canvas's (never lighter there: solid_over_marks). On another paper than
+        // the open page's (dots, from a blank page) no paper tells its ink by, and it is sampled with no pass.
         let _panel = paper_panel_lock();
         let whole = Rect::new(0, 0, 2480, 1860);
         for (k1, k2) in [(PAPER_BLANK, PAPER_BLANK), (PAPER_DOTS, PAPER_DOTS), (PAPER_BLANK, PAPER_DOTS)] {
@@ -18111,7 +18342,8 @@ mod tests {
                 blit_solid_edges(&mut want, &ed_ref(&a).ccache[0].canvas, Some((&paper2, 1860)), zoom, ox, oy, whole);
                 assert!(shown == want.px, "paper {}: the bar at Solid", k1.0);
                 let without = sampled(&a, &other_ink);
-                assert!((0..shown.len()).all(|i| shown[i] == 0 || shown[i] == without[i]), "paper {}: black, or the page without the strokes", k1.0);
+                let (kept, lighter) = solid_over_marks(&shown, &without, &plain, &format!("paper {}", k1.0));
+                assert!(kept > 0 && lighter == 0, "paper {}: {kept} {lighter}", k1.0);
                 assert!(shown != plain);
                 // (the paper it was told by is the open page's, made for the bar where the open page's view had not)
                 let s = ed_ref(&a);
