@@ -11,10 +11,12 @@ expect editor.modal is pages
 wait 300
 expect bg.busy is 1
 fpath 1400 1300 600 1320 200
-wait 1200
+wait 300
 expect editor.pages.screen is 2
+# (the next screen's previews waited for, not a time they take on a quiet machine: when they show, the first
+# process is still busy with the dense page's 6 s)
+waitfor editor.pages.shows is ppp
 expect bg.busy is 1
-expect editor.pages.shows is ppp
 waitbg 30000
 fpath 600 1300 1400 1320 200
 wait 400

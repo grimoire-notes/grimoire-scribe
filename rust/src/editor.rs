@@ -526,12 +526,14 @@ pub struct EditorState {
     zoom: f32,
     ox: f32,
     oy: f32,
-    /// the resting zoom: the page's width across the screen, or sideways with landscape_fit the whole page
+    /// the resting zoom: the page's width across the screen, or sideways with landscape_fit the whole page;
+    /// 100% for a page a little smaller than the screen (page_near_view)
     zoom_default: f32,
     zoom_min: f32,
     /// pinched in at most this far: four times the page's width across the screen, however it rests
     zoom_max: f32,
-    /// the offset the resting view has across (the whole page sideways is centred: negative)
+    /// the offset the resting view has across (the whole page sideways is centred: negative; so is a page a
+    /// little smaller than the screen, page_near_view)
     rest_ox: f32,
     /// screen size the view was set up for
     view_w: i32,
@@ -1941,14 +1943,37 @@ fn view_clamp(a: &mut App) {
     }
     s.ox = if vw >= s.pgw as f32 { -(vw - s.pgw as f32) / 2.0 } else { clampf(s.ox, 0.0, s.pgw as f32 - vw) };
     s.oy = if vh >= s.pgh as f32 { -(vh - s.pgh as f32) / 2.0 } else { clampf(s.oy, 0.0, s.pgh as f32 - vh) };
-    // Snap to exactly 100% / no offset in portrait so the fast identity path is used.
-    if (s.zoom - 1.0).abs() < 0.01 && s.pgw == aw && s.pgh == ah {
-        s.zoom = 1.0;
-        s.ox = 0.0;
-        s.oy = 0.0;
+    // Snap to exactly 100% so the 1:1 paths draw it: a page of the view's size at no offset (the identity), one a
+    // little smaller centred on whole pixels (view_at_100).
+    if (s.zoom - 1.0).abs() < 0.01 {
+        if let Some((ox, oy)) = view_at_100(aw, ah, s.pgw, s.pgh) {
+            s.zoom = 1.0;
+            s.ox = ox;
+            s.oy = oy;
+        }
     }
     s.oy -= top as f32 / s.zoom;
     touch_context(a);
+}
+
+/// Whether a page of pgw x pgh is a little smaller than an aw x ah view: no larger on either axis, within 4% of it
+/// on both, and not its size (a notebook made on a screen a little smaller than this one). Such a page rests at
+/// 100%, centred (view_rest): it fits whole there, and a fit of a few percent would only resample every stroke,
+/// softer and a few percent larger than it was written. A page a little larger is fitted as any other: at 100%
+/// part of it would be off the screen.
+fn page_near_view(aw: i32, ah: i32, pgw: i32, pgh: i32) -> bool {
+    pgw <= aw && pgh <= ah && (pgw, pgh) != (aw, ah) && pgw * 25 >= aw * 24 && pgh * 25 >= ah * 24
+}
+
+/// Where a page sits at exactly 100% when that is where it rests (a page of the view's size, or one a little
+/// smaller, page_near_view): its offsets, centred on whole pixels so that blit_canvas copies it 1:1 ((0, 0) for a
+/// page of the view's size). None for any other page.
+fn view_at_100(aw: i32, ah: i32, pgw: i32, pgh: i32) -> Option<(f32, f32)> {
+    if (pgw, pgh) == (aw, ah) || page_near_view(aw, ah, pgw, pgh) {
+        Some(((-((aw - pgw) / 2)) as f32, (-((ah - pgh) / 2)) as f32))
+    } else {
+        None
+    }
 }
 
 /// What touchgest needs of the editor to tell a pan from a swipe, and to let a pinch zoom: whether the
@@ -1989,16 +2014,22 @@ fn touch_context(a: &App) {
 /// (100% upright for a page of this screen's size, the whole page for a notebook from another Scribe,
 /// theirs are 3:4 too); sideways with `fit` (settings.landscape_fit) the whole page shows instead,
 /// centred, and two fingers swipe anywhere. The least is the whole page either way, and the most four
-/// times the width's fit (the same expression and order it always was, so it is bit-identical).
+/// times the width's fit (the same expression and order it always was, so it is bit-identical). A page
+/// a little smaller than the screen (page_near_view) rests at 100% instead, centred, on any screen's
+/// shape and either way of `fit`; the whole page shows there, so 100% is its least too.
 fn view_rest(aw: i32, ah: i32, pgw: i32, pgh: i32, fit: bool) -> (f32, f32, f32) {
     let zoom_min = (aw as f32 / pgw as f32).min(ah as f32 / pgh as f32);
     let zoom = if fit && aw > ah { zoom_min } else { aw as f32 / pgw as f32 };
     let zoom_max = (aw as f32 / pgw as f32) * 4.0;
+    if page_near_view(aw, ah, pgw, pgh) {
+        return (1.0, 1.0, zoom_max);
+    }
     (zoom, zoom_min, zoom_max)
 }
 
 // The page at rest (view_rest): the width across upright, sideways the width too (pan with two fingers;
-// pinching out shows the whole page) or, with landscape_fit, the whole page.
+// pinching out shows the whole page) or, with landscape_fit, the whole page; a page a little smaller than
+// the screen at 100%, centred.
 fn view_reset(a: &mut App) {
     let top = status_reserved(a);
     let (aw, ah) = (a.w, a.h - top);
@@ -2064,23 +2095,37 @@ fn page_to_screen(a: &App, p: Rect) -> Rect {
 
 fn zoomed(a: &App) -> bool {
     let s = ed_ref(a);
-    // (The whole page sideways rests centred across, at a negative offset: rest_ox, 0 everywhere else.)
+    // (The whole page sideways rests centred across, at a negative offset: rest_ox, 0 everywhere else but a page a
+    // little smaller than the screen, centred both ways: its offset down is negative too, never scrolled.)
     (s.zoom - s.zoom_default).abs() > 0.01 || s.ox != s.rest_ox || s.oy + status_reserved(a) as f32 / s.zoom > 0.5
 }
 
-// Draws the visible page into a screen rect: bilinear sampling for grayscale frames, nearest-neighbor
-// during live fast (DU) pinch/pan previews, and a gray desk outside the page. Input is pumped every
-// 64 rows (work_pump, common.h).
+// Draws the visible page into a screen rect: bilinear sampling for grayscale frames (below 100% on a
+// paper of rulings, the paper drawn at the screen's scale and the ink sampled over it: view_rules),
+// nearest-neighbor during live fast (DU) pinch/pan previews, and a gray desk outside the page. Input is
+// pumped every 64 rows (work_pump, common.h).
+//
+// With Ink edges at Solid (#320) a grayscale frame of a view that is not 1:1 follows one rule (solid_px), in the
+// sampled view and the ruled one alike: a screen pixel that reads a solid stroke's ink is black where the ink has
+// half of the pixel's weight or more; elsewhere, with nothing but paper beside the ink, what the same view shows with
+// that stroke absent, and beside other ink the darker of that and the view's own pixel. So over its paper a solid
+// stroke changes screen pixels only to black, the rulings beside and under it are the view's own, and the frames
+// drawn while writing are the frame the settle composes; beside other ink nothing is lighter than without it.
 fn blit_view(a: &mut App, r: Rect) {
     let top = status_reserved(a);
     let r = rect_intersect(r, Rect { x: 0, y: top, w: a.w, h: a.h - top ,
         },
     );
+    let dpi = a.dpi;
+    let rules = if rect_is_empty(r) { None } else { view_rules(ed(a), dpi) };
     // Ink edges at Solid (#320): the page's paper, which tells a solid stroke's black from the paper's own
-    // (blit_solid_edges); drawn once for a page's paper, as an erase stroke draws it.
-    let solid = ink_edges() == InkEdges::Solid && !ed_ref(a).fast_blit && !rect_is_empty(r);
+    // (solid_px); drawn once for a page's paper, as an erase stroke draws it (a ruled view has made it: view_rules).
+    // Not at 100% on whole pixels, where the page is copied and nothing is blended (view_copies).
+    let solid = {
+        let s = ed_ref(a);
+        ink_edges() == InkEdges::Solid && !s.fast_blit && !rect_is_empty(r) && !view_copies(s.zoom, s.ox, s.oy)
+    };
     if solid {
-        let dpi = a.dpi;
         let s = ed(a);
         if s.open_page().is_some() && !s.page_canvas.px.is_empty() {
             page_paper(s, dpi);
@@ -2090,6 +2135,8 @@ fn blit_view(a: &mut App, r: Rect) {
     let s = ed.as_deref().unwrap();
     if s.fast_blit {
         blit_canvas_fast(screen, &s.page_canvas, s.zoom, s.ox, s.oy, r);
+    } else if let (Some(k), Some(paper)) = (rules, s.paper.px.as_deref()) {
+        blit_canvas_ruled(screen, &s.page_canvas, paper, s.paper.stride, k, dpi, s.zoom, s.ox, s.oy, r, solid);
     } else {
         blit_canvas(screen, &s.page_canvas, s.zoom, s.ox, s.oy, r);
         if solid {
@@ -2098,6 +2145,609 @@ fn blit_view(a: &mut App, r: Rect) {
             blit_solid_edges(screen, pc, paper, s.zoom, s.ox, s.oy, r);
         }
     }
+}
+
+/// The least zoom a view draws a paper of rulings at its own scale (view_rules). The views below 100% are the whole
+/// page sideways (0.75 on the Kindle, 0.77 for a 1860x2480 page on a screen of 2560x1920), a notebook from a
+/// larger screen fitted upright, and the pinches between them and 100%; under half, the lines would crowd
+/// (Seyes's 2 mm is 12 px there), and the page is sampled as at any other zoom.
+const RULES_MIN_ZOOM: f32 = 0.5;
+
+// Whether the view draws the open page's paper at the screen's scale (blit_canvas_ruled, #308), and which
+// paper: a final frame (not a pinch's fast one) below 100% (to RULES_MIN_ZOOM), the open page drawn in the
+// page canvas on a paper of rulings (paper_view_draws), and its paper alone current for it (rules_paper).
+// None: the view samples the page as it always has.
+fn view_rules(s: &mut EditorState, dpi: f32) -> Option<PaperKind> {
+    if s.fast_blit || !(RULES_MIN_ZOOM..1.0).contains(&s.zoom) {
+        return None;
+    }
+    let k = s.open_page()?.paper;
+    let pc = &s.page_canvas;
+    if !paper_view_draws(k) || pc.px.is_empty() || s.canvas_page != s.open_page_ref() || pc.w != s.pgw || pc.h != s.pgh {
+        return None;
+    }
+    rules_paper(s, k, dpi)
+}
+
+// view_rules for the page the Links bar shows, at the view it rests in (peek_view, zoom): its canvas cache slot
+// drawn whole, on a paper of rulings that is the open page's too, so the open page's paper alone serves it.
+// Another paper is sampled as ever.
+fn peek_rules(s: &mut EditorState, dpi: f32, slot: usize, zoom: f32) -> Option<PaperKind> {
+    if !(RULES_MIN_ZOOM..1.0).contains(&zoom) {
+        return None;
+    }
+    let k = peek_paper(s, slot)?;
+    if !paper_view_draws(k) {
+        return None;
+    }
+    rules_paper(s, k, dpi)
+}
+
+// The paper of the page the Links bar shows, where the open page's paper alone (s.paper) is its paper too: its
+// canvas cache slot drawn whole, on the paper the open page is on. None for any other page (no paper of its own
+// is kept for it).
+fn peek_paper(s: &EditorState, slot: usize) -> Option<PaperKind> {
+    let e = &s.ccache[slot];
+    let pc = &e.canvas;
+    if pc.px.is_empty() || pc.w != s.pgw || pc.h != s.pgh || e.rows_done < s.pgh || e.white {
+        return None;
+    }
+    let pid = s.peek.pid;
+    let k = s.hist.iter().find(|h| h.page_id == pid).and_then(|h| h.page.as_deref()).or(e.page.as_deref())?.paper;
+    (s.open_page()?.paper == k).then_some(k)
+}
+
+// The open page's paper alone (s.paper, page_paper), paper k, current for the view: made here when it is not,
+// unless a stroke is being drawn (an erase stroke's brush holds it). The first such frame of a paper or a page
+// size draws a page of paper (10-40 ms on the Kindle). Some(k) when it is current.
+fn rules_paper(s: &mut EditorState, k: PaperKind, dpi: f32) -> Option<PaperKind> {
+    let current = |s: &EditorState| s.paper.px.is_some() && s.paper.w == s.pgw && s.paper.h == s.pgh && s.paper_k == k && !s.paper_stale;
+    if !current(s) && (s.cur.is_some() || !page_paper(s, dpi) || !current(s)) {
+        return None;
+    }
+    Some(k)
+}
+
+// The screen columns (or rows) [first, end) a view samples a page n px across from, as blit_canvas samples it:
+// those whose sample, floor((s + 0.5) / zoom + o - 0.5) worked out in f32 as blit_canvas works it out, falls in
+// -1..n (its desk is outside them; -1 is the page's edge pixel again).
+fn view_span(zoom: f32, o: f32, n: i32) -> (i32, i32) {
+    let at = |s: i32| ((s as f32 + 0.5) / zoom + o - 0.5).floor() as i32;
+    // the first s whose sample is lim or more (it never falls as s grows)
+    let first = |lim: i32| {
+        let (mut lo, mut hi) = (-(1 << 22), 1 << 22);
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if at(mid) >= lim {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        lo
+    };
+    (first(-1), first(n))
+}
+
+// blit_canvas for a page on a paper of rulings, below 100% (view_rules, #308): the paper drawn on the screen
+// at the screen's scale (paper_render_view), every line on whole pixels at its page width and gray, and the page's
+// ink sampled over it (blit_over_paper). The desk is blit_canvas's, and so is all of r for a paper drawn otherwise.
+//
+// `solid`, with Ink edges at Solid (#320): the rule of every scaled view (solid_px) over this one. A screen pixel
+// that reads a solid stroke's ink is black where the ink has half of its weight or more. With less and nothing but
+// the ink and paper beside it, it is the paper drawn here (the rulings as drawn, whole and even, up to the stroke and
+// under its edge), which is what this view shows there with the stroke absent. With other ink beside it, the darker
+// of what blit_over_paper samples there and what it would sample with the ink's taps taken as their paper: its own
+// value can be the lighter one (it takes the darkest ink among a pixel's taps, here the stroke's 0, as the gray of
+// all of them, and lays a gray tap over the paper drawn here by that), and the darker of the two never is. The
+// paper drawn here is on the screen only until the ink is sampled over it, so the rule's answers are worked out
+// first, read from the screen as paper_render_view left it, kept (SolidKept), and put over the sampled ink. Not
+// `solid`, nothing here runs but what #308 wrote.
+fn blit_canvas_ruled(screen: &mut Canvas, pc: &Canvas, paper: &[u8], pstride: i32, k: PaperKind, dpi: f32, zoom: f32, ox: f32, oy: f32, r: Rect, solid: bool) {
+    if rect_is_empty(r) {
+        return;
+    }
+    if pc.w <= 0 || pc.h <= 0 || zoom <= 0.0 || pstride < pc.w || paper.len() < pstride as usize * pc.h as usize {
+        blit_canvas(screen, pc, zoom, ox, oy, r);
+        if solid {
+            // (no paper to tell the ink by: white, as blit_view takes it for a paper of another size)
+            blit_solid_edges(screen, pc, None, zoom, ox, oy, r);
+        }
+        return;
+    }
+    let (x0, x1) = view_span(zoom, ox, pc.w);
+    let (y0, y1) = view_span(zoom, oy, pc.h);
+    let view = PaperView { zoom, ox, oy, foot: Rect::new(x0, y0, x1 - x0, y1 - y0) };
+    if !paper_render_view(screen, k, pc.w, pc.h, dpi, view, r) {
+        blit_canvas(screen, pc, zoom, ox, oy, r);
+        if solid {
+            blit_solid_edges(screen, pc, Some((paper, pstride)), zoom, ox, oy, r);
+        }
+        return;
+    }
+    if !solid {
+        blit_over_paper(screen, pc, paper, pstride, zoom, ox, oy, r);
+        return;
+    }
+    let mut kept = SOLID_KEPT.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
+    kept.clear();
+    solid_edges(pc, Some((paper, pstride)), screen.stride, zoom, ox, oy, r, |at, px, q, wf, wy, bottom| match px {
+        SolidPx::Black => kept.over.push(at, 0),
+        // (the taps that weigh are each the ink or its paper: what over_paper_px makes of them is the paper drawn)
+        SolidPx::Under(_) => kept.over.push(at, screen.px[at]),
+        SolidPx::Beside(u) => kept.darker.push(at, over_paper_px(screen.px[at], u, q, wf, wy, bottom)),
+    });
+    blit_over_paper(screen, pc, paper, pstride, zoom, ox, oy, r);
+    kept.over.put(screen, false);
+    kept.darker.put(screen, true);
+    SOLID_KEPT.with(|cell| *cell.borrow_mut() = kept);
+}
+
+// What the Solid rule answered for a ruled view's pixels (blit_canvas_ruled), kept while the ink is sampled over the
+// drawn paper: `over` what is put over the sampled ink (black, or the paper drawn), `darker` what is put where it is
+// darker than the sampled ink (the view without the stroke, beside other ink). A byte for each pixel that reads a
+// solid stroke's ink, eight more for each run of them.
+#[derive(Default)]
+struct SolidKept {
+    over: SolidRuns,
+    darker: SolidRuns,
+}
+
+impl SolidKept {
+    fn clear(&mut self) {
+        self.over.clear();
+        self.darker.clear();
+    }
+}
+
+// Runs of pixels, each its first index in the screen and its length, and every pixel's value in order.
+#[derive(Default)]
+struct SolidRuns {
+    runs: Vec<(u32, u32)>,
+    px: Vec<u8>,
+}
+
+impl SolidRuns {
+    fn clear(&mut self) {
+        self.runs.clear();
+        self.px.clear();
+    }
+    // (the pass goes along each row, so a stroke's pixels come one after another)
+    fn push(&mut self, at: usize, v: u8) {
+        match self.runs.last_mut() {
+            Some(run) if run.0 as usize + run.1 as usize == at => run.1 += 1,
+            _ => self.runs.push((at as u32, 1)),
+        }
+        self.px.push(v);
+    }
+    // Each kept value put on the screen, or (`darker`) only where it is darker than what is there.
+    fn put(&self, screen: &mut Canvas, darker: bool) {
+        let mut i = 0;
+        for &(at, n) in &self.runs {
+            let (at, n) = (at as usize, n as usize);
+            if darker {
+                for (d, &v) in screen.px[at..at + n].iter_mut().zip(&self.px[i..i + n]) {
+                    *d = (*d).min(v);
+                }
+            } else {
+                screen.px[at..at + n].copy_from_slice(&self.px[i..i + n]);
+            }
+            i += n;
+        }
+    }
+}
+
+thread_local! {
+    static SOLID_KEPT: RefCell<SolidKept> = RefCell::new(SolidKept::default());
+}
+
+// What page pixel p over its paper q shows over v, the paper drawn at that screen pixel (blit_over_paper), k the
+// darkest ink among the pixel's taps. Ink darkens toward its gray (canvas_deposit_px), and erasing lightens back
+// toward the paper, never past it: p < q is ink of gray k (at most p) over (q - p) / (q - k) of the pixel, laid
+// over v the same way, darkening only. p == q is the paper alone, or ink no darker than the paper under it, which
+// a deposit leaves as it was: with ink as dark as k beside it (k at least q) it is taken to be there, hidden under
+// q (a highlighter's 110 under Seyes's strong lines, 68) and showing over a lighter v. Where v is q, p comes back.
+#[inline]
+fn rules_tap(p: u8, q: u8, k: u8, v: u8) -> u8 {
+    if p >= q {
+        return if q <= k { v.min(k) } else { v };
+    }
+    // (k is at most p for a tap that weighs; one that does not is kept inside the arithmetic)
+    let k = k.min(p);
+    if v <= k {
+        return v;
+    }
+    let (p, q, k, v) = (p as u32, q as u32, k as u32, v as u32);
+    // ((v - k) * (q - p) + (q - k) / 2) / (q - k), by the divisor's reciprocal (RECIP_24: the dividend is under 2^16)
+    let n = (v - k) * (q - p) + (q - k) / 2;
+    (v - ((n as u64 * RECIP_24[(q - k) as usize] as u64) >> 24) as u32) as u8
+}
+
+/// ceil(2^24 / d) for d of 1 to 255 (0 for 0): n / d is (n * RECIP_24[d]) >> 24 for every n under 2^16, the error
+/// under n / 2^24 < 1/256 <= 1/d.
+const RECIP_24: [u32; 256] = {
+    let mut t = [0u32; 256];
+    let mut d = 1;
+    while d < 256 {
+        t[d] = ((1u32 << 24) + d as u32 - 1) / d as u32;
+        d += 1;
+    }
+    t
+};
+
+// One screen pixel of blit_over_paper: v the paper drawn there, p and q the page and its paper at the bilinear's
+// four taps (top left, top right, bottom left, bottom right; the bottom ones the top ones again where the page's
+// rows are one), wf and wy blit_canvas's weights. The taps that weigh (the right ones unless wf is 0, the bottom
+// ones if `bottom`) decide: the paper alone keeps v; a tap lighter than its paper (nothing a pen draws makes one)
+// gives blit_canvas's value; ink gives each tap over v (rules_tap), mixed as blit_canvas mixes.
+//
+// Where every tap that weighs has the paper drawn here (q == v: ink on white paper, most of a written page), each
+// tap is p over v (rules_tap(p, v, k, v) is p), so the pixel is blit_canvas's, worked out straight away.
+#[inline]
+fn over_paper_px(v: u8, p: [u8; 4], q: [u8; 4], wf: u32, wy: u32, bottom: bool) -> u8 {
+    let (iwf, iwy) = (255 - wf, 255 - wy);
+    let mix = |u: [u8; 4]| {
+        let t = u[0] as u32 * iwf + u[1] as u32 * wf;
+        let b = u[2] as u32 * iwf + u[3] as u32 * wf;
+        ((t * iwy + b * wy + 32512) / 65025) as u8
+    };
+    if (q[0] == v) & (wf == 0 || q[1] == v) & (!bottom || (q[2] == v) & (wf == 0 || q[3] == v)) {
+        return mix(p);
+    }
+    let weighs = [true, wf != 0, bottom, bottom && wf != 0];
+    let mut ink: Option<u8> = None;
+    let mut lighter = false;
+    for i in 0..4 {
+        if weighs[i] {
+            if p[i] < q[i] {
+                ink = Some(ink.map_or(p[i], |k| k.min(p[i])));
+            } else if p[i] > q[i] {
+                lighter = true;
+            }
+        }
+    }
+    match (ink, lighter) {
+        (None, false) => v,
+        (Some(k), false) => mix([0, 1, 2, 3].map(|i| rules_tap(p[i], q[i], k, v))),
+        (_, true) => mix(p),
+    }
+}
+
+// Two page columns apart or less, two stretches where a page row differs from its paper are taken as one: a screen
+// pixel reads two neighbouring columns, so the pixels between them are few, and are worked out exactly anyway.
+const DIFF_GAP: usize = 2;
+
+// The stretches [first, last] (columns of a and b, a page row and its paper over the same columns) where they
+// differ, into out, found 32 bytes at a time: the paper's pixels, most of a row even on a written page, cost a
+// compare per eight. A stretch may hold some equal columns (between the first and the last that differ of 32, or in a
+// gap of DIFF_GAP), never leave out one that differs.
+fn row_diffs(a: &[u8], b: &[u8], out: &mut Vec<(u32, u32)>) {
+    out.clear();
+    let mut add = |d0: usize, d1: usize| match out.last_mut() {
+        Some(l) if d0 <= l.1 as usize + DIFF_GAP + 1 => l.1 = d1 as u32,
+        _ => out.push((d0 as u32, d1 as u32)),
+    };
+    let n = a.len().min(b.len());
+    let mut i = 0;
+    let word = |s: &[u8], i: usize| u64::from_le_bytes(s[i..i + 8].try_into().unwrap());
+    while i + 32 <= n {
+        let x = [word(a, i) ^ word(b, i), word(a, i + 8) ^ word(b, i + 8), word(a, i + 16) ^ word(b, i + 16), word(a, i + 24) ^ word(b, i + 24)];
+        if x[0] | x[1] | x[2] | x[3] != 0 {
+            // (from the first column that differs to the last, as one)
+            let f = x.iter().position(|&x| x != 0).unwrap();
+            let l = x.iter().rposition(|&x| x != 0).unwrap();
+            add(i + 8 * f + (x[f].trailing_zeros() / 8) as usize, i + 8 * l + 7 - (x[l].leading_zeros() / 8) as usize);
+        }
+        i += 32;
+    }
+    while i + 8 <= n {
+        let x = u64::from_le_bytes(a[i..i + 8].try_into().unwrap()) ^ u64::from_le_bytes(b[i..i + 8].try_into().unwrap());
+        if x != 0 {
+            add(i + (x.trailing_zeros() / 8) as usize, i + 7 - (x.leading_zeros() / 8) as usize);
+        }
+        i += 8;
+    }
+    while i < n {
+        if a[i] != b[i] {
+            add(i, i);
+        }
+        i += 1;
+    }
+}
+
+// Two lists of stretches as one, in order, those that overlap or touch (DIFF_GAP) joined.
+fn diffs_union(a: &[(u32, u32)], b: &[(u32, u32)], out: &mut Vec<(u32, u32)>) {
+    out.clear();
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() || j < b.len() {
+        let d = if j >= b.len() || (i < a.len() && a[i].0 <= b[j].0) {
+            i += 1;
+            a[i - 1]
+        } else {
+            j += 1;
+            b[j - 1]
+        };
+        match out.last_mut() {
+            Some(l) if d.0 as usize <= l.1 as usize + DIFF_GAP + 1 => l.1 = l.1.max(d.1),
+            _ => out.push(d),
+        }
+    }
+}
+
+// Two page rows' stretches (row_diffs), by row: the last two asked for, kept for the next screen row, which reads the
+// same rows or the next ones.
+#[derive(Default)]
+struct RowStretches {
+    rows: [(i32, Vec<(u32, u32)>); 2],
+}
+
+impl RowStretches {
+    fn forget(&mut self) {
+        self.rows[0].0 = -1;
+        self.rows[1].0 = -1;
+    }
+    // The slot that holds page row y's stretches, found by `find` into the older slot when neither does.
+    fn get(&mut self, y: usize, find: impl FnOnce(&mut Vec<(u32, u32)>)) -> usize {
+        if let Some(n) = (0..2).find(|&n| self.rows[n].0 == y as i32) {
+            return n;
+        }
+        let n = if self.rows[0].0 < self.rows[1].0 { 0 } else { 1 };
+        self.rows[n].0 = y as i32;
+        find(&mut self.rows[n].1);
+        n
+    }
+}
+
+// blit_over_paper's scratch, kept from call to call (its buffers): the stretches where page rows differ from their
+// paper (ink) and where the paper's rows are not white (lines), the screen row's union of each and the screen
+// pixels that read them, a row of white, and blit_canvas's taps and horizontal rows.
+#[derive(Default)]
+struct OverScratch {
+    ink: RowStretches,
+    lines: RowStretches,
+    ink_both: Vec<(u32, u32)>,
+    lines_both: Vec<(u32, u32)>,
+    ink_px: Vec<(usize, usize)>,
+    lines_px: Vec<(usize, usize)>,
+    dark: Vec<(u32, u32)>,
+    dark_px: Vec<(usize, usize)>,
+    near: Vec<(usize, usize)>,
+    from: Vec<usize>,
+    white: Vec<u8>,
+    ix: Vec<i32>,
+    wx: Vec<u8>,
+    r0: Vec<u16>,
+    r1: Vec<u16>,
+}
+
+thread_local! {
+    static OVER_SCRATCH: RefCell<OverScratch> = RefCell::new(OverScratch::default());
+}
+
+// The screen pixels [first, end) of a row reading each stretch [a, b] (columns lo + a .. lo + b): those whose left tap
+// ix is a - 1 to b. from[c] is the first pixel whose left tap is lo - 1 + c or more (blit_over_paper). The stretches
+// are in order and apart (DIFF_GAP), so the spans are in order and do not overlap.
+fn stretch_pixels(st: &[(u32, u32)], from: &[usize], out: &mut Vec<(usize, usize)>) {
+    out.clear();
+    for &(a, b) in st {
+        // (column lo + a - 1 is from[a], lo + b + 1 is from[b + 2])
+        let (i0, i1) = (from[a as usize], from[b as usize + 2]);
+        if i1 > i0 {
+            out.push((i0, i1));
+        }
+    }
+}
+
+// Two lists of pixel spans [first, end) as one, in order, those that overlap or touch joined.
+fn spans_union(a: &[(usize, usize)], b: &[(usize, usize)], out: &mut Vec<(usize, usize)>) {
+    out.clear();
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() || j < b.len() {
+        let d = if j >= b.len() || (i < a.len() && a[i].0 <= b[j].0) {
+            i += 1;
+            a[i - 1]
+        } else {
+            j += 1;
+            b[j - 1]
+        };
+        match out.last_mut() {
+            Some(l) if d.0 <= l.1 => l.1 = l.1.max(d.1),
+            _ => out.push(d),
+        }
+    }
+}
+
+/// A screen row with ink to sample over at least this share of its page pixels (1 / RULES_DENSE) takes blit_canvas's
+/// way for the pixels over white paper: its two page rows interpolated across once each, for every screen row that
+/// reads them. A row with less works those pixels out one by one.
+const RULES_DENSE: usize = 4;
+
+// The ink of page canvas pc, whose paper alone is `paper` (row stride pstride), sampled over the paper
+// blit_canvas_ruled drew on the screen over r, with blit_canvas's taps and weights. Each page row is compared with
+// its paper, 32 bytes at a time, once for the screen rows that read it (row_diffs), and so is its paper with white,
+// and each screen row's drawn paper. A screen pixel whose taps meet no column where their rows differ from the paper keeps the drawn paper. One
+// whose taps are all over white paper, under white drawn paper, is blit_canvas's (in a row dense with ink, its rows
+// interpolated as blit_canvas does). The rest, near the rulings, are worked out (over_paper_px). The desk is
+// blit_canvas's. Input is pumped every 64 rows.
+fn blit_over_paper(screen: &mut Canvas, pc: &Canvas, paper: &[u8], pstride: i32, zoom: f32, ox: f32, oy: f32, r: Rect) {
+    let w = r.w as usize;
+    let mut sc = OVER_SCRATCH.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
+    sc.ink.forget();
+    sc.lines.forget();
+    let OverScratch { ink, lines, ink_both, lines_both, ink_px, lines_px, dark, dark_px, near, from, white, ix, wx, r0, r1 } = &mut sc;
+    ix.resize(w, 0);
+    wx.resize(w, 0);
+    r0.resize(w, 0);
+    r1.resize(w, 0);
+    for i in 0..w {
+        let fx = ((r.x + i as i32) as f32 + 0.5) / zoom + ox - 0.5;
+        let x = fx.floor() as i32;
+        ix[i] = x;
+        wx[i] = ((fx - x as f32) * 255.0) as u8;
+    }
+    // (blit_canvas's split of the row: desk, clamped edge, interior)
+    let mut desk_l = 0usize;
+    while desk_l < w && ix[desk_l] < -1 {
+        desk_l += 1;
+    }
+    let mut mid_l = desk_l;
+    while mid_l < w && ix[mid_l] < 0 {
+        mid_l += 1;
+    }
+    let mut desk_r = w;
+    while desk_r > mid_l && ix[desk_r - 1] >= pc.w {
+        desk_r -= 1;
+    }
+    let mut mid_r = desk_r;
+    while mid_r > mid_l && ix[mid_r - 1] + 1 >= pc.w {
+        mid_r -= 1;
+    }
+    let desk_r = desk_r.max(desk_l);
+    let (ps, qs, pw) = (pc.stride as usize, pstride as usize, pc.w as usize);
+    // the page's columns the row's pixels read
+    let (lo, hi) = if desk_l < desk_r { (clampi(ix[desk_l], 0, pc.w - 1) as usize, clampi(ix[desk_r - 1] + 1, 0, pc.w - 1) as usize) } else { (0, 0) };
+    white.clear();
+    white.resize((hi - lo + 1).max(w), 255);
+    // the first pixel of desk_l..desk_r whose left tap is column lo - 1 + c or more, for c to hi - lo + 3
+    from.clear();
+    let mut i = desk_l;
+    for c in 0..hi - lo + 4 {
+        while i < desk_r && ix[i] < (lo + c) as i32 - 1 {
+            i += 1;
+        }
+        from.push(i);
+    }
+    let (mut cur0, mut cur1) = (-1i64, -1i64);
+    for y in r.y..r.y + r.h {
+        let dst_off = y as usize * screen.stride as usize + r.x as usize;
+        let row = &mut screen.px[dst_off..dst_off + w];
+        let fy = (y as f32 + 0.5) / zoom + oy - 0.5;
+        let py = fy.floor() as i32;
+        if py < -1 || py >= pc.h || desk_l >= desk_r {
+            row.fill(205);
+        } else {
+            row[..desk_l].fill(205);
+            row[desk_r..].fill(205);
+            let wy = ((fy - py as f32) * 255.0) as u32;
+            let iwy = 255 - wy;
+            let py0 = clampi(py, 0, pc.h - 1) as usize;
+            let py1 = clampi(py + 1, 0, pc.h - 1) as usize;
+            let bottom = wy != 0 && py1 != py0;
+            let (p0, p1) = (&pc.px[py0 * ps..py0 * ps + pw], &pc.px[py1 * ps..py1 * ps + pw]);
+            let (q0, q1) = (&paper[py0 * qs..py0 * qs + pw], &paper[py1 * qs..py1 * qs + pw]);
+            // where its rows differ from their paper, and the pixels that read there
+            let differ = |y: usize, out: &mut Vec<(u32, u32)>| row_diffs(&pc.px[y * ps + lo..=y * ps + hi], &paper[y * qs + lo..=y * qs + hi], out);
+            let n0 = ink.get(py0, |o| differ(py0, o));
+            let st = if bottom {
+                let n1 = ink.get(py1, |o| differ(py1, o));
+                diffs_union(&ink.rows[n0].1, &ink.rows[n1].1, ink_both);
+                &ink_both[..]
+            } else {
+                &ink.rows[n0].1[..]
+            };
+            stretch_pixels(st, from, ink_px);
+            if !ink_px.is_empty() {
+                // where its rows' paper is not white, and the pixels that read there
+                let ruled = |y: usize, out: &mut Vec<(u32, u32)>| row_diffs(&paper[y * qs + lo..=y * qs + hi], white, out);
+                let m0 = lines.get(py0, |o| ruled(py0, o));
+                let st = if bottom {
+                    let m1 = lines.get(py1, |o| ruled(py1, o));
+                    diffs_union(&lines.rows[m0].1, &lines.rows[m1].1, lines_both);
+                    &lines_both[..]
+                } else {
+                    &lines.rows[m0].1[..]
+                };
+                stretch_pixels(st, from, lines_px);
+                // and where the paper drawn on the screen is not white: around these, worked out
+                row_diffs(&row[desk_l..desk_r], &white[..desk_r - desk_l], dark);
+                dark_px.clear();
+                dark_px.extend(dark.iter().map(|&(a, b)| (desk_l + a as usize, desk_l + b as usize + 1)));
+                spans_union(lines_px, dark_px, near);
+                let dense = ink_px.iter().map(|&(a, b)| b - a).sum::<usize>() * RULES_DENSE >= desk_r - desk_l;
+                if dense {
+                    // blit_canvas's horizontal rows, as it keeps them
+                    if py0 as i64 != cur0 {
+                        if py0 as i64 == cur1 {
+                            std::mem::swap(r0, r1);
+                            std::mem::swap(&mut cur0, &mut cur1);
+                        } else {
+                            blit_hrow(r0, p0, ix, wx, desk_l, mid_l, mid_r, desk_r, pc.w);
+                            cur0 = py0 as i64;
+                        }
+                    }
+                    if bottom && py1 as i64 != cur1 {
+                        blit_hrow(r1, p1, ix, wx, desk_l, mid_l, mid_r, desk_r, pc.w);
+                        cur1 = py1 as i64;
+                    }
+                }
+                let last = pc.w - 1;
+                let two = |c: &[u8], x: usize| -> [u8; 2] { c[x..x + 2].try_into().unwrap() };
+                let mix = |pa: [u8; 2], pb: [u8; 2], wf: u32| {
+                    let t = pa[0] as u32 * (255 - wf) + pa[1] as u32 * wf;
+                    let u = pb[0] as u32 * (255 - wf) + pb[1] as u32 * wf;
+                    ((t * iwy + u * wy + 32512) / 65025) as u8
+                };
+                let mut ni = 0;
+                for &(s0, s1) in ink_px.iter() {
+                    let mut i = s0;
+                    while i < s1 {
+                        while ni < near.len() && near[ni].1 <= i {
+                            ni += 1;
+                        }
+                        let (n0, n1) = near.get(ni).copied().unwrap_or((usize::MAX, usize::MAX));
+                        if i < n0 {
+                            // taps over white paper under white drawn paper: blit_canvas's pixels
+                            let e = s1.min(n0);
+                            if dense {
+                                // (as it mixes its rows)
+                                if bottom {
+                                    for ((d, &t), &b) in row[i..e].iter_mut().zip(&r0[i..e]).zip(&r1[i..e]) {
+                                        *d = ((t as u32 * iwy + b as u32 * wy + 32512) / 65025) as u8;
+                                    }
+                                } else {
+                                    for (d, &t) in row[i..e].iter_mut().zip(&r0[i..e]) {
+                                        *d = ((t as u32 * 255 + 32512) / 65025) as u8;
+                                    }
+                                }
+                            } else {
+                                for j in i..e {
+                                    let x = ix[j];
+                                    let (xa, xb) = (clampi(x, 0, last) as usize, clampi(x + 1, 0, last) as usize);
+                                    row[j] = mix([p0[xa], p0[xb]], [p1[xa], p1[xb]], wx[j] as u32);
+                                }
+                            }
+                            i = e;
+                        } else {
+                            // near the rulings: all four taps over the paper drawn here is blit_canvas's too, else
+                            // the pixel is worked out
+                            let e = s1.min(n1);
+                            for j in i..e {
+                                let (x, v, wf) = (ix[j], row[j], wx[j] as u32);
+                                row[j] = if x >= 0 && x < last {
+                                    let x = x as usize;
+                                    let (pa, pb, qa, qb) = (two(p0, x), two(p1, x), two(q0, x), two(q1, x));
+                                    if (qa[0] == v) & (qa[1] == v) & (qb[0] == v) & (qb[1] == v) {
+                                        mix(pa, pb, wf)
+                                    } else {
+                                        over_paper_px(v, [pa[0], pa[1], pb[0], pb[1]], [qa[0], qa[1], qb[0], qb[1]], wf, wy, bottom)
+                                    }
+                                } else {
+                                    // (the page's edge pixels: a tap clamped to them)
+                                    let (xa, xb) = (clampi(x, 0, last) as usize, clampi(x + 1, 0, last) as usize);
+                                    over_paper_px(v, [p0[xa], p0[xb], p1[xa], p1[xb]], [q0[xa], q0[xb], q1[xa], q1[xb]], wf, wy, bottom)
+                                };
+                            }
+                            i = e;
+                        }
+                    }
+                }
+            }
+        }
+        if ((y - r.y) & 63) == 63 {
+            work_pump();
+        }
+    }
+    OVER_SCRATCH.with(|cell| *cell.borrow_mut() = sc);
 }
 
 // Reusable per-row scratch buffers for separable bilinear blit_canvas (replaces a 40 KB stack
@@ -2224,6 +2874,13 @@ fn blit_canvas_fast(screen: &mut Canvas, pc: &Canvas, zoom: f32, ox: f32, oy: f3
     }
 }
 
+/// Whether blit_canvas copies the page's pixels as they are at this view: 100% on whole pixels, a page of the
+/// view's size scrolled or one a little smaller at rest (view_at_100). Nothing is blended there, so Ink edges at
+/// Solid has no pixel to make again (solid_edges).
+fn view_copies(zoom: f32, ox: f32, oy: f32) -> bool {
+    zoom == 1.0 && ox == ox.trunc() && oy == oy.trunc()
+}
+
 // The same for any page canvas at any view: the open page's, or the one the Links bar shows.
 fn blit_canvas(screen: &mut Canvas, pc: &Canvas, zoom: f32, ox: f32, oy: f32, r: Rect) {
     if rect_is_empty(r) {
@@ -2235,7 +2892,7 @@ fn blit_canvas(screen: &mut Canvas, pc: &Canvas, zoom: f32, ox: f32, oy: f32, r:
     }
     let w = r.w as usize;
     // Exact 1:1 integer-aligned pan inside the page: row memcpy.
-    if zoom == 1.0 && ox == ox.trunc() && oy == oy.trunc() {
+    if view_copies(zoom, ox, oy) {
         let sx = r.x + ox as i32;
         let sy = r.y + oy as i32;
         if sx >= 0 && sx + r.w <= pc.w && sy >= 0 && sy + r.h <= pc.h {
@@ -2243,6 +2900,31 @@ fn blit_canvas(screen: &mut Canvas, pc: &Canvas, zoom: f32, ox: f32, oy: f32, r:
                 let dst_off = (r.y + row) as usize * screen.stride as usize + r.x as usize;
                 let src_off = (sy + row) as usize * pc.stride as usize + sx as usize;
                 screen.px[dst_off..dst_off + w].copy_from_slice(&pc.px[src_off..src_off + w]);
+                if (row & 63) == 63 {
+                    work_pump();
+                }
+            }
+            return;
+        }
+        // A rect that reaches past the page's edge at 100% (a page a little smaller than the screen, at rest:
+        // page_near_view): the desk outside the page, the page's own pixels inside, each row copied. (The
+        // bilinear path below would clamp to the edge, and draw the page's first column and row once more
+        // into the desk, a pixel to the left and above.)
+        if ox.abs() < 1e7 && oy.abs() < 1e7 {
+            let on = rect_intersect(r, Rect::new(-(ox as i32), -(oy as i32), pc.w, pc.h));
+            for row in 0..r.h {
+                let y = r.y + row;
+                let dst_off = y as usize * screen.stride as usize + r.x as usize;
+                let dst = &mut screen.px[dst_off..dst_off + w];
+                if rect_is_empty(on) || y < on.y || y >= on.y + on.h {
+                    dst.fill(205);
+                } else {
+                    let (l, n) = ((on.x - r.x) as usize, on.w as usize);
+                    let src_off = (y + oy as i32) as usize * pc.stride as usize + (on.x + ox as i32) as usize;
+                    dst[..l].fill(205);
+                    dst[l..l + n].copy_from_slice(&pc.px[src_off..src_off + n]);
+                    dst[l + n..].fill(205);
+                }
                 if (row & 63) == 63 {
                     work_pump();
                 }
@@ -2349,20 +3031,86 @@ fn blit_canvas(screen: &mut Canvas, pc: &Canvas, zoom: f32, ox: f32, oy: f32, r:
     });
 }
 
-// Ink edges at Solid (#320), over a view that is not 1:1 (zoomed, or a page fitted sideways), after blit_canvas drew
-// r: its bilinear blend would give a solid stroke (0 on the page where its paper is not 0) a gray rim on screen, which
-// the live frames dither and the settle then sends again. A screen pixel of r whose four page pixels include such ink
-// is made again: black where the ink has half of its weight or more, else the blend of the four with each ink pixel
-// taken as its paper (`paper`: the page's paper alone and its stride; None: white). So over its paper a solid stroke
-// changes a screen pixel only to black, at any zoom, and leaves the others as they were; every pixel with no such ink
-// beside it is blit_canvas's, the same bytes. (The same sampling as blit_canvas, pixel for pixel.)
-// Beside other ink it never lightens: where the ink has less than half the weight and one of the four with any weight
-// is neither such ink nor its own paper (pencil, charcoal, a highlight, a pen given grain, under the stroke or over
-// it), blit_canvas's blend stays, which counts the ink as black and so is never lighter than the view without the
-// stroke. The paper is taken for the ink only where the page shows nothing but paper beside it; the paper's own black
-// counts as paper there, so other ink the stroke covered beside a black line of the paper shows as that paper.
+/// What Ink edges at Solid shows at a screen pixel that reads a solid stroke's ink (solid_px). Each answer that is
+/// not black carries the four taps with each of the stroke's taken as its paper: what the view makes of them is its
+/// pixel with the stroke absent, as far as the page can tell (it does not keep what a stroke covers).
+enum SolidPx {
+    /// The ink has half of the pixel's weight or more: black.
+    Black,
+    /// Less, with nothing but the ink and paper among the taps that weigh: the view's pixel with the stroke absent.
+    Under([u8; 4]),
+    /// Less, with other ink among the taps that weigh: the darker of the view's own pixel (the ink counted as it is)
+    /// and its pixel with the stroke absent.
+    Beside([u8; 4]),
+}
+
+// Ink edges at Solid (#320) in a view that is not 1:1 (zoomed, or a page fitted sideways), where a blend of the
+// page's pixels would give a solid stroke a gray rim that the live frames dither and the settle then sends again:
+// the one rule for a screen pixel, whichever way the view is drawn. p is the page at the bilinear's four taps (top
+// left, top right, bottom left, bottom right), q its paper alone there, wf and wy blit_canvas's weights. A tap holds
+// a solid stroke's ink where the page is 0 and its paper is not (the paper's own black is no ink); a tap that weighs
+// holds other ink where it is neither that nor its own paper (pencil, charcoal, a highlight, a pen given grain,
+// under the stroke or over it). With no ink that weighs, None: the pixel is the view's own. With half of the weight
+// or more on the ink, black. With less and other ink beside it, the darker of the view's own pixel, which counts the
+// ink as it is, and the view's pixel with the stroke absent: so the stroke never lightens what is beside it. Else
+// the view's pixel with the stroke absent, which over its paper is the paper as the view draws it. So over its paper
+// a solid stroke changes a screen pixel only to black, at any zoom, and leaves the others as they were; beside other
+// ink nothing is lighter than without it. (The sampled view's pixel with the stroke absent is the blend of the taps
+// with the ink's taken as their paper, blit_solid_edges; the ruled view's is what is left of them over the paper it
+// drew, blit_canvas_ruled.)
+#[inline]
+fn solid_px(p: [u8; 4], q: [u8; 4], wf: u32, wy: u32) -> Option<SolidPx> {
+    let wt = [(255 - wf) * (255 - wy), wf * (255 - wy), (255 - wf) * wy, wf * wy];
+    let (mut ink, mut under, mut other) = (0u32, p, false);
+    for i in 0..4 {
+        if p[i] == 0 && q[i] != 0 {
+            ink += wt[i];
+            under[i] = q[i];
+        } else if p[i] != q[i] && wt[i] != 0 {
+            other = true;
+        }
+    }
+    if ink == 0 {
+        None
+    } else if 2 * ink >= 65025 {
+        Some(SolidPx::Black)
+    } else if other {
+        Some(SolidPx::Beside(under))
+    } else {
+        Some(SolidPx::Under(under))
+    }
+}
+
+// Ink edges at Solid over the sampled view, after blit_canvas drew r (`paper`: the page's paper alone and its
+// stride; None: white): each screen pixel of r that reads a solid stroke's ink made again by the rule (solid_px),
+// black, or the blend of its four taps with the ink's taken as their paper. Beside other ink the darker of
+// blit_canvas's blend and that one is blit_canvas's, always (the blend is the same arithmetic over taps no lighter),
+// so those pixels are left as they are. Every pixel the pass does not write is blit_canvas's, the same bytes. The
+// paper is taken for the ink only where the page shows nothing but paper beside it; the paper's own black counts as
+// paper there, so other ink the stroke covered beside a black line of the paper shows as that paper.
 fn blit_solid_edges(screen: &mut Canvas, pc: &Canvas, paper: Option<(&[u8], i32)>, zoom: f32, ox: f32, oy: f32, r: Rect) {
-    if rect_is_empty(r) || pc.w <= 0 || pc.h <= 0 || zoom <= 0.0 {
+    let stride = screen.stride;
+    solid_edges(pc, paper, stride, zoom, ox, oy, r, |at, px, _, wf, wy, _| match px {
+        SolidPx::Black => screen.px[at] = 0,
+        SolidPx::Under(u) => {
+            let (u, iwf, iwy) = (u.map(|v| v as u32), 255 - wf, 255 - wy);
+            screen.px[at] = ((u[0] * iwf * iwy + u[1] * wf * iwy + u[2] * iwf * wy + u[3] * wf * wy + 32512) / 65025) as u8;
+        }
+        SolidPx::Beside(_) => {}
+    });
+}
+
+// The pass of Ink edges at Solid over r of a view that is not 1:1, the same for the sampled view and the ruled one:
+// every screen pixel of r that reads a solid stroke's ink (solid_px, with blit_canvas's sampling, pixel for pixel)
+// is given to `put`, with its index in a canvas of row stride `stride`, the rule's answer, its taps' paper, the
+// weights, and whether the bottom taps weigh (over_paper_px's `bottom`). The rows of the page are searched for a
+// black pixel first, so a row with none costs a pass over its bytes. Input is pumped every 64 rows.
+//
+// Nothing at a view that copies the page (view_copies): there blit_canvas draws the desk right up to the page,
+// where the bilinear, and so this pass, reads the page's first column and row once more a pixel to the left and
+// above (a page a little smaller than the screen at rest, #303).
+fn solid_edges(pc: &Canvas, paper: Option<(&[u8], i32)>, stride: i32, zoom: f32, ox: f32, oy: f32, r: Rect, mut put: impl FnMut(usize, SolidPx, [u8; 4], u32, u32, bool)) {
+    if rect_is_empty(r) || pc.w <= 0 || pc.h <= 0 || zoom <= 0.0 || view_copies(zoom, ox, oy) {
         return;
     }
     let w = r.w as usize;
@@ -2388,7 +3136,7 @@ fn blit_solid_edges(screen: &mut Canvas, pc: &Canvas, paper: Option<(&[u8], i32)
         return;
     }
     let has_black = |py: usize| pc.px[py * pc.stride as usize..][lo..=hi].contains(&0);
-    let paper_at = |x: usize, y: usize| paper.map_or(255u32, |(p, stride)| p[y * stride as usize + x] as u32);
+    let paper_at = |x: usize, y: usize| paper.map_or(255u8, |(p, stride)| p[y * stride as usize + x]);
     for y in r.y..r.y + r.h {
         let fy = (y as f32 + 0.5) / zoom + oy - 0.5;
         let py = fy.floor() as i32;
@@ -2403,40 +3151,22 @@ fn blit_solid_edges(screen: &mut Canvas, pc: &Canvas, paper: Option<(&[u8], i32)
         }
         let row0 = &pc.px[py0 * pc.stride as usize..];
         let row1 = &pc.px[py1 * pc.stride as usize..];
-        let dst = y as usize * screen.stride as usize + r.x as usize;
+        let dst = y as usize * stride as usize + r.x as usize;
+        let bottom = wy != 0 && py1 != py0;
         for i in 0..w {
             if !page_cols[i] {
                 continue;
             }
             let (x0, x1, wx) = (x0s[i], x1s[i], wxs[i]);
-            let n = [row0[x0] as u32, row0[x1] as u32, row1[x0] as u32, row1[x1] as u32];
-            if n[0].min(n[1]).min(n[2]).min(n[3]) != 0 {
+            let p = [row0[x0], row0[x1], row1[x0], row1[x1]];
+            if p[0].min(p[1]).min(p[2]).min(p[3]) != 0 {
                 continue;
             }
-            let wt = [(255 - wx) * (255 - wy), wx * (255 - wy), (255 - wx) * wy, wx * wy];
-            let at = [(x0, py0), (x1, py0), (x0, py1), (x1, py1)];
-            let (mut ink, mut sum, mut other) = (0u32, 0u32, false);
-            for k in 0..4 {
-                let mut v = n[k];
-                let p = paper_at(at[k].0, at[k].1);
-                if v == 0 && p != 0 {
-                    ink += wt[k];
-                    v = p;
-                } else if v != p && wt[k] != 0 {
-                    other = true; // (pencil, charcoal, a highlight, a pen given grain: not the stroke's, not paper)
-                }
-                sum += wt[k] * v;
+            let q = [paper_at(x0, py0), paper_at(x1, py0), paper_at(x0, py1), paper_at(x1, py1)];
+            // (None: no ink that weighs, the paper's own black among it, or other ink beside it: the view's own pixel)
+            if let Some(px) = solid_px(p, q, wx, wy) {
+                put(dst + i, px, q, wx, wy, bottom);
             }
-            if ink == 0 {
-                continue; // (the paper's own black: blit_canvas's blend)
-            }
-            if 2 * ink >= 65025 {
-                screen.px[dst + i] = 0;
-            } else if !other {
-                screen.px[dst + i] = ((sum + 32512) / 65025) as u8;
-            }
-            // (else blit_canvas's blend stays: the page no longer holds what lay under the stroke, and its paper
-            // there would be lighter than the ink beside it)
         }
         if ((y - r.y) & 63) == 63 {
             work_pump();
@@ -2460,8 +3190,10 @@ fn peek_view(aw: i32, ah: i32, pgw: i32, pgh: i32, fit: bool) -> (f32, f32, f32)
     // (a view that holds the whole page on an axis is centred on it; else it starts at the top or the left)
     let ox = if vw >= pgw as f32 { -(vw - pgw as f32) / 2.0 } else { clampf(0.0, 0.0, pgw as f32 - vw) };
     let oy = if vh >= pgh as f32 { -(vh - pgh as f32) / 2.0 } else { clampf(0.0, 0.0, pgh as f32 - vh) };
-    if (z - 1.0).abs() < 0.01 && pgw == aw && pgh == ah {
-        return (1.0, 0.0, 0.0);
+    if (z - 1.0).abs() < 0.01 {
+        if let Some((ox, oy)) = view_at_100(aw, ah, pgw, pgh) {
+            return (1.0, ox, oy);
+        }
     }
     (z, ox, oy)
 }
@@ -3072,12 +3804,30 @@ fn compose(a: &mut App, r: Rect) {
         let r = rect_intersect(r, Rect { x: 0, y: top, w: a.w, h: a.h - top ,
             },
         );
+        // (below 100%, a paper of rulings at the screen's scale, as the open page's: peek_rules)
+        let dpi = a.dpi;
+        let rules = if rect_is_empty(r) { None } else { peek_rules(ed(a), dpi, slot, zoom) };
+        // Ink edges at Solid (#320): the page shows here as it will once it is the open one (blit_view), where the
+        // open page's paper alone is its paper too (peek_paper), which tells a solid stroke's black from the
+        // paper's own. A page on another paper is sampled with no pass (no paper of its own is kept for it), and a
+        // view that copies the page has none (view_copies). Nothing is written here, so no settle counts on it.
+        let solid = ink_edges() == InkEdges::Solid && !rect_is_empty(r) && !view_copies(zoom, ox, oy);
+        let passed = solid && rules.is_none() && {
+            let s = ed(a);
+            peek_paper(s, slot).is_some_and(|k| rules_paper(s, k, dpi).is_some())
+        };
         let App { screen, ed, w: aw, .. } = a;
-        let pc = &ed.as_deref().unwrap().ccache[slot].canvas;
+        let s = ed.as_deref().unwrap();
+        let pc = &s.ccache[slot].canvas;
         if zoom == 1.0 && ox == 0.0 && oy == 0.0 && pc.w == *aw && pc.h == screen.h {
             canvas_blit(screen, pc, r, r.x, r.y);
+        } else if let (Some(k), Some(paper)) = (rules, s.paper.px.as_deref()) {
+            blit_canvas_ruled(screen, pc, paper, s.paper.stride, k, dpi, zoom, ox, oy, r, solid);
         } else {
             blit_canvas(screen, pc, zoom, ox, oy, r);
+            if let (true, Some(paper)) = (passed, s.paper.px.as_deref()) {
+                blit_solid_edges(screen, pc, Some((paper, s.paper.stride)), zoom, ox, oy, r);
+            }
         }
     } else if view_identity(a) {
         let App { screen, ed, .. } = a;
@@ -5059,15 +5809,22 @@ pub fn editor_live_style(a: &App, ev: &InEvent, out: &mut LiveStyle) {
     out.pressure_gamma = prm.pressure_gamma;
     out.opacity_min = prm.opacity_min;
     out.opacity_max = prm.opacity_max;
-    out.clip = rect_intersect(page_to_screen(a, Rect { x: 0, y: 0, w: s.pgw, h: s.pgh ,
-            },
-        ), Rect { x: 0, y: 0, w: a.w, h: a.h ,
-        },
-    );
-    out.clip = rect_intersect(out.clip, Rect { x: 0, y: status_reserved(a), w: a.w, h: a.h - status_reserved(a) ,
+    out.clip = rect_intersect(page_on_screen(a), Rect { x: 0, y: status_reserved(a), w: a.w, h: a.h - status_reserved(a) ,
         },
     );
     out.exclude = s.panel;
+}
+
+/// The screen pixels the page covers, at least in part, with no margin, inside the screen. (page_to_screen pads a
+/// damage rect by a few pixels. Live view's fast ink clips to this rect instead, so it stops where the page does
+/// where the desk shows around it: a page a little smaller than the screen, the whole page sideways.)
+fn page_on_screen(a: &App) -> Rect {
+    let s = ed_ref(a);
+    let x0 = ((0.0 - s.ox) * s.zoom).floor() as i32;
+    let y0 = ((0.0 - s.oy) * s.zoom).floor() as i32;
+    let x1 = ((s.pgw as f32 - s.ox) * s.zoom).ceil() as i32;
+    let y1 = ((s.pgh as f32 - s.oy) * s.zoom).ceil() as i32;
+    rect_intersect(Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, Rect { x: 0, y: 0, w: a.w, h: a.h })
 }
 
 /// A bound side-button contact. Its viewport anchor is fixed for the whole contact.
@@ -8628,7 +9385,8 @@ fn widget_runtime_tick(a: &mut App, now: u32) {
     }
     if let Some(r) = dirty {
         compose(a, r);
-        app_invalidate(a, r, RefreshMode::Ui);
+        // (nobody asked for it: counted and promoted as any Ui, and the platform hears so, display_unasked)
+        app_invalidate_unasked(a, r);
     }
 }
 
@@ -14660,9 +15418,14 @@ mod tests {
     // one batch, as the loop hands them over when it comes to them late.
     #[cfg(feature = "sim")]
     fn solid_line_in_one_batch(a: &mut App, x0: f32, x1: f32, y: f32, t: u32) {
-        tool_params_default(TOOL_BALLPOINT, &mut a.settings.tools[TOOL_BALLPOINT.0 as usize]);
-        a.settings.current_tool = TOOL_BALLPOINT;
-        a.settings.draw_tool = TOOL_BALLPOINT;
+        line_in_one_batch(a, TOOL_BALLPOINT, x0, x1, y, t);
+    }
+    // The same with tool `tool`.
+    #[cfg(feature = "sim")]
+    fn line_in_one_batch(a: &mut App, tool: ToolKind, x0: f32, x1: f32, y: f32, t: u32) {
+        tool_params_default(tool, &mut a.settings.tools[tool.0 as usize]);
+        a.settings.current_tool = tool;
+        a.settings.draw_tool = tool;
         let mut ev = InEvent { type_: InType::PenDown, x: x0, y, pressure: 0.6, t_ms: t, ..Default::default() };
         editor_event(a, &ev);
         ev.type_ = InType::PenMove;
@@ -14728,6 +15491,65 @@ mod tests {
         assert!(rect_is_empty(ed_ref(&a).settle));
         assert!(!rect_is_empty(a.dirty) && a.dirty_mode == RefreshMode::Ui);
         assert_eq!(counts(&a), (2, 0));
+    }
+
+    // Ink edges at Solid with the hint of a refresh nobody asked for (display_unasked, app.rs app_flush_in): the hint
+    // goes only with its own present. A pause's settle that sends nothing, here taken one pass late after the
+    // stroke's frames were flushed (settle_waits_for_flush), says nothing to the display: a pressed look sent
+    // straight to it afterwards (app_press_feedback) goes without the hint, as does the next flush's refresh. A
+    // settle that left the word said would have the platform take it with the next present that is not the
+    // flush's (a pressed look, the status bar's own refresh), on a platform that takes it with mem::take.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn a_quiet_solid_settle_leaves_no_hint_set() {
+        let _solid = InkEdgesScope::new(InkEdges::Solid);
+        let mut a = fshape_app_of(1860, 2480);
+        let unasked = || crate::sim_sdl::display_probe_read("display.unasked");
+        let _ = unasked();
+        let t = now_ms();
+        let late = t.wrapping_add(SETTLE_LEFT_MS + 250);
+        a.last_input = late;
+        solid_line_in_one_batch(&mut a, 400.0, 1000.0, 900.0, t);
+        editor_tick(&mut a, late);
+        assert!(!rect_is_empty(ed_ref(&a).settle), "the settle waits for the stroke's frames");
+        app_flush(&mut a);
+        editor_tick(&mut a, late.wrapping_add(30));
+        assert_eq!((ed_ref(&a).settles_quiet, ed_ref(&a).settles_sent), (1, 0), "a solid stroke settles with nothing sent");
+        assert!(rect_is_empty(a.dirty));
+        app_flush(&mut a);
+        crate::app::app_press_feedback(&mut a, Rect::new(100, 2000, 200, 100));
+        assert_eq!(unasked().as_deref(), Some("0"), "a pressed look after the quiet settle");
+        app_invalidate(&mut a, Rect::new(100, 1500, 300, 100), RefreshMode::Ui);
+        app_flush(&mut a);
+        assert_eq!(unasked().as_deref(), Some("0"), "the next refresh");
+    }
+
+    // Ink edges at Solid: a pause's settle that sends is a refresh asked for (settle_solid: app_invalidate), so it
+    // goes without the hint, alone or with a widget frame's timed redraw that waited beside it (one present, the hint
+    // cleared). A pencil word: Solid leaves the pencil soft, so its settle sends its grays.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn a_solid_settle_that_sends_goes_without_the_hint() {
+        let _solid = InkEdgesScope::new(InkEdges::Solid);
+        let mut a = fshape_app_of(1860, 2480);
+        let unasked = || crate::sim_sdl::display_probe_read("display.unasked");
+        let counts = |a: &App| (ed_ref(a).settles_quiet, ed_ref(a).settles_sent);
+        for (k, widget) in [false, true].into_iter().enumerate() {
+            let t = now_ms();
+            line_in_one_batch(&mut a, TOOL_PENCIL, 400.0, 1000.0, 900.0 + 300.0 * k as f32, t);
+            app_flush(&mut a);
+            let _ = unasked();
+            if widget {
+                crate::app::app_invalidate_unasked(&mut a, Rect::new(100, 2000, 300, 100));
+                assert!(a.dirty_unasked);
+            }
+            a.last_input = t.wrapping_add(SETTLE_LEFT_MS + 250); // (none of the tick's idle work is due)
+            editor_tick(&mut a, t.wrapping_add(SETTLE_LEFT_MS + 250));
+            assert_eq!(counts(&a), (0, k as u32 + 1), "widget {widget}: the pencil's settle sends");
+            assert!(!a.dirty_unasked && a.dirty_mode == RefreshMode::Ui, "widget {widget}: asked for");
+            app_flush(&mut a);
+            assert_eq!(unasked().as_deref(), Some("0"), "widget {widget}: the settle's present goes without the hint");
+        }
     }
 
     #[test]
@@ -15454,6 +16276,19 @@ mod tests {
     #[test]
     fn blit_canvas_matches_reference_and_fast_blit_aligns() {
         fn ref_blit(screen: &mut Canvas, pc: &Canvas, zoom: f32, ox: f32, oy: f32, r: Rect) {
+            // At exactly 100% on whole pixels each screen pixel is the page's own pixel, or the desk off the
+            // page (a page a little smaller than the screen rests so: page_near_view).
+            if zoom == 1.0 && ox == ox.trunc() && oy == oy.trunc() {
+                for y in r.y..r.y + r.h {
+                    for x in r.x..r.x + r.w {
+                        let (px, py) = (x + ox as i32, y + oy as i32);
+                        let on = (0..pc.w).contains(&px) && (0..pc.h).contains(&py);
+                        screen.px[y as usize * screen.stride as usize + x as usize] =
+                            if on { pc.px[py as usize * pc.stride as usize + px as usize] } else { 205 };
+                    }
+                }
+                return;
+            }
             let mut ix = vec![0i32; r.w as usize];
             let mut wx = vec![0u8; r.w as usize];
             for i in 0..r.w {
@@ -15521,6 +16356,10 @@ mod tests {
             if zoom == 1.0 && ox == 0.0 && oy == 0.0 {
                 assert_eq!(fast.px, pc.px);
             }
+            // At 100% on whole pixels the fast preview and the grays' blit draw the same pixels, the desk too.
+            if zoom == 1.0 {
+                assert_eq!(fast.px, got.px, "fast and bilinear differ at zoom={zoom} ox={ox} oy={oy}");
+            }
         }
     }
 
@@ -15572,6 +16411,138 @@ mod tests {
             let grays = (0..after.px.len()).filter(|&i| plain_after.px[i] != before.px[i] && plain_after.px[i] != 0).count();
             assert!(grays > 0, "zoom {zoom}: the bilinear blend alone gives grays");
         }
+    }
+
+    // Solid strokes, made up: black bands, bars, dots and single pixels across a page canvas, put only where the page
+    // holds its paper alone (`paper`, of row stride `stride`), so that nothing else lies under them, as Ink edges at
+    // Solid leaves the solid pens' strokes on a page. The pixels made black.
+    fn solid_marks(pc: &mut Canvas, paper: &[u8], stride: i32) -> usize {
+        let (w, h) = (pc.w, pc.h);
+        let mut n = 0;
+        for y in 0..h {
+            for x in 0..w {
+                let bands = (x - y - w / 8).abs() <= 2 || (x + y - h).abs() <= 1;
+                let bars = (y % 97 == 40 && x % 200 < 150) || (x % 131 == 60 && y % 180 < 120) || ((100..104).contains(&(y % 211)) && x % 300 < 90);
+                let dots = (x % 53 - 20).pow(2) + (y % 67 - 30).pow(2) <= 5 || (x % 89 == 7 && y % 71 == 9);
+                let i = (y * pc.stride + x) as usize;
+                if (bands || bars || dots) && pc.px[i] == paper[(y * stride + x) as usize] && pc.px[i] != 0 {
+                    pc.px[i] = 0;
+                    n += 1;
+                }
+            }
+        }
+        n
+    }
+
+    // A view at Ink edges at Solid of a page whose solid marks lie only where it held its paper alone (solid_marks),
+    // other ink beside them, against `without` (the same view of the page without the marks, which is there the
+    // view's pixel with the stroke absent) and `plain` (the view of the page with the marks and no rule): every pixel
+    // is black, or `without`, or `plain` where that is darker (beside other ink, the view's own pixel), and none is
+    // lighter than `without`. Counted: the pixels left as `plain` beside the ink, and those where `plain` alone would
+    // have been lighter than `without`.
+    fn solid_over_marks(after: &[u8], without: &[u8], plain: &[u8], what: &str) -> (u32, u32) {
+        let (mut kept, mut lighter) = (0, 0);
+        for i in 0..after.len() {
+            let (a, b, p) = (after[i], without[i], plain[i]);
+            assert!(a <= b && (a == 0 || a == b || a == p), "{what}: pixel {i} is {a}, without the marks {b}, the view's own {p}");
+            kept += (a != 0 && a != b) as u32;
+            lighter += (a == b && p > b) as u32;
+        }
+        (kept, lighter)
+    }
+
+    // Ink edges at Solid (#320) in a view #308 rules (a paper of rulings below 100%, to half): a solid stroke changes
+    // screen pixels only to black where nothing but paper is beside it, and every such pixel is what blit_canvas_ruled
+    // draws of the page without that stroke, the rulings drawn at the screen's scale beside the ink and under its edge.
+    // Beside other ink a pixel is the ruled view's own where that is darker, and never lighter than the page without
+    // the stroke (solid_over_marks); here the ruled view's own is the lighter one at some pixels (its sampling takes
+    // the stroke's 0 as the gray of the other ink beside it). With no solid ink the bytes are blit_canvas_ruled's, and
+    // a rect drawn in parts is the rect drawn whole. The pixels made black are the ones the sampled view makes black
+    // (one rule, solid_px). Without the rule the ruled view gives the stroke a gray rim; with the sampled view's pass
+    // run over it instead, a pixel beside the ink would hold a blend of the page's paper where the view drew a ruling
+    // whole.
+    #[test]
+    fn solid_ink_on_a_ruled_view_is_black_or_the_view_without_it() {
+        let _panel = paper_panel_lock();
+        paper_set_panel_ppi(0.0, 300.0);
+        ui_init(300.0);
+        assert_eq!(font_init(), 0);
+        let (pw, ph, sw, sh) = (620, 830, 640, 520);
+        let whole = Rect::new(0, 0, sw, sh);
+        let cases = [
+            // the whole page, the desk around it
+            (PAPER_SEYES, 0.5f32, -330.0f32, -105.0f32),
+            (PAPER_WIDE, 0.56, -200.25, 400.0),
+            (PAPER_MEDIUM, 0.62, 12.3, 100.7),
+            // the fitted page sideways on the Kindle, and on a screen of another shape
+            (PAPER_SEYES, 0.75, -116.5, 30.5),
+            (PAPER_GRID, 0.75, -8.5, 61.25),
+            (PAPER_CORNELL, 1920.0 / 2480.0, -100.0, 0.0),
+            (PAPER_MUSIC, 0.9, 3.3, 310.0),
+            (PAPER_SEYES, 0.97, -4.0, 290.0),
+        ];
+        let mut lighters = 0;
+        for (k, zoom, ox, oy) in cases {
+            let canvas = |w: i32, h: i32| {
+                let mut c = Canvas::default();
+                assert_eq!(canvas_init(&mut c, w, h), 0);
+                c
+            };
+            let mut paper = canvas(pw, ph);
+            paper_render(&mut paper, k, Rect::new(0, 0, pw, ph), 300.0);
+            // the page without the solid strokes: its paper, and other ink (grays, and a pixel lighter than its paper)
+            let mut free = paper.clone();
+            scatter_ink(&mut free, 500, 11 + k.0);
+            assert!(!free.px.iter().zip(&paper.px).any(|(&p, &q)| p == 0 && q != 0), "no solid ink yet");
+            let mut page = free.clone();
+            assert!(solid_marks(&mut page, &paper.px, paper.stride) > 2000);
+            let ruled = |pc: &Canvas, solid: bool, parts: &[Rect]| {
+                let mut c = canvas(sw, sh);
+                c.px.fill(77);
+                for &r in parts {
+                    blit_canvas_ruled(&mut c, pc, &paper.px, paper.stride, k, 300.0, zoom, ox, oy, r, solid);
+                }
+                c.px
+            };
+            let before = ruled(&free, false, &[whole]);
+            assert!(ruled(&free, true, &[whole]) == before, "paper {} zoom {zoom}: a page with no solid ink", k.0);
+            let plain = ruled(&page, false, &[whole]);
+            let after = ruled(&page, true, &[whole]);
+            let (kept, lighter) = solid_over_marks(&after, &before, &plain, &format!("paper {} zoom {zoom}", k.0));
+            let black = (0..after.len()).filter(|&i| after[i] == 0 && before[i] != 0).count();
+            assert!(black > 500, "paper {} zoom {zoom}: the ink shows ({black} px)", k.0);
+            assert!(kept > 0, "paper {} zoom {zoom}: beside other ink the view's own pixel stays ({kept} px)", k.0);
+            lighters += lighter;
+            let grays = (0..after.len()).filter(|&i| plain[i] != before[i] && plain[i] != 0).count();
+            assert!(grays > 0, "paper {} zoom {zoom}: sampled over the paper alone, the ink has a gray rim", k.0);
+            // in parts, as a pen's dabs and the settle draw it again
+            let mut parts = vec![];
+            for y in (0..sh).step_by(61) {
+                for x in (0..sw).step_by(97) {
+                    parts.push(rect_intersect(Rect::new(x, y, 97, 61), whole));
+                }
+            }
+            assert!(ruled(&page, true, &parts) == after, "paper {} zoom {zoom}: in parts", k.0);
+            // the sampled view of the same page: the same pixels black, and beside the ink a blend of the page's
+            // paper, which is not the ruled view's paper wherever a ruling is near
+            let sampled = |pc: &Canvas| {
+                let mut c = canvas(sw, sh);
+                blit_canvas(&mut c, pc, zoom, ox, oy, whole);
+                blit_solid_edges(&mut c, pc, Some((&paper.px, paper.stride)), zoom, ox, oy, whole);
+                c.px
+            };
+            let (sampled_before, sampled_after) = (sampled(&free), sampled(&page));
+            let mut blends = 0;
+            for i in 0..after.len() {
+                if before[i] != 0 && sampled_before[i] != 0 {
+                    assert_eq!(after[i] == 0, sampled_after[i] == 0, "paper {} zoom {zoom}: pixel {i} black in one view only", k.0);
+                }
+                // (a pixel at the ink's edge, not black: the sampled pass's answer for it against the ruled view's)
+                blends += (plain[i] != before[i] && after[i] != 0 && sampled_after[i] != before[i]) as u32;
+            }
+            assert!(blends > 0, "paper {} zoom {zoom}: the sampled pass would not give the ruled view's pixels", k.0);
+        }
+        assert!(lighters > 0, "the ruled view's own pixel beside the ink is lighter than without it somewhere ({lighters} px)");
     }
 
     // A 640 x 420 page for the scaled view's tests: a paper with gray rules and black of its own (a block, and two
@@ -15666,7 +16637,7 @@ mod tests {
         });
         page
     }
-    // The reviewer's ten views of that page on a 640 x 420 screen: (zoom, ox, oy). Sideways and fitted, a notebook of
+    // Ten views of that page on a 640 x 420 screen: (zoom, ox, oy). Sideways and fitted, a notebook of
     // another size either way, 1:1 panned half a pixel, sideways at the width, three pinches, the page smaller than
     // the view (the desk around it), and the page's right bottom corner.
     const SCALED_VIEWS: [(f32, f32, f32); 10] = [
@@ -15836,7 +16807,9 @@ mod tests {
     // solid stroke across graph paper's gray lines leaves every screen pixel black or the paper's, and a black of
     // the paper's own (a picture's, as a PDF page or a template has: here put into the kept paper and the page, which
     // no built-in paper has) keeps blit_canvas's edges. Handed no paper the pass takes white for it: the ink over a
-    // line then counts as white there, and the paper's black as ink.
+    // line then counts as white there, and the paper's black as ink. (Below 100%, to half, graph paper is drawn at
+    // the screen's scale, #308: there the paper's is that view's paper alone. A picture's paper never is, so its
+    // black is looked at in the sampled views.)
     #[cfg(feature = "sim")]
     #[test]
     fn blit_view_hands_the_solid_pass_the_pages_own_paper() {
@@ -15868,13 +16841,19 @@ mod tests {
         s.hist[ip].page = Some(page);
         render_page_full(&mut a);
         let whole = Rect::new(0, 0, w, h);
+        let dpi = a.dpi;
+        let ruled_view = |zoom: f32| (RULES_MIN_ZOOM..1.0).contains(&zoom);
         let view_of = |c: &Canvas, zoom: f32, ox: f32, oy: f32| {
             let mut sc = Canvas::default();
             assert_eq!(canvas_init(&mut sc, w, h), 0);
-            blit_canvas(&mut sc, c, zoom, ox, oy, whole);
+            if ruled_view(zoom) {
+                blit_canvas_ruled(&mut sc, c, &c.px, c.stride, PAPER_GRID, dpi, zoom, ox, oy, whole, false);
+            } else {
+                blit_canvas(&mut sc, c, zoom, ox, oy, whole);
+            }
             sc
         };
-        let views = [(2.0f32, 100.0f32, 60.0f32), (0.75, -20.333334, 0.0), (1.3333334, 40.0, 12.0)];
+        let views = [(2.0f32, 100.0f32, 60.0f32), (0.75, -20.333334, 0.0), (1.3333334, 40.0, 12.0), (0.48, -100.0, -60.0)];
         for (zoom, ox, oy) in views {
             let s = ed(&mut a);
             (s.zoom, s.ox, s.oy) = (zoom, ox, oy);
@@ -15895,7 +16874,7 @@ mod tests {
         canvas_fill(&mut paper, block, 0);
         canvas_fill(&mut s.page_canvas, block, 0);
         s.paper.px = Some(Rc::new(paper.px.clone()));
-        for (zoom, ox, oy) in views {
+        for (zoom, ox, oy) in views.into_iter().filter(|v| !ruled_view(v.0)) {
             let s = ed(&mut a);
             (s.zoom, s.ox, s.oy) = (zoom, ox, oy);
             blit_view(&mut a, whole);
@@ -15907,6 +16886,177 @@ mod tests {
                 assert!(a.screen.px[i] == 0 || a.screen.px[i] == paper_view.px[i], "zoom {zoom}, the paper's black: pixel {i} is {} over the paper's {}", a.screen.px[i], paper_view.px[i]);
             }
         }
+    }
+
+    // The ruled view (#308) of the scaled view's test page above, drawn on a paper of rulings, below 100% to half,
+    // on a 640 x 420 screen: the page whole with the desk around it, fitted sideways, notebooks of other sizes, and
+    // pinches between.
+    const RULED_VIEWS: [(f32, f32, f32); 8] = [
+        (0.5, -320.0, -210.0),
+        (0.56, -100.25, -50.0),
+        (0.62, 12.3, 10.7),
+        (0.75, -20.333334, 0.0),
+        (0.774, -60.0, -40.5),
+        (0.9, 3.3, 5.0),
+        (0.9366, -3.2, -1.1),
+        (0.97, -4.0, 2.0),
+    ];
+    const RULED_PAPERS: [PaperKind; 3] = [PAPER_SEYES, PAPER_MEDIUM, PAPER_GRID];
+    fn ruled_page_paper(k: PaperKind) -> Canvas {
+        let mut paper = Canvas::default();
+        assert_eq!(canvas_init(&mut paper, 640, 420), 0);
+        paper_render(&mut paper, k, Rect::new(0, 0, 640, 420), 300.0);
+        paper
+    }
+    fn ruled_view_of(pc: &Canvas, paper: &Canvas, k: PaperKind, (zoom, ox, oy): (f32, f32, f32), solid: bool) -> Vec<u8> {
+        let mut sc = Canvas::default();
+        assert_eq!(canvas_init(&mut sc, 640, 420), 0);
+        blit_canvas_ruled(&mut sc, pc, &paper.px, paper.stride, k, 300.0, zoom, ox, oy, Rect::new(0, 0, 640, 420), solid);
+        sc.px
+    }
+    // The page with each solid stroke's black taken back to its paper: its ruled view is, pixel for pixel, what the
+    // view makes of the taps with the ink's taken as their paper.
+    fn ink_as_paper(page: &Canvas, paper: &Canvas) -> Canvas {
+        let mut u = page.clone();
+        for i in 0..u.px.len() {
+            if u.px[i] == 0 && paper.px[i] != 0 {
+                u.px[i] = paper.px[i];
+            }
+        }
+        u
+    }
+    // For screen pixel i of a view: the weight of the solid ink among its four page pixels, and whether one of them
+    // with any weight is other ink (solid_px's two questions, asked of the page and its paper).
+    fn solid_weight(view: (f32, f32, f32), i: usize, page: &Canvas, paper: &Canvas) -> (u32, bool) {
+        let (sx, sy) = (i as i32 % 640, i as i32 / 640);
+        let four = scaled_four(view, sx, sy, page);
+        let ink = |j: usize| page.px[j] == 0 && paper.px[j] != 0;
+        let weight = four.iter().filter(|&&(j, _)| ink(j)).map(|&(_, wt)| wt).sum();
+        (weight, four.iter().any(|&(j, wt)| wt != 0 && !ink(j) && page.px[j] != paper.px[j]))
+    }
+
+    // Ink edges at Solid (#320) in a view #308 rules, where a solid stroke crosses or lies beside other ink (a
+    // highlight band, pencil shading, charcoal, a marker and a pen given grain across the rulings), drawn before it or
+    // after it: beside other ink no screen pixel is lighter than the ruled view's own sampling of the page, and none
+    // is lighter than the same ruled view of the page without the solid strokes but over other ink the stroke covered
+    // (the page does not keep what a stroke covers, so the rule takes paper for it there): those are counted apart,
+    // the paper drawn where nothing but the ink and paper shows, and a few beside other ink, whose sampling the covered
+    // ink would have changed. None is darker than the view without the solid strokes unless it is black, the ruled
+    // view's own, or its value with the ink's pixels taken as their paper (the last met where a stroke covered other
+    // ink beside more of it). Over paper alone every pixel is black or the paper drawn. Writing the view without the
+    // stroke beside other ink (each ink pixel taken as its paper) puts a pale outline along the stroke over the pencil
+    // and the highlight; leaving the ruled view's own pixel there lightens other ink at some pixels.
+    #[test]
+    fn solid_ink_on_a_ruled_view_never_lightens_other_ink() {
+        let _panel = paper_panel_lock();
+        paper_set_panel_ppi(0.0, 300.0);
+        ui_init(300.0);
+        assert_eq!(font_init(), 0);
+        for k in RULED_PAPERS {
+            let paper = ruled_page_paper(k);
+            let under = scaled_view_page(&paper, false, true, true);
+            assert!((0..under.px.len()).all(|i| under.px[i] != 0 || paper.px[i] == 0), "paper {}: the other ink never reaches black", k.0);
+            let alone = scaled_view_page(&paper, true, false, true);
+            for view in RULED_VIEWS {
+                let (zoom, ox, oy) = view;
+                let paper_view = ruled_view_of(&paper, &paper, k, view, false);
+                let before = ruled_view_of(&under, &paper, k, view, true);
+                assert!(before == ruled_view_of(&under, &paper, k, view, false), "paper {} zoom {zoom}: a page with no solid ink", k.0);
+                let on_paper = ruled_view_of(&alone, &paper, k, view, true);
+                for i in 0..on_paper.len() {
+                    assert!(on_paper[i] == 0 || on_paper[i] == paper_view[i], "paper {} zoom {zoom} at {ox} {oy}, over paper alone: pixel {i} is {} over {}", k.0, on_paper[i], paper_view[i]);
+                }
+                for other_first in [true, false] {
+                    let page = scaled_view_page(&paper, true, true, other_first);
+                    for i in 0..page.px.len() {
+                        assert!(page.px[i] == under.px[i] || page.px[i] == 0, "paper {}, the page, other ink first {other_first}: pixel {i}", k.0);
+                    }
+                    let plain = ruled_view_of(&page, &paper, k, view, false);
+                    let without = ruled_view_of(&ink_as_paper(&page, &paper), &paper, k, view, false);
+                    let after = ruled_view_of(&page, &paper, k, view, true);
+                    let what = format!("paper {} zoom {zoom} at {ox} {oy}, other ink first {other_first}", k.0);
+                    let (mut black, mut kept, mut covered, mut covered_beside) = (0, 0, 0, 0);
+                    for i in 0..after.len() {
+                        let (a, b) = (after[i], before[i]);
+                        let (weight, other) = solid_weight(view, i, &page, &paper);
+                        if weight > 0 && 2 * weight < 255 * 255 && other {
+                            assert!(a <= plain[i], "{what}: pixel {i} is {a}, beside other ink lighter than the ruled view's own {}", plain[i]);
+                        }
+                        if a > b {
+                            let (sx, sy) = (i as i32 % 640, i as i32 / 640);
+                            let over_covered = scaled_four(view, sx, sy, &page).iter().any(|&(j, wt)| wt != 0 && page.px[j] == 0 && paper.px[j] != 0 && under.px[j] != paper.px[j]);
+                            assert!(over_covered, "{what}: pixel {i} is {a}, lighter than {b} without the strokes, and no ink of its covers other ink");
+                            if other {
+                                covered_beside += 1;
+                            } else {
+                                assert!(a == paper_view[i], "{what}: pixel {i} is {a}, lighter than {b}, and not the paper drawn {}", paper_view[i]);
+                                covered += 1;
+                            }
+                        }
+                        assert!(a >= b || a == 0 || a == plain[i] || a == without[i], "{what}: pixel {i} is {a}, darker than {b} and neither the ruled view's own {} nor its value without the ink {}", plain[i], without[i]);
+                        black += (a == 0 && b != 0) as u32;
+                        kept += (a != 0 && a == plain[i] && a < b) as u32;
+                    }
+                    assert!(black > 300, "{what}: the ink shows ({black} px)");
+                    assert!(kept > 50, "{what}: beside other ink the ruled view's own pixel stays ({kept} px)");
+                    // (on this page 0 to 34 of the one kind a view, 0 to 19 of the other, at most 95 and 53 lighter;
+                    // other pages give more, and the paper drawn can be lighter by all of the covered ink's
+                    // darkness, where the view without the strokes shows that ink at its own gray over a ruling)
+                    assert!(covered < 100 && covered_beside < 100, "{what}: {covered} and {covered_beside} of {} pixels are lighter over covered ink", after.len());
+                }
+            }
+        }
+    }
+
+    // The ruled view's rule at Solid written out pixel by pixel (blit_canvas_ruled with solid_px), on the page above
+    // drawn on three papers of rulings at the eight ruled views. With W the weight of the solid ink among a screen
+    // pixel's four page pixels: the ruled view's own value where W is 0; black where W is half the whole weight or
+    // more; where W is less and one of the four with any weight is other ink, the darker of the ruled view's own value
+    // and its value with the ink's pixels taken as their paper; else the paper drawn (what the view shows there
+    // without the stroke). Each of the four kinds is met.
+    #[test]
+    fn solid_ink_on_a_ruled_view_is_black_from_half_the_weight() {
+        let _panel = paper_panel_lock();
+        paper_set_panel_ppi(0.0, 300.0);
+        ui_init(300.0);
+        assert_eq!(font_init(), 0);
+        let (mut own, mut darker) = (0, 0);
+        for k in RULED_PAPERS {
+            let paper = ruled_page_paper(k);
+            for other_first in [true, false] {
+                let page = scaled_view_page(&paper, true, true, other_first);
+                let free = ink_as_paper(&page, &paper);
+                for view in RULED_VIEWS {
+                    let zoom = view.0;
+                    let plain = ruled_view_of(&page, &paper, k, view, false);
+                    let paper_view = ruled_view_of(&paper, &paper, k, view, false);
+                    let without = ruled_view_of(&free, &paper, k, view, false);
+                    let got = ruled_view_of(&page, &paper, k, view, true);
+                    let (mut black, mut papers) = (0, 0);
+                    for i in 0..got.len() {
+                        let (weight, other) = solid_weight(view, i, &page, &paper);
+                        let want = if weight == 0 {
+                            plain[i]
+                        } else if 2 * weight >= 255 * 255 {
+                            black += 1;
+                            0
+                        } else if other {
+                            own += (plain[i] < without[i]) as u32;
+                            darker += (without[i] < plain[i]) as u32;
+                            plain[i].min(without[i])
+                        } else {
+                            papers += 1;
+                            paper_view[i]
+                        };
+                        assert_eq!(got[i], want, "paper {} zoom {zoom}, other ink first {other_first}: pixel {},{}", k.0, i % 640, i / 640);
+                    }
+                    assert!(black > 300 && papers > 300, "paper {} zoom {zoom}: black {black}, the paper's {papers}", k.0);
+                }
+            }
+        }
+        // (beside other ink both of the darker of the two are met: the ruled view's own at thousands of pixels, its
+        // value without the ink where its own would be lighter at a few)
+        assert!(own > 10_000 && darker > 50, "the ruled view's own {own}, its value without the ink {darker}");
     }
 
     #[test]
@@ -16350,8 +17500,10 @@ mod tests {
     #[test]
     fn a_peeked_page_rests_where_the_open_page_would() {
         // The view the bar shows a page at is the one view_reset would give it as the open page, on every
-        // screen and page shape, with the whole page sideways on and off.
+        // screen and page shape, with the whole page sideways on and off; a page a little smaller than the
+        // screen (page_near_view) at 100%, centred on whole pixels, an odd number of pixels to spare or not.
         for (aw, ah, pw, ph) in [(1860, 2480, 1860, 2480), (2480, 1860, 1860, 2480), (1986, 2648, 1986, 2648), (2648, 1986, 1986, 2648), (1860, 2480, 1986, 2648), (2480, 1860, 1986, 2648), (1986, 2648, 1860, 2480),
+            (1920, 2560, 1860, 2480), (2560, 1920, 1860, 2480), (1920, 2560, 1861, 2479), (1986, 2648, 1920, 2560), (2560, 1920, 2480, 1860), (1860, 2480, 1920, 2560),
         ] {
             for fit in [false, true] {
                 let mut a = app(aw, ah, pw, ph);
@@ -16390,6 +17542,948 @@ mod tests {
         let bot = at(32, 25) * (255 - w) + at(33, 25) * w;
         assert_eq!(a.screen.px[24 * 64 + 32] as u32, (top * (255 - w) + bot * w + 32512) / 65025);
     }
+
+    #[test]
+    fn a_page_a_little_smaller_than_the_screen_is_near_it() {
+        // No larger on either axis, within 4% on both, and not the screen's own size.
+        assert!(page_near_view(1920, 2560, 1860, 2480)); // 3.1% and 3.1%
+        assert!(page_near_view(1986, 2648, 1920, 2560)); // 3.3% and 3.3%
+        assert!(page_near_view(1920, 2560, 1920, 2480)); // the screen's width, 3.1% shorter
+        assert!(page_near_view(2560, 1920, 2480, 1860)); // a sideways page on a sideways screen
+        // 96% is near, a pixel less on either axis is not
+        assert!(page_near_view(1000, 2000, 960, 1920));
+        assert!(!page_near_view(1000, 2000, 959, 1920));
+        assert!(!page_near_view(1000, 2000, 960, 1919));
+        // The screen's own size (the identity), a page larger on either axis, one further off, an upright page on
+        // a sideways screen
+        assert!(!page_near_view(1920, 2560, 1920, 2560));
+        assert!(!page_near_view(1860, 2480, 1920, 2560));
+        assert!(!page_near_view(1920, 2560, 1930, 2500));
+        assert!(!page_near_view(1986, 2648, 1860, 2480)); // 6.3%: a notebook from the other Scribe size
+        assert!(!page_near_view(1920, 2560, 1404, 1872));
+        assert!(!page_near_view(2560, 1920, 1860, 2480));
+    }
+
+    #[test]
+    fn a_page_a_little_smaller_than_the_screen_rests_at_100_percent_centred() {
+        // An 1860x2480 page on a 1920x2560 screen: 100%, not fitted at 1920/1860, with 30 px of desk at the
+        // sides and 40 at the top and bottom, whatever landscape_fit says. The least zoom is 100% (the whole
+        // page shows there), the most four times the width's fit, as for any page.
+        for fit in [false, true] {
+            let (z, zmin, zmax) = view_rest(1920, 2560, 1860, 2480, fit);
+            assert_eq!((z, zmin, zmax.to_bits()), (1.0, 1.0, ((1920.0f32 / 1860.0) * 4.0).to_bits()));
+            let mut a = app(1920, 2560, 1860, 2480);
+            a.settings.landscape_fit = fit;
+            view_reset(&mut a);
+            let s = ed_ref(&a);
+            assert_eq!((s.zoom, s.zoom_default, s.zoom_min, s.ox, s.oy, s.rest_ox), (1.0, 1.0, 1.0, -30.0, -40.0, -30.0));
+            assert!(!view_identity(&a) && !zoomed(&a));
+        }
+        let mut a = app(1920, 2560, 1860, 2480);
+        view_reset(&mut a);
+        // Screen and page are a whole-pixel shift apart: the page's own coordinates, nothing scaled.
+        let (mut x, mut y) = (0.0, 0.0);
+        to_page(ed_ref(&a), 30.0, 40.0, &mut x, &mut y);
+        assert_eq!((x, y), (0.0, 0.0));
+        to_page(ed_ref(&a), 100.5, 200.25, &mut x, &mut y);
+        assert_eq!((x, y), (70.5, 160.25));
+        assert_eq!(page_to_screen(&a, Rect::new(10, 10, 5, 5)), Rect::new(38, 48, 10, 10));
+        // Pinched in and panned: zoomed, the view inside the page.
+        let s = ed(&mut a);
+        s.zoom = 1.5;
+        s.ox = 500.0;
+        s.oy = 700.0;
+        view_clamp(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.zoom, s.ox, s.oy), (1.5, 500.0, 700.0));
+        assert!(zoomed(&a));
+        // Pinched out past 100%: held there, centred, at rest again.
+        ed(&mut a).zoom = 0.5;
+        view_clamp(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.zoom, s.ox, s.oy), (1.0, -30.0, -40.0));
+        assert!(!zoomed(&a));
+        // Nearly 100% snaps to it, centred on whole pixels, wherever the pinch left the offsets.
+        let s = ed(&mut a);
+        s.zoom = 1.006;
+        s.ox = 3.0;
+        s.oy = 9.5;
+        view_clamp(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.zoom, s.ox, s.oy), (1.0, -30.0, -40.0));
+        assert!(!zoomed(&a));
+        // Nothing zooms past four times the width's fit.
+        ed(&mut a).zoom = 100.0;
+        view_clamp(&mut a);
+        assert_eq!(ed_ref(&a).zoom, (1920.0f32 / 1860.0) * 4.0);
+        // Fit page (view_reset) from there: at rest.
+        view_reset(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.zoom, s.ox, s.oy), (1.0, -30.0, -40.0));
+        // An odd number of pixels to spare: centred on whole pixels all the same.
+        let mut a = app(1920, 2560, 1861, 2479);
+        view_reset(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.zoom, s.ox, s.oy, s.rest_ox), (1.0, -29.0, -40.0, -29.0));
+        // A sideways page on a sideways screen a little larger: the same.
+        let mut a = app(2560, 1920, 2480, 1860);
+        view_reset(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.zoom, s.ox, s.oy), (1.0, -40.0, -30.0));
+    }
+
+    #[test]
+    fn pages_of_the_screens_size_or_further_off_rest_as_before() {
+        // The rule view_rest always had, bit for bit: the width across (sideways with fit, the whole page), the
+        // least the whole page, the most four times the width's fit.
+        let before = |aw: i32, ah: i32, pw: i32, ph: i32, fit: bool| {
+            let zmin = (aw as f32 / pw as f32).min(ah as f32 / ph as f32);
+            (if fit && aw > ah { zmin } else { aw as f32 / pw as f32 }, zmin, (aw as f32 / pw as f32) * 4.0)
+        };
+        for (aw, ah, pw, ph) in [
+            (1920, 2560, 1920, 2560), // the screen's size
+            (2560, 1920, 1860, 2480), // an upright page sideways
+            (1920, 2560, 1404, 1872), // much smaller
+            (1920, 2560, 1920, 2400), // the screen's width, 6.25% shorter
+            (1860, 2480, 1920, 2560), // a little larger
+            (1986, 2648, 1860, 2480), // the two Scribe sizes, both ways
+            (1860, 2480, 1986, 2648),
+            (1000, 2000, 959, 1920), // just past 4%
+        ] {
+            for fit in [false, true] {
+                let (z, zmin, zmax) = view_rest(aw, ah, pw, ph, fit);
+                let (bz, bzmin, bzmax) = before(aw, ah, pw, ph, fit);
+                assert_eq!((z.to_bits(), zmin.to_bits(), zmax.to_bits()), (bz.to_bits(), bzmin.to_bits(), bzmax.to_bits()), "{aw}x{ah} page {pw}x{ph} fit {fit}");
+            }
+        }
+        // A 1920x2560 page on a screen of its size: the identity, and nearly 100% snaps to it.
+        let mut a = app(1920, 2560, 1920, 2560);
+        view_reset(&mut a);
+        assert!(view_identity(&a) && !zoomed(&a));
+        ed(&mut a).zoom = 1.005;
+        view_clamp(&mut a);
+        assert!(view_identity(&a));
+        // A much smaller page fills the screen's width from its top; 100% is below its least zoom.
+        let mut a = app(1920, 2560, 1404, 1872);
+        view_reset(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.zoom, s.ox, s.oy), (1920.0 / 1404.0, 0.0, 0.0));
+        ed(&mut a).zoom = 1.005;
+        view_clamp(&mut a);
+        assert_eq!(ed_ref(&a).zoom, ed_ref(&a).zoom_min);
+        assert!(!zoomed(&a));
+        // The screen's width, further off in height: 100% as before, centred down by half the difference.
+        let mut a = app(1920, 2560, 1920, 2400);
+        view_reset(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.zoom, s.ox, s.oy), (1.0, 0.0, -80.0));
+        // A page a little larger: fitted, its whole width across.
+        let mut a = app(1860, 2480, 1920, 2560);
+        view_reset(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.zoom, s.ox, s.oy), (1860.0 / 1920.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn live_views_fast_ink_stops_at_the_pages_edge() {
+        // Live view's fast ink clips to the page's own pixels on the screen, not to a padded damage rect: an
+        // 1860x2480 page at rest on a 1920x2560 screen covers x 30..1890 and y 40..2520, and no fast ink goes into
+        // the desk around it.
+        let mut a = app(1920, 2560, 1860, 2480);
+        a.scr = ScreenId::Editor;
+        let s = ed(&mut a);
+        nav_init(&mut s.nav);
+        s.open = true;
+        s.nb.page_ids = vec![1];
+        let i = s.entry_for(1).unwrap();
+        s.hist[i].page = Some(page_new(1860, 2480, PAPER_BLANK));
+        s.page = Some(1);
+        view_reset(&mut a);
+        assert_eq!(page_to_screen(&a, Rect::new(0, 0, 1860, 2480)), Rect::new(28, 38, 1865, 2485));
+        let ev = InEvent { type_: InType::PenDown, x: 900.0, y: 900.0, pressure: 0.5, ..Default::default() };
+        let mut out = LiveStyle::default();
+        editor_live_style(&a, &ev, &mut out);
+        assert_eq!(out.enabled, 1);
+        assert_eq!(out.clip, Rect::new(30, 40, 1860, 2480));
+        // The screen's own size: the whole screen. A page further off, fitted: the screen it fills.
+        for (aw, ah, pw, ph) in [(1860, 2480, 1860, 2480), (1920, 2560, 1986, 2648), (1986, 2648, 1860, 2480)] {
+            let mut a = app(aw, ah, pw, ph);
+            view_reset(&mut a);
+            assert_eq!(page_on_screen(&a), Rect::new(0, 0, aw, ah), "{aw}x{ah} page {pw}x{ph}");
+        }
+        // The whole page sideways (landscape_fit), centred at 75%: x 542.5..1937.5, the edge pixels in part.
+        let mut a = app(2480, 1860, 1860, 2480);
+        a.settings.landscape_fit = true;
+        view_reset(&mut a);
+        assert_eq!(page_on_screen(&a), Rect::new(542, 0, 1396, 1860));
+        // Pinched in and panned: the screen, the page's edges off it.
+        let mut a = app(1920, 2560, 1860, 2480);
+        view_reset(&mut a);
+        let s = ed(&mut a);
+        s.zoom = 2.0;
+        s.ox = 400.0;
+        s.oy = 600.0;
+        view_clamp(&mut a);
+        assert_eq!(page_on_screen(&a), Rect::new(0, 0, 1920, 2560));
+    }
+
+    #[test]
+    fn a_page_a_little_smaller_than_the_screen_blits_one_to_one() {
+        // A 96x77 page on a 100x80 screen rests at 100%, 2 px of desk to the left and right, 1 above and 2 below:
+        // each screen pixel is the page's own pixel or the desk, in the grays' blit and the fast preview's alike,
+        // over the whole screen and in rects that cross the page's edges or lie off it.
+        let mut a = app(100, 80, 96, 77);
+        let s = ed(&mut a);
+        assert_eq!(canvas_init(&mut s.page_canvas, 96, 77), 0);
+        for (i, p) in s.page_canvas.px.iter_mut().enumerate() {
+            *p = (i * 37 % 251) as u8;
+        }
+        view_reset(&mut a);
+        assert_eq!((ed_ref(&a).zoom, ed_ref(&a).ox, ed_ref(&a).oy), (1.0, -2.0, -1.0));
+        let pc = ed_ref(&a).page_canvas.clone();
+        let want = |x: i32, y: i32| -> u8 {
+            let (px, py) = (x - 2, y - 1);
+            if (0..96).contains(&px) && (0..77).contains(&py) { pc.px[py as usize * pc.stride as usize + px as usize] } else { 205 }
+        };
+        for r in [Rect::new(0, 0, 100, 80), Rect::new(0, 0, 10, 10), Rect::new(90, 70, 10, 10), Rect::new(40, 30, 10, 10), Rect::new(98, 0, 2, 80), Rect::new(0, 78, 100, 2)] {
+            for fast in [false, true] {
+                a.screen.px.fill(0);
+                ed(&mut a).fast_blit = fast;
+                blit_view(&mut a, r);
+                for y in 0..80 {
+                    for x in 0..100 {
+                        let got = a.screen.px[y as usize * a.screen.stride as usize + x as usize];
+                        let inside = x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+                        assert_eq!(got, if inside { want(x, y) } else { 0 }, "{r:?} fast {fast} at {x},{y}");
+                    }
+                }
+            }
+        }
+        ed(&mut a).fast_blit = false;
+    }
+
+    #[test]
+    fn a_page_a_little_smaller_than_the_screen_is_copied_with_ink_edges_at_solid_too() {
+        // The same 96x77 page at rest on a 100x80 screen (#303), with solid strokes on it that reach its first and
+        // last columns and rows, and Ink edges at Solid (#320): 100% on whole pixels copies the page, so there is no
+        // blend for the Solid pass to make again, and every screen pixel is the page's own or the desk. (The pass
+        // reads the page as the bilinear does, whose taps left of the page and above it are the page's first column
+        // and row again: run here it would draw a stroke's black a pixel into the desk.)
+        let mut a = app(100, 80, 96, 77);
+        a.scr = ScreenId::Editor;
+        let s = ed(&mut a);
+        nav_init(&mut s.nav);
+        s.open = true;
+        s.nb.page_ids = vec![1];
+        let i = s.entry_for(1).unwrap();
+        s.hist[i].page = Some(page_new(96, 77, PAPER_BLANK));
+        s.page = Some(1);
+        assert_eq!(canvas_init(&mut s.page_canvas, 96, 77), 0);
+        canvas_fill(&mut s.page_canvas, Rect::new(0, 0, 96, 77), 255);
+        for x in 0..96i32 {
+            for y in 0..77i32 {
+                if x == 0 || y == 0 || x == 95 || y == 76 || (x - y).abs() < 2 {
+                    s.page_canvas.px[(y * 96 + x) as usize] = 0;
+                }
+            }
+        }
+        view_reset(&mut a);
+        assert_eq!((ed_ref(&a).zoom, ed_ref(&a).ox, ed_ref(&a).oy), (1.0, -2.0, -1.0));
+        let pc = ed_ref(&a).page_canvas.clone();
+        let want = |x: i32, y: i32| -> u8 {
+            let (px, py) = (x - 2, y - 1);
+            if (0..96).contains(&px) && (0..77).contains(&py) { pc.px[py as usize * pc.stride as usize + px as usize] } else { 205 }
+        };
+        let _solid = InkEdgesScope::new(InkEdges::Solid);
+        for r in [Rect::new(0, 0, 100, 80), Rect::new(0, 0, 10, 10), Rect::new(90, 70, 10, 10), Rect::new(1, 0, 3, 80), Rect::new(0, 0, 100, 3)] {
+            a.screen.px.fill(77);
+            blit_view(&mut a, r);
+            for y in 0..80 {
+                for x in 0..100 {
+                    let got = a.screen.px[y as usize * a.screen.stride as usize + x as usize];
+                    let inside = x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+                    assert_eq!(got, if inside { want(x, y) } else { 77 }, "{r:?} at {x},{y}");
+                }
+            }
+        }
+        // (and the page's paper alone was not drawn for a view with nothing to tell by it)
+        assert!(ed_ref(&a).paper.px.is_none());
+    }
+
+    // The editor on an aw x ah screen with page 1 of a notebook of pw x ph pages on paper k open and drawn,
+    // resting as a turn leaves it (sideways, the whole page: landscape_fit, the default). (A test that draws Seyes
+    // holds paper_panel_lock: the panel's density is process state.)
+    fn ruled_app(aw: i32, ah: i32, pw: i32, ph: i32, k: PaperKind) -> App {
+        paper_set_panel_ppi(0.0, 300.0);
+        let mut a = app(aw, ah, pw, ph);
+        a.scr = ScreenId::Editor;
+        a.settings.status_on = false;
+        a.settings.landscape_fit = true;
+        let s = ed(&mut a);
+        nav_init(&mut s.nav);
+        s.open = true;
+        s.nb.page_ids = vec![1];
+        let i = s.entry_for(1).unwrap();
+        s.hist[i].page = Some(page_new(pw, ph, k));
+        s.page = Some(1);
+        assert_eq!(canvas_init(&mut s.page_canvas, pw, ph), 0);
+        render_page_full(&mut a);
+        view_reset(&mut a);
+        a
+    }
+
+    // The runs of pixels darker than white along a line of them (the rulings it crosses), as the panel shows them
+    // when `cut` (16 grays: the low four bits dropped).
+    fn dark_runs(vals: impl Iterator<Item = u8>, cut: bool) -> Vec<Vec<u8>> {
+        let mut runs = vec![];
+        let mut run = vec![];
+        for v in vals.map(|v| if cut { (v >> 4) * 17 } else { v }) {
+            if v < 255 {
+                run.push(v);
+            } else if !run.is_empty() {
+                runs.push(std::mem::take(&mut run));
+            }
+        }
+        if !run.is_empty() {
+            runs.push(run);
+        }
+        runs
+    }
+
+    // How much darker than white a run is in all, and the heaviest of a set of runs against the lightest.
+    fn run_ink(r: &[u8]) -> u32 {
+        r.iter().map(|&v| 255 - v as u32).sum()
+    }
+    fn ink_spread(runs: &[&Vec<u8>]) -> f32 {
+        let inks = runs.iter().map(|r| run_ink(r));
+        inks.clone().max().unwrap() as f32 / inks.min().unwrap() as f32
+    }
+
+    #[test]
+    fn a_view_below_100_percent_draws_every_ruling_alike() {
+        // Seyes sideways at the whole page (#308): a Kindle page on the Kindle (0.75), and on a screen of 2560x1920
+        // (0.77), and a 1920x2560 page there (0.75). Sampled from the page, as every view was before, each line
+        // fell at its own fraction of a pixel: the inner lines in four shapes or more, a third heavier one to the
+        // next once cut to the panel's 16 grays. Drawn at the screen's scale, every inner line is the page's two
+        // rows of 136, every strong line its three of 68, every vertical its two columns of 119.
+        let _panel = paper_panel_lock();
+        for (aw, ah, pw, ph, zoom) in [(2480, 1860, 1860, 2480, 0.75f32), (2560, 1920, 1860, 2480, 1920.0 / 2480.0), (2560, 1920, 1920, 2560, 0.75)] {
+            let mut a = ruled_app(aw, ah, pw, ph, PAPER_SEYES);
+            let whole = Rect::new(0, 0, aw, ah);
+            assert_eq!(ed_ref(&a).zoom, zoom);
+            blit_view(&mut a, whole);
+            assert!(ed_ref(&a).paper.px.is_some(), "the view made the page's paper alone");
+            let s = ed_ref(&a);
+            let ruled = a.screen.clone();
+            let mut sampled = a.screen.clone();
+            blit_canvas(&mut sampled, &s.page_canvas, s.zoom, s.ox, s.oy, whole);
+            let (sx, sy) = (|v: f32| ((v - s.ox) * s.zoom) as i32, |v: f32| ((v - s.oy) * s.zoom) as i32);
+            for cut in [false, true] {
+                // Down a band of columns left of the margin, where the horizontal lines cross nothing; each column
+                // of the band alike.
+                let across = |c: &Canvas| {
+                    let col = |x: i32| dark_runs((0..ah).map(|y| c.px[(y * c.stride + x) as usize]), cut);
+                    let runs = col(sx(60.0));
+                    assert!((sx(60.0)..sx(300.0)).all(|x| col(x) == runs));
+                    runs
+                };
+                // Along a band of rows in the first 2 mm below the first strong line, where the verticals and the
+                // margin cross nothing.
+                let first = mm_to_px(20.0, 300.0);
+                let down = |c: &Canvas| {
+                    let row = |y: i32| dark_runs((sx(5.0)..sx(pw as f32 - 5.0)).map(|x| c.px[(y * c.stride + x) as usize]), cut);
+                    let (y0, y1) = (sy(first + 7.0), sy(first + 19.0));
+                    let runs = row(y0);
+                    assert!(y1 > y0 && (y0..y1).all(|y| row(y) == runs));
+                    runs
+                };
+                let (h, v) = (across(&ruled), down(&ruled));
+                let (strong, faint): (Vec<_>, Vec<_>) = h.iter().partition(|r| *r.iter().min().unwrap() < 100);
+                let (margin, verticals): (Vec<_>, Vec<_>) = v.iter().partition(|r| *r.iter().min().unwrap() < 60);
+                assert!(faint.len() >= 60 && strong.len() >= 20 && verticals.len() >= 14 && margin.len() == 1, "{aw}x{ah}: {} {} {} {}", faint.len(), strong.len(), verticals.len(), margin.len());
+                assert!(faint.iter().all(|r| **r == [136, 136]), "{aw}x{ah} cut {cut}: {faint:?}");
+                assert!(strong.iter().all(|r| **r == [68, 68, 68]), "{aw}x{ah} cut {cut}: {strong:?}");
+                assert!(verticals.iter().all(|r| **r == [119, 119]), "{aw}x{ah} cut {cut}: {verticals:?}");
+                assert!(margin.iter().all(|r| **r == [34, 34, 34]), "{aw}x{ah} cut {cut}: {margin:?}");
+                assert_eq!((ink_spread(&faint), ink_spread(&verticals)), (1.0, 1.0));
+                // The same lines sampled from the page: the measure sees what the owner saw.
+                let (h, v) = (across(&sampled), down(&sampled));
+                let faint: Vec<_> = h.iter().filter(|r| *r.iter().min().unwrap() >= 100).collect();
+                let verticals: Vec<_> = v.iter().filter(|r| *r.iter().min().unwrap() >= 60).collect();
+                let least = if cut { 1.3 } else { 1.2 };
+                assert!(ink_spread(&faint) > least && ink_spread(&verticals) > least, "{aw}x{ah} cut {cut}: {} {}", ink_spread(&faint), ink_spread(&verticals));
+            }
+            // The desk is where blit_canvas has it: around the footprint view_span gives, which the drawn paper
+            // fills (its grays alone, none of them the desk's 205).
+            let (x0, x1) = view_span(s.zoom, s.ox, pw);
+            let (y0, y1) = view_span(s.zoom, s.oy, ph);
+            let mut white = Canvas::default();
+            assert_eq!(canvas_init(&mut white, pw, ph), 0);
+            let mut desk = Canvas::default();
+            assert_eq!(canvas_init(&mut desk, aw, ah), 0);
+            blit_canvas(&mut desk, &white, s.zoom, s.ox, s.oy, whole);
+            for y in 0..ah {
+                for x in 0..aw {
+                    let i = (y * aw + x) as usize;
+                    let inside = x >= x0 && x < x1 && y >= y0 && y < y1;
+                    assert_eq!(desk.px[i] == 205, !inside, "{x},{y}");
+                    assert_eq!(ruled.px[i] == 205, !inside, "{x},{y}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ink_over_white_in_both_papers_is_sampled_as_ever() {
+        // blit_over_paper over a paper drawn white, of a page whose paper is white: blit_canvas's pixels, at the views
+        // of blit_canvas_matches_reference_and_fast_blit_aligns off 100% and more below it, the page's edges in
+        // view, whole and in parts. (At exactly 100% blit_canvas copies the page, and the view never comes here.)
+        let mut pc = Canvas::default();
+        assert_eq!(canvas_init(&mut pc, 64, 48), 0);
+        for (i, p) in pc.px.iter_mut().enumerate() {
+            *p = if i % 5 == 0 { 255 } else if i % 7 == 0 { 0 } else { ((i * 37) % 251) as u8 };
+        }
+        let paper = vec![255u8; 64 * 48];
+        for (zoom, ox, oy) in [(0.5f32, -32.0f32, -24.0f32), (0.73, -10.5, -5.25), (0.75, -9.3, 2.6), (0.9, -4.0, -3.0), (0.97, 3.3, -1.7), (1.25, 10.3, 6.7), (2.3, 20.1, 15.9), (4.0, 48.0, 36.0)] {
+            let mut want = Canvas::default();
+            assert_eq!(canvas_init(&mut want, 64, 48), 0);
+            blit_canvas(&mut want, &pc, zoom, ox, oy, Rect::new(0, 0, 64, 48));
+            for parts in [&[Rect::new(0, 0, 64, 48)][..], &[Rect::new(0, 0, 13, 48), Rect::new(13, 0, 51, 17), Rect::new(13, 17, 51, 31)]] {
+                let mut got = Canvas::default();
+                assert_eq!(canvas_init(&mut got, 64, 48), 0);
+                for &r in parts {
+                    blit_over_paper(&mut got, &pc, &paper, 64, zoom, ox, oy, r);
+                }
+                assert_eq!(got.px, want.px, "zoom={zoom} ox={ox} oy={oy}");
+            }
+        }
+    }
+
+    #[test]
+    fn ink_over_a_ruled_view_and_its_parts() {
+        // On a Seyes page sideways on a screen of 2560x1920: black over the margin and the lines, a highlighter's
+        // gray across every kind of line, a stroke's soft edge fading out across the page, and a page pixel lighter
+        // than its paper, as deposits and nothing else would leave them.
+        let _panel = paper_panel_lock();
+        let mut a = ruled_app(2560, 1920, 1860, 2480, PAPER_SEYES);
+        let whole = Rect::new(0, 0, 2560, 1920);
+        {
+            let pc = &mut ed(&mut a).page_canvas;
+            let w = pc.stride as usize;
+            for y in 300..700 {
+                for x in 200..600 {
+                    pc.px[y * w + x] = pc.px[y * w + x].min(20);
+                }
+            }
+            for y in 900..1300 {
+                for x in 250..900 {
+                    pc.px[y * w + x] = pc.px[y * w + x].min(110);
+                }
+            }
+            for y in 1500..1560 {
+                for x in 100..1700 {
+                    canvas_deposit_px(pc, x as i32, y as i32, 12, (x - 100) as f32 / 1600.0);
+                }
+            }
+            // (a faint line's rows are 2008 and 2009)
+            pc.px[2008 * w + 1000] = 255;
+            pc.px[2009 * w + 1001] = 200;
+        }
+        blit_view(&mut a, whole);
+        let composed = a.screen.px.clone();
+        // the view's parts, composed one by one, come out as the whole
+        canvas_fill(&mut a.screen, whole, 0);
+        for y in (0..1920).step_by(61) {
+            for x in (0..2560).step_by(97) {
+                blit_view(&mut a, Rect::new(x, y, 97, 61));
+            }
+        }
+        assert!(a.screen.px == composed);
+        // Inside the blocks (where every tap is), black is its gray, and the highlighter's gray is over the paper
+        // drawn at the screen's scale, the lines darker than it (the strong ones and the margin) showing through.
+        let s = ed_ref(&a);
+        let (x0, x1) = view_span(s.zoom, s.ox, 1860);
+        let (y0, y1) = view_span(s.zoom, s.oy, 2480);
+        let mut drawn = Canvas::default();
+        assert_eq!(canvas_init(&mut drawn, 2560, 1920), 0);
+        let view = PaperView { zoom: s.zoom, ox: s.ox, oy: s.oy, foot: Rect::new(x0, y0, x1 - x0, y1 - y0) };
+        assert!(paper_render_view(&mut drawn, PAPER_SEYES, 1860, 2480, 300.0, view, whole));
+        let (sx, sy) = (|v: i32| ((v as f32 - s.ox) * s.zoom) as i32, |v: i32| ((v as f32 - s.oy) * s.zoom) as i32);
+        let (mut black, mut light) = (0, 0);
+        for y in 0..1920 {
+            for x in 0..2560 {
+                let i = (y * 2560 + x) as usize;
+                if x > sx(201) && x < sx(598) && y > sy(301) && y < sy(698) {
+                    assert_eq!(composed[i], 20, "{x},{y}");
+                    black += 1;
+                }
+                if x > sx(251) && x < sx(898) && y > sy(901) && y < sy(1298) {
+                    assert_eq!(composed[i], drawn.px[i].min(110), "{x},{y}");
+                    light += (drawn.px[i] < 110) as i32;
+                }
+            }
+        }
+        assert!(black > 80_000 && light > 4_000, "{black} {light}");
+    }
+
+    #[test]
+    fn views_the_ruled_view_leaves_as_they_were() {
+        // 100%: the page as it is.
+        let _panel = paper_panel_lock();
+        let whole = |a: &App| Rect::new(0, 0, a.w, a.h);
+        let mut a = ruled_app(1860, 2480, 1860, 2480, PAPER_SEYES);
+        let r = whole(&a);
+        blit_view(&mut a, r);
+        assert!(a.screen.px == ed_ref(&a).page_canvas.px && ed_ref(&a).paper.px.is_none());
+        let sampled = |a: &App| {
+            let s = ed_ref(a);
+            let mut c = a.screen.clone();
+            blit_canvas(&mut c, &s.page_canvas, s.zoom, s.ox, s.oy, whole(a));
+            c.px
+        };
+        // Sideways: a paper of round marks, a pinch's fast frames, a pinch in past 100% and one out under half
+        // (a page from a much larger screen) are sampled from the page as ever, and so is a page whose paper alone
+        // cannot be made now (a stroke is being drawn).
+        let mut a = ruled_app(2480, 1860, 1860, 2480, PAPER_DOTS);
+        let r = whole(&a);
+        blit_view(&mut a, r);
+        assert!(a.screen.px == sampled(&a));
+        let mut a = ruled_app(2480, 1860, 1860, 2480, PAPER_SEYES);
+        ed(&mut a).fast_blit = true;
+        let r = whole(&a);
+        blit_view(&mut a, r);
+        let s = ed_ref(&a);
+        let mut fast = a.screen.clone();
+        blit_canvas_fast(&mut fast, &s.page_canvas, s.zoom, s.ox, s.oy, whole(&a));
+        assert!(a.screen.px == fast.px && s.paper.px.is_none());
+        ed(&mut a).fast_blit = false;
+        ed(&mut a).zoom = 1.5;
+        view_clamp(&mut a);
+        let r = whole(&a);
+        blit_view(&mut a, r);
+        assert!(a.screen.px == sampled(&a) && ed_ref(&a).paper.px.is_none());
+        let mut a = ruled_app(2480, 1860, 3720, 4960, PAPER_SEYES);
+        assert!(ed_ref(&a).zoom < RULES_MIN_ZOOM);
+        let r = whole(&a);
+        blit_view(&mut a, r);
+        assert!(a.screen.px == sampled(&a));
+        let mut a = ruled_app(2480, 1860, 1860, 2480, PAPER_SEYES);
+        ed(&mut a).cur = Some(stroke_new(TOOL_PENCIL, &ToolParams::default(), 1));
+        let r = whole(&a);
+        blit_view(&mut a, r);
+        assert!(a.screen.px == sampled(&a) && ed_ref(&a).paper.px.is_none());
+        // Once made, the paper alone serves the frames of a stroke too.
+        ed(&mut a).cur = None;
+        let r = whole(&a);
+        blit_view(&mut a, r);
+        let ruled = a.screen.px.clone();
+        assert!(ruled != sampled(&a));
+        ed(&mut a).cur = Some(stroke_new(TOOL_PENCIL, &ToolParams::default(), 1));
+        let r = whole(&a);
+        blit_view(&mut a, r);
+        assert!(a.screen.px == ruled);
+    }
+
+    #[test]
+    fn the_reciprocals_divide_as_division_does() {
+        for d in 1..256u32 {
+            for n in 0..1u32 << 16 {
+                assert_eq!(((n as u64 * RECIP_24[d as usize] as u64) >> 24) as u32, n / d, "{n} / {d}");
+            }
+        }
+    }
+
+    // over_paper_px as #308 first wrote it, every tap through rules_tap: what the quicker path must come to
+    fn over_paper_px_reference(v: u8, p: [u8; 4], q: [u8; 4], wf: u32, wy: u32, bottom: bool) -> u8 {
+        let weighs = [true, wf != 0, bottom, bottom && wf != 0];
+        let mut ink: Option<u8> = None;
+        let mut lighter = false;
+        for i in 0..4 {
+            if weighs[i] {
+                if p[i] < q[i] {
+                    ink = Some(ink.map_or(p[i], |k| k.min(p[i])));
+                } else if p[i] > q[i] {
+                    lighter = true;
+                }
+            }
+        }
+        let u = match (ink, lighter) {
+            (None, false) => return v,
+            (Some(k), false) => [0, 1, 2, 3].map(|i| rules_tap(p[i], q[i], k, v)),
+            (_, true) => p,
+        };
+        let (iwf, iwy) = (255 - wf, 255 - wy);
+        let t = u[0] as u32 * iwf + u[1] as u32 * wf;
+        let b = u[2] as u32 * iwf + u[3] as u32 * wf;
+        ((t * iwy + b * wy + 32512) / 65025) as u8
+    }
+
+    // A written page, made up: n marks of a pen's three rows (a core of 30 between soft rows of 160) at places of a
+    // seeded sequence, darkening the page canvas as deposits do, and here and there a pixel lighter than its paper.
+    fn scatter_ink(pc: &mut Canvas, n: usize, seed: u32) {
+        let mut x = seed;
+        let mut next = |m: i32| {
+            x = x.wrapping_mul(1_103_515_245).wrapping_add(12345);
+            ((x >> 8) % m as u32) as i32
+        };
+        let w = pc.stride as usize;
+        for k in 0..n {
+            let (len, y0, x0) = (8 + next(40), next(pc.h - 3), 0);
+            let x0 = x0 + next(pc.w - len);
+            for (dy, g) in [(0, 160u8), (1, 30), (2, 160)] {
+                for xx in x0..x0 + len {
+                    let i = (y0 + dy) as usize * w + xx as usize;
+                    pc.px[i] = pc.px[i].min(g);
+                }
+            }
+            if k % 97 == 0 {
+                let i = next(pc.h) as usize * w + next(pc.w) as usize;
+                pc.px[i] = pc.px[i].saturating_add(60);
+            }
+        }
+    }
+
+    #[test]
+    fn dense_ink_over_a_ruled_view_is_every_pixel_worked_out() {
+        // blit_over_paper works out only the pixels whose taps meet a page column that is not its paper, takes
+        // blit_canvas's value where the taps are over white paper under white drawn paper (from its interpolated rows
+        // in a row dense with ink), and checks the rest: on pages written lightly to all over, sideways on either
+        // screen, a 1920x2560 notebook upright on the Kindle (0.97) and a tall page at 0.56, on Seyes, Cornell and
+        // sheet music, whole and in parts, the screen is what working out every pixel the long way gives.
+        let _panel = paper_panel_lock();
+        for (aw, ah, pw, ph, k, marks) in [
+            (2480, 1860, 1860, 2480, PAPER_SEYES, 1500),
+            (2480, 1860, 1860, 2480, PAPER_SEYES, 60_000),
+            (2560, 1920, 1860, 2480, PAPER_CORNELL, 6000),
+            (2560, 1920, 1860, 2480, PAPER_CORNELL, 20_000),
+            (1860, 2480, 1920, 2560, PAPER_SEYES, 6000),
+            (1860, 2480, 1920, 2560, PAPER_SEYES, 60_000),
+            (2480, 1860, 2480, 3320, PAPER_MUSIC, 20_000),
+        ] {
+            let mut a = ruled_app(aw, ah, pw, ph, k);
+            scatter_ink(&mut ed(&mut a).page_canvas, marks, marks as u32);
+            let whole = Rect::new(0, 0, aw, ah);
+            blit_view(&mut a, whole);
+            let got = a.screen.px.clone();
+            let s = ed_ref(&a);
+            assert!(s.zoom < 1.0 && s.paper.px.is_some());
+            let (pc, paper) = (&s.page_canvas, s.paper.px.as_deref().unwrap());
+            let (x0, x1) = view_span(s.zoom, s.ox, pw);
+            let (y0, y1) = view_span(s.zoom, s.oy, ph);
+            let mut want = Canvas::default();
+            assert_eq!(canvas_init(&mut want, aw, ah), 0);
+            canvas_fill(&mut want, whole, 205);
+            let view = PaperView { zoom: s.zoom, ox: s.ox, oy: s.oy, foot: Rect::new(x0, y0, x1 - x0, y1 - y0) };
+            assert!(paper_render_view(&mut want, k, pw, ph, 300.0, view, whole));
+            let mut worked = 0;
+            for y in y0..y1 {
+                let fy = (y as f32 + 0.5) / s.zoom + s.oy - 0.5;
+                let py = fy.floor() as i32;
+                let wy = ((fy - py as f32) * 255.0) as u32;
+                let (py0, py1) = (clampi(py, 0, ph - 1) as usize, clampi(py + 1, 0, ph - 1) as usize);
+                for x in x0..x1 {
+                    let fx = (x as f32 + 0.5) / s.zoom + s.ox - 0.5;
+                    let px = fx.floor() as i32;
+                    let wf = ((fx - px as f32) * 255.0) as u8 as u32;
+                    let (xa, xb) = (clampi(px, 0, pw - 1) as usize, clampi(px + 1, 0, pw - 1) as usize);
+                    let at = |c: &[u8], y: usize, x: usize| c[y * pw as usize + x];
+                    let p = [at(&pc.px, py0, xa), at(&pc.px, py0, xb), at(&pc.px, py1, xa), at(&pc.px, py1, xb)];
+                    let q = [at(paper, py0, xa), at(paper, py0, xb), at(paper, py1, xa), at(paper, py1, xb)];
+                    let i = (y * aw + x) as usize;
+                    let v = want.px[i];
+                    want.px[i] = over_paper_px_reference(v, p, q, wf, wy, wy != 0 && py1 != py0);
+                    worked += (p != q) as i32;
+                }
+            }
+            assert!(worked > 1000, "{aw}x{ah} {marks}: {worked}");
+            assert!(got == want.px, "{aw}x{ah} {marks}");
+            // in parts, as refreshes and dabs draw it again
+            canvas_fill(&mut a.screen, whole, 0);
+            for y in (0..ah).step_by(173) {
+                for x in (0..aw).step_by(211) {
+                    blit_view(&mut a, Rect::new(x, y, 211, 173));
+                }
+            }
+            assert!(a.screen.px == got, "{aw}x{ah} {marks} in parts");
+        }
+    }
+
+    #[test]
+    fn the_links_bar_shows_a_page_on_the_open_pages_paper_as_the_open_page() {
+        // The bar looking at page 2 sideways (0.75), on Seyes as page 1 is: its canvas is drawn as the open page's
+        // would be, over the paper drawn at the screen's scale (the open page's paper alone serves both). Looking
+        // at a page on dots, it is sampled as ever.
+        let _panel = paper_panel_lock();
+        for (k2, ruled) in [(PAPER_SEYES, true), (PAPER_DOTS, false)] {
+            let mut a = ruled_app(2480, 1860, 1860, 2480, PAPER_SEYES);
+            let dpi = a.dpi;
+            let s = ed(&mut a);
+            s.nb.page_ids = vec![1, 2];
+            let e = s.entry_for(2).unwrap();
+            s.hist[e].page = Some(page_new(1860, 2480, k2));
+            let mut peeked = Canvas::default();
+            assert_eq!(canvas_init(&mut peeked, 1860, 2480), 0);
+            page_render(&mut peeked, s.hist[e].page.as_deref().unwrap(), Rect::new(0, 0, 1860, 2480), dpi);
+            scatter_ink(&mut peeked, 3000, 7);
+            s.ccache[0] = CacheEntry { pid: 2, w: 1860, h: 2480, pic_gen: bgimage_generation(), canvas: peeked, rows_done: 2480, from_hist: true, ..Default::default() };
+            s.peek = Peek { active: true, index: 1, pid: 2, slot: 0, count: 1, from_back: false };
+            let whole = Rect::new(0, 0, 2480, 1860);
+            compose(&mut a, whole);
+            let shown = a.screen.px.clone();
+            let s = ed_ref(&a);
+            let (zoom, ox, oy) = peek_view(2480, 1860, 1860, 2480, true);
+            assert_eq!((zoom, ox, oy), (s.zoom, s.ox, s.oy));
+            let mut want = a.screen.clone();
+            if ruled {
+                blit_canvas_ruled(&mut want, &s.ccache[0].canvas, s.paper.px.as_deref().unwrap(), s.paper.stride, PAPER_SEYES, dpi, zoom, ox, oy, whole, false);
+            } else {
+                blit_canvas(&mut want, &s.ccache[0].canvas, zoom, ox, oy, whole);
+            }
+            assert!(shown == want.px, "{}", k2.0);
+            let mut sampled = a.screen.clone();
+            blit_canvas(&mut sampled, &s.ccache[0].canvas, zoom, ox, oy, whole);
+            assert_eq!(shown != sampled.px, ruled);
+        }
+    }
+
+    #[test]
+    fn a_ruled_view_draws_only_the_open_pages_paper_under_a_whole_canvas() {
+        // The paper drawn at the screen's scale is the open page's, under a canvas drawn to its last row. The
+        // Links bar looking at a page on another paper of rulings (Medium from a Seyes page), or at one whose
+        // canvas is drawn to row 1000 only, samples it as ever; so does a view of a page canvas that is not the
+        // open page's (a page still being drawn, its lower half white).
+        let _panel = paper_panel_lock();
+        let whole = Rect::new(0, 0, 2480, 1860);
+        for (k2, rows_done) in [(PAPER_MEDIUM, 2480), (PAPER_SEYES, 1000)] {
+            let mut a = ruled_app(2480, 1860, 1860, 2480, PAPER_SEYES);
+            let dpi = a.dpi;
+            let s = ed(&mut a);
+            s.nb.page_ids = vec![1, 2];
+            let e = s.entry_for(2).unwrap();
+            s.hist[e].page = Some(page_new(1860, 2480, k2));
+            let mut peeked = Canvas::default();
+            assert_eq!(canvas_init(&mut peeked, 1860, 2480), 0);
+            page_render(&mut peeked, s.hist[e].page.as_deref().unwrap(), Rect::new(0, 0, 1860, 2480), dpi);
+            scatter_ink(&mut peeked, 3000, 7);
+            let w = peeked.stride as usize;
+            peeked.px[rows_done as usize * w..].fill(255);
+            s.ccache[0] = CacheEntry { pid: 2, w: 1860, h: 2480, pic_gen: bgimage_generation(), canvas: peeked, rows_done, from_hist: true, ..Default::default() };
+            s.peek = Peek { active: true, index: 1, pid: 2, slot: 0, count: 1, from_back: false };
+            compose(&mut a, whole);
+            let shown = a.screen.px.clone();
+            let s = ed_ref(&a);
+            let (zoom, ox, oy) = peek_view(2480, 1860, 1860, 2480, true);
+            let mut sampled = a.screen.clone();
+            blit_canvas(&mut sampled, &s.ccache[0].canvas, zoom, ox, oy, whole);
+            assert!(shown == sampled.px, "the bar on paper {} drawn to row {rows_done}", k2.0);
+        }
+        let mut a = ruled_app(2480, 1860, 1860, 2480, PAPER_SEYES);
+        let s = ed(&mut a);
+        s.canvas_page = 0;
+        let w = s.page_canvas.stride as usize;
+        s.page_canvas.px[1240 * w..].fill(255);
+        blit_view(&mut a, whole);
+        let s = ed_ref(&a);
+        let mut sampled = a.screen.clone();
+        blit_canvas(&mut sampled, &s.page_canvas, s.zoom, s.ox, s.oy, whole);
+        assert!(a.screen.px == sampled.px, "a page canvas that is not the open page's");
+    }
+
+    #[test]
+    fn with_ink_edges_at_solid_a_ruled_view_keeps_its_rulings_beside_the_ink() {
+        // Seyes sideways on the Kindle (0.75), a page written with solid strokes. With Ink edges at Smooth the view
+        // is blit_canvas_ruled's, as on any page. At Solid every pixel of it is black or what the view shows of the
+        // paper alone, each ruling as #308 draws it up to the ink; drawn in parts it is the whole; a pinch's fast
+        // frames are sampled as ever. The Links bar looking at such a page on the open page's paper shows it the
+        // same way, at either setting (with other ink on it as well: never lighter beside it, solid_over_marks).
+        let _panel = paper_panel_lock();
+        let mut a = ruled_app(2480, 1860, 1860, 2480, PAPER_SEYES);
+        let dpi = a.dpi;
+        let whole = Rect::new(0, 0, 2480, 1860);
+        blit_view(&mut a, whole);
+        let paper_alone = a.screen.px.clone();
+        let s = ed(&mut a);
+        let paper = s.paper.px.clone().expect("the view made the page's paper alone");
+        assert!(solid_marks(&mut s.page_canvas, &paper, s.paper.stride) > 20_000);
+        let ruled = |a: &App, pc: &Canvas, solid: bool| {
+            let s = ed_ref(a);
+            let mut c = a.screen.clone();
+            blit_canvas_ruled(&mut c, pc, s.paper.px.as_deref().unwrap(), s.paper.stride, PAPER_SEYES, dpi, s.zoom, s.ox, s.oy, whole, solid);
+            c.px
+        };
+        blit_view(&mut a, whole);
+        let smooth = a.screen.px.clone();
+        assert!(smooth == ruled(&a, &ed_ref(&a).page_canvas, false), "Smooth: the ruled view as it was");
+        {
+            let _solid = InkEdgesScope::new(InkEdges::Solid);
+            blit_view(&mut a, whole);
+            let solid = a.screen.px.clone();
+            assert!(solid == ruled(&a, &ed_ref(&a).page_canvas, true));
+            let (mut black, mut rims) = (0, 0);
+            for i in 0..solid.len() {
+                assert!(solid[i] == 0 || solid[i] == paper_alone[i], "pixel {i} is {} over {}", solid[i], paper_alone[i]);
+                black += (solid[i] == 0) as u32;
+                rims += (smooth[i] != 0 && smooth[i] != paper_alone[i]) as u32;
+            }
+            assert!(black > 10_000 && rims > 10_000, "{black} {rims}");
+            canvas_fill(&mut a.screen, whole, 0);
+            for y in (0..1860).step_by(173) {
+                for x in (0..2480).step_by(211) {
+                    blit_view(&mut a, Rect::new(x, y, 211, 173));
+                }
+            }
+            assert!(a.screen.px == solid, "in parts");
+            ed(&mut a).fast_blit = true;
+            blit_view(&mut a, whole);
+            let s = ed_ref(&a);
+            let mut fast = a.screen.clone();
+            blit_canvas_fast(&mut fast, &s.page_canvas, s.zoom, s.ox, s.oy, whole);
+            assert!(a.screen.px == fast.px, "a pinch's fast frames");
+            ed(&mut a).fast_blit = false;
+        }
+        // The Links bar on page 2, written the same way on the same paper.
+        let s = ed(&mut a);
+        s.nb.page_ids = vec![1, 2];
+        let e = s.entry_for(2).unwrap();
+        s.hist[e].page = Some(page_new(1860, 2480, PAPER_SEYES));
+        let mut peeked = Canvas::default();
+        assert_eq!(canvas_init(&mut peeked, 1860, 2480), 0);
+        page_render(&mut peeked, s.hist[e].page.as_deref().unwrap(), Rect::new(0, 0, 1860, 2480), dpi);
+        assert!(peeked.px == *paper, "page 2 is its paper alone");
+        scatter_ink(&mut peeked, 3000, 7);
+        let other_ink = peeked.clone();
+        assert!(solid_marks(&mut peeked, &paper, 1860) > 20_000);
+        s.ccache[0] = CacheEntry { pid: 2, w: 1860, h: 2480, pic_gen: bgimage_generation(), canvas: peeked, rows_done: 2480, from_hist: true, ..Default::default() };
+        s.peek = Peek { active: true, index: 1, pid: 2, slot: 0, count: 1, from_back: false };
+        compose(&mut a, whole);
+        assert!(a.screen.px == ruled(&a, &ed_ref(&a).ccache[0].canvas, false), "the bar at Smooth");
+        let without = ruled(&a, &other_ink, false);
+        let _solid = InkEdgesScope::new(InkEdges::Solid);
+        compose(&mut a, whole);
+        assert!(a.screen.px == ruled(&a, &ed_ref(&a).ccache[0].canvas, true), "the bar at Solid");
+        let plain = ruled(&a, &ed_ref(&a).ccache[0].canvas, false);
+        let (kept, _) = solid_over_marks(&a.screen.px, &without, &plain, "the bar at Solid");
+        assert!(kept > 0);
+    }
+
+    #[test]
+    fn with_ink_edges_at_solid_the_links_bar_shows_a_sampled_page_as_it_will_open() {
+        // The bar looking at page 2 sideways (0.75), a page sampled as ever (blank paper, or dots), written with
+        // solid strokes. At Smooth it is blit_canvas's. At Solid, on the open page's paper, it is what blit_view
+        // draws of the open page: the sampled view with the Solid pass, every pixel black, or the page without the
+        // strokes, or beside other ink blit_canvas's (never lighter there: solid_over_marks). On another paper than
+        // the open page's (dots, from a blank page) no paper tells its ink by, and it is sampled with no pass.
+        let _panel = paper_panel_lock();
+        let whole = Rect::new(0, 0, 2480, 1860);
+        for (k1, k2) in [(PAPER_BLANK, PAPER_BLANK), (PAPER_DOTS, PAPER_DOTS), (PAPER_BLANK, PAPER_DOTS)] {
+            let mut a = ruled_app(2480, 1860, 1860, 2480, k1);
+            let dpi = a.dpi;
+            let s = ed(&mut a);
+            s.nb.page_ids = vec![1, 2];
+            let e = s.entry_for(2).unwrap();
+            s.hist[e].page = Some(page_new(1860, 2480, k2));
+            let mut peeked = Canvas::default();
+            assert_eq!(canvas_init(&mut peeked, 1860, 2480), 0);
+            page_render(&mut peeked, s.hist[e].page.as_deref().unwrap(), Rect::new(0, 0, 1860, 2480), dpi);
+            let paper2 = peeked.px.clone();
+            scatter_ink(&mut peeked, 3000, 7);
+            let other_ink = peeked.clone();
+            assert!(solid_marks(&mut peeked, &paper2, 1860) > 20_000);
+            s.ccache[0] = CacheEntry { pid: 2, w: 1860, h: 2480, pic_gen: bgimage_generation(), canvas: peeked, rows_done: 2480, from_hist: true, ..Default::default() };
+            s.peek = Peek { active: true, index: 1, pid: 2, slot: 0, count: 1, from_back: false };
+            let (zoom, ox, oy) = peek_view(2480, 1860, 1860, 2480, true);
+            assert_eq!(zoom, 0.75);
+            let sampled = |a: &App, pc: &Canvas| {
+                let mut c = a.screen.clone();
+                blit_canvas(&mut c, pc, zoom, ox, oy, whole);
+                c.px
+            };
+            compose(&mut a, whole);
+            assert!(a.screen.px == sampled(&a, &ed_ref(&a).ccache[0].canvas), "papers {} {}: the bar at Smooth", k1.0, k2.0);
+            let _solid = InkEdgesScope::new(InkEdges::Solid);
+            compose(&mut a, whole);
+            let shown = a.screen.px.clone();
+            let plain = sampled(&a, &ed_ref(&a).ccache[0].canvas);
+            if k1 == k2 {
+                let mut want = a.screen.clone();
+                blit_canvas(&mut want, &ed_ref(&a).ccache[0].canvas, zoom, ox, oy, whole);
+                blit_solid_edges(&mut want, &ed_ref(&a).ccache[0].canvas, Some((&paper2, 1860)), zoom, ox, oy, whole);
+                assert!(shown == want.px, "paper {}: the bar at Solid", k1.0);
+                let without = sampled(&a, &other_ink);
+                let (kept, lighter) = solid_over_marks(&shown, &without, &plain, &format!("paper {}", k1.0));
+                assert!(kept > 0 && lighter == 0, "paper {}: {kept} {lighter}", k1.0);
+                assert!(shown != plain);
+                // (the paper it was told by is the open page's, made for the bar where the open page's view had not)
+                let s = ed_ref(&a);
+                assert!(s.paper.px.as_deref().is_some_and(|p| *p == paper2) && s.paper_k == k1);
+            } else {
+                assert!(shown == plain, "papers {} {}: sampled, no pass", k1.0, k2.0);
+            }
+        }
+    }
+
+    #[test]
+    fn a_solid_word_on_a_ruled_view_leaves_a_kindle_nothing_to_settle() {
+        // The Kindle's copy of a frame (fbpack_row_cached over a known frame, through the RAM shadow its settle
+        // reads: display_fbink.rs) run over the frames of a ballpoint word written sideways on Medium rule, at 0.75:
+        // each live frame is the part of the view a dab changed, drawn by blit_view and copied fast, then the settle's
+        // frame is the whole view. With Ink edges at Solid the shadow shows the settled view at every pixel's level,
+        // across the lines the word crosses too, so that settle sends nothing; with Smooth the word's dithered grays
+        // are left for it. (The simulator's panel dithers a fast frame's unchanged grays as well, a line's among
+        // them, so no scenario shows this over the lines: docs/SIM.md, editor.settles_sent.)
+        let _panel = paper_panel_lock();
+        for edges in [InkEdges::Solid, InkEdges::Smooth] {
+            let _edges = InkEdgesScope::new(edges);
+            let (aw, ah) = (2480, 1860);
+            let mut a = ruled_app(aw, ah, 1860, 2480, PAPER_MEDIUM);
+            assert_eq!(ed_ref(&a).zoom, 0.75);
+            let whole = Rect::new(0, 0, aw, ah);
+            let n = (aw * ah) as usize;
+            let (mut fb, mut previous, mut shown) = (vec![0u8; n], vec![0u8; n], vec![0u8; n]);
+            let copy = |screen: &Canvas, r: Rect, fast: bool, fb: &mut [u8], previous: &mut [u8], shown: &mut [u8]| {
+                for y in r.y..r.y + r.h {
+                    let at = (y * aw + r.x) as usize;
+                    fbpack_row_cached(fb, at, 1, Some(&mut *previous), Some(&mut *shown), at, 1, &screen.px[(y * screen.stride + r.x) as usize..], r.w, r.x, y, 8, false, fast, true);
+                }
+            };
+            blit_view(&mut a, whole);
+            copy(&a.screen, whole, false, &mut fb, &mut previous, &mut shown);
+            let lines = a.screen.px.iter().filter(|&&v| v == 119).count();
+            assert!(lines > 50_000, "the view's lines, drawn at its scale ({lines} px)");
+            let mut prm = ToolParams::default();
+            tool_params_default(TOOL_BALLPOINT, &mut prm);
+            let mut b = BrushState::default();
+            brush_begin(&mut b, TOOL_BALLPOINT, &prm, 99, 300.0);
+            let mut frames = 0;
+            for k in 0..=80 {
+                let f = k as f32 / 80.0;
+                let q = PenSample { x: 500.0 + 700.0 * f, y: 1200.0 + 130.0 * (f * 12.0).sin(), pressure: 0.3 + 0.6 * f, t_ms: k * 8, ..Default::default() };
+                let d = brush_add(&mut b, &mut ed(&mut a).page_canvas, &q);
+                let r = page_to_screen(&a, d);
+                if !rect_is_empty(r) {
+                    blit_view(&mut a, r);
+                    copy(&a.screen, r, true, &mut fb, &mut previous, &mut shown);
+                    frames += 1;
+                }
+            }
+            assert!(frames > 40, "{frames} live frames");
+            blit_view(&mut a, whole);
+            let s = &a.screen;
+            let row = |y: i32| &s.px[(y * s.stride) as usize..][..aw as usize];
+            let differ = (0..ah).filter(|&y| fbpack_level_span(row(y), &shown, (y * aw) as usize, 1, false).is_some()).count();
+            let dark = s.px.iter().filter(|&&v| v < 64).count();
+            assert!(dark > 1500, "the word shows ({dark} px)");
+            if edges == InkEdges::Solid {
+                assert_eq!(differ, 0, "rows a Kindle's settle would send");
+                assert!(s.px == shown, "the shadow is the settled view");
+                // (and the word did cross lines: the view's lines are fewer by what it covers)
+                assert!(s.px.iter().filter(|&&v| v == 119).count() < lines);
+            } else {
+                assert!(differ > 20, "Smooth: {differ} rows left to settle");
+            }
+        }
+    }
+
 
     // A drag of the panel's grip moves the panel itself where the finger takes it, drawn in black and
     // white alone while it moves, and in grays again where it lands on release.

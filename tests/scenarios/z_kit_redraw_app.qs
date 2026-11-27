@@ -33,10 +33,23 @@ wait 200
 expect library.app.status has p003
 expect display.presents is ui 100 178 200 200
 expect display.stale.0.0.1860.2480 is 0
-# and so on, one refresh of the square a second, nothing else
-wait 2500
+# and so on, one refresh of the square a second, nothing else: each pass in a wait of its own, as the one before
+# (a wait's time is made up in one step at its end on a slow machine, docs/SIM.md: one wait that held two passes
+# gave the second, asked for by the first, no time to come due). The third pass ran in the last 100 ms, so the
+# fourth is due 900 to 1,000 ms from here and the fifth 1,900 to 2,100 ms.
+wait 800
+expect library.app.status has p003
+expect display.presents is
+wait 300
+expect library.app.status has p004
+expect display.presents is ui 100 178 200 200
+expect display.stale.0.0.1860.2480 is 0
+wait 700
+expect library.app.status has p004
+expect display.presents is
+wait 400
 expect library.app.status has p005
-expect display.presents is ui 100 178 200 200, ui 100 178 200 200
+expect display.presents is ui 100 178 200 200
 expect display.stale.0.0.1860.2480 is 0
 shot 01-graytick
 swipe 2 930 2200 0 -1000

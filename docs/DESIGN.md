@@ -70,14 +70,44 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
 
 - The editor's `page_canvas` holds the rendered page (paper + ink) at the notebook's page size,
   not the device's: `use_page_size`, as a notebook opens, makes it and the paper previews again
-  when the size changes, and every page the editor reads comes through `load_page`, at that
-  size. The view maps page to screen (zoom + pan): `view_reset` fits the page's width to the
-  screen's (`zoom_default` = screen width / page width, 1.00 upright for a notebook made on this
-  screen, 1.07 for an 1860x2480 notebook on a 1986x2648 screen), `zoom_min` shows the whole page,
-  and a pinch zooms up to 4x the fit. The sleep screen fits the page to the screen the same way
-  (`canvas_blit_fit`). `App.screen` is what the panel shows: the viewed page plus overlays
-  (floating panel, modals). Overlays are re-drawn on top of the page whenever a region is
-  recomposed.
+  when the size changes, and every page the editor reads comes through `load_page`, at that size.
+  The view maps page to screen (zoom + pan): `view_reset` fits the page's width to the screen's
+  (`zoom_default` = screen width / page width, 1.00 upright for a notebook made on this screen,
+  1.07 for an 1860x2480 notebook on a 1986x2648 screen), `zoom_min` shows the whole page, and a
+  pinch zooms up to 4x the fit. A page a little smaller than the screen (`page_near_view`: no
+  larger on either axis, within 4% on both, not its size, such as an 1860x2480 page on a 1920x2560
+  screen) rests at 100% instead, centred on whole pixels with the desk around it, which is its
+  `zoom_min` too: a fit of a few percent would resample every stroke and the live ink, softer and
+  a few percent larger than written, and at 100% `blit_canvas` copies the page 1:1. The sleep
+  screen fits the page to the screen (`canvas_blit_fit`), whatever its size. `App.screen` is what
+  the panel shows: the viewed page plus overlays (floating panel, modals). Overlays are re-drawn
+  on top of the page whenever a region is recomposed.
+- Off 100% the view samples the page canvas with a two-tap bilinear (`blit_canvas`), and the panel
+  then cuts each gray to its 16. Below 100% (to half), a paper of rulings is drawn at the screen's
+  scale instead (issue #308, `blit_canvas_ruled`): the six ruled kinds, sheet music, graph, the cross
+  grid, Seyes, Cornell, the grand staff, the guitar and bass tabs and the custom music layouts
+  (`paper_view_draws`). `paper_render_view` draws the paper over the rect, every line on whole screen
+  pixels as wide and as gray as on the page, placed by one rounding of its page coordinates (a
+  barline's end and a cross's arms placed from the line they meet, so they still meet it), and the
+  marks some carry (Cornell's labels, the clefs, "TAB", the braces) at the view's scale. The page's
+  ink is sampled over it (`blit_over_paper`). A screen pixel whose taps hold the paper alone (the page
+  canvas equal to `s.paper`, the paper alone at page size, which the first such frame makes:
+  `view_rules`) keeps the drawn paper. One with ink takes each tap as that ink would show over the
+  drawn paper (ink darkens toward its gray: a tap darker than its paper is ink of the darkest gray
+  among the taps over part of the pixel), mixed with the bilinear's weights and rounding, so ink over
+  paper that is white in both comes out exactly as before. Each page row is compared with its paper
+  32 bytes at a time, so the paper costs next to nothing; ink over white paper is `blit_canvas`'s
+  pixel straight away (in a row with ink over a quarter of it, from its rows interpolated as
+  `blit_canvas` does), and only the pixels near a ruling are worked out one by one. Sampled with the
+  page, each line fell at its own fraction of a pixel: at 0.75 (the whole page sideways) Seyes's inner
+  lines came out in four shapes, the heaviest a third darker than the lightest on the 16 grays. The
+  Links bar's preview of another page on the open page's paper is drawn the same way
+  (`peek_rules`). With Ink edges at Solid (2.3, #320) a solid stroke shows in these views as in every
+  scaled one, black or not at all, over the lines as drawn here (the settle with Ink edges at Solid,
+  below). The 100% view, zooms of 100% and more, a pinch's fast frames, the dots, isometric,
+  hex and image papers (round marks, slanted lines and pictures, at fractions of a pixel on the page
+  itself) are sampled from the page as before, and nothing drawn at page size (pages, exports,
+  previews, kept drawings) changes.
 - Screens never call display directly. They call `app_invalidate(app, rect, mode)` and the
   main loop calls `app_flush(app)` after draining all pending input events, so a burst of
   pen samples becomes one refresh.
@@ -87,6 +117,13 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   every 30 UI refreshes), and in the Rust build `RefreshMode::Clean` (GC16 flashing over the given
   rect alone).
   Accumulating different modes keeps the strongest (FULL > CLEAN > UI > FAST).
+- Refreshes nobody asked for (issue #280): a part of the screen that fills in by itself (`app_invalidate_filling`:
+  Files' Covers tiles, a package's picture) or redraws when its time comes (`app_invalidate_unasked`: a widget
+  frame's timed redraw) is a UI refresh like any other, and `app_flush` tells the platform so just before its
+  present (`display_unasked`) when nothing that anything asked for is flushed with it and it was not promoted to
+  the every-30th FULL. A platform that adds a cleaning flash of its own to large grayscale refreshes can leave it
+  out for these, which arrive while nobody touches anything. The Kindle does nothing with it (its UI refreshes
+  never flash), and the timed redraw counts toward the every-30th FULL, and becomes it, as any UI refresh.
 - DU wear (issue #11, display.rs `DuWear`): DU turning a pixel from black to white leaves a faint trace
   of the black, and the GL16 settle after it does not reach that pixel (a partial update drives only the
   pixels whose value changed, and DU already wrote its final white). The toolbar drag's release cleans
@@ -103,34 +140,52 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   another level (value >> 4) than the screen holds now (`display_settle_area`), lighter pixels as well as darker
   ones (a shape snapped, an undo, the lasso and erasing take ink away), padded by 3 px (`SETTLE_MARGIN`), and
   refreshes only that in grays, or nothing at all: a solid word on any paper settles with no refresh. That holds
-  in a view that is not 1:1 too (zoomed, or a page fitted sideways), which compose scales bilinearly: with Solid, a
-  screen pixel whose page pixels include a solid stroke's black (0 where the page's paper is not) is black where
-  that ink has half its weight or more, else the blend with the ink's pixels taken as their paper (editor.rs
-  `blit_solid_edges`), so over its paper a solid stroke changes screen pixels only to black there as well. Beside
-  other ink (pencil, charcoal, a highlight, a pen given grain, drawn before the stroke or after it) the paper is
-  not taken for the ink: where the ink has less than half the weight and one of the four page pixels with any
-  weight is neither such ink nor its own paper, the bilinear blend stays, which counts the ink as black and so is
-  never lighter than the view without the stroke (taking the paper there left a pale outline along the stroke).
-  The page does not keep what a solid stroke covers, so where the four show only the ink and paper, other ink the
-  stroke covered there shows as paper, lighter than without the stroke: a few pixels of a view, more where the
-  stroke meets black of the paper's own (a PDF page's text, a template's lines) under a highlight or pencil, as
-  that black counts as paper. So the settle of a solid stroke that crosses other ink in such a view may send a
-  small refresh, of the grays beside it. Only the settle's rect is judged; anything else due goes out as it would.
-  The settle follows the flush of the stroke's own live frames, by order and not by time: the loop handles a batch
-  of input, ticks, then flushes, so a tick that comes to the pen's leaving 150 ms late finds the settle due while
-  the stroke's last frames still wait for the flush. While a refresh waits where the settle's rect is on screen,
-  the tick leaves the settle due (editor.rs `settle_waits_for_flush`); the flush sends the frames, and the next
-  tick settles against a panel that has them. Nothing is flushed from the tick; refreshes waiting elsewhere hold
-  the settle back one pass at most (what waits for the flush is one rect, which two of them can stretch across the
-  stroke); and a settle an action forces (Undo, a tap on the toolbar) is taken at once. The display's contract
-  (display.rs): a platform answers the whole rect unless it knows what it last gave the panel at every pixel of it,
-  so one that keeps no record (the default), or whose last frames may not all have reached the panel as written (a
-  refresh refused or failed, a rotation or inversion since, until a whole grayscale frame; a colour panel, whose
-  live frames are not waited for), refreshes all of it as before; one with a pen mode leaves it when it answers
-  empty, as the grayscale refresh would have (the status bar waits for it). display_fbink.rs answers from
-  `g_shown`, the RAM shadow of the bytes written to the framebuffer, row by row as `copy_row` writes them
-  (`fbpack_level_span`); the simulator from its panel. With Smooth the settle is the UI refresh of its whole rect,
-  as before.
+  in a view that is not 1:1 too (zoomed, or a page fitted sideways), which compose scales: with Solid, a screen
+  pixel whose page pixels include a solid stroke's black (0 where the page's paper is not) is black where that ink
+  has half its weight or more, else what the same view shows with the stroke absent (editor.rs `solid_px`, one
+  rule and one pass, `solid_edges`, for both ways a view is drawn). The sampled view takes the blend with the
+  ink's pixels taken as their paper (`blit_solid_edges`). A view that draws a paper of rulings at the screen's
+  scale (issue #308, above) takes what is left of the taps over the paper it drew, which is that paper itself
+  where nothing else is written, so each line stays whole and even up to the stroke and under its edge
+  (`blit_canvas_ruled`: the answers are worked out over the drawn paper, before the ink is sampled over it, and
+  put over the result; a byte kept for each pixel that reads such ink). So over its paper a solid stroke changes
+  screen pixels only to black there as well, and the frames drawn while writing are the frame the settle
+  composes. Beside other ink (pencil, charcoal, a highlight, a pen given grain, drawn before the stroke or after
+  it) the paper is not taken for the ink alone: where the ink has less than half the weight and one of the four
+  page pixels with any weight is neither such ink nor its own paper, the pixel is the darker of the view's own,
+  which counts the ink as it is, and the view without the stroke (taking only the paper there left a pale outline
+  along the stroke). In the sampled view that is always the bilinear blend, which counts the ink as black. The
+  ruled view's own sampling can be the lighter of the two: it takes the darkest ink among a pixel's page pixels,
+  there the stroke's black, as the gray of all of them, and lays the others over the paper it drew by that. The
+  page does not keep what a solid stroke covers, so where the four show only the ink and paper, other ink the
+  stroke covered there shows as paper, lighter than without the stroke (and in the ruled view some pixels beside
+  other ink, whose sampling the covered ink would have changed, come out lighter or darker): a few pixels a view
+  on a written page, more over dense layers of ink, zoomed in, and where the stroke meets black of the paper's own
+  (a PDF page's text, a template's lines) under a highlight or pencil, as that black counts as paper. In the
+  sampled view such a pixel is lighter by about half the covered ink's darkness at most (the covered pixel weighs
+  less than half); in the ruled view by up to all of it, where the view without the stroke shows the covered ink
+  at its own gray over a line (`rules_tap`) and the pass gives the paper drawn. So the settle of a solid stroke that crosses other ink in such a view may send a small
+  refresh, of the grays beside it. A view at 100% on whole pixels copies the page (a
+  page of the screen's size scrolled, or one a little smaller at rest, issue #303) and has no such pass: nothing
+  is blended there, and the desk comes right up to the page (`view_copies`). The Links bar's view of another page
+  follows the same rule, ruled or sampled, where the open page's paper alone is that page's paper too
+  (`peek_paper`: it tells a solid stroke's black from the paper's own), so the page shows there as it will once
+  it is open; a page on another paper is sampled with no pass, since no paper of its own is kept for it. Only the
+  settle's rect is judged; anything else due goes out as it would. The settle follows the flush of the stroke's
+  own live frames, by order and not by time: the loop handles a batch of input, ticks, then flushes, so a tick
+  that comes to the pen's leaving 150 ms late finds the settle due while the stroke's last frames still wait for
+  the flush. While a refresh waits where the settle's rect is on screen, the tick leaves the settle due (editor.rs
+  `settle_waits_for_flush`); the flush sends the frames, and the next tick settles against a panel that has them.
+  Nothing is flushed from the tick; refreshes waiting elsewhere hold the settle back one pass at most (what waits
+  for the flush is one rect, which two of them can stretch across the stroke); and a settle an action forces
+  (Undo, a tap on the toolbar) is taken at once. The display's contract (display.rs): a platform answers the whole
+  rect unless it knows what it last gave the panel at every pixel of it, so one that keeps no record (the
+  default), or whose last frames may not all have reached the panel as written (a refresh refused or failed, a
+  rotation or inversion since, until a whole grayscale frame; a colour panel, whose live frames are not waited
+  for), refreshes all of it as before; one with a pen mode leaves it when it answers empty, as the grayscale
+  refresh would have (the status bar waits for it). display_fbink.rs answers from `g_shown`, the RAM shadow of the
+  bytes written to the framebuffer, row by row as `copy_row` writes them (`fbpack_level_span`); the simulator from
+  its panel. With Smooth the settle is the UI refresh of its whole rect, as before.
 - The Kindle display keeps the previous logical frame in physical order (+4.6 MB at 1860x2480).
   `fbpack_row` dithers only changed pixels for a FAST refresh. Unchanged gray image paper stays
   gray in the framebuffer, which DU leaves alone; earlier dithered ink stays as it was until the
@@ -837,11 +892,13 @@ announcements: goingToScreenSaver draws the sleep screen, outOfScreenSaver is th
   failed check, an unknown script line or a leftover `*.tmp` fails the build once every scenario
   has run, and a headless run waits for the PDF exports it started. A `# root: NAME` line starts a
   scenario from another scenario's data (d_persist, x_turn_calibrated and y_pagesize_1_ksc use
-  b_library's, s_passcode_once r_passcode's, y_pagesize_2_back y_pagesize_1_ksc's, z_language_kept
-  y_language's), `# env: K=V` lines set its environment (`GRIMOIRE_PASSCODE` in r_passcode,
+  b_library's, s_passcode_once r_passcode's, y_pagesize_2_back y_pagesize_1_ksc's,
+  y_rulings_2_other_size y_rulings_1_sideways's, z_language_kept y_language's), `# env: K=V` lines
+  set its environment (`GRIMOIRE_PASSCODE` in r_passcode,
   s_passcode_once, t_passcode_left_off and z_annotate_f_passcode, `GRIMOIRE_BG_DELAY_MS` in
   v_leave_from_editor, `GRIMOIRE_HOST` in y_koreader_hosted and y_koreader_not_hosted,
-  `GRIMOIRE_LANG` in y_language and z_language_kept, `GRIMOIRE_SIM_SIZE` in y_pagesize_1_ksc,
+  `GRIMOIRE_LANG` in y_language and z_language_kept, `GRIMOIRE_SIM_SIZE` in y_pagesize_1_ksc and
+  y_rulings_2_other_size,
   `GRIMOIRE_CHECK_FIT` and `GRIMOIRE_SIM_ADDRS` in y_all_screens), `# settings: key=value` lines
   go into its settings.ini, and a `# pdfs: N` line wants exactly N PDFs in its root's PDFs/ folder.
   The rule unsets the test hooks first, so nothing else of the caller's reaches them, and runs
@@ -1376,8 +1433,8 @@ announcements: goingToScreenSaver draws the sleep screen, outOfScreenSaver is th
    came out corrupt (its WebM changed size mid-file). Viewers end with a bye when Live view stops
    (Stop on the card, 10 minutes without a viewer, Grimoire leaving: `app_shutdown` stops them
    before anything else, so no export child inherits a socket and the headless runner never waits
-   for one); on Linux they also have PR_SET_PDEATHSIG, and everywhere they end once their parent
-   has gone.
+   for one); on Linux (and in a build with the `linux-kernel` feature, PORTING.md) they also have
+   PR_SET_PDEATHSIG, and everywhere they end once their parent has gone.
    An icon-only chip says Live view is on: in the top right corner (inside the 50 px margin) on the Library,
    Share and the other screens, and beside the editor's panel on a notebook page (and none while a menu is
    in front of it); it is overlaid at the present like the toast, and the screen guard skips it
@@ -1684,7 +1741,10 @@ from the colour page measured above with about 60 MiB of headroom; previews and 
 writer 128, two copies of a 24 MB font; a file's preview 128, a picture or a font read whole; a file copy 64;
 compaction and the default 256; a picture job 512, above its own tighter cap), applied after `child_setup` for each bgjob child, the detached child, the share server's render children
 (128 MiB) and Live view's viewer children (64 MiB). A child that cannot read its own size (`/proc/self/statm`) is
-capped at 1 GiB plus its margin, never left without one. Both caps are Linux's; the host build applies nothing.
+capped at 1 GiB plus its margin, never left without one. Both caps are a Linux kernel's: a build with the
+`linux-kernel` feature (PORTING.md) applies them too, except that a child there that cannot read its size gets no
+address-space cap (an allocator there may hold more than 1 GiB from the start); the host build on macOS applies
+nothing.
 The CI job `sandbox` mirrors a Scribe-sized colour page under the real cap. The mirror logs its pages, how many it
 drew, its time and `VmHWM` ("bg: export of ...: N pages, D drawn, T ms, VmHWM K kB").
 
@@ -3257,10 +3317,10 @@ may cost is held to a few seconds a file, behind every other job.
   one Ui refresh of the union of those tiles, the mode a list's rows fill in with, as a refresh that fills in by
   itself (`app_invalidate_filling`): counted toward the cleaning Full like any Ui, and never itself promoted to
   it, so no whole-panel flash lands in the middle of a screen that is arriving; the next refresh a tap asks for
-  is the Full instead. A screen of previews costs one refresh when they come within 2 s, and one more for every
-  2 s they take. Nothing is drawn under an open card: its close (and its opening) refreshes the tiles that
-  changed meanwhile together with the card's rect, whichever row closes it (Cancel, or a picture's Use as
-  template or Use as photo, `copy_in`).
+  is the Full instead. The platform hears that nobody asked for it (`display_unasked`). A screen of previews
+  costs one refresh when they come within 2 s, and one more for every 2 s they take. Nothing is drawn under an
+  open card: its close (and its opening) refreshes the tiles that changed meanwhile together with the card's
+  rect, whichever row closes it (Cancel, or a picture's Use as template or Use as photo, `copy_in`).
 - **The notice** "Making previews..." (`NoticeKey::Previews`, on the Library's screen that asked) stays while a
   preview the screen asked for is being made, from its first second on, as "Loading..." does; not while the
   screen's jobs only wait behind other work, whose own notice shows.

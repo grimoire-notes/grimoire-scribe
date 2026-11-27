@@ -258,6 +258,11 @@ fn the_page_offers_to_send_with_a_token_of_its_own() {
     check!(tok.len() == 32 && tok.bytes().all(|c| c.is_ascii_hexdigit()));
     check!(t.contains(&format!("\",\"max\":{UPLOAD_MAX},\"words\":{{\"send\":\"Send a PDF to the Kindle\",\"sending\":\"Sending PDF: {{percent}}\"")));
     check!(t.contains("\"confirm\":\"Confirm on the Kindle.\",\"code\":\"Code %s\",\"sent\":\"Copied to grimoire/import.\",\"no\":\"Not imported.\""));
+    // (the import folder as found from the storage root, pdfimport::own_folder_shown: with the storage a folder
+    // further out than the Kindle's, the path from there)
+    std::env::set_var("GRIMOIRE_STORAGE", tl_tmp());
+    check!(get("/").text().contains(&format!("\"sent\":\"Copied to upload-{}/grimoire/import.\"", std::process::id())));
+    std::env::remove_var("GRIMOIRE_STORAGE");
     check!(t.contains("\"reload\":\"Open Share on the Kindle, then reload this page.\",\"wait\":\"Wait 5 seconds, then send again.\""));
     check!(t.contains("\"big\":\"PDF too big: over 64 MB.\",\"full\":\"Couldn't import PDF. Is the storage full?\"}};</script><script>"));
     check!(t.contains("x.open('POST', '/upload');") && t.contains("x.setRequestHeader('X-Grimoire-Token', cfg.token);"));

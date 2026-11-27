@@ -567,15 +567,19 @@ def l10n(args, hooks):
     times = read_times(args.times)
     w_all = times.get('y_all_screens', DEFAULT_WEIGHT)
     if not args.skip_rust_only:
+        # (on a fixture storage root when its "# storage:" line says so, as make scenarios runs it: the texts that
+        # name one of Grimoire's folders then read as on the Kindle, grimoire/trash, not with the run's name)
+        all_storage = header(args.scenario)['storage']
         for lang in langs:
             for style in styles_for(lang):
                 n = f'{lang}-{style}'
                 if n in args.skip:
                     print(f'== l10n {n}: skipped (make scenarios ran {args.scenario} in it)')
                     continue
-                task(n, args.scenario, f'{b}/scen/l10n/{n}',
-                     [('GRIMOIRE_LANG', lang), ('GRIMOIRE_CHECK_FIT', '1'), ('GRIMOIRE_SIM_ADDRS', 'wlan0=192.168.0.20')],
-                     inis[style], w_all)
+                t = task(n, args.scenario, f'{b}/scen/l10n/{n}',
+                         [('GRIMOIRE_LANG', lang), ('GRIMOIRE_CHECK_FIT', '1'), ('GRIMOIRE_SIM_ADDRS', 'wlan0=192.168.0.20')],
+                         inis[style], w_all)
+                t.storage = all_storage
         for lang in langs:
             for style in styles_for(lang):
                 n = f'shapes-{lang}-{style}'
@@ -603,12 +607,13 @@ def l10n(args, hooks):
             t.copies = copies
     if not args.skip_rust_only:
         # Settings > Font (2.1) in every language and in each font, Terminess too: its Font row, and the sheet
-        # with each family tapped.
+        # with each family tapped. On a fixture storage root, so its heading names grimoire/fonts as on the Kindle.
         for lang in langs:
             for style in ['classic'] + [f'classic-{f}' for f in CLASSIC_FONTS]:
                 n = f'fonts-{lang}-{style}'
-                task(n, 'tests/l10n/fonts.qs', f'{b}/scen/l10n/{n}',
-                     [('GRIMOIRE_LANG', lang), ('GRIMOIRE_CHECK_FIT', '1')], inis[style], 4.0)
+                t = task(n, 'tests/l10n/fonts.qs', f'{b}/scen/l10n/{n}',
+                         [('GRIMOIRE_LANG', lang), ('GRIMOIRE_CHECK_FIT', '1')], inis[style], 4.0)
+                t.storage = True
         # Your own fonts (2.1.0-beta.2): the Font sheet over a fonts folder of fixtures, in every language: every
         # note a row can carry, the headings and the notice; then every font taking too long.
         for script, ini, extra, weight in (

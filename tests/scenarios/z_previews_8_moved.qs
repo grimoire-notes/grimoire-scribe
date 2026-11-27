@@ -10,7 +10,9 @@ wait 300
 tap library notebook.previews
 tap panel pages
 expect editor.modal is pages
-wait 300
+# (the batch begun and the screenful's light pages made, the dense page still drawn: waited for, not a time they
+# take on a quiet machine; a batch begun after the delete would hold the ninth page)
+waitfor editor.pages.shows is lpppppppp
 expect bg.busy is 1
 # (page 3's tile held: its card's Delete)
 touch down 1542 500

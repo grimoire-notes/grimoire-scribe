@@ -101,6 +101,18 @@
   cleaned once they stop (#307). A held tap on a widget is still a tap.
   Packages made with the package kit can also tell a tap from a long press and a drag, and are told when their
   settings change. docs/KIT.md says how.
+- **A page a little smaller than the screen shows at 100%** (#303). A notebook made on a screen a little smaller
+  than this one (its page at least 96% of the screen's width and height, and larger on neither) rests at 100%,
+  centred, with a narrow band of the desk around the page, where it was enlarged by a few percent to fill the
+  screen's width. Its ink shows pixel for pixel as it was written, without the softening the enlargement gave it,
+  and zooming back out, by a pinch or Fit page, returns to that view. Turned sideways, and on a screen of its own
+  size or one further from it, a notebook opens as before.
+- **Even paper lines below 100%** (#308). Where a page shows smaller than 100% (the whole page sideways, a
+  notebook from a larger screen fitted to this one, or a page zoomed out to between 50% and 100%), the lines of
+  the ruled papers, Cornell notes, Graph paper, Cross grid, Seyes rule and the music papers are drawn at the
+  screen's own scale, every one as wide and as gray as at 100%, where until now each line came out at a weight of
+  its own (Seyes rule's inner lines in four shapes sideways). So the lines read darker sideways than they did.
+  Dot grid, Isometric, Hexagon and pages on a picture show as before.
 - **Darker paper lines** (#314). Narrow, Medium and Wide rule (with and without a margin), Cornell notes, Graph
   paper, Dot grid, Cross grid, Isometric and Hexagon draw their lines darker, at least 2 px wide and on the panel's
   own grays, as Seyes rule does, so they read as sharply on the Scribe: the rules 119 (were 175, where 0 is black
@@ -122,12 +134,20 @@
   next shown. A notebook's card in the Library follows the change when the notebook is next opened and left. In
   Polish and Japanese its texts are in English until they are translated.
 - **Polish and Japanese** (#315, nebuff). The texts of the new home, Apps, the Package Store and the rest of 2.2's
-  and 2.3's screens are translated. In this beta 45 of 1,267 texts are still in English in each language, among
-  them the Package Store's license steps, the package kit's messages, Manage apps... and Settings > Updates' version
-  line.
+  and 2.3's screens are translated. In this beta 46 of 1,268 texts are still in English in each language: 35 of
+  the Package Store's (among them its search, installing from GitHub, updating, uninstalling and the license
+  steps), the package kit's two messages, Manage apps..., Settings > Updates' version line, Ink edges' six, and one
+  a Kindle never shows (the Sleep settings switch of a device whose system owns sleep).
 - Settings > Updates says "Version 2.2.0 to 2.3.0" where it had an arrow, which Classic's fonts do not have; and
   the home's Sort select shows its value alone where the caption and value do not fit even small, as in Japanese
   (#316).
+- Housekeeping: the Buttons and Gestures lists offer an action only where it acts (#282). On a platform kept in
+  another crate whose system owns sleep (rust/PORTING.md), the Sleep settings page has one switch, Keep the screen
+  on while Grimoire is open, the sleep screen is the page, and Sleep now, Sleep screen and Sleep after are not
+  offered (nor Bluetooth controller or Update channel where the platform leaves pairing or updates to its system,
+  nor Light and Warmth without a front light). The Kindle keeps its lists and its Sleep settings page; the one
+  change there is that Warmth down / up on a Kindle whose light has no warmth says "This Kindle has no warmth
+  control." instead of "Light not ready.".
 - Fixes: the update-channel shortcut's message names the channel it sets; it named the other one (#312).
 
 ## 2.2.0 (2026-11-26)

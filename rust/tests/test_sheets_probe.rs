@@ -1252,12 +1252,18 @@ fn same(name: &str, got: &str) {
     check!(bad == 0 && n > 0);
 }
 
-fn setup(root: &str) {
-    let _ = std::fs::remove_dir_all(root);
-    assert_eq!(store_init(root), 0);
+/// The probe's data root, made afresh: "grimoire" in a folder of the run's own (`base`), as /mnt/us/grimoire is on
+/// the Kindle. With no storage root set, the texts that name one of Grimoire's folders name it from the folder
+/// around the data root (pdfimport::own_folder_shown), so the empty Templates and Photos sheets read
+/// "grimoire/templates" and "grimoire/photos", as the C prints them.
+fn setup(base: &str) -> String {
+    let _ = std::fs::remove_dir_all(base);
+    let root = format!("{base}/grimoire");
+    assert_eq!(store_init(&root), 0);
     store_set_device(300.0, 1860, 2480);
     ui_init(300.0);
     assert_eq!(font_init(), 0);
+    root
 }
 
 fn section(p: &mut Probe, name: &str, f: fn(&mut Probe)) {
@@ -1280,8 +1286,8 @@ fn section(p: &mut Probe, name: &str, f: fn(&mut Probe)) {
 
 #[test]
 fn test_sheets_probe() {
-    let root = format!("{}/sheets-{}", tl_tmp(), std::process::id());
-    setup(&root);
+    let base = format!("{}/sheets-{}", tl_tmp(), std::process::id());
+    let root = setup(&base);
     // (a press on a sheet now shows at once, app_press_feedback: the display is open, as for the events)
     #[cfg(feature = "sim")]
     std::env::set_var("GRIMOIRE_SCRIPT", "/dev/null");
@@ -1298,7 +1304,7 @@ fn test_sheets_probe() {
     section(&mut p, "penset draws", penset_draws);
     font_shutdown();
     done();
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 // The sections that tap and draw with the pen: they reach app.rs's app_invalidate, app_toast,
@@ -1308,8 +1314,8 @@ fn test_sheets_probe() {
 // that names a script; nothing reads this one.)
 #[test]
 fn test_sheets_probe_events() {
-    let root = format!("{}/sheets-events-{}", tl_tmp(), std::process::id());
-    setup(&root);
+    let base = format!("{}/sheets-events-{}", tl_tmp(), std::process::id());
+    let root = setup(&base);
     #[cfg(feature = "sim")]
     std::env::set_var("GRIMOIRE_SCRIPT", "/dev/null");
     let (mut w, mut h, mut dpi) = (0, 0, 0.0f32);
@@ -1322,5 +1328,5 @@ fn test_sheets_probe_events() {
     section(&mut p, "penset events", penset_events);
     font_shutdown();
     done();
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&base);
 }

@@ -4989,6 +4989,9 @@ static K_TOOL_KEYS: [&str; TOOL_COUNT] = [
     "calligraphy",
 ];
 
+/// Sleep after's minutes in a new settings.ini (and where "Keep the screen on" is turned off again).
+pub const SLEEP_MINUTES_DEFAULT: i32 = 10;
+
 pub fn settings_default(s: &mut Settings) {
     *s = Settings::default();
     for t in 0..TOOL_COUNT {
@@ -5006,7 +5009,7 @@ pub fn settings_default(s: &mut Settings) {
     s.theme = 0;
     s.font = 0; // Terminess
     s.sleep_mode = 0;
-    s.sleep_minutes = 10;
+    s.sleep_minutes = SLEEP_MINUTES_DEFAULT;
     s.http_port = 8765;
     s.language.set("auto");
     s.eraser_mode = 0; // whole strokes, as before 1.1

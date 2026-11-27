@@ -1824,25 +1824,32 @@ fn set_int_opt(fd: i32, level: libc::c_int, name: libc::c_int, v: libc::c_int) {
 // the kernel before it: a small send buffer; at most TILE_UNSENT not yet sent (TCP_NOTSENT_LOWAT:
 // only below it is the socket writable and does a send go on; enough to keep the radio busy while
 // the next PNG is made); and a batch starts only while it holds under TILE_BACKLOG, sent or not,
-// that the browser has not acknowledged.
+// that the browser has not acknowledged. The Linux kernel's options are taken under another system's
+// name too (the `linux-kernel` feature, PORTING.md).
 const TILE_SNDBUF: libc::c_int = 64 * 1024;
 const TILE_UNSENT: libc::c_int = 32 * 1024;
 const TILE_BACKLOG: libc::c_int = 48 * 1024;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", feature = "linux-kernel"))]
 const TCP_NOTSENT_LOWAT: libc::c_int = libc::TCP_NOTSENT_LOWAT;
 #[cfg(target_vendor = "apple")]
 const TCP_NOTSENT_LOWAT: libc::c_int = 0x201; // (netinet/tcp.h; the libc crate has none for Darwin)
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", feature = "linux-kernel"))]
 const SO_PRIORITY: libc::c_int = 12; // (asm-generic/socket.h)
 
 // What the socket holds, sent or not, that the browser has not acknowledged (SIOCOUTQ, Darwin's
-// SO_NWRITE); 0 where it cannot say.
+// SO_NWRITE); 0 where it cannot say. Where the kernel refuses SIOCOUTQ (a security policy may), each
+// viewer says so once in the log; its tiles then go as the send buffer lets them.
 fn backlog(fd: i32) -> libc::c_int {
     let mut n: libc::c_int = 0;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", feature = "linux-kernel"))]
     // SAFETY: ioctl SIOCOUTQ (TIOCOUTQ's number) writes one int to the local n.
     if unsafe { libc::ioctl(fd, libc::TIOCOUTQ, &mut n as *mut libc::c_int) } != 0 {
+        let e = errno();
         n = 0;
+        static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !TOLD.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            qlog!("live: a viewer's socket cannot say what it holds (SIOCOUTQ: %s): its tiles go as the send buffer lets them", &strerror(e));
+        }
     }
     #[cfg(target_vendor = "apple")]
     {
@@ -1852,7 +1859,7 @@ fn backlog(fd: i32) -> libc::c_int {
             n = 0;
         }
     }
-    #[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
+    #[cfg(not(any(target_os = "linux", feature = "linux-kernel", target_vendor = "apple")))]
     let _ = fd;
     n
 }
@@ -2349,8 +2356,9 @@ fn pen_main(f: Frame, slot: usize, fd: i32, wake: i32, parent: libc::pid_t) -> !
 // the app's pid, taken before the fork.
 fn viewer_main(f: Frame, slot: usize, fd: i32, wake: i32, parent: libc::pid_t) -> ! {
     // First of all, to end with the app: the death signal asked for, then the app looked for, as it
-    // may have ended before the signal was asked for (then nothing would ever send it).
-    #[cfg(target_os = "linux")]
+    // may have ended before the signal was asked for (then nothing would ever send it). (A Linux
+    // kernel's prctl, under another system's name too; elsewhere the getppid checks alone.)
+    #[cfg(any(target_os = "linux", feature = "linux-kernel"))]
     // SAFETY: prctl with a NUL-terminated name and the signal number, no pointers kept.
     unsafe {
         libc::prctl(libc::PR_SET_NAME, c"grimoire-live".as_ptr() as libc::c_ulong, 0 as libc::c_ulong, 0 as libc::c_ulong, 0 as libc::c_ulong);
@@ -2389,7 +2397,7 @@ fn viewer_main(f: Frame, slot: usize, fd: i32, wake: i32, parent: libc::pid_t) -
     // Wi-Fi can disappear across suspend without a FIN/RST. A successful write only means the
     // local TCP buffer accepted it: bound unacknowledged data so stale viewers release slots.
     set_int_opt(fd, libc::SOL_SOCKET, libc::SO_KEEPALIVE, 1);
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", feature = "linux-kernel"))]
     {
         set_int_opt(fd, libc::IPPROTO_TCP, libc::TCP_KEEPIDLE, 15);
         set_int_opt(fd, libc::IPPROTO_TCP, libc::TCP_KEEPINTVL, 5);
@@ -2401,7 +2409,7 @@ fn viewer_main(f: Frame, slot: usize, fd: i32, wake: i32, parent: libc::pid_t) -
     // 10 s is gone (the send timeout, or the wait for room below). Its socket holds little
     // (TILE_SNDBUF): on a busy link the marks gather, not the PNGs.
     set_int_opt(fd, libc::SOL_SOCKET, libc::SO_SNDBUF, if fast { 16 * 1024 } else { TILE_SNDBUF });
-    #[cfg(any(target_os = "linux", target_vendor = "apple"))]
+    #[cfg(any(target_os = "linux", feature = "linux-kernel", target_vendor = "apple"))]
     if !fast {
         set_int_opt(fd, libc::IPPROTO_TCP, TCP_NOTSENT_LOWAT, TILE_UNSENT); // (an old kernel refuses it: harmless)
     }
@@ -2410,7 +2418,7 @@ fn viewer_main(f: Frame, slot: usize, fd: i32, wake: i32, parent: libc::pid_t) -
     // class could starve them). Best effort too: a driver that ignores it changes nothing.
     if fast {
         set_int_opt(fd, libc::IPPROTO_IP, libc::IP_TOS, 0xB8);
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", feature = "linux-kernel"))]
         set_int_opt(fd, libc::SOL_SOCKET, SO_PRIORITY, 5); // (after IP_TOS, which sets its own)
     }
     let tv = libc::timeval { tv_sec: if fast { 1 } else { 10 }, tv_usec: 0 };

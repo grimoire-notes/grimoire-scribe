@@ -350,7 +350,8 @@ enum PlaceKind {
     All,
 }
 
-/// The root's places in order, each with its folder: in Grimoire's folder (`true`) or at the storage root.
+/// The root's places in order, each with its folder: in Grimoire's folder (`true`) or at the storage root (there by the
+/// Kindle's name, or off the Kindle by the one its variable gives: `place_path`).
 const PLACES: [(PlaceKind, bool, &str); 10] = [
     (PlaceKind::Import, true, "import"),
     (PlaceKind::Documents, false, "documents"),
@@ -890,11 +891,19 @@ impl Browser {
         self.place_path(PlaceKind::Import)
     }
 
-    /// A place's folder: in Grimoire's folder (when it is inside the storage) or at the storage root.
+    /// A place's folder: in Grimoire's folder (when it is inside the storage) or at the storage root, where Documents,
+    /// Downloads and the Kindle's fonts have the folder that GRIMOIRE_PLACE_DOCUMENTS, GRIMOIRE_PLACE_DOWNLOADS and
+    /// GRIMOIRE_PLACE_FONTS name off the Kindle, when set (None, no such place, when set empty:
+    /// `fsview_place_folder`). The labels and the runner's names stay the same.
     fn place_path(&self, k: PlaceKind) -> Option<StoragePath> {
         let &(_, own, name) = PLACES.iter().find(|p| p.0 == k)?;
         if !own {
-            return StoragePath::new(name.as_bytes());
+            return match k {
+                PlaceKind::Documents => fsview_place_folder("GRIMOIRE_PLACE_DOCUMENTS", name),
+                PlaceKind::Downloads => fsview_place_folder("GRIMOIRE_PLACE_DOWNLOADS", name),
+                PlaceKind::KindleFonts => fsview_place_folder("GRIMOIRE_PLACE_FONTS", name),
+                _ => StoragePath::new(name.as_bytes()),
+            };
         }
         StoragePath::new(format!("{}/{name}", self.storage.as_ref()?.grimoire_rel()?.to_string_lossy()).as_bytes())
     }
@@ -1871,11 +1880,15 @@ impl Browser {
         let mut rows: Vec<(String, StoragePath, IconKind, bool)> = Vec::new();
         let pick = self.pick();
         let Some(st) = self.storage.as_ref() else { return };
+        // (a top folder is no row of its own when a place is that folder, the whole path compared, or when it is
+        // Grimoire's own folder, one name, and a place of this mode is in it: never a folder that only holds
+        // Grimoire's, which is a folder of the storage as any other)
         let mut taken: Vec<Vec<u8>> = Vec::new();
         for &k in self.mode_places() {
             let Some(p) = self.place_path(k) else { continue };
-            if let Some(first) = p.components().next() {
-                taken.push(first.to_ascii_lowercase());
+            taken.push(p.as_bytes().to_ascii_lowercase());
+            if PLACES.iter().any(|q| q.0 == k && q.1) {
+                taken.extend(st.grimoire_rel().map(|g| g.as_bytes().to_ascii_lowercase()));
             }
             let always = matches!(k, PlaceKind::Import | PlaceKind::All);
             if always || st.stat(&p, pick).is_ok_and(|s| s.mode & libc::S_IFMT as u32 == libc::S_IFDIR as u32) {
@@ -2184,9 +2197,11 @@ impl Browser {
         r.kind == RowKind::Trashed && r.trash.as_ref().is_some_and(|t| matches!(t.kind, TrashKind::File | TrashKind::Notebook))
     }
 
-    /// The trash, as the Delete row and its toast name it (Grimoire's own folder's, relative to the storage).
+    /// The trash, as the Delete row and its toast name it (Grimoire's own folder's, relative to the storage): the
+    /// Trash place's path, else the name the Library's Delete gives it (pdfimport::own_folder_shown), so the two
+    /// never name one folder two ways.
     fn trash_label(&self) -> String {
-        self.place_path(PlaceKind::Trash).map_or_else(|| "grimoire/trash".to_string(), |p| p.to_string_lossy())
+        self.place_path(PlaceKind::Trash).map_or_else(|| crate::pdfimport::own_folder_shown("trash"), |p| p.to_string_lossy())
     }
 
     /// The open card's item, checked again before an act: its path and its stat then. Err: what the toast says, and
@@ -5803,5 +5818,148 @@ mod tests {
         b.home_follows(&mut a);
         assert!(a.settings.home.is_empty());
         canvas_free(&mut a.screen);
+    }
+
+    // ---- a storage that names its places otherwise (issue #278) ----
+
+    // The place hooks (GRIMOIRE_PLACE_*, off the Kindle) set for one test, under its storage's lock, and unset again
+    // as it ends, passed or failed.
+    struct PlaceVars;
+
+    impl PlaceVars {
+        fn set(vars: &[(&str, &str)]) -> PlaceVars {
+            for (k, v) in vars {
+                std::env::set_var(k, v);
+            }
+            PlaceVars
+        }
+    }
+
+    impl Drop for PlaceVars {
+        fn drop(&mut self) {
+            for k in ["GRIMOIRE_PLACE_DOCUMENTS", "GRIMOIRE_PLACE_DOWNLOADS", "GRIMOIRE_PLACE_FONTS"] {
+                std::env::remove_var(k);
+            }
+        }
+    }
+
+    // Off the Kindle a storage that names its folders otherwise gives Documents, Downloads and the Kindle's fonts the
+    // folders GRIMOIRE_PLACE_DOCUMENTS, GRIMOIRE_PLACE_DOWNLOADS and GRIMOIRE_PLACE_FONTS name: the same labels and
+    // runner names, their own folders (a folder of the Kindle's name is then a folder like any other, in Go to by its
+    // name); set empty, no such place, whatever is at the root. A value that is no one name is no place either, and
+    // unset the Kindle's names are back.
+    #[test]
+    fn the_storage_roots_places_take_the_folders_their_variables_name() {
+        let (base, _g) = storage("placevars");
+        for d in ["Document/Books", "Download", "documents", "fonts", "Notes"] {
+            std::fs::create_dir_all(format!("{base}/{d}")).unwrap();
+        }
+        std::fs::write(format!("{base}/fonts/Kindle.otf"), b"x").unwrap();
+        i18n_set("en");
+        let prefs = FilesPrefs { card: true, ..Default::default() };
+        let vars = PlaceVars::set(&[("GRIMOIRE_PLACE_DOCUMENTS", "Document"), ("GRIMOIRE_PLACE_DOWNLOADS", "Download"), ("GRIMOIRE_PLACE_FONTS", "")]);
+        let mut b = Browser::default();
+        assert!(b.open(PickSpec::place(), prefs));
+        assert_eq!(row_names(&b), ["Import", "documents", "Downloads", "Trash", "All storage"]);
+        let labels: Vec<String> = b.rows.iter().map(|r| b.row_label(r)).collect();
+        assert_eq!(labels[1..3], ["Documents", "Downloads"]);
+        assert_eq!(b.row_sub(&b.rows[1]), "Document");
+        assert_eq!(b.row_sub(&b.rows[2]), "Download");
+        assert!(b.go(sp("Document/Books")));
+        assert_eq!(b.crumbs(), "Files > Documents > Books");
+        // Go to: Document once, as the Documents place; the Kindle's names are folders by their own names
+        let rows = goto_rows(&mut b);
+        assert_eq!(rows, ["Home: Notebooks", "Import", "Documents", "Downloads", "Trash", "All storage", "documents", "fonts", "Notes", "Set as home", "Cancel"]);
+        assert!(b.goto[1].1 == sp("Document") && b.goto[1].3);
+        assert!(b.goto[5].1 == sp("documents") && !b.goto[5].3);
+        // the picks: no Kindle fonts row where the variable says there is none
+        let mut p = Browser::default();
+        assert!(p.open(PickSpec::font(), prefs));
+        assert_eq!(row_names(&p), ["documents", "Downloads", "All storage"]);
+        assert_eq!(p.row_sub(&p.rows[0]), "Document");
+        assert!(p.open(PickSpec::import(), prefs));
+        assert_eq!(row_names(&p), ["Import", "documents", "Downloads", "All storage"]);
+        // a value that is no one name: no place
+        for bad in ["Document/Books", ".", ".."] {
+            std::env::set_var("GRIMOIRE_PLACE_DOWNLOADS", bad);
+            assert!(p.open(PickSpec::import(), prefs));
+            assert_eq!(row_names(&p), ["Import", "documents", "All storage"], "{bad}");
+        }
+        // unset: the Kindle's names
+        drop(vars);
+        assert!(p.open(PickSpec::font(), prefs));
+        assert_eq!(row_names(&p), ["Kindle fonts", "documents", "All storage"]);
+        assert_eq!(p.row_sub(&p.rows[1]), "documents");
+    }
+
+    // Grimoire's folder two levels down in the storage (Shelf/Grimoire): the Go to sheet leaves out only what a place
+    // is, never the folder that holds Grimoire's, which is listed by its name as any other top folder; Grimoire's
+    // places are in its folder there.
+    #[test]
+    fn the_go_to_sheet_keeps_the_folder_that_holds_grimoires() {
+        let (base, _g) = storage("deepgoto");
+        let root = format!("{base}/Shelf/Grimoire");
+        std::fs::create_dir_all(format!("{root}/import")).unwrap();
+        assert_eq!(store_init(&root), 0);
+        std::fs::remove_dir_all(format!("{base}/grimoire")).unwrap();
+        for d in ["Shelf/Books", "documents", "Notes"] {
+            std::fs::create_dir_all(format!("{base}/{d}")).unwrap();
+        }
+        i18n_set("en");
+        let mut b = Browser::default();
+        assert!(b.open(PickSpec::place(), FilesPrefs { card: true, ..Default::default() }));
+        assert_eq!(b.rows[0].path, sp("Shelf/Grimoire/import"));
+        assert!(b.go(sp("documents")));
+        assert_eq!(goto_rows(&mut b), ["Home: Notebooks", "Import", "Documents", "Trash", "All storage", "Notes", "Shelf", "Set as home", "Cancel"]);
+        let shelf = b.goto.iter().find(|g| g.0 == "Shelf").unwrap();
+        assert!(shelf.1 == sp("Shelf") && !shelf.3);
+        assert!(b.go(sp("Shelf")));
+        assert_eq!(row_names(&b), ["Books", "Grimoire"]);
+        assert!(b.go(sp("Shelf/Grimoire/import")));
+        assert_eq!(b.crumbs(), "Files > Import");
+    }
+
+    // Both at once, the layout of a platform whose data root sits inside a larger storage: the Documents place's
+    // folder holds Grimoire's (GRIMOIRE_PLACE_DOCUMENTS=Document, Grimoire's folder Document/Grimoire). Go to lists
+    // that folder once, as the Documents place, and neither it nor Grimoire's folder as a top row, in Files and in a
+    // pick; Grimoire's places are in its folder there, and the Documents place lists Grimoire's folder as a folder.
+    // Without a Documents place the folder that holds Grimoire's is in Go to by its name.
+    #[test]
+    fn the_documents_place_may_hold_grimoires_folder() {
+        let (base, _g) = storage("docholds");
+        let root = format!("{base}/Document/Grimoire");
+        std::fs::create_dir_all(format!("{root}/import")).unwrap();
+        assert_eq!(store_init(&root), 0);
+        std::fs::remove_dir_all(format!("{base}/grimoire")).unwrap();
+        for d in ["Document/Books", "Notes"] {
+            std::fs::create_dir_all(format!("{base}/{d}")).unwrap();
+        }
+        i18n_set("en");
+        let _vars = PlaceVars::set(&[("GRIMOIRE_PLACE_DOCUMENTS", "Document")]);
+        let prefs = FilesPrefs { card: true, ..Default::default() };
+        let mut b = Browser::default();
+        assert!(b.open(PickSpec::place(), prefs));
+        assert_eq!(row_names(&b), ["Import", "documents", "Trash", "All storage"]);
+        assert_eq!(b.rows[0].path, sp("Document/Grimoire/import"));
+        assert_eq!(b.rows[1].path, sp("Document"));
+        assert!(b.go(sp("Notes")));
+        assert_eq!(goto_rows(&mut b), ["Home: Notebooks", "Import", "Documents", "Trash", "All storage", "Notes", "Set as home", "Cancel"]);
+        assert!(b.goto[1].1 == sp("Document") && b.goto[1].3);
+        assert!(b.go(sp("Document")));
+        assert_eq!(b.crumbs(), "Files > Documents");
+        assert_eq!(row_names(&b), ["Books", "Grimoire"]);
+        assert!(b.go(sp("Document/Grimoire/import")));
+        assert_eq!(b.crumbs(), "Files > Import");
+        // a pick's Go to: the same, with the pick's places
+        let mut p = Browser::default();
+        assert!(p.open(PickSpec::import(), prefs));
+        p.open_goto();
+        let names: Vec<&str> = p.goto.iter().map(|g| g.0.as_str()).collect();
+        assert_eq!(names, ["Import", "Documents", "All storage", "Notes"]);
+        // no Documents place (set empty): the folder that holds Grimoire's is a top folder by its name
+        std::env::set_var("GRIMOIRE_PLACE_DOCUMENTS", "");
+        assert!(b.open(PickSpec::place(), prefs));
+        assert!(b.go(sp("Notes")));
+        assert_eq!(goto_rows(&mut b), ["Home: Notebooks", "Import", "Trash", "All storage", "Document", "Notes", "Set as home", "Cancel"]);
     }
 }
