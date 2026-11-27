@@ -1,7 +1,7 @@
 //! The notebook PDF's page streams, kept so that a changed notebook renders only its changed pages
 //! (docs/FORMAT.md, "grimoire/.cache/pdf/"). Each page's compressed image stream lives in
 //! `grimoire/.cache/pdf/<notebook id>/p<page id>.z` with the stamp it was made under: the page file's
-//! identity (size, modification time, inode), the renderer's version and the ink renderer's fingerprint,
+//! identity (size, modification time, inode), the renderer's version and fingerprint (its ink and its papers),
 //! the dpi, the notebook's page size and paper, and the page's picture file as it was (its size, its
 //! modification time, its channel count). A record that does not read, whose checksum is wrong, or whose
 //! stamp is not the page's today is never used: the page is drawn again (full render on any doubt). A page

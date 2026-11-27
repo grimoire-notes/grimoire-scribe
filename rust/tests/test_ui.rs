@@ -310,12 +310,13 @@ fn toasts_fit_the_live_view_layer() {
 // that offers choices).
 fn every_hold_reads_hold_ms() {
     check!(HOLD_MS == 600);
-    let sites: [(&str, &str, usize); 5] = [
+    let sites: [(&str, &str, usize); 6] = [
         ("editor.rs", include_str!("../src/editor.rs"), 3), // a link's card, a Links bar row's card, the toolbar's +
         ("editor/select.rs", include_str!("../src/editor/select.rs"), 1), // the paste (the finger lasso is editor.rs's link hold)
         ("library.rs", include_str!("../src/library.rs"), 2), // a Buttons or Gestures row
         ("pagesview.rs", include_str!("../src/pagesview.rs"), 4), // New page and a tile, at the tick and the lift
         ("linkbar.rs", include_str!("../src/linkbar.rs"), 1), // a chip held: neither a peek nor a stay
+        ("kithost.rs", include_str!("../src/kithost.rs"), 1), // a package's PRESS (the kit's recogniser)
     ];
     for (name, src, uses) in sites {
         for old in ["LINK_HOLD_MS", "PASTE_HOLD_MS", "ROW_HOLD_MS", "ADD_HOLD_MS", "CARD_HOLD_MS"] {

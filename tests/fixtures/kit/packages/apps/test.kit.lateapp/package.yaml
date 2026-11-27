@@ -7,8 +7,8 @@ description: A module of the package kit's tests.
 platforms: [all]
 artifact:
   path: app.wasm
-  sha256: 494be5d974806e9cd735465ab0357d9ebbfe5461cf8db9e5cff474af24a47ad2
-  size: 952
+  sha256: 519504cfe944f303bc7fae1db2060e8a3c82285fbf4b7141760c73f0f88d6ec1
+  size: 1004
 capabilities: []
 spec:
   runtime: wasm

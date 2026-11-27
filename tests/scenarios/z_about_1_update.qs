@@ -11,8 +11,8 @@ expect library.about.view is browser
 expect library.about.full is 1
 expect library.about.entries is 6
 expect library.about.rows is 6
-expect library.about.note is 2.1.0
-expect library.about.marked is 2
+expect library.about.note is 2.2.0
+expect library.about.marked is 1
 expect settings.whatsnew_seen not 1.2.0
 expect settings.whatsnew_seen not
 shot 01-after-update

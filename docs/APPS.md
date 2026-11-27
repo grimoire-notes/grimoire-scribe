@@ -183,7 +183,8 @@ for returns at once. Drawing needs no capability: an app is the screen its modul
 that declares neither still draws, gets its touches and its keys, and can use every other call
 (`status`, `setting`, `toast`, `close`, `request_redraw`, the clock, the battery and the Wi-Fi
 state). The app's settings are the reader's, changed on its Settings page and kept by the host in
-`state/settings.json` with or without `storage:app-local`.
+`state/settings.json` with or without `storage:app-local`; an open app that exports `kit_event` is told when the
+page saves them (a SETTINGS event, [KIT.md](KIT.md#events)).
 
 An app that keeps something and fetches something declares both:
 
@@ -201,19 +202,39 @@ app_pointer(phase, x, y, source)
 app_key(code, mods, down)
 app_status_bar() -> i32
 app_stop()
+kit_event(kind, id, a, b, c) -> i32
 ```
 
 `app_draw` is called whenever Grimoire redraws the app. Width and height are the app body in screen
 pixels (the area under the status bar when it is shown), and `scale_milli` is 1000 at the normal UI
-scale. `elapsed_ms` is the time since the previous draw, for animation.
+scale. `elapsed_ms` is the time since the previous drawing pass by the app's clock (the clock `now_ms`
+reads, which a scenario's `clock` line holds still), for animation.
 
 `app_pointer` receives every pointer phase in the body: `0` down, `1` move, `2` up. `source` is `0`
 for touch and `1` for pen. Coordinates are body-local, so the app never needs to subtract the status
 bar itself. A lift outside the body is still delivered so a contact that began in the app can end
 cleanly.
 
+A touch calls the module at once, and the drawing pass it owes is drawn once for all the input since
+the last pass: none while the contact may still be a tap, so that a tap is one pass, at its lift; at
+most one every 120 ms while a finger drags or is held; and only the part of the screen the pass
+changed is refreshed, by every pass of the app's, the status bar's minute too. What those passes
+refreshed fast while a finger was down gets one full-depth refresh after the lift
+([KIT.md](KIT.md#how-a-pass-follows-input)). `kit_event`, the package kit's
+optional export, is also told what the contact was: a tap (with the kit's hit region under it), a
+long press or a drag with its samples ([KIT.md](KIT.md#events)).
+
 `app_key` receives hardware keys. `code` is the Grimoire key code, `mods` its modifier bits, and
-`down` is 1 for a press and 0 for a release.
+`down` is 1 for a press and 0 for a release. On the Kindle a paired keyboard and a controller are
+read only while Settings > Shortcuts is on: an open app gets keys while Shortcuts is on, and none are
+read with it off. While an app is open every key of a paired keyboard, and every button of a
+controller, is the app's, pressed and let go (`app_key`, and a KEY event for `kit_event`), before
+Grimoire's shortcuts; no shortcut acts but the two that leave the app: a key bound to `back` (Esc, in
+the keys Grimoire writes) or to `home` closes the app as the two-finger swipe does (`app_stop` runs),
+and does nothing more. A controller's buttons reach the app as keys too, and one leaves it only if
+the controller's own bindings bind it to `back` or `home`, which none of the bindings Grimoire writes
+does; a finger can always leave, by the two-finger swipe. A keyboard of Grimoire's open over the app takes the keys that type.
+The kit's `key_char` gives the character a key types.
 
 `app_status_bar` is called once, before the first frame. Returning 0 starts with the bar hidden and
 1 with it shown; the manifest's `spec.status_bar` is the fallback. The app can change it at any time
@@ -307,13 +328,22 @@ behind it rather than a busy loop. `close`
 asks the host to run `app_stop`, save and return Home. `toast` shows a short Grimoire message.
 
 One redraw request stands at a time: the soonest asked for, whichever call of the module asked (a
-drawing pass, a touch, a key), so a later call does not put an earlier one off. When its time has
-come, the app is drawn once and the whole screen refreshed once, and the request is gone: a pass
-that wants another asks again. An app that asks in every pass is so drawn, and the screen
-refreshed, at most ten times a second; an app that asks for nothing is drawn only when it is
-touched, a key is pressed or Grimoire itself redraws. A refresh of an e-ink panel takes a few
-hundred milliseconds and its share of the battery: ask for the next pass when there is something
-new to show (the next minute for a clock, the next poll for a request in flight).
+drawing pass, a touch, a key, an event), so a later call does not put an earlier one off. When its time has
+come, the app is drawn once, and the request is gone (a pass drawn then for another reason answers it): a
+pass that wants another asks again. Only the part of the screen the pass changed is refreshed. A pass
+that changes nothing refreshes nothing and does not count for what follows. A pass is back to back when it
+comes within the pause a touch's cleaning waits (150 ms, 1.5 s with the pen near) of the app's last pass of
+its own asking that refreshed something, or of its last fast refresh. One that is not back to back, while no
+fast refresh is owed a clean, is a pass after a rest: it is refreshed at full depth, as Grimoire's screens
+are, and owes nothing (with the pen away, a clock's tick or a poll that brought a change). Any other is
+refreshed fast, and what those fast refreshes covered gets one full-depth refresh the pause after the last
+of them, or after the last pass back to back that changed nothing: an animation's frames are cleaned once,
+after it stops, even with a frame in it that changed nothing. With the pen near, a clock that asks every
+second is back to back, so its ticks after the first are fast, cleaned once the pen has left. An app that
+asks in every pass is so drawn, and the screen refreshed, at most ten times a second; an app that asks for
+nothing is drawn only when it is touched, a key is pressed or Grimoire itself redraws. A refresh of an
+e-ink panel takes a few hundred milliseconds and its share of the battery: ask for the next pass when there
+is something new to show (the next minute for a clock, the next poll for a request in flight).
 
 `battery_percent` returns -1 when the device cannot tell. `wifi_connected` returns 1, 0 or -1.
 `wifi_ssid` returns the connected network's name, empty when there is none. `time_text` and
@@ -392,8 +422,8 @@ The host does not provide filesystem or shell access.
 
 ## Limits
 
-The host calls a module's `app_draw` (a drawing pass), `app_pointer`, `app_key`, `app_status_bar` and
-`app_stop`. Each call is held to the limits below, and the counts start again with every call:
+The host calls a module's `app_draw` (a drawing pass), `app_pointer`, `app_key`, `app_status_bar`,
+`app_stop` and `kit_event`. Each call is held to the limits below, and the counts start again with every call:
 
 | limit | |
 |---|---|
@@ -420,7 +450,7 @@ The host calls a module's `app_draw` (a drawing pass), `app_pointer`, `app_key`,
 A length is compared with its limit before the host reads the module's memory. A call that goes
 past the command, text, status line or state limit is stopped the way a call that runs past its
 instruction budget is (below), and Grimoire's log names the limit. What a call records is its own:
-the drawing commands of a touch or a key are not kept for the next drawing pass.
+the drawing commands of a touch, a key or an event are not kept for the next drawing pass.
 
 A module may pass any numbers as places and sizes. What it draws with numbers near its body is
 drawn exactly as given; the bounds of the last four rows lie far outside what a screen holds, and

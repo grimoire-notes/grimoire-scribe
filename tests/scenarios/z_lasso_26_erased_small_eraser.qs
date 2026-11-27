@@ -10,6 +10,8 @@
 # neither does a selection's halo (it goes as the page shows ink, lasso.rs stroke_shown_runs). Exact area: the
 # preview's halo goes along the samples a crossing stroke is judged by that the page shows, never joined across
 # the gap (they skip it, and were joined when 1.6 mm or less apart); nor is the piece's after the lift.
+# (Since 2.3.0 the paper's rules are darker than mid-gray, issue #314, so display.dark counts them: a place with no
+# ink counts its rules' pixels, two rows of each rule across it, and "not N" there says ink shows beside them.)
 clock 1700000000
 wait 300
 tap library add
@@ -24,7 +26,7 @@ pen line 400 1150 1400 1150 60 0.6 0.6
 pen line 400 1450 1400 1450 60 0.6 0.6
 pen leave
 wait 300
-expect display.dark.750.1130.200.40 not 0
+expect display.dark.750.1130.200.40 not 200
 eraser line 700 1100 700 1200 10 0.6 0.6
 eraser line 709 1100 709 1200 10 0.6 0.6
 eraser line 718 1100 718 1200 10 0.6 0.6
@@ -66,7 +68,7 @@ waitfor display.stale.750.1130.200.40 is 0
 waitfor display.stale.828.1440.4.20 is 0
 expect editor.strokes is 38
 expect editor.live_matches_render is 1
-expect display.dark.750.1130.200.40 is 0
+expect display.dark.750.1130.200.40 is 200
 expect display.dark.828.1440.4.20 is 0
 tap panel tool-picker
 wait 100
@@ -81,9 +83,9 @@ wait 300
 expect editor.select is selected
 expect editor.selected is 3
 expect editor.halo is 3
-expect display.dark.750.1130.200.40 is 0
+expect display.dark.750.1130.200.40 is 200
 expect display.dark.828.1440.4.20 is 0
-expect display.dark.0.550.1650.1250 not 0
+expect display.dark.0.550.1650.1250 not 62700
 tap panel select.done
 wait 300
 # exact area across the gap (between two of the paper's rules, which the preview's fast refreshes show dark)

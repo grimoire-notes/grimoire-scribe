@@ -1,17 +1,125 @@
 # Changelog
 
-## 2.2.0 (unreleased)
+## 2.3.0 (unreleased)
 
-- **A new Settings menu** (#115, nebuff). Settings opens as a menu of six groups, General, Display, Sleep & Clock,
-  Pen, Controls and System, each row opening its own sheet.
-- **Auto brightness** (#163, nebuff). Settings > Display can let the front light follow the room's light.
-- **Polish** (#181, nebuff): Grimoire's screens and documents in Polish.
+- **A new home** (#225, nebuff). The Library opens as a home screen: the status bar at the top, then the
+  Library's title with its Settings and Search buttons, a row of apps (Files, Share, Settings, Package Store and
+  any app installed, most recently used first) with Show All at its end, the All, Notebooks and Folders chips
+  beside Sort (Name (A-Z), Name (Z-A), Newest first, Oldest first), both kept across restarts, and the cards. The
+  + button at the bottom right makes a New notebook or a New folder, or opens Share (Import over Wi-Fi). Search
+  opens the keyboard and shows, as you type, the notebooks and folders in every folder whose names hold what is
+  typed. The top bar of New, Folder, Share, Settings and Exit is gone: Exit is at the foot of Settings' left
+  column.
+- **The Apps page and What's new** (#225, nebuff). Show All opens Apps: every app, most recently used first,
+  with What's new, About (Settings > System > About: device and storage) and Manage apps... at its foot. What's
+  new is a screen of its own, no longer a card under the bat: every version down the left, newest first, and the
+  notes of the one tapped at the right, set to fit. It still opens by itself once after each update, on this
+  version's notes; its X or Esc closes it.
+- **Quick settings** (#225, nebuff). A one-finger pull down from the top of any screen, a notebook's or an app's
+  too, opens Brightness and Warmth, Settings, Rotation lock (the screen stays turned as it is) and Auto
+  brightness. A notebook's toolbar has no Display button any more: brightness and warmth are here, and the rest
+  of its sheet is Settings > Display > Display: brightness, warmth.
+- **A status bar** (#225, nebuff). The clock and battery corner is replaced by a bar on every screen (an app may
+  hide it): the time and date at the left, Wi-Fi, Bluetooth and the battery's percent at the right. In a
+  notebook it lies over the page's top margin with the page showing through; a tap on it hides it, and a tap on
+  the top strip brings it back. There its minute's refresh waits while the pen is writing or near the screen,
+  and comes once the pen has left (#242). Settings > Sleep & Clock > Status bar (was Clock settings) has Hide
+  status bar inside Notebooks, Display time as 12 hour and its size (small, medium, large); the corner rows are
+  gone.
+- **Apps** (#225, nebuff; #238, #259). Full-screen programs packaged for Grimoire, installed from the Package
+  Store. One opens from the home's app row or Apps, and two fingers swiped up from the bottom of the screen to
+  the middle bring the home back in every app. Manage apps... at the foot of Apps has each app's settings page,
+  its update check and Remove. Grimoire runs an app's WebAssembly with no access to files or a shell: its file is
+  checked against its SHA-256 when it is installed and again each time it opens, it keeps state of its own only
+  when its manifest declares `storage:app-local`, and it makes requests, to http and https addresses alone, only
+  with `network:http`.
+- **The Package Store** (#225, #260, nebuff; #241). The home's Package Store is a catalog of apps and widgets
+  (Grimoire's is grimoire-notes/package-store-contents on GitHub): All, Apps, Widgets and Installed, a search, and
+  each package's page with its screenshots, description, license and repository. Install asks whether you trust
+  the author, then shows the license the package names to read and accept (#260, nebuff), again for an update
+  whose license has changed, and checks the download against the manifest's size and SHA-256 before anything is
+  written. An installed package's page has Uninstall, and Update to when the catalog has a newer version; the
+  arrow at the top installs a package from a GitHub repository (`user/repo`) or an https `.yaml` address. The last
+  catalog opens without a network. Icons and screenshots are decoded by the sandboxed worker that reads PDFs and
+  pictures, never by the Store itself (#241). Settings > General > Updates lists, under Package Updates, each
+  installed package the Store has a newer version of, each with its Update button.
+- **Widgets come from the Package Store** (#225, #260, nebuff). Settings > Packages is gone: widgets are installed
+  from the Package Store, and Manage widgets... at the foot of a notebook's Widgets popup opens their package
+  manager (each widget's settings, Update all, Install from repository... and Remove).
+- **For package authors: apps** (#225, nebuff; #238, #259). docs/APPS.md is the guide to a package of
+  `type: app`: its module draws the whole screen through the `grimoire` calls (Grimoire's own elements in the
+  theme in use, text, the status bar, saved state, its settings, a toast, the clock, the battery, Wi-Fi, HTTP),
+  each call held to limits (an instruction budget of 30,000,000 that pays for the host's work too, 4,096 drawing
+  commands, one memory of at most 48 MiB). A request follows at most five redirects, sends at most 2 MiB and takes
+  an answer of at most 8 MiB within 30 seconds. A repository cloned into `grimoire/packages/import/` is installed
+  when the Store opens, to try a package before it is published.
+- **For package authors: the package kit, level 1** (#267). Widgets and apps can import a second module,
+  `grimoire_kit`, whose calls mean the same in both: the theme's standard sizes, text by role, and Grimoire's own
+  elements (buttons, rows, chips, fields, selects, checkboxes, cards, a pager) at those sizes, so a package's
+  screen is drawn as Grimoire's own are, in Gothic and Classic and in each font. A module that imports a call this
+  Grimoire does not have is not started, and says so: "This widget needs a newer Grimoire (...)." or, for an app,
+  a toast. docs/KIT.md is the reference.
+- A notebook's PDF (over Share, or mirrored over USB) compresses its page images, and Share's zips the files they
+  deflate, in pieces of a fixed size, where they used one block that doubled as it grew and could be held twice
+  while it was moved, so a colour page takes less memory at its peak. The files are the same, byte for byte (#83).
+- Hardening (#252, nebuff): a copy into Grimoire's folders (From a file..., Add a font..., and Files' Use as
+  template, Use as photo and Add to fonts) checks that the file is still the one listed by its modification time
+  to the nanosecond, where it went to the second, so a file rewritten within the same second is not copied as
+  the one picked.
+- Housekeeping: package-check's size guard for the Kindle binary is now 14 MB (was 13 MB; the zip's stays 7 MB):
+  Apps, the Package Store and the package kit brought the binary past 13 MB (#253).
 - **Folder icons and pictures** (#230). A folder's menu (its `...`) has Icon & picture...: pick one of 48 icons for
   the folder's card, in two pages of ordinary uses (school, work, documents, photos, music, recipes, travel, pets
   and more), or give it a picture from `grimoire/photos` (From a file... copies one in from anywhere on the Kindle).
   Picking one clears the other: the card shows the picture in place of the icon, and the plain folder while the
   picture's preview is made or if it goes. Kept in `grimoire/folder-looks.ini`, which older versions leave as it
   is; renaming or moving a folder carries its look with it.
+- **Typing on a paired keyboard** (#266). While one of Grimoire's keyboards is open (a notebook's or a folder's
+  name, a rename, Find, a page number, a Wi-Fi password, a search, the Package Store's), a paired keyboard's
+  letters, digits, punctuation and Space type into it as its keys do (the US layout, with Shift), Backspace
+  deletes, Enter is Done and Esc is Cancel. With no keyboard open its keys do what they did. On the Kindle, as
+  for every key, Settings > Shortcuts > Enable shortcuts must be on.
+- **Kindle notebooks** (#196). Copy a notebook's folder from the Kindle's `.notebooks/` into `grimoire/import/`
+  and Grimoire imports its ink: one page per page, strokes scaled to the Scribe's page, pressure kept, and
+  Amazon's brushes mapped to Grimoire's. It takes the Scribe's title where it has one, the folder's name
+  otherwise, and leaves out the blank `note_template_collection` templates. Text and other non-ink page content
+  are not imported. Settings > General > Import Kindle notebooks copies the Scribe's own notebooks in for you,
+  eight at a time, leaving `.notebooks/` untouched. It reads the Kindle's own `/mnt/us/.notebooks/` and
+  `ksdk.content.db` catalog, so it uses the Scribe's titles, skips a book's annotation folders, and says how
+  many notebooks are cloud-only (no `nbk` until opened once on the Kindle). The
+  reader and the format notes are in `rust/src/nbk.rs` and docs/KINDLE.md.
+- **Packages: keys for apps, and fewer refreshes after a touch** (#272). An open app now gets a paired keyboard's
+  keys and a controller's buttons before Grimoire's shortcuts, so a game can be played with them; only a key bound
+  to back (Esc) or home acts while an app is open, and leaves it. On the Kindle, as for every key, Settings >
+  Shortcuts > Enable shortcuts must be on. A tap on an app draws it once (it was twice), a
+  drag draws it at most every 120 ms, and only the part of the screen that changed is refreshed, in an app and in a
+  widget's frame alike (a tap refreshed the whole screen, or the whole frame); so is a pass an app asks for itself:
+  at full depth when it comes after a rest, fast when it comes back to back as an animation's frames do, and those
+  cleaned once they stop (#307). A held tap on a widget is still a tap.
+  Packages made with the package kit can also tell a tap from a long press and a drag, and are told when their
+  settings change. docs/KIT.md says how.
+- **Darker paper lines** (#314). Narrow, Medium and Wide rule (with and without a margin), Cornell notes, Graph
+  paper, Dot grid, Cross grid, Isometric and Hexagon draw their lines darker, at least 2 px wide and on the panel's
+  own grays, as Seyes rule does, so they read as sharply on the Scribe: the rules 119 (were 175, where 0 is black
+  and 255 white), the header 85 and the margin 102, Cornell's cue and summary lines 68 and its headings 85, graph
+  paper 136 with every fifth line 85 (now whole where the lighter lines cross it), the dots 51, the crosses 85,
+  Isometric 136 and Hexagon 119. Seyes rule, Blank and the music papers are unchanged. After the update a page kept
+  drawn to open quickly is drawn once more, so it shows the new lines, and so are a notebook's previews in the
+  Pages view as the view opens and its card in the Library as the notebook is next opened and left.
+- Housekeeping: the Buttons and Gestures lists offer an action only where it acts (#282). On a platform kept in
+  another crate whose system owns sleep (rust/PORTING.md), the Sleep settings page has one switch, Keep the screen
+  on while Grimoire is open, the sleep screen is the page, and Sleep now, Sleep screen and Sleep after are not
+  offered (nor Bluetooth controller or Update channel where the platform leaves pairing or updates to its system,
+  nor Light and Warmth without a front light). The Kindle keeps its lists and its Sleep settings page; the one
+  change there is that Warmth down / up on a Kindle whose light has no warmth says "This Kindle has no warmth
+  control." instead of "Light not ready.".
+
+## 2.2.0 (2026-11-26)
+
+- **A new Settings menu** (#115, nebuff). Settings opens as a menu of six groups, General, Display, Sleep & Clock,
+  Pen, Controls and System, each row opening its own sheet.
+- **Auto brightness** (#163, nebuff). Settings > Display can let the front light follow the room's light.
+- **Polish** (#181, nebuff): Grimoire's screens and documents in Polish.
 - **Web links in PDFs** (#174). A PDF's web links, left out until now, are kept when you import the PDF: tap one and
   a card shows the address and a QR code to scan with your phone's camera, which opens it there (the Kindle opens
   nothing itself). Only http and https addresses of up to 200 characters whose host is written plainly are kept.
@@ -31,11 +139,6 @@
   Tools group of Buttons and of Gestures). The new `quick-size` action, bound by name in shortcuts.ini or
   gestures.ini, opens the sizes card from a key or a gesture. An unedited shortcuts.ini gets the two keys at the
   next start.
-- **Typing on a paired keyboard** (#266). While one of Grimoire's keyboards is open (a notebook's or a folder's
-  name, a rename, Find, a page number, a Wi-Fi password, a search, the Package Store's), a paired keyboard's
-  letters, digits, punctuation and Space type into it as its keys do (the US layout, with Shift), Backspace
-  deletes, Enter is Done and Esc is Cancel. With no keyboard open its keys do what they did. On the Kindle, as
-  for every key, Settings > Shortcuts > Enable shortcuts must be on.
 - **Files**: the Kindle's storage as a place to browse. "Show Files in Library", the last row of New notebook >
   From a file..., puts a Files card at the end of the Library (its menu hides it again). Files lists Grimoire's
   places (Import, Templates, Photos, Fonts, PDF copies, Trash) and the Kindle's folders, with a path bar whose
@@ -52,15 +155,6 @@
   pick a notebook and one of its pages, and that page as it looks now becomes the open page's template, drawn in
   the background while a notice says so. Over New notebook the notebook it creates opens on that page. The
   Templates and Photos sheets also open in the Paper sheet's rows now: six columns, three rows, the same tiles.
-- **Kindle notebooks** (#196). Copy a notebook's folder from the Kindle's `.notebooks/` into `grimoire/import/`
-  and Grimoire imports its ink: one page per page, strokes scaled to the Scribe's page, pressure kept, and
-  Amazon's brushes mapped to Grimoire's. It takes the Scribe's title where it has one, the folder's name
-  otherwise, and leaves out the blank `note_template_collection` templates. Text and other non-ink page content
-  are not imported. Settings > General > Import Kindle notebooks copies the Scribe's own notebooks in for you,
-  eight at a time, leaving `.notebooks/` untouched. It reads the Kindle's own `/mnt/us/.notebooks/` and
-  `ksdk.content.db` catalog, so it uses the Scribe's titles, skips a book's annotation folders, and says how
-  many notebooks are cloud-only (no `nbk` until opened once on the Kindle). The
-  reader and the format notes are in `rust/src/nbk.rs` and docs/KINDLE.md.
 - **Fonts from a file.** In the Library, Settings > Font ends with Add a font...: pick a `.ttf` or `.otf` file
   anywhere on the Kindle, the Kindle's own fonts folder first (Kindle fonts), and it is copied into
   `grimoire/fonts`, where it is checked as a font copied over USB is: its row says "Checking..." until it can be
@@ -95,13 +189,6 @@
 - Housekeeping: a platform kept in another crate whose system runs a Linux kernel under another name can
   build the sandbox's steps that need no root for that process (`linux-kernel`, rust/PORTING.md). No change
   in the app.
-- Housekeeping: the Buttons and Gestures lists offer an action only where it acts (#282). On a platform kept in
-  another crate whose system owns sleep (rust/PORTING.md), the Sleep settings page has one switch, Keep the screen
-  on while Grimoire is open, the sleep screen is the page, and Sleep now, Sleep screen and Sleep after are not
-  offered (nor Bluetooth controller or Update channel where the platform leaves pairing or updates to its system,
-  nor Light and Warmth without a front light). The Kindle keeps its lists and its Sleep settings page; the one
-  change there is that Warmth down / up on a Kindle whose light has no warmth says "This Kindle has no warmth
-  control." instead of "Light not ready.".
 - Housekeeping: the documents of the safe loader and of your own fonts say what the code does (the limit
   on a worker's record lines, what a build off the Kindle takes of the sandbox, the font check's second
   try), `licenses/rust-crates.txt` says it lists every crate `Cargo.lock` names, and the crate check

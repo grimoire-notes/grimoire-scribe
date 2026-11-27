@@ -380,24 +380,24 @@ fn ruled(c: &mut Canvas, pitch_mm: f32, dpi: f32, margin: bool) {
     let pitch = mm_to_px(pitch_mm, dpi);
     let first = mm_to_px(22.0, dpi);
     let bottom = h - px_mm(10.0, dpi);
-    // Header rule: slightly heavier.
-    canvas_hline(c, 0, w, lrintf(first), thick(3.0, dpi), 150);
+    // Header rule: darker and heavier.
+    canvas_hline(c, 0, w, lrintf(first), thick(3.0, dpi), RULED_HEADER);
     let mut i = 1;
     loop {
         let y = lrintf(fmla(pitch, i as f32, first));
         if y > bottom {
             break;
         }
-        canvas_hline(c, 0, w, y, line_t, 175);
+        canvas_hline(c, 0, w, y, line_t, RULED_RULE);
         i += 1;
     }
     if !margin {
         return;
     }
-    // Double hairline margin.
+    // Double margin line.
     let mx = px_mm(25.0, dpi);
-    canvas_vline(c, mx, 0, h, line_t, 140);
-    canvas_vline(c, mx + thick(7.0, dpi), 0, h, line_t, 140);
+    canvas_vline(c, mx, 0, h, line_t, RULED_MARGIN);
+    canvas_vline(c, mx + thick(7.0, dpi), 0, h, line_t, RULED_MARGIN);
 }
 
 fn music(c: &mut Canvas, dpi: f32) {
@@ -637,35 +637,41 @@ fn dots(c: &mut Canvas, dpi: f32) {
             if x > c.w as f32 - pitch / 2.0 {
                 break;
             }
-            canvas_disc_aa(c, x, y, r, 90, 1.0);
+            canvas_disc_aa(c, x, y, r, DOT_GRAY, 1.0);
         }
     }
 }
 
-// 5 mm graph paper, every fifth line a little stronger.
+// 5 mm graph paper, every fifth line darker and heavier. The other lines are drawn first and every fifth
+// line after them, so a fifth line is whole where the lighter lines cross it, down the page as across it
+// (until 2.3.0 the lighter rows were drawn over the fifth columns: a notch every 5 mm, #314).
 fn grid(c: &mut Canvas, dpi: f32) {
     let pitch = mm_to_px(5.0, dpi);
-    let lt = thick(1.0, dpi);
-    let lt5 = thick(2.0, dpi);
-    let mut i = 0;
-    loop {
-        let x = lrintf(pitch * i as f32);
-        if x >= c.w {
-            break;
+    let (w, h) = (c.w, c.h);
+    for fifth in [false, true] {
+        let (t, g) = if fifth { (thick(3.0, dpi), GRID_FIFTH) } else { (thick(2.0, dpi), GRID_LINE) };
+        let mut i = 0;
+        loop {
+            let x = lrintf(pitch * i as f32);
+            if x >= w {
+                break;
+            }
+            if (i % 5 == 0) == fifth {
+                canvas_vline(c, x, 0, h, t, g);
+            }
+            i += 1;
         }
-        let h = c.h;
-        canvas_vline(c, x, 0, h, if i % 5 != 0 { lt } else { lt5 }, if i % 5 != 0 { 200 } else { 170 });
-        i += 1;
-    }
-    let mut j = 0;
-    loop {
-        let y = lrintf(pitch * j as f32);
-        if y >= c.h {
-            break;
+        let mut j = 0;
+        loop {
+            let y = lrintf(pitch * j as f32);
+            if y >= h {
+                break;
+            }
+            if (j % 5 == 0) == fifth {
+                canvas_hline(c, 0, w, y, t, g);
+            }
+            j += 1;
         }
-        let w = c.w;
-        canvas_hline(c, 0, w, y, if j % 5 != 0 { lt } else { lt5 }, if j % 5 != 0 { 200 } else { 170 });
-        j += 1;
     }
 }
 
@@ -690,8 +696,8 @@ fn reticle(c: &mut Canvas, dpi: f32) {
                 break;
             }
             let xi = lrintf(x);
-            canvas_hline(c, xi - arm, xi + arm + 1, y, t, 140);
-            canvas_vline(c, xi, y - arm, y + arm + 1, t, 140);
+            canvas_hline(c, xi - arm, xi + arm + 1, y, t, RETICLE_GRAY);
+            canvas_vline(c, xi, y - arm, y + arm + 1, t, RETICLE_GRAY);
             i += 1;
         }
         j += 1;
@@ -700,13 +706,14 @@ fn reticle(c: &mut Canvas, dpi: f32) {
 
 // Isometric paper: equilateral triangles of 5 mm sides, lines vertical and at 30 degrees both ways.
 // Every line is drawn over the whole page and the clip keeps what the region needs; one gray, so the
-// crossings come out the same whatever order or region draws them.
+// crossings come out the same whatever order or region draws them. 2 px wide (at 300 dpi), so in every
+// row and column a line crosses, a pixel is the line's gray itself, not a blend toward it.
 fn iso(c: &mut Canvas, dpi: f32) {
     let side = mm_to_px(5.0, dpi);
     let col = side * 0.866_025_4; // between vertical lines
     let (w, h) = (c.w as f32, c.h as f32);
-    let lw = thick(2.0, dpi) as f32 * 0.75;
-    let g = 190;
+    let lw = thick(2.0, dpi) as f32;
+    let g = ISO_LINE;
     let mut x = (w % col) / 2.0;
     while x < w {
         canvas_line_aa(c, x, 0.0, x, h, lw, g);
@@ -723,13 +730,14 @@ fn iso(c: &mut Canvas, dpi: f32) {
 }
 
 // Hexagon paper: flat-topped hexagons of 4 mm sides. Each hexagon draws its top, upper left and
-// lower left edges, which between them draw every edge of the tiling once.
+// lower left edges, which between them draw every edge of the tiling once. One gray and 2 px wide, as
+// the isometric paper's lines.
 fn hex(c: &mut Canvas, dpi: f32) {
     let a = mm_to_px(4.0, dpi);
     let hh = a * 0.866_025_4; // half a hexagon's height
     let (w, h) = (c.w as f32, c.h as f32);
-    let lw = thick(2.0, dpi) as f32 * 0.75;
-    let g = 175;
+    let lw = thick(2.0, dpi) as f32;
+    let g = HEX_LINE;
     let cols = (w / (1.5 * a)) as i32 + 2;
     let rows = (h / (2.0 * hh)) as i32 + 2;
     let x0 = (w - (cols - 1) as f32 * 1.5 * a) / 2.0;
@@ -781,6 +789,32 @@ const SEYES_VERTICAL: u8 = 119;
 // the margin line, darkest of all (it was 120, shown as 119: as dark as the strong lines now are)
 const SEYES_MARGIN: u8 = 34;
 
+// The other ordinary papers on Seyes's rules (2.3.0, issue #314; the owner, 2026-11-26: "can we darken all
+// the layouts except seyes? seyes is the only one really which looks that sharp of the normal non music
+// paper layouts"). Most of their lines were grays between two of the panel's, and some 1 or 1.5 px wide:
+// each is now one of the panel's 16 grays and at least 2 px wide (an anti-aliased line 2.0 px, so its
+// middle reaches its gray), none lighter than Seyes's faint lines (136), and a paper's strong lines (a
+// header, every fifth line, Cornell's cue and summary lines) about as dark as Seyes's strong ones (68).
+// Seyes, Blank and the music papers are unchanged.
+// Narrow, Medium and Wide rule (and Cornell's rules): the rules 2 px (were 175), the header 3 px (150),
+// the margin's two lines 2 px (140).
+const RULED_RULE: u8 = 119;
+const RULED_HEADER: u8 = 85;
+const RULED_MARGIN: u8 = 102;
+// Cornell's cue and summary lines, 3 px (were 120), and its labels (150).
+const CORNELL_LINE: u8 = 68;
+const CORNELL_LABEL: u8 = 85;
+// Graph paper: its lines 2 px (were 200 at 1 px), every fifth 3 px (170 at 2 px).
+const GRID_LINE: u8 = 136;
+const GRID_FIFTH: u8 = 85;
+// Dot grid's dots, 2.4 px in radius as before (were 90).
+const DOT_GRAY: u8 = 51;
+// Cross grid's crosses, 2 px (were 140).
+const RETICLE_GRAY: u8 = 85;
+// Isometric and Hexagon paper's lines, 2.0 px anti-aliased (were 190 and 175 at 1.5 px).
+const ISO_LINE: u8 = 136;
+const HEX_LINE: u8 = 119;
+
 fn seyes(c: &mut Canvas, dpi: f32) {
     let dpi = dpi * seyes_scale();
     let (w, h) = (c.w, c.h);
@@ -826,13 +860,13 @@ fn cornell(c: &mut Canvas, dpi: f32) {
     let head = lrintf(mm_to_px(22.0, dpi));
     let sum = c.h - px_mm(52.0, dpi);
     let cue = px_mm(55.0, dpi);
-    canvas_vline(c, cue, head, sum, lt, 120);
+    canvas_vline(c, cue, head, sum, lt, CORNELL_LINE);
     let w = c.w;
-    canvas_hline(c, 0, w, sum, lt, 120);
+    canvas_hline(c, 0, w, sum, lt, CORNELL_LINE);
     let fs = mm_to_px(2.6, dpi);
-    font_draw(c, FontFace::Fixed, fs, px_mm(4.0, dpi), head - px_mm(3.0, dpi), "Cues", 150);
-    font_draw(c, FontFace::Fixed, fs, cue + px_mm(4.0, dpi), head - px_mm(3.0, dpi), "Notes", 150);
-    font_draw(c, FontFace::Fixed, fs, px_mm(4.0, dpi), sum + px_mm(6.0, dpi), "Summary", 150);
+    font_draw(c, FontFace::Fixed, fs, px_mm(4.0, dpi), head - px_mm(3.0, dpi), "Cues", CORNELL_LABEL);
+    font_draw(c, FontFace::Fixed, fs, cue + px_mm(4.0, dpi), head - px_mm(3.0, dpi), "Notes", CORNELL_LABEL);
+    font_draw(c, FontFace::Fixed, fs, px_mm(4.0, dpi), sum + px_mm(6.0, dpi), "Summary", CORNELL_LABEL);
 }
 
 // paper_render given an image paper: a caller that should have taken the page's paper from
@@ -845,6 +879,32 @@ thread_local! {
 /// a caller that should have used page_paper_render. The tests hold page rendering to 0.
 pub fn paper_take_image_blank_count() -> i32 {
     G_IMAGE_BLANK.with(|g| g.replace(0))
+}
+
+/// Every drawing paper_render makes, for the renderer's fingerprint (page.rs page_render_fingerprint): each
+/// built-in kind, then two custom music layouts that between them have every part, and one of few systems
+/// (two of one staff), whose staff spaces take music_custom's cap and whose systems are spread down the page,
+/// as a layout of few systems is on a Scribe page (an image paper is drawn from its picture,
+/// page_paper_render, and has no lines here).
+pub fn paper_every_drawing() -> Vec<PaperKind> {
+    let staves = MusicLayout { systems: 1, n: 6, part: [PART_TREBLE, PART_BASS, PART_ALTO, PART_TENOR, PART_PERC, PART_STAFF] };
+    let tabs = MusicLayout { systems: 1, n: 6, part: [PART_LYRICS, PART_TAB4, PART_TAB5, PART_TAB6, PART_TAB7, PART_TAB8] };
+    let spread = MusicLayout { systems: 2, n: 1, part: [PART_TREBLE, PART_NONE, PART_NONE, PART_NONE, PART_NONE, PART_NONE] };
+    (0..PAPER_COUNT as u32).map(PaperKind).chain([music_encode(&staves), music_encode(&tabs), music_encode(&spread)]).collect()
+}
+/// The page (w, h) paper k is drawn on for the fingerprint, at 300 dpi: room for every kind of line it has
+/// (a ruled page's header, rules and margin, Seyes's strong and faint lines, verticals and margin, every
+/// staff of a music page), at a sixteenth of a Scribe page; Cornell's, a sixth, has its summary line below
+/// its header and its cue line 55 mm in; a custom layout's is 1000 px tall, room for two systems of one
+/// staff to take the staff spaces' cap.
+pub fn paper_fingerprint_page(k: PaperKind) -> (i32, i32) {
+    if k == PAPER_CORNELL {
+        (760, 1000)
+    } else if paper_is_custom(k) {
+        (480, 1000)
+    } else {
+        (480, 620)
+    }
 }
 
 /// Renders the background for `region` of a full page canvas (canvas size = page size).
@@ -1061,5 +1121,270 @@ mod tests {
         assert!((k - 302.85 / 300.0).abs() < 0.001, "k {k}");
         // the first strong line, 20 mm down: 236.2 px at 300, 238.5 at 302.9
         assert!(scaled > plain && (scaled - plain) <= 3, "{plain} -> {scaled}");
+    }
+
+    // The ordinary papers, each with the grays of its lines: those 2.3.0 drew darker (#314), then Seyes.
+    const ORDINARY: [(PaperKind, &[u8]); 13] = [
+        (PAPER_NARROW, &[RULED_HEADER, RULED_RULE, RULED_MARGIN]),
+        (PAPER_MEDIUM, &[RULED_HEADER, RULED_RULE, RULED_MARGIN]),
+        (PAPER_WIDE, &[RULED_HEADER, RULED_RULE, RULED_MARGIN]),
+        (PAPER_NARROW_NM, &[RULED_HEADER, RULED_RULE]),
+        (PAPER_MEDIUM_NM, &[RULED_HEADER, RULED_RULE]),
+        (PAPER_WIDE_NM, &[RULED_HEADER, RULED_RULE]),
+        (PAPER_CORNELL, &[RULED_HEADER, RULED_RULE, CORNELL_LINE, CORNELL_LABEL]),
+        (PAPER_GRID, &[GRID_LINE, GRID_FIFTH]),
+        (PAPER_RETICLE, &[RETICLE_GRAY]),
+        (PAPER_DOTS, &[DOT_GRAY]),
+        (PAPER_ISO, &[ISO_LINE]),
+        (PAPER_HEX, &[HEX_LINE]),
+        (PAPER_SEYES, &[SEYES_STRONG, SEYES_FAINT, SEYES_VERTICAL, SEYES_MARGIN]),
+    ];
+
+    fn drawn(k: PaperKind, w: i32, h: i32) -> Canvas {
+        let mut c = Canvas::default();
+        assert_eq!(canvas_init(&mut c, w, h), 0);
+        paper_render(&mut c, k, Rect::new(0, 0, w, h), 300.0);
+        c
+    }
+
+    // Cornell's three labels, generously: what is inside is text, anti-aliased toward its gray.
+    fn cornell_labels(w: i32, h: i32) -> [Rect; 3] {
+        let dpi = 300.0;
+        let (head, sum, cue, fs) = (lrintf(mm_to_px(22.0, dpi)), h - px_mm(52.0, dpi), px_mm(55.0, dpi), mm_to_px(2.6, dpi) as i32);
+        let label = |x: i32, base: i32| Rect::new(x - 2, base - 2 * fs, px_mm(30.0, dpi).min(w - x), 3 * fs);
+        [label(px_mm(4.0, dpi), head - px_mm(3.0, dpi)), label(cue + px_mm(4.0, dpi), head - px_mm(3.0, dpi)), label(px_mm(4.0, dpi), sum + px_mm(6.0, dpi))]
+    }
+
+    #[test]
+    fn the_ordinary_papers_draw_on_the_panels_grays_at_least_two_px_wide() {
+        assert_eq!(font_init(), 0); // (Cornell's labels)
+        let (w, h) = (1860, 2480);
+        // each one of the panel's 16 grays, none lighter than Seyes's faint lines
+        let all: Vec<u8> = ORDINARY.iter().flat_map(|(_, g)| g.iter().copied()).collect();
+        assert!(all.iter().all(|g| g % 17 == 0 && *g <= SEYES_FAINT), "{all:?}");
+        for (k, grays) in ORDINARY {
+            let c = drawn(k, w, h);
+            let name = paper_name(k);
+            let labels = if k == PAPER_CORNELL { cornell_labels(w, h).to_vec() } else { vec![] };
+            let text = |x: i32, y: i32| labels.iter().any(|r| x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
+            let mut seen = [false; 256];
+            for y in 0..h {
+                for x in 0..w {
+                    let g = c.px[(y * w + x) as usize];
+                    seen[g as usize] = true;
+                    let anti_aliased = k == PAPER_DOTS || k == PAPER_ISO || k == PAPER_HEX || text(x, y);
+                    assert!(g == 255 || grays.contains(&g) || anti_aliased, "{name}: gray {g} at {x},{y}");
+                    // (nothing darker than the paper's darkest line: a line's middle is its gray, never past it)
+                    assert!(g >= *grays.iter().min().unwrap(), "{name}: gray {g} at {x},{y}");
+                }
+            }
+            // every line gray is drawn, the anti-aliased lines' middles included
+            assert!(grays.iter().all(|&g| seen[g as usize]), "{name}");
+            // (and each of Cornell's labels is there, in its box)
+            for r in &labels {
+                let label = (r.y..r.y + r.h).any(|y| (r.x..r.x + r.w).any(|x| !grays.contains(&c.px[(y * w + x) as usize]) && c.px[(y * w + x) as usize] != 255));
+                assert!(label, "{name}: no label in {r:?}");
+            }
+            // no line narrower than 2 px: down every column and along every row, each run of line is 2 px or more
+            // (a line's crossings with another are part of one run)
+            if k == PAPER_DOTS || k == PAPER_ISO || k == PAPER_HEX {
+                continue;
+            }
+            let ink = |x: i32, y: i32| c.px[(y * w + x) as usize] != 255 && !text(x, y);
+            let down = |i: i32, j: i32| ink(j, i);
+            let along = |i: i32, j: i32| ink(i, j);
+            for (len, across, at) in [(h, w, &down as &dyn Fn(i32, i32) -> bool), (w, h, &along as &dyn Fn(i32, i32) -> bool)] {
+                for j in 0..across {
+                    let mut run = 0;
+                    for i in 0..=len {
+                        if i < len && at(i, j) {
+                            run += 1;
+                            continue;
+                        }
+                        assert!(run == 0 || run >= 2, "{name}: a line {run} px wide at {i},{j}");
+                        run = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn graph_papers_fifth_lines_are_whole_both_ways() {
+        // A column or row that is mostly the fifth lines' gray is a fifth line: it is that gray from end to end,
+        // where the lighter lines cross it too. At both page sizes the Scribes have.
+        for (w, h) in [(1860, 2480), (1986, 2648)] {
+            let c = drawn(PAPER_GRID, w, h);
+            let at = |x: i32, y: i32| c.px[(y * w + x) as usize];
+            let (mut columns, mut rows) = (0, 0);
+            for x in 0..w {
+                let n = (0..h).filter(|&y| at(x, y) == GRID_FIFTH).count() as i32;
+                if n > h / 2 {
+                    columns += 1;
+                    let cut = (0..h).find(|&y| at(x, y) != GRID_FIFTH);
+                    assert!(cut.is_none(), "{w}x{h}: the fifth line's column {x} is {} at {cut:?}", at(x, cut.unwrap_or(0)));
+                }
+            }
+            for y in 0..h {
+                let n = (0..w).filter(|&x| at(x, y) == GRID_FIFTH).count() as i32;
+                if n > w / 2 {
+                    rows += 1;
+                    let cut = (0..w).find(|&x| at(x, y) != GRID_FIFTH);
+                    assert!(cut.is_none(), "{w}x{h}: the fifth line's row {y} is {} at {cut:?}", at(cut.unwrap_or(0), y));
+                }
+            }
+            // (one every 25 mm from the corner, 3 px wide: seven down and nine across, on either page)
+            assert!(columns == 21 && rows == 27, "{w}x{h}: {columns} columns, {rows} rows");
+        }
+    }
+
+    #[test]
+    fn the_anti_aliased_lines_reach_their_gray_all_along() {
+        // Isometric and Hexagon: 2.0 px lines, so every pixel a line touches has one of exactly the line's gray
+        // beside it (or is one): the middle of the line is its gray all along, at every angle. (At 1.5 px a
+        // slanted line's middle was a blend toward it.) Away from the page's edges, where a line's middle may
+        // be off the page.
+        let (w, h) = (1860, 2480);
+        for (k, g) in [(PAPER_ISO, ISO_LINE), (PAPER_HEX, HEX_LINE)] {
+            let c = drawn(k, w, h);
+            let at = |x: i32, y: i32| c.px[(y * w + x) as usize];
+            for y in 3..h - 3 {
+                for x in 3..w - 3 {
+                    if at(x, y) == 255 {
+                        continue;
+                    }
+                    let near = (-1..=1).any(|dy| (-1..=1).any(|dx| at(x + dx, y + dy) == g));
+                    assert!(near, "{}: {} at {x},{y} with no {g} beside it", paper_name(k), at(x, y));
+                }
+            }
+        }
+        // Dot grid: every dot's middle is its gray (the dots placed as dots() places them).
+        let c = drawn(PAPER_DOTS, w, h);
+        let dpi = 300.0;
+        let pitch = mm_to_px(5.0, dpi);
+        let (ox, oy) = ((w as f32 % pitch) / 2.0 + pitch / 2.0, mm_to_px(10.0, dpi));
+        let mut dots = 0;
+        for j in 0.. {
+            let y = fmla(j as f32, pitch, oy);
+            if y > h as f32 - mm_to_px(8.0, dpi) {
+                break;
+            }
+            for i in 0.. {
+                let x = fmla(i as f32, pitch, ox);
+                if x > w as f32 - pitch / 2.0 {
+                    break;
+                }
+                let (xi, yi) = (x as i32, y as i32);
+                let darkest = (yi - 3..=yi + 3).flat_map(|py| (xi - 3..=xi + 3).map(move |px| (px, py))).map(|(px, py)| c.px[(py * w + px) as usize]).min();
+                assert_eq!(darkest, Some(DOT_GRAY), "the dot at {x},{y}");
+                dots += 1;
+            }
+        }
+        assert!(dots > 1000, "{dots}");
+    }
+
+    #[test]
+    fn a_page_drawn_in_regions_is_the_page_drawn_whole() {
+        // The editor draws the paper by region (its clip): for every paper 2.3.0 drew darker, any set of regions
+        // that covers the page gives the bytes of the page drawn whole, whatever their sizes and order, over
+        // whatever was there; and a region drawn again over the whole page changes nothing. (Isometric and Hexagon
+        // draw every line over the whole page and keep what the clip needs, one gray for all; the dots are walked
+        // by the clip.) At both page sizes the Scribes have. (Seyes, unchanged, is test_ink's: its scale is process
+        // state, which seyes_is_laid_out_at_the_panels_density changes.)
+        assert_eq!(font_init(), 0); // (Cornell's labels)
+        let mut seed = 0x314u32;
+        let mut rnd = move |n: i32| {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+            ((seed >> 8) % n.max(1) as u32) as i32
+        };
+        for (w, h) in [(1860, 2480), (1986, 2648)] {
+            for (k, _) in ORDINARY.into_iter().filter(|&(k, _)| k != PAPER_SEYES) {
+                let whole = drawn(k, w, h);
+                let name = paper_name(k);
+                // uneven tiles: cuts at random places, drawn in a random order over a page of another gray
+                for _ in 0..2 {
+                    let mut xs: Vec<i32> = (0..8).map(|_| 1 + rnd(w - 2)).chain([0, w]).collect();
+                    let mut ys: Vec<i32> = (0..10).map(|_| 1 + rnd(h - 2)).chain([0, h]).collect();
+                    xs.sort_unstable();
+                    ys.sort_unstable();
+                    let mut tiles: Vec<Rect> = Vec::new();
+                    for (y0, y1) in ys.iter().zip(&ys[1..]) {
+                        for (x0, x1) in xs.iter().zip(&xs[1..]) {
+                            tiles.push(Rect::new(*x0, *y0, x1 - x0, y1 - y0));
+                        }
+                    }
+                    for i in (1..tiles.len()).rev() {
+                        tiles.swap(i, rnd(i as i32 + 1) as usize);
+                    }
+                    let mut part = Canvas::default();
+                    assert_eq!(canvas_init(&mut part, w, h), 0);
+                    canvas_fill(&mut part, Rect::new(0, 0, w, h), 77);
+                    for t in &tiles {
+                        paper_render(&mut part, k, *t, 300.0);
+                    }
+                    assert!(part.px == whole.px, "{name} {w}x{h}: tiles {tiles:?}");
+                }
+                // strips 1 to 3 px wide, down and across, each through lines and their crossings
+                let mut part = Canvas::default();
+                assert_eq!(canvas_init(&mut part, w, h), 0);
+                canvas_fill(&mut part, Rect::new(0, 0, w, h), 0);
+                let mut x = 0;
+                while x < w {
+                    let sw = 1 + rnd(3);
+                    paper_render(&mut part, k, Rect::new(x, 0, sw, h / 2), 300.0);
+                    x += sw;
+                }
+                let mut y = h / 2;
+                while y < h {
+                    let sh = 1 + rnd(3);
+                    paper_render(&mut part, k, Rect::new(0, y, w, sh), 300.0);
+                    y += sh;
+                }
+                assert!(part.px == whole.px, "{name} {w}x{h}: strips");
+                // small regions drawn again over the page, as the editor redraws what changed
+                for _ in 0..60 {
+                    let r = Rect::new(rnd(w) - 20, rnd(h) - 20, 1 + rnd(240), 1 + rnd(240));
+                    paper_render(&mut part, k, r, 300.0);
+                }
+                assert!(part.px == whole.px, "{name} {w}x{h}: redrawn regions");
+            }
+        }
+    }
+
+    #[test]
+    fn the_renderers_fingerprint_draws_every_paper_with_every_line() {
+        assert_eq!(font_init(), 0); // (Cornell's labels, the clefs)
+        // Every fixed kind, then custom layouts that have every part between them.
+        let every = paper_every_drawing();
+        assert!((0..PAPER_COUNT as u32).all(|k| every.contains(&PaperKind(k))));
+        let mut parts = [false; PART_COUNT as usize];
+        for k in &every {
+            let mut m = MusicLayout::default();
+            if music_decode(*k, &mut m) {
+                m.part[..m.n as usize].iter().for_each(|p| parts[p.0 as usize] = true);
+            }
+        }
+        assert!(parts[1..].iter().all(|&p| p), "{parts:?}");
+        // On its fingerprint page each paper draws every gray its lines have (so a change to any of them changes the
+        // fingerprint), and every other paper but Blank draws a line.
+        for (k, grays) in ORDINARY {
+            let (w, h) = paper_fingerprint_page(k);
+            let c = drawn(k, w, h);
+            assert!(grays.iter().all(|g| c.px.contains(g)), "{}", paper_name(k));
+        }
+        for k in every.iter().copied().filter(|&k| k != PAPER_BLANK) {
+            let (w, h) = paper_fingerprint_page(k);
+            assert!(drawn(k, w, h).px.iter().any(|&g| g < 200), "{:x}", k.0);
+        }
+        // A custom layout takes music_custom's cap on its staff spaces and spreads its systems (as two systems of a
+        // treble and a bass staff do on a Scribe page), and the others do not: both ways of laying out are drawn.
+        let capped = |k: PaperKind| {
+            let mut m = MusicLayout::default();
+            let (_, h) = paper_fingerprint_page(k);
+            let avail = h as f32 - mm_to_px(MUSIC_TOP_MM, 300.0) - mm_to_px(MUSIC_BOT_MM, 300.0);
+            music_decode(k, &mut m).then(|| avail / fmla(m.systems as f32, system_units(&m), ((m.systems - 1) as f32) * SYSTEM_GAP) > mm_to_px(MAX_SPACE_MM, 300.0) && m.systems > 1)
+        };
+        let custom: Vec<bool> = every.iter().filter_map(|&k| capped(k)).collect();
+        assert!(custom.contains(&true) && custom.contains(&false), "{custom:?}");
     }
 }

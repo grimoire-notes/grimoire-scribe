@@ -176,3 +176,36 @@ pub fn line_in_reach(body: Rect, x0: f32, y0: f32, x1: f32, y1: f32) -> Option<(
         (x0, y0, x1, y1)
     })
 }
+
+// ---- a module's request to be drawn again ----
+
+/// A module's request to be drawn again (`request_redraw`), which its host keeps until a pass answers it: when it
+/// was asked, by the app's clock (`now_ms`), and how long after. It is due once that long has gone since it was
+/// asked, a duration on the u32 clock (`now.wrapping_sub(asked)`), so a request comes due the same at any uptime,
+/// past 2^31 ms and across the clock's wrap at 2^32 too. One stands at a time, the soonest asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Redraw {
+    asked: u32,
+    after: u32,
+}
+
+impl Redraw {
+    /// The request that stands after a module asks at `now` for a pass `after` ms later while `was` stands: the
+    /// soonest of the two (a later ask does not put an earlier request off).
+    pub fn asked(was: Option<Redraw>, now: u32, after: u32) -> Redraw {
+        match was {
+            Some(w) if w.left(now) <= after => w,
+            _ => Redraw { asked: now, after },
+        }
+    }
+
+    /// Whether the request is due at `now`.
+    pub fn due(&self, now: u32) -> bool {
+        now.wrapping_sub(self.asked) >= self.after
+    }
+
+    /// How long until the request is due at `now`; 0 once it is.
+    pub fn left(&self, now: u32) -> u32 {
+        self.after.saturating_sub(now.wrapping_sub(self.asked))
+    }
+}
