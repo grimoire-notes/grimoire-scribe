@@ -492,33 +492,18 @@ fn solid_draws_the_same_every_way() {
             check!(c.px == fresh.px);
         });
     }
-    // Compaction's pieces: a long ballpoint that goes right and comes back left beside itself (its pieces about 16 mm
+    // Compaction's pieces: a long stroke that goes right and comes back left beside itself (its pieces about 16 mm
     // each), drawn over the left part of the page, which the middle pieces never reach: the pieces that do share the
-    // stroke's shadow, and a pixel two of them darken a little each is drawn as the whole stroke draws it.
-    // (a few pens, pressures and gaps between the two ways, back along the very line among them: without the shared
-    // shadow these differ by 1 to 240 pixels)
+    // stroke's shadow, and a pixel two of them reach is drawn as the whole stroke draws it. Each page is drawn so, and
+    // whole in pieces, with Smooth and with Solid. `what` names the case when it differs.
     let (w, h) = (700, 160);
     let mut shared_wrong = 0;
-    for (t, pressure, gap) in [(TOOL_BALLPOINT, 0.35f32, 3.0f32), (TOOL_BALLPOINT, 0.5, 0.0), (TOOL_BALLPOINT, 0.5, 5.0), (TOOL_MARKER, 0.9, 0.0)] {
-        let mut p = page_new(w, h, PAPER_BLANK);
-        let mut s = stroke_new(t, &params(t), 9);
-        let mut k = 0;
-        let mut add = |s: &mut Stroke, x: f32, y: f32| {
-            stroke_append(s, &PenSample { x, y, pressure, t_ms: k * 6, ..Default::default() }, DPI);
-            k += 1;
-        };
-        for i in 0..120 {
-            add(&mut s, 30.0 + i as f32 * 5.0, 60.0);
-        }
-        for i in 0..120 {
-            add(&mut s, 625.0 - i as f32 * 5.0, 60.0 + gap);
-        }
-        page_add(&mut p, s);
+    let mut in_pieces = |p: &Page, what: &str| {
         for e in [InkEdges::Smooth, InkEdges::Solid] {
-            let all = render(&p, e);
+            let all = render(p, e);
             let left = Rect { x: 0, y: 0, w: 150, h };
             let mut c = canvas(w, h);
-            ink_edges_as(e, || page_render_in_pieces(&mut c, &p, left, DPI));
+            ink_edges_as(e, || page_render_in_pieces(&mut c, p, left, DPI));
             let mut wrong = 0;
             for y in 0..h {
                 for x in 0..left.w {
@@ -529,12 +514,54 @@ fn solid_draws_the_same_every_way() {
             check!(wrong == 0);
             shared_wrong += wrong;
             if wrong != 0 {
-                eprintln!("  pieces of a {} stroke drawn {:?} at pressure {pressure}, {gap} px apart: {wrong} pixels differ", tool_name(t), e);
+                eprintln!("  pieces of {what} drawn {:?}: {wrong} pixels differ", e);
             }
             let mut c = canvas(w, h);
-            ink_edges_as(e, || page_render_in_pieces(&mut c, &p, Rect { x: 0, y: 0, w, h }, DPI));
+            ink_edges_as(e, || page_render_in_pieces(&mut c, p, Rect { x: 0, y: 0, w, h }, DPI));
             check!(c.px == all.px);
         }
+    };
+    // right along y, then back along y + gap
+    let there_and_back = |s: &mut Stroke, x0: f32, y: f32, gap: f32, pressure: f32| {
+        let mut k = 0;
+        for (dir, yy) in [(1.0f32, y), (-1.0, y + gap)] {
+            for i in 0..120 {
+                let x = if dir > 0.0 { x0 + i as f32 * 5.0 } else { x0 + 595.0 - i as f32 * 5.0 };
+                stroke_append(s, &PenSample { x, y: yy, pressure, t_ms: k * 6, ..Default::default() }, DPI);
+                k += 1;
+            }
+        }
+    };
+    // A solid pen's own stroke (a few pens, pressures and gaps between the two ways, back along the very line among
+    // them: without the shared shadow these differ by 1 to 240 pixels at Solid)
+    for (t, pressure, gap) in [(TOOL_BALLPOINT, 0.35f32, 3.0f32), (TOOL_BALLPOINT, 0.5, 0.0), (TOOL_BALLPOINT, 0.5, 5.0), (TOOL_MARKER, 0.9, 0.0)] {
+        let mut p = page_new(w, h, PAPER_BLANK);
+        let mut s = stroke_new(t, &params(t), 9);
+        there_and_back(&mut s, 30.0, 60.0, gap, pressure);
+        page_add(&mut p, s);
+        in_pieces(&p, &format!("a {} stroke at pressure {pressure}, {gap} px apart", tool_name(t)));
+    }
+    // An erase stroke over a solid line: white ink of a pen, or the precise eraser to either side of it, right above
+    // or along the line and back below or along it. At Solid an erase stroke has a shadow as an ink stroke does (a
+    // solid stroke's black is restored whole or not at all, by what the whole stroke restores there), so its pieces
+    // share it too. (Without the shared shadow these differ by 2 to 23 pixels at Solid, and not at all at Smooth.)
+    for (ink, tex, pressure, (up, down), paper) in [
+        (TOOL_BALLPOINT, TOOL_PENCIL, 1.0f32, (0.0f32, 0.0f32), PAPER_BLANK),
+        (TOOL_MARKER, TOOL_CHARCOAL, 0.6, (0.0, 0.0), PAPER_BLANK),
+        (TOOL_CALLIGRAPHY, TOOL_MARKER, 1.0, (0.0, 0.0), PAPER_BLANK),
+        (TOOL_BALLPOINT, TOOL_PENCIL, 0.6, (3.0, 0.0), PAPER_MEDIUM),
+        (TOOL_BALLPOINT, TOOL_ERASER, 0.3, (30.0, 30.0), PAPER_BLANK),
+    ] {
+        let mut p = page_new(w, h, paper);
+        let mut line = stroke_new(ink, &params(ink), 9);
+        for i in 0..130 {
+            stroke_append(&mut line, &PenSample { x: 20.0 + i as f32 * 5.0, y: 60.0, pressure: 0.6, t_ms: i * 6, ..Default::default() }, DPI);
+        }
+        page_add(&mut p, line);
+        let mut e = stroke_new(TOOL_ERASER, &params(tex), erase_seed(tex, 77));
+        there_and_back(&mut e, 30.0, 60.0 - up, up + down, pressure);
+        page_add(&mut p, e);
+        in_pieces(&p, &format!("{} erased with {} at pressure {pressure}, {up} px above and {down} below", tool_name(ink), tool_name(tex)));
     }
     check!(shared_wrong == 0);
 }
