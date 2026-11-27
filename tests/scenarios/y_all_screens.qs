@@ -409,6 +409,27 @@ tap library pen-button
 wait 50
 tap library pen-button.2
 wait 50
+# Ink edges (2.3, #320): its list, upright and sideways, so its two lines are measured in every language; left with
+# Back, the setting as it was.
+tap library ink-edges
+wait 50
+expect library.sheet is ink-edges
+shot 05-settings-ink-edges-list
+tap library ink-edges.back
+wait 50
+expect library.sheet is settings
+rotate 1
+wait 100
+tap library ink-edges
+wait 50
+expect library.sheet is ink-edges
+shot 05-settings-ink-edges-list-sideways
+tap library ink-edges.back
+wait 50
+rotate 0
+wait 100
+expect library.sheet is settings
+expect settings.ink_edges is smooth
 tap library settings.cat.1
 wait 50
 tap library rotate

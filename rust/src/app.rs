@@ -2323,9 +2323,6 @@ fn poll_jobs(a: &mut App) -> i32 {
         bgimage_retry_missing();
         editor_picture_made(a); // (the open page may be on that picture: a page KOReader sent)
     }
-    if done == BgKind::Cards as i32 {
-        bgimage_retry_missing(); // (the Library reads again the cards whose files changed: library_tick)
-    }
     if done == BgKind::PageTemplate as i32 {
         // (a notebook's page drawn as the open page's template: From a notebook..., issue #195)
         crate::editor::editor_page_template_done(a, done_id.as_str(), r > 0);

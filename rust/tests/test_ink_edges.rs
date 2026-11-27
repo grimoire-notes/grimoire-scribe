@@ -144,8 +144,9 @@ fn solid_is_the_threshold_of_smooth() {
     check!(SOLID_STEP == 16);
 }
 
-// The ballpoint at pressure 0.6 on white, a horizontal stroke: Smooth's column across it is the one the port's
-// experiment measured (254 106 42 38 54 186), and Solid draws it 5 px of 0; the fineliner 3 px.
+// The ballpoint at pressure 0.6 on white, a horizontal stroke: Smooth's column across it is 254 106 42 38 54 186, of
+// which the rule (16 or more below what was there) makes 5 px of 0 with Solid; the fineliner 3 px. These are the
+// widths the setting was judged at.
 fn solid_widths_are_the_ones_judged() {
     let (w, h) = (240, 120);
     for (t, width) in [(TOOL_BALLPOINT, 5), (TOOL_FINELINER, 3)] {
@@ -331,6 +332,77 @@ fn smooth_fingerprint_whatever_the_setting() {
     check!(ink_edges() == InkEdges::Smooth);
 }
 
+// Solid's fingerprint's second page (page.rs page_solid_fingerprint_page) drawn with Ink edges at Solid as the pen
+// writes it, each stroke's brush Solid or not as `flag` says (given the stroke's place on the page, the stroke, and
+// what the rule and the setting say).
+fn second_page_drawn(flag: impl Fn(usize, &Stroke, bool) -> bool) -> Canvas {
+    let p = page_solid_fingerprint_page();
+    let mut paper = canvas(p.w, p.h);
+    page_paper_render(&mut paper, &p, Rect { x: 0, y: 0, w: p.w, h: p.h }, DPI);
+    let mut c = paper.clone();
+    ink_edges_as(InkEdges::Solid, || {
+        for (i, s) in p.strokes.iter().enumerate() {
+            let mut b = BrushState::default();
+            stroke_brush_begin(&mut b, s, DPI, Some(Rc::new(paper.px.clone())), 0, 0, c.stride);
+            b.solid = flag(i, s, b.solid);
+            for q in &s.pts {
+                brush_add(&mut b, &mut c, q);
+            }
+        }
+    });
+    c
+}
+
+// Solid's fingerprint covers the rule for a pen's own grain and tilt shading: its second page has a marker given
+// Grain past SOLID_GRAIN_MOST and a ballpoint given Tilt lightens, which the rule refuses for that alone. Were the
+// rule to take either (brush_ink_solid answering yes for them), the page would draw otherwise and the fingerprint
+// would be another, so no picture kept under today's would be shown as current.
+fn solid_fingerprint_follows_the_rule_for_grain_and_tilt() {
+    let p = page_solid_fingerprint_page();
+    let grainy = p.strokes.iter().position(|s| !stroke_is_erase(s) && s.params.grain > SOLID_GRAIN_MOST);
+    let shaded = p.strokes.iter().position(|s| !stroke_is_erase(s) && s.params.tilt_opacity > 0.0);
+    check!(grainy.is_some() && shaded.is_some() && grainy != shaded);
+    let (Some(grainy), Some(shaded)) = (grainy, shaded) else { return };
+    for (i, s) in p.strokes.iter().enumerate() {
+        if stroke_is_erase(s) {
+            continue;
+        }
+        // (the grain and the tilt shading are each the one thing the rule refuses its stroke for)
+        check!(stroke_may_be_solid(s) == (i != grainy && i != shaded));
+        let mut plain = s.clone();
+        plain.params.grain = plain.params.grain.min(SOLID_GRAIN_MOST);
+        plain.params.tilt_opacity = 0.0;
+        check!(stroke_may_be_solid(&plain));
+    }
+    check!(p.strokes[shaded].pts.iter().any(|q| q.tilt_x != 0.0));
+    let solid = page_render_fingerprint_for(InkEdges::Solid);
+    let now = second_page_drawn(|_, _, rule| rule);
+    check!(now.px == render(&p, InkEdges::Solid).px);
+    check!(solid != 0 && page_render_fingerprint_solid_with(&now) == solid);
+    // the rule taking both, then each alone
+    for taken in [vec![grainy, shaded], vec![grainy], vec![shaded]] {
+        let other = second_page_drawn(|i, _, rule| rule || taken.contains(&i));
+        check!(other.px != now.px);
+        check!(page_render_fingerprint_solid_with(&other) != solid);
+    }
+    // Smooth's is not this page's business
+    check!(page_render_fingerprint_for(InkEdges::Smooth) == page_render_fingerprint());
+}
+
+// Solid's fingerprint covers how white ink and the eraser draw at Solid (a solid stroke's black restored whole or
+// not at all): were erase strokes drawn as with Smooth, its second page would draw otherwise and the fingerprint
+// would be another.
+fn solid_fingerprint_follows_how_erasing_draws() {
+    let p = page_solid_fingerprint_page();
+    check!(p.strokes.iter().filter(|s| stroke_is_erase(s)).count() == 2);
+    let solid = page_render_fingerprint_for(InkEdges::Solid);
+    let now = second_page_drawn(|_, _, rule| rule);
+    check!(solid != 0 && page_render_fingerprint_solid_with(&now) == solid);
+    let other = second_page_drawn(|_, s, rule| rule && !stroke_is_erase(s));
+    check!(other.px != now.px);
+    check!(page_render_fingerprint_solid_with(&other) != solid);
+}
+
 // A page of every kind of stroke on ruled paper: random strokes of every tool, ink and erase strokes among them.
 fn random_page(w: i32, h: i32, seed: u32, n: usize) -> Box<Page> {
     let mut g = seed;
@@ -421,33 +493,18 @@ fn solid_draws_the_same_every_way() {
             check!(c.px == fresh.px);
         });
     }
-    // Compaction's pieces: a long ballpoint that goes right and comes back left beside itself (its pieces about 16 mm
+    // Compaction's pieces: a long stroke that goes right and comes back left beside itself (its pieces about 16 mm
     // each), drawn over the left part of the page, which the middle pieces never reach: the pieces that do share the
-    // stroke's shadow, and a pixel two of them darken a little each is drawn as the whole stroke draws it.
-    // (a few pens, pressures and gaps between the two ways, back along the very line among them: without the shared
-    // shadow these differ by 1 to 240 pixels)
+    // stroke's shadow, and a pixel two of them reach is drawn as the whole stroke draws it. Each page is drawn so, and
+    // whole in pieces, with Smooth and with Solid. `what` names the case when it differs.
     let (w, h) = (700, 160);
     let mut shared_wrong = 0;
-    for (t, pressure, gap) in [(TOOL_BALLPOINT, 0.35f32, 3.0f32), (TOOL_BALLPOINT, 0.5, 0.0), (TOOL_BALLPOINT, 0.5, 5.0), (TOOL_MARKER, 0.9, 0.0)] {
-        let mut p = page_new(w, h, PAPER_BLANK);
-        let mut s = stroke_new(t, &params(t), 9);
-        let mut k = 0;
-        let mut add = |s: &mut Stroke, x: f32, y: f32| {
-            stroke_append(s, &PenSample { x, y, pressure, t_ms: k * 6, ..Default::default() }, DPI);
-            k += 1;
-        };
-        for i in 0..120 {
-            add(&mut s, 30.0 + i as f32 * 5.0, 60.0);
-        }
-        for i in 0..120 {
-            add(&mut s, 625.0 - i as f32 * 5.0, 60.0 + gap);
-        }
-        page_add(&mut p, s);
+    let mut in_pieces = |p: &Page, what: &str| {
         for e in [InkEdges::Smooth, InkEdges::Solid] {
-            let all = render(&p, e);
+            let all = render(p, e);
             let left = Rect { x: 0, y: 0, w: 150, h };
             let mut c = canvas(w, h);
-            ink_edges_as(e, || page_render_in_pieces(&mut c, &p, left, DPI));
+            ink_edges_as(e, || page_render_in_pieces(&mut c, p, left, DPI));
             let mut wrong = 0;
             for y in 0..h {
                 for x in 0..left.w {
@@ -458,12 +515,54 @@ fn solid_draws_the_same_every_way() {
             check!(wrong == 0);
             shared_wrong += wrong;
             if wrong != 0 {
-                eprintln!("  pieces of a {} stroke drawn {:?} at pressure {pressure}, {gap} px apart: {wrong} pixels differ", tool_name(t), e);
+                eprintln!("  pieces of {what} drawn {:?}: {wrong} pixels differ", e);
             }
             let mut c = canvas(w, h);
-            ink_edges_as(e, || page_render_in_pieces(&mut c, &p, Rect { x: 0, y: 0, w, h }, DPI));
+            ink_edges_as(e, || page_render_in_pieces(&mut c, p, Rect { x: 0, y: 0, w, h }, DPI));
             check!(c.px == all.px);
         }
+    };
+    // right along y, then back along y + gap
+    let there_and_back = |s: &mut Stroke, x0: f32, y: f32, gap: f32, pressure: f32| {
+        let mut k = 0;
+        for (dir, yy) in [(1.0f32, y), (-1.0, y + gap)] {
+            for i in 0..120 {
+                let x = if dir > 0.0 { x0 + i as f32 * 5.0 } else { x0 + 595.0 - i as f32 * 5.0 };
+                stroke_append(s, &PenSample { x, y: yy, pressure, t_ms: k * 6, ..Default::default() }, DPI);
+                k += 1;
+            }
+        }
+    };
+    // A solid pen's own stroke (a few pens, pressures and gaps between the two ways, back along the very line among
+    // them: without the shared shadow these differ by 1 to 240 pixels at Solid)
+    for (t, pressure, gap) in [(TOOL_BALLPOINT, 0.35f32, 3.0f32), (TOOL_BALLPOINT, 0.5, 0.0), (TOOL_BALLPOINT, 0.5, 5.0), (TOOL_MARKER, 0.9, 0.0)] {
+        let mut p = page_new(w, h, PAPER_BLANK);
+        let mut s = stroke_new(t, &params(t), 9);
+        there_and_back(&mut s, 30.0, 60.0, gap, pressure);
+        page_add(&mut p, s);
+        in_pieces(&p, &format!("a {} stroke at pressure {pressure}, {gap} px apart", tool_name(t)));
+    }
+    // An erase stroke over a solid line: white ink of a pen, or the precise eraser to either side of it, right above
+    // or along the line and back below or along it. At Solid an erase stroke has a shadow as an ink stroke does (a
+    // solid stroke's black is restored whole or not at all, by what the whole stroke restores there), so its pieces
+    // share it too. (Without the shared shadow these differ by 2 to 23 pixels at Solid, and not at all at Smooth.)
+    for (ink, tex, pressure, (up, down), paper) in [
+        (TOOL_BALLPOINT, TOOL_PENCIL, 1.0f32, (0.0f32, 0.0f32), PAPER_BLANK),
+        (TOOL_MARKER, TOOL_CHARCOAL, 0.6, (0.0, 0.0), PAPER_BLANK),
+        (TOOL_CALLIGRAPHY, TOOL_MARKER, 1.0, (0.0, 0.0), PAPER_BLANK),
+        (TOOL_BALLPOINT, TOOL_PENCIL, 0.6, (3.0, 0.0), PAPER_MEDIUM),
+        (TOOL_BALLPOINT, TOOL_ERASER, 0.3, (30.0, 30.0), PAPER_BLANK),
+    ] {
+        let mut p = page_new(w, h, paper);
+        let mut line = stroke_new(ink, &params(ink), 9);
+        for i in 0..130 {
+            stroke_append(&mut line, &PenSample { x: 20.0 + i as f32 * 5.0, y: 60.0, pressure: 0.6, t_ms: i * 6, ..Default::default() }, DPI);
+        }
+        page_add(&mut p, line);
+        let mut e = stroke_new(TOOL_ERASER, &params(tex), erase_seed(tex, 77));
+        there_and_back(&mut e, 30.0, 60.0 - up, up + down, pressure);
+        page_add(&mut p, e);
+        in_pieces(&p, &format!("{} erased with {} at pressure {pressure}, {up} px above and {down} below", tool_name(ink), tool_name(tex)));
     }
     check!(shared_wrong == 0);
 }
@@ -502,6 +601,8 @@ fn test_ink_edges() {
     check!(font_init() == 0); // (the papers of the fingerprint draw text)
     paper_set_panel_ppi(0.0, DPI);
     run!(smooth_fingerprint_whatever_the_setting); // (first: the fingerprint is taken once per process)
+    run!(solid_fingerprint_follows_the_rule_for_grain_and_tilt);
+    run!(solid_fingerprint_follows_how_erasing_draws);
     run!(the_rule_takes_the_solid_pens);
     run!(solid_is_the_threshold_of_smooth);
     run!(solid_widths_are_the_ones_judged);

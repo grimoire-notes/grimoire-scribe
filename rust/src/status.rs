@@ -220,8 +220,10 @@ pub fn status_touch(_a: &mut App, ev: &InEvent) {
 /// Whether a notebook's bar holds its minute's refresh back (editor_tick): the pen is near, a stroke
 /// or another gesture is in progress, or the driver is in pen mode. A grayscale refresh would end that
 /// mode and wait for the pen's last frame (display_fbink.rs pen_leave), so the bar waits for the pen
-/// to leave, as the clock corner it replaced did. A widget frame's due redraw waits by the same
-/// rule (editor.rs, widget_runtime_tick).
+/// to leave, as the clock corner it replaced did. Pen mode ends at the settle after writing: at its
+/// grayscale refresh or, with Ink edges at Solid, at a pause that sends nothing
+/// (display_settle_area), so the bar's minute comes after either. A widget frame's due redraw waits
+/// by the same rule (editor.rs, widget_runtime_tick).
 pub fn status_busy(a: &App) -> bool {
     PEN_NEAR.with(|n| n.get()) || editor_busy(a) || display_pen_mode_on()
 }

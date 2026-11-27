@@ -1,7 +1,9 @@
 # settings: status_mode=1
 # Ink edges at Smooth (2.3, #320), the default: the same ballpoint word as z_ink_edges_2_settle_solid. Its live frames
 # leave the grays of its rim dithered (display.stale over the word), and the pause after writing refreshes them in
-# grays as every version did: one ui refresh, then the panel shows the page.
+# grays as every version did: one ui refresh, then the panel shows the page. (The refreshes are read while the pen is
+# still down and again after the pause: a loop that comes to the pen's leaving late sends the pause's refresh with the
+# last frames, in the same pass.)
 # rust-only
 wait 3600
 clock 1700000000
@@ -39,10 +41,10 @@ pen move 760 960 0.9 0 0
 pen move 820 900 0.9 0 0
 expect display.last_fast is ink
 expect display.stale.200.700.1200.500 not 0
+expect display.presents has fast
 shot 01-live-smooth
 pen up 830 890
 pen leave
-expect display.presents has fast
 wait 2000
 expect editor.strokes is 2
 expect display.presents has ui

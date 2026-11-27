@@ -148,22 +148,37 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   scale (issue #308, above) takes what is left of the taps over the paper it drew, which is that paper itself
   where nothing else is written, so each line stays whole and even up to the stroke and under its edge
   (`blit_canvas_ruled`: the answers are worked out over the drawn paper, before the ink is sampled over it, and
-  put over the result; a byte kept for each pixel that reads such ink). So a solid stroke changes screen pixels
-  only to black there as well, and the frames drawn while writing are the frame the settle composes. A view at
-  100% on whole pixels copies the page (a page of the screen's size scrolled, or one a little smaller at rest,
-  issue #303) and has no such pass: nothing is blended there, and the desk comes right up to the page
-  (`view_copies`). The Links bar's view of another page follows the same rule, ruled or sampled, where the open
-  page's paper alone is that page's paper too (`peek_paper`: it tells a solid stroke's black from the paper's
-  own), so the page shows there as it will once it is open; a page on another paper is sampled with no pass,
-  since no paper of its own is kept for it. Only the settle's rect is judged; anything else due goes out as it
-  would. The display's contract (display.rs): a platform
-  answers the whole rect unless it knows what it last gave the panel at every pixel of it, so one that keeps no
-  record (the default), or whose last frames may not all have reached the panel as written (a refresh refused or
-  failed, a rotation or inversion since, until a whole grayscale frame; a colour panel, whose live frames are not
-  waited for), refreshes all of it as before; one with a pen mode leaves it when it answers empty, as the
-  grayscale refresh would have (the status bar waits for it). display_fbink.rs answers from `g_shown`, the RAM
-  shadow of the bytes written to the framebuffer, row by row as `copy_row` writes them (`fbpack_level_span`);
-  the simulator from its panel. With Smooth the settle is the UI refresh of its whole rect, as before.
+  put over the result; a byte kept for each pixel that reads such ink). So over its paper a solid stroke changes
+  screen pixels only to black there as well, and the frames drawn while writing are the frame the settle
+  composes. Beside other ink (pencil, charcoal, a highlight, a pen given grain, drawn before the stroke or after
+  it) the paper is not taken for the ink: where the ink has less than half the weight and one of the four page
+  pixels with any weight is neither such ink nor its own paper, the view's own pixel stays, which counts the ink
+  as black and so is never lighter than the view without the stroke (taking the paper there left a pale outline
+  along the stroke). The page does not keep what a solid stroke covers, so where the four show only the ink and
+  paper, other ink the stroke covered there shows as paper, lighter than without the stroke: a few pixels of a
+  view, more where the stroke meets black of the paper's own (a PDF page's text, a template's lines) under a
+  highlight or pencil, as that black counts as paper. So the settle of a solid stroke that crosses other ink in
+  such a view may send a small refresh, of the grays beside it. A view at 100% on whole pixels copies the page (a
+  page of the screen's size scrolled, or one a little smaller at rest, issue #303) and has no such pass: nothing
+  is blended there, and the desk comes right up to the page (`view_copies`). The Links bar's view of another page
+  follows the same rule, ruled or sampled, where the open page's paper alone is that page's paper too
+  (`peek_paper`: it tells a solid stroke's black from the paper's own), so the page shows there as it will once
+  it is open; a page on another paper is sampled with no pass, since no paper of its own is kept for it. Only the
+  settle's rect is judged; anything else due goes out as it would. The settle follows the flush of the stroke's
+  own live frames, by order and not by time: the loop handles a batch of input, ticks, then flushes, so a tick
+  that comes to the pen's leaving 150 ms late finds the settle due while the stroke's last frames still wait for
+  the flush. While a refresh waits where the settle's rect is on screen, the tick leaves the settle due (editor.rs
+  `settle_waits_for_flush`); the flush sends the frames, and the next tick settles against a panel that has them.
+  Nothing is flushed from the tick; refreshes waiting elsewhere hold the settle back one pass at most (what waits
+  for the flush is one rect, which two of them can stretch across the stroke); and a settle an action forces
+  (Undo, a tap on the toolbar) is taken at once. The display's contract (display.rs): a platform answers the whole
+  rect unless it knows what it last gave the panel at every pixel of it, so one that keeps no record (the
+  default), or whose last frames may not all have reached the panel as written (a refresh refused or failed, a
+  rotation or inversion since, until a whole grayscale frame; a colour panel, whose live frames are not waited
+  for), refreshes all of it as before; one with a pen mode leaves it when it answers empty, as the grayscale
+  refresh would have (the status bar waits for it). display_fbink.rs answers from `g_shown`, the RAM shadow of the
+  bytes written to the framebuffer, row by row as `copy_row` writes them (`fbpack_level_span`); the simulator from
+  its panel. With Smooth the settle is the UI refresh of its whole rect, as before.
 - The Kindle display keeps the previous logical frame in physical order (+4.6 MB at 1860x2480).
   `fbpack_row` dithers only changed pixels for a FAST refresh. Unchanged gray image paper stays
   gray in the framebuffer, which DU leaves alone; earlier dithered ink stays as it was until the
@@ -211,9 +226,9 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   that changed (a save waits for the storage twice, so it follows the refresh). They are held back while
   the pen is near (any pen event until `IN_PEN_LEAVE`, or until a finger the touch panel lets through: that
   is never the pen's hand), a stroke or another gesture is in progress (`editor_busy`), or the driver is in
-  pen mode (`display_pen_mode_on`: it stays so past a stroke until a grayscale refresh is due, and
-  that refresh waits for the pen's last frame, so a refresh of the corner must not be the one that
-  ends it). Taking it down is not held back by the pen merely being near: a sheet opened under the pen
+  pen mode (`display_pen_mode_on`: it stays so past a stroke until a grayscale refresh is due or, with
+  Ink edges at Solid, a pause after writing sends nothing, and either waits for the pen's last frame,
+  so a refresh of the corner must not be the one that ends it). Taking it down is not held back by the pen merely being near: a sheet opened under the pen
   must not keep the corner over the sheet. A finger tap in the 14 mm corner square, or on the box's place with 4 mm around it (shown or
   not: `status_hit`), turns it on and off: decided at the lift, with the
   finger down in the zone, on no control (`editor_control_at`: the panel, or a link, but
@@ -282,14 +297,18 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   `ink_edges_as(InkEdges::Smooth, ..)` (export.rs `render_page_links`, which every PDF, PNG, share and mirror
   page comes through, and a page made into a template's picture); grimoire-export never sets it. The renderer's
   fingerprint is Smooth's whatever the setting (`page_ink_fingerprint` draws in the Smooth scope); Solid's is
-  `page_render_fingerprint_for(InkEdges::Solid)`, and the stamps of the screen's pictures (store.rs
+  `page_render_fingerprint_for(InkEdges::Solid)`: Smooth's with two pages drawn Solid folded in, the ink page and
+  a second one (`page_solid_fingerprint_page`) with white ink and the eraser over a solid line, a marker given
+  grain past the limit and a ballpoint given Tilt lightens, so a later change of the rule's answer for grain or
+  tilt, or of how erasing draws at Solid, moves it. The stamps of the screen's pictures (store.rs
   `preview_stamp`, `render_tag`) name the one of the setting they were drawn under, so a kept drawing, a
-  preview or a card of the other setting is drawn again once. The Library's cards are drawn again right after a
-  change, in the background (bgjob.rs `BgKind::Cards`, editor.rs `bg_redraw_cards`: each card whose source,
-  thumb.src, is not its page as the job's process draws it, with the setting it was forked with), so a notebook
-  not opened again keeps no card of the other setting; one with no card yet is left so. A change made over an
-  open notebook drops its undo patches and the pages kept in memory and draws its page again at once (editor.rs
-  `editor_ink_edges_changed`).
+  preview or a card of the other setting is drawn again once, each when it is next used: a kept drawing as its
+  page opens, a preview as the Pages view shows it, and a notebook's card when the notebook is next opened and
+  left (editor.rs `refresh_library_thumb`: the card's source, thumb.src, is no longer its page's as the stamp
+  names it now), as the cards follow a paper drawn otherwise. Nothing runs per notebook when the setting
+  changes, at a start or as the Library opens, so until then the Library shows a notebook's card as it was drawn
+  under the other setting. A change made over an open notebook drops its undo patches and the pages kept in
+  memory and draws its page again at once (editor.rs `editor_ink_edges_changed`).
 - The eraser removes whole strokes it touches, or with `eraser_mode` 1 (Precise) draws erase
   strokes (below); one pen-down..up is ONE undo step. The eraser end of the pen
   (BTN_TOOL_RUBBER) and holding the side button (BTN_STYLUS) erase regardless of the selected

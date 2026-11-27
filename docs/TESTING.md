@@ -3719,17 +3719,101 @@ Not run on a Scribe. The Mac's tests cover the drawing and the settle's logic: `
 is the threshold of Smooth over every background, the other tools unchanged, every way of drawing a page the same,
 exports Smooth), `test_fbpack.rs` (a solid word's live frames through the RAM shadow leave nothing to settle,
 `fbpack_level_span` in every rotation), `test_render_keep.rs`, `test_erase.rs` (compaction under both settings),
-`test_store.rs`, `test_tplsheet.rs` (a page made into a template's picture is Smooth), the editor's unit test of the
-scaled view, and the scenarios `z_ink_edges_1_row` to `_11_dense_switch` (zoomed in and sideways, the Library's
-cards after a change, a change over a dense page). The Kindle's own answer
+`test_store.rs`, `test_tplsheet.rs` (a page made into a template's picture is Smooth), the editor's unit tests of the
+scaled view (black from half the weight, never lighter beside other ink, the page's own paper) and of the settle's
+order, `display.rs`'s unit tests (the scan in strips of 64 rows: every row read once, the pump called after each
+full strip and before an empty answer, the answer one pass gives in every rotation, no answer for a row that would
+leave the record; the log's counts), and the scenarios
+`z_ink_edges_1_row` to `_13_erase` (zoomed in and sideways, a card that follows a change when its
+notebook is next opened and left, a change over a dense page, a highlight beside a solid word in a scaled view,
+erasing with undo, redo and a reopen). The Kindle's own answer
 (display_fbink.rs `display_settle_area`: its row mapping, inversion, pen mode left when it answers empty) runs only
-on a device. To check with Solid (Settings > Pen > Ink edges): a ballpoint word goes on in black and nothing changes
+on a device: it was read against the driver's rules and compiled, never run.
+
+The drawing, with Solid (Settings > Pen > Ink edges): a ballpoint word goes on in black and nothing changes
 on the screen at the pause after writing; a pencil word still settles in grays; the status bar's minute still comes
 after writing stops; a word written, the notebook left and opened again looks the same; a highlight over a solid word
 leaves it as black as it was; zoomed in, and sideways with the page fitted, a ballpoint word also goes on in black and
 nothing changes at the pause; white ink traced along a solid word takes it away with no dark rim left; after a switch
-the Library's cards change to the new look within moments; the USB mirror's PDF of such a page has soft edges; and
-with Smooth everything is as in 2.2.0.
+a notebook's card in the Library keeps its look until the notebook is opened and left, then shows the new one; the
+USB mirror's PDF of such a page has soft edges; and with Smooth everything is as in 2.2.0.
+
+The driver, in twelve checks. Checks 2 to 6 and 9 must pass before Solid is offered, and check 6 failing holds the
+setting back. Start Grimoire fresh for checks 2 and 3 (the pen mode lines are logged only in a session's first 400
+refreshes, live frames included). Keep a root shell over SSH. Before each check empty the kernel's log with
+`dmesg -c > /dev/null`, and after it run:
+
+    dmesg | grep -i -E "hwtcon|lut collision|WARNING"
+    grep -E "display: (pen mode|settle|driver|refresh .* failed|refreshes so far|a clean still)|screen guard|main: .* took|input: " /mnt/us/grimoire/grimoire.log | tail -n 80
+
+A failure in dmesg is any of these lines: `wait marker[N] update timeout` (a wait sat out 5 s),
+`wait marker[N] submit timeout`, a WARNING with `BUG Here Find a pixel lut collision` (a pen update met a standard
+one), `No enough LUT for Stylus mode use`, `wait power down timeout`,
+`collision task(s) is pending but there is no active LUT`. A line the driver prints as stylus mode is turned off is
+not a failure.
+
+What the settles did is in grimoire.log: `display: settles so far: quiet N, part N, whole N (reason N, ...)`. A
+quiet settle sent nothing and left pen mode; a part one sent the box of what differed; a whole one refreshed its
+whole rect, as 2.2 does, for the reason in the brackets (no frame known, a refresh failed, colour panel, no record of
+the panel, row out of range, state changed during the scan). The line is written with `display: refreshes so far`,
+at the first refresh 30 s or more after the last such line, and only when a count rose: after a check wait half a
+minute and tap a tool, then read it. The first whole answer of each reason in a session also writes
+`display: settle answered all of it: <reason>`, at once. With Smooth no count rises (after a switch from Solid one
+`settles so far` line may still follow, with the counts that rose before it). This line is what to read for checks
+2, 4, 8 and 10.
+
+1. **Smooth is 2.2.** Ink edges at Smooth: a ballpoint word and a pencil word, a pause after each. Dotted rims
+   while writing, grays at the pause; `ui` in `refreshes so far` rises by one for each pause, and the `settles`
+   counts do not rise (no such line at all in a session that never had Solid on). Failure: anything different from
+   2.2.0.
+2. **Solid, blank paper, upright.** Ink edges at Solid: five ballpoint words, the pen lifted well away after each.
+   Black ink at once, nothing changing at the pause. In the log `quiet` rises by five and `part` and `whole` do not,
+   and `display: pen mode off -> 0` follows the first pauses. Failure: a flicker at the pause; `whole` rising (its
+   `settle answered all of it` line says why: send it, and any `refresh ... failed` line); `part` rising for
+   ballpoint words on blank paper; `pen mode off refused`.
+3. **The clock.** With Solid, write across a change of minute, then lift the pen away: the status bar's minute
+   changes within a couple of seconds. Failure: it changes only after a tap on the toolbar or a page turn.
+4. **Ruled, grid and dotted paper, and a gray PDF page.** With Solid, words and long strokes across the lines.
+   The lines beside the strokes stay unbroken and of the same gray, with no dots, and nothing changes at the pause;
+   `quiet` rises with each pause. Failure: lines broken, lighter, darker or speckled in small boxes along a stroke
+   that do not heal; a flicker at each pause; `part` rising for ballpoint strokes alone. Photograph it, and the
+   same page written with Smooth to compare.
+5. **Many quick words.** With Solid, twenty short words, the pen out of range for about half a second between
+   them. Every word starts at once, none missing its start, and dmesg shows none of the lines above. (Optional: an
+   empty `/mnt/us/grimoire/ink-metrics` made before Grimoire starts logs `strokes kept on plain DU` every 10 s,
+   which stays near 0; remove it after.) Failure: a dmesg line from the list, or first strokes that lag.
+6. **Undo, erase, lasso right after writing.** With Solid: a word, the pen lifted away, 2 s, then Undo. Write
+   again, pause, and erase half of it with the Precise eraser; again with the Whole strokes eraser; again, lasso it
+   and move it. The ink goes completely each time, at once. Failure: black ink, or a clear gray ghost of it, stays
+   where it was until a page turn. Photograph it. This is the failure that holds Solid back.
+7. **Mixed burst.** With Solid, a ballpoint word, a pencil underline and a highlight over the word, with no pause.
+   At the pause only the pencil and the highlight settle into grays (`part` rises by one); the ballpoint does not
+   change, gets no outline and no lighter.
+8. **The four orientations, zoomed, inverted.** With Solid: upright, both sideways, upside down; zoomed in; and
+   with Invert colors on. In each, a ballpoint word (nothing at the pause: `quiet` rises) and a pencil word (it
+   settles fully into grays, with no dots left: `part` rises). Failure: pencil dots that stay in part of a word; ink
+   that flickers at every pause in one orientation only; `whole` rising there (`row out of range` names the
+   mapping, `no frame known` a whole frame that did not go out after the turn).
+9. **Sleep and exit right after writing.** With Solid: a word, the pen lifted away, and the power button within
+   about a second; wake. Again, waiting 5 s before the button. Then a word, and leave Grimoire at once. The sleep
+   screen comes as promptly as ever, and dmesg has no `update timeout`. Failure: sleep or exit that takes 5 s
+   longer, or that line.
+10. **A full page, sideways.** With Solid and the Scribe sideways, fill a good half of the page without pausing,
+    lift the pen away and bring it straight back down to write. The new stroke is whole from its start. In the log
+    that pause counts as `quiet` (or `part`), with no `input: pen events dropped by the kernel` or
+    `input: pressure/tilt events dropped by the kernel` line and no `state changed during the scan`. A
+    `main: app_tick took N ms` line at that pause is expected and is no failure by itself (send it with the rest):
+    that tick holds the settle's compose, its scan (which calls the pump every 64 rows) and, on a quiet answer, the
+    wait for the pen's last frame to end, longer on a cold panel. Failure: a missing start or a straight join, an
+    `input: ... dropped by the kernel` line, or `state changed during the scan`.
+11. **A long session.** With Solid, five minutes of ballpoint writing on one page. Expected, and new: no full
+    flash comes from writing. Look for anything building up on the page. Then erase a few words: the clean flash
+    still comes once a quarter of the screen was erased. With Smart shapes on, snap a few circles: is a faint
+    trace of the hand-drawn path left, and does it bother?
+12. **The look.** With Solid, write a word, then turn the page and back (a flash). Does the word change? Compare
+    its black with the same word written with Smooth and settled.
+
+For any failure send the two commands' output, a photo, and the check's number.
 
 ## 2.3, packages' pictures decoded by the worker (issue #236): device checks
 

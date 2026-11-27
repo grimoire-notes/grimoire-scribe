@@ -35,12 +35,40 @@ expect editor.settles_sent is 1
 expect display.stale.200.400.1300.400 is 0
 expect display.dark.250.560.1100.100 is 5224
 # A pencil line on its own, on blank paper: its grays reach the panel dithered while it is drawn (display.stale over
-# it), and its pause settles it in grays
+# it, read while the pen is still down: nothing settles under a stroke, however late the loop is), and its pause
+# settles it in grays
 pentap panel tool-picker
 pentap 872 395
 expect editor.tool is pencil
-pen line 300 1000 1300 1020 40 0.7 0.7 40 30
+pen down 300 1000 0.7 40 30
+pen move 341 1000 0.7 40 30
+pen move 383 1001 0.7 40 30
+pen move 425 1002 0.7 40 30
+pen move 466 1003 0.7 40 30
+pen move 508 1004 0.7 40 30
+pen move 550 1005 0.7 40 30
+wait 30
+pen move 591 1005 0.7 40 30
+pen move 633 1006 0.7 40 30
+pen move 675 1007 0.7 40 30
+pen move 716 1008 0.7 40 30
+pen move 758 1009 0.7 40 30
+pen move 800 1010 0.7 40 30
+wait 30
+pen move 841 1010 0.7 40 30
+pen move 883 1011 0.7 40 30
+pen move 925 1012 0.7 40 30
+pen move 966 1013 0.7 40 30
+pen move 1008 1014 0.7 40 30
+pen move 1050 1015 0.7 40 30
+wait 30
+pen move 1091 1015 0.7 40 30
+pen move 1133 1016 0.7 40 30
+pen move 1175 1017 0.7 40 30
+pen move 1216 1018 0.7 40 30
+pen move 1258 1019 0.7 40 30
 expect display.stale.200.900.1300.250 not 0
+pen up 1300 1020
 pen leave
 wait 2000
 expect editor.settles_sent is 2

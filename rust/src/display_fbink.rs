@@ -48,7 +48,9 @@ use std::time::{Duration, Instant};
 // The driver requires that pen-mode updates never collide with standard ones (FBInk's note): so a
 // stroke enters pen mode only while no standard update can still be on the panel (the quiet thread
 // below follows them), the driver stays in it until a grayscale refresh is due, and that refresh
-// first waits for the pen's last update to end.
+// first waits for the pen's last update to end. With Ink edges at Solid (2.3, #320) pen mode also
+// ends at a pause after writing that sends nothing (display_settle_area's empty answer), after the
+// same wait: no refresh follows it then, and the next stroke enters pen mode again at its first frame.
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum PenCfg {
@@ -157,6 +159,11 @@ struct State {
     g_overlay: Rect,
     /// display_skip_status
     g_status: Rect,
+    /// What display_settle_area answered since start (Ink edges at Solid; all 0 with Smooth), for the log:
+    /// bumped as it answers, written with the refresh counts (send_refresh).
+    g_settles: SettleCounts,
+    /// g_fail when a settle last found the frame known: a failed refresh since is why it is not
+    g_settle_fail: i32,
 }
 
 impl State {
@@ -216,6 +223,8 @@ impl State {
             g_fence_gray: false,
             g_overlay: RECT_EMPTY,
             g_status: RECT_EMPTY,
+            g_settles: SettleCounts::default(),
+            g_settle_fail: 0,
         }
     }
 }
@@ -259,7 +268,8 @@ fn fbink_get_last_marker() -> u32 {
 fn fbink_wait_for_complete(fd: i32, marker: u32) -> i32 {
     // SAFETY: plain values. The callers keep the hard rule: never on a marker the quiet thread
     // waits on (display_wait checks its books first; pen_leave's marker went out in pen mode, which
-    // the quiet thread never takes on).
+    // the quiet thread never takes on). The main thread may wait on the pen's last marker twice, one
+    // wait after the other (pen_leave, then display_wait: see there); never two waiters at once.
     unsafe { ffi::grim_fbink_wait_for_complete(fd, marker) }
 }
 fn fbink_mtk_toggle_auto_reagl(fd: i32, on: bool) -> i32 {
@@ -675,7 +685,8 @@ fn read_pen_cfg(s: &State) -> PenCfg {
 
 // A stroke of ink starts (on) or ends. Its fast frames take pen mode when it is on and no standard
 // update can still be on the panel (display_present); the driver stays in pen mode past the stroke,
-// until a grayscale refresh is due (pen_leave).
+// until a grayscale refresh is due or, with Ink edges at Solid, a pause after writing sends nothing
+// (pen_leave, from display_present or display_settle_area).
 pub fn display_pen_mode(on: bool) {
     display_live_ink(on);
     with(|s| {
@@ -710,6 +721,8 @@ pub fn display_pen_mode(on: bool) {
 
 // Before a standard update: out of pen mode, once the panel has finished the pen's last update (a
 // standard one over it would collide). Grayscale refreshes come after a pause, so this rarely waits.
+// Also at a pause after writing with Ink edges at Solid that sends nothing (display_settle_area): no
+// update follows it then, and whichever standard one comes next finds the pen's last one ended.
 fn pen_leave(s: &mut State) {
     if !s.g_pen_mode {
         return;
@@ -990,8 +1003,9 @@ pub fn display_skip_status(r: Rect) {
     with(|s| s.g_status = r);
 }
 /// Whether the driver is in pen mode now. It stays so past a stroke, until a grayscale refresh
-/// is due (pen_leave), and that refresh waits for the pen's last frame: the clock and battery
-/// corner (status.rs) keeps its own refreshes out of that wait.
+/// is due or, with Ink edges at Solid, a pause after writing sends nothing (pen_leave), and either
+/// first waits for the pen's last frame: the clock and battery corner (status.rs) keeps its own
+/// refreshes out of that wait.
 pub fn display_pen_mode_on() -> bool {
     with(|s| s.g_pen_mode)
 }
@@ -1097,6 +1111,11 @@ fn send_refresh(s: &mut State, r: Rect, mode: RefreshMode, wfm: i32, flashing: b
             s.g_count[3],
             s.g_fail
         );
+        // (and what the settles with Ink edges at Solid answered, when one did since the last line. With Smooth no count
+        // rises: at most one line follows a switch from Solid, for the counts that rose before it.)
+        if let Some(line) = settle_counts_line(&mut s.g_settles) {
+            qlog!("%s", &line);
+        }
     }
     if ret < 0 {
         qlog!("display: refresh %d,%d %dx%d mode %d failed (%d): %s", r.x, r.y, r.w, r.h, mode as i32, ret, &strerror(e));
@@ -1413,6 +1432,13 @@ pub fn display_band_overwritten(screen: &Canvas, band: Rect, skip: Rect) -> bool
 
 // Until the last update has ended (before sleep and exit). One the quiet thread took on is waited
 // for in its books, not at the driver: a second waiter on its marker would sit out the driver's 5 s.
+// After a pause that sent nothing with Ink edges at Solid, the last update is the pen's own, and
+// pen_leave has waited on its marker already: this then waits on it a second time, later, from the
+// same thread. That is no second waiter: the first wait has returned, and the quiet thread never
+// takes on a pen mode marker. The driver answers such a wait at once: it drops an update's markers
+// from its list as the update ends, and a marker it does not list returns 0, which FBInk reads as
+// "already fully been completed" (read in the Scribe 2's driver module, not measured;
+// docs/TESTING.md's Ink edges device check 9 times it on a Scribe).
 pub fn display_wait() {
     let fd = with(|s| s.g_fd);
     if fd < 0 {
@@ -1461,46 +1487,128 @@ pub fn display_close() {
 /// Last Fast frame needed the existing colour-panel driver wait; reads cached state only.
 pub fn display_last_fast_waiting() -> bool { with(|s| s.last_fast_wait) }
 
+/// What display_settle_area's scan reads of the state, taken before its first strip and compared again at every
+/// strip and at its end: each is a hold of the state of its own, with the pump called between them (work_pump). The
+/// pump moves input into its queue and reaches nothing of the display, which copy_rect relies on as well. Were any
+/// of this to differ all the same (a refresh sent, which alone writes the shadow and counts in g_presents; the
+/// screen turned, flipped or inverted; the frame no longer known; the panel closed), the rows scanned before would
+/// be those of another record, and the answer is the whole rect.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SettleStamp {
+    fd: i32,
+    known: bool,
+    presents: i32,
+    rot: i32,
+    flip: bool,
+    /// as copy_row writes
+    flip_px: bool,
+    logical: (i32, i32),
+    shown: usize,
+}
+
+fn settle_stamp(s: &State) -> SettleStamp {
+    SettleStamp {
+        fd: s.g_fd,
+        known: s.g_frame_known,
+        presents: s.g_presents,
+        rot: s.g_rot,
+        flip: s.g_flip,
+        flip_px: if s.g_st.bpp == 8 { s.g_st.inverted_grayscale != s.g_invert } else { s.g_invert },
+        logical: (s.LW, s.LH),
+        shown: s.g_shown.px.len(),
+    }
+}
+
 /// display.rs display_settle_area. The record is g_shown, the RAM shadow of the bytes written to the framebuffer (each
 /// with the refresh that sent it), compared with the screen row by row as copy_row writes the row (fbpack_level_span).
-/// r whole while the record may not be what the panel shows: no panel, no frame known (a refresh failed, the screen
-/// turned or inverted, an ownership change: until a whole grayscale frame goes out), or a colour panel, whose live
-/// frames are not waited for and may be read half done. An empty answer leaves pen mode, as the grayscale refresh
-/// would have (the status bar waits for it), and the live area the answer covers is one no longer: its pixels are the
-/// screen's within a level, inside the guard's tolerance.
+/// r whole while the record may not be what the panel shows: no panel, a framebuffer mapping that does not cover the
+/// panel, no frame known (a refresh failed, the screen turned or inverted, an ownership change: until a whole
+/// grayscale frame goes out), or a colour panel, whose live frames are not waited for and may be read half done. An
+/// empty answer leaves pen mode, as the grayscale refresh would have (the status bar waits for it), and the live area
+/// the answer covers is one no longer: its pixels are the screen's within a level, inside the guard's tolerance.
+///
+/// The rect is everything written since the last pause, most of the screen after a long burst, so the scan pumps
+/// input as a full-screen copy does (copy_rect): strips of 64 rows, each under one state borrow that is released
+/// for the pump, and the pump called once more before pen_leave, whose wait reads no pens (display.rs
+/// settle_area_strips walks the strips; never a pump inside a borrow). The pump reads the pens unless they were read
+/// under 8 ms before (input_evdev.rs input_pump), so they were read at most about 8 ms before that wait begins.
+/// The answer is the one pass's: r whole if the state the scan reads changed between two strips (SettleStamp), which
+/// the pump cannot do.
+///
+/// Each answer is counted (g_settles: quiet, part, or whole with its reason), for the line send_refresh writes
+/// beside its refresh counts; only a reason's first whole answer of the session writes a line here (settle_whole).
 pub fn display_settle_area(screen: &Canvas, r: Rect) -> Rect {
+    let Some((c, stamp)) = with(|s| {
+        // (g_readback: the mapping covers the panel, set once as the display opens. Where it does not, a copy ends at
+        // the first row that would lie outside it (copy_row) and the shadow keeps older bytes from there on, while a
+        // whole present still makes the frame known.)
+        let why = if s.g_fd < 0 || s.g_shown.px.is_empty() || !s.g_readback {
+            SettleWhole::NoRecord
+        } else if s.g_st.has_color_panel {
+            SettleWhole::ColourPanel
+        } else if !s.g_frame_known {
+            if s.g_fail != s.g_settle_fail {
+                SettleWhole::RefreshFailed
+            } else {
+                SettleWhole::NoFrame
+            }
+        } else {
+            s.g_settle_fail = s.g_fail;
+            let c = rect_intersect(rect_intersect(r, Rect { x: 0, y: 0, w: s.LW, h: s.LH }), Rect { x: 0, y: 0, w: screen.w, h: screen.h });
+            return Some((c, settle_stamp(s)));
+        };
+        settle_whole(s, why);
+        None
+    }) else {
+        return r;
+    };
+    let mut out_of_range = false;
+    let found = settle_area_strips(
+        c,
+        |y0, y1| {
+            with(|s| {
+                if settle_stamp(s) != stamp {
+                    return None;
+                }
+                let s = &*s;
+                let stride = s.g_shown.stride as isize;
+                // (along a logical row the shadow moves by a constant step, as copy_row's previous_at and previous_step)
+                let found = settle_strip_by_bytes(screen, c, y0, y1, &s.g_shown.px, stamp.flip_px, |y| {
+                    let (fx0, fy0) = to_fb(s, c.x, y);
+                    let (fx1, fy1) = to_fb(s, c.x + 1, y);
+                    (fy0 as isize * stride + fx0 as isize, (fy1 - fy0) as isize * stride + (fx1 - fx0) as isize)
+                });
+                out_of_range = found.is_none();
+                found
+            })
+        },
+        work_pump,
+    );
     with(|s| {
-        if s.g_fd < 0 || !s.g_frame_known || s.g_shown.px.is_empty() || s.g_st.has_color_panel {
+        // (after the last pump: what is decided here, and pen_leave's wait, come under this one borrow)
+        let Some(d) = found.filter(|_| settle_stamp(s) == stamp) else {
+            settle_whole(s, if out_of_range { SettleWhole::RowRange } else { SettleWhole::Changed });
             return r;
-        }
-        let c = rect_intersect(rect_intersect(r, Rect { x: 0, y: 0, w: s.LW, h: s.LH }), Rect { x: 0, y: 0, w: screen.w, h: screen.h });
-        let flip_px = if s.g_st.bpp == 8 { s.g_st.inverted_grayscale != s.g_invert } else { s.g_invert }; // as copy_row writes
-        let stride = s.g_shown.stride as isize;
-        let mut found = RECT_EMPTY;
-        for y in c.y..c.y + c.h {
-            // (along a logical row the shadow moves by a constant step, as copy_row's previous_at and previous_step)
-            let (fx0, fy0) = to_fb(s, c.x, y);
-            let (fx1, fy1) = to_fb(s, c.x + 1, y);
-            let at = fy0 as isize * stride + fx0 as isize;
-            let step = (fy1 - fy0) as isize * stride + (fx1 - fx0) as isize;
-            let last = at + step * (c.w - 1) as isize;
-            if at < 0 || last < 0 || at.max(last) as usize >= s.g_shown.px.len() {
-                return r;
-            }
-            let src = &screen.px[(y * screen.stride + c.x) as usize..][..c.w as usize];
-            if let Some((a, b)) = fbpack_level_span(src, &s.g_shown.px, at as usize, step, flip_px) {
-                found = rect_union(found, Rect { x: c.x + a as i32, y, w: (b - a + 1) as i32, h: 1 });
-            }
-        }
-        let d = settle_area_pad(found, c);
+        };
         if !rect_is_empty(s.g_live_area) && rect_contains_rect(c, s.g_live_area) {
             s.g_live_area = d;
         }
         if rect_is_empty(d) {
+            settle_count_quiet(&mut s.g_settles);
             pen_leave(s);
+        } else {
+            settle_count_part(&mut s.g_settles);
         }
         d
     })
+}
+
+// display_settle_area answered its rect whole: counted, and said in the log the first time its reason occurs (six
+// lines a session at most, each before the whole refresh that follows; the counts' own line is send_refresh's).
+fn settle_whole(s: &mut State, why: SettleWhole) {
+    if settle_count_whole(&mut s.g_settles, why) {
+        qlog!("display: settle answered all of it: %s", K_SETTLE_WHOLE[why as usize]);
+    }
 }
 
 /// With no word from the quiet thread, how long a refresh is taken to stay on the panel: the fast (DU)
