@@ -11996,6 +11996,17 @@ mod tests {
             assert!(about(&mut a).is_none(), "{theme:?}: no What's new in a folder");
             assert!(lib(&mut a).hits.h.iter().any(|h| h.id == H_BACK), "{theme:?}: Back");
             assert!(!is_bat(&a.screen), "{theme:?}: no bat in a folder");
+            // (nowhere in the header: its band is the plain header's, Back and then the folder's name where
+            // gui_header puts it)
+            let (w, h) = (a.w, gui_status_h() + gui_head_h());
+            let mut plain = Canvas::default();
+            assert_eq!(canvas_init(&mut plain, w, h), 0);
+            canvas_fill(&mut plain, Rect::new(0, 0, w, h), 255);
+            gui_header(&mut plain, w, "School", true, &[(IconKind::Gear, H_SETTINGS), (IconKind::Search, H_SEARCH)]);
+            let row = |c: &Canvas, y: i32| (y * c.stride) as usize..(y * c.stride + w) as usize;
+            let same = (gui_status_h()..gui_status_h() + gui_head_h()).all(|y| a.screen.px[row(&a.screen, y)] == plain.px[row(&plain, y)]);
+            assert!(same, "{theme:?}: a folder's header is a plain one");
+            canvas_free(&mut plain);
         }
         ui_set_theme(UiTheme::Gothic);
         canvas_free(&mut want);
