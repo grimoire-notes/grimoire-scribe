@@ -79,9 +79,12 @@ expect library.app.id is test.app.later
 expect library.app.error is
 expect library.app.status is later
 expect display.dark.40.40.200.100 is 20000
-# (waited for by what it does, not by a time: the pass comes due and is stopped in one round, and the app is
-# closed in the next, which a wait that makes its time up in one step at its end does not have)
-waitfor library.app.open is 0
+# (a wait for each step: the pass comes due and is stopped in the first, in one of its rounds or at its end, and
+# the second has a round of its own for the host's next, which closes the app; one wait that makes its time up in
+# one step at its end has no round left after the pass)
+wait 150
+wait 60
+expect library.app.open is 0
 expect toast is The app stopped: all fuel consumed by WebAssembly
 expect screen is library
 expect library.sheet is none
