@@ -633,7 +633,7 @@ file name, title, key or hash ever appears in it: ids, page numbers, counts, siz
   are still drawn by the UI.
 - `bg: PDF import of <id> (pid N)` once per slice; `bg: PDF import pid N done`.
 
-## Kindle notebooks (2.2, #196)
+## Kindle notebooks (2.3, #196)
 
 Grimoire imports notebooks made in the Kindle's own notebook app. Over USB (or MTP), each notebook is a folder
 in `/mnt/us/.notebooks/` named by an id and holding a file called `nbk`: copy that whole folder into

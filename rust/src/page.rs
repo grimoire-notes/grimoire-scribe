@@ -613,34 +613,82 @@ fn render_from(c: &mut Canvas, p: &Page, region: Rect, dpi: f32, layers: i32, sk
     true
 }
 
-/// The renderer's own fingerprint: a small fixed page with a stroke of every tool (ink and white),
-/// drawn and hashed once per process. A drawing kept from an earlier render (store_load_page_render)
-/// is trusted only under the same fingerprint, so any change to how ink is drawn (a new build, a pen
-/// redrawn, another processor's floating point) retires every one of them by itself.
+/// The renderer's own fingerprint: a small fixed page with a stroke of every tool (ink and white), then every
+/// paper this build draws (paper_every_drawing), drawn and hashed once per process. A drawing kept from an
+/// earlier render (store_load_page_render) is trusted only under the same fingerprint, so a change to how ink or
+/// a paper draws on these pages (a new build, a pen redrawn, a paper's lines darkened, another processor's
+/// floating point; each paper's page has every kind of line it draws) retires every one of them by itself; since
+/// 2.3.0 the Pages previews and Library cards drawn before it do not match either, as their stamps name it
+/// (store.rs preview_stamp). Until 2.3.0 it hashed the ink page alone, whose paper (Narrow rule at 240 x
+/// 160 px) has no line on it: a paper drawn differently kept its old drawings (#314). Seyes is drawn at the
+/// panel's density, which the display sets as it opens, and Cornell's headings and the clefs in the fonts
+/// app_init loads: both before any page is drawn or this is taken (paper_set_panel_ppi, font_init).
 pub fn page_render_fingerprint() -> u64 {
     static FP: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *FP.get_or_init(|| {
-        let mut p = page_new(240, 160, PAPER_NARROW);
-        for t in 0..TOOL_COUNT as i32 {
-            let mut prm = ToolParams::default();
-            tool_params_default(ToolKind(t), &mut prm);
-            let mut s = stroke_new(ToolKind(t), &prm, 0x5EED_0000 ^ (t as u32).wrapping_mul(2654435761));
-            for k in 0..24 {
-                let f = k as f32 / 23.0;
-                let pt = PenSample { x: 12.0 + 216.0 * f, y: 10.0 + 14.0 * t as f32 + 6.0 * (f * 9.0).sin(),
-                    pressure: 0.2 + 0.7 * f, tilt_x: 30.0 * f - 15.0, tilt_y: 10.0, t_ms: k * 8, ..Default::default() };
-                stroke_append(&mut s, &pt, 300.0);
-            }
-            page_add(&mut p, s);
-        }
-        let mut c = Canvas::default();
-        if canvas_init(&mut c, p.w, p.h) != 0 {
+    *FP.get_or_init(|| page_render_fingerprint_with(page_ink_fingerprint(), &paper_render))
+}
+
+// FNV-1a over px, eight bytes at a time (a byte at a time for the rest), with the state's high half folded into
+// its low half after each multiply. Any one word that differs makes the hash differ: each step is a bijection of
+// the state. The fold is for several: a multiply carries a difference toward the high bits only, so without it a
+// change held to the high bytes of words (a glyph's edge in one column of pixels, x = 7 mod 8) was mixed into those
+// bits alone, and two such changes cancelled about one time in 256 (a clef's gray a step lighter did).
+fn fnv_words(mut h: u64, px: &[u8]) -> u64 {
+    let mut words = px.chunks_exact(8);
+    for w in &mut words {
+        h = (h ^ u64::from_le_bytes([w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]])).wrapping_mul(0x100_0000_01b3);
+        h ^= h >> 32;
+    }
+    words.remainder().iter().fold(h, |h, &b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
+}
+
+/// The fingerprint of a renderer that draws ink as this build does (its hash `ink`, page_ink_fingerprint)
+/// and each paper as `paper` does: every one of paper_every_drawing() drawn whole on its own fixed page
+/// (paper_fingerprint_page) and hashed after the ink. page_render_fingerprint is this with paper_render; a
+/// test passes an earlier build's papers to see that its drawings are not trusted. 0 when there is no
+/// memory for a page.
+pub fn page_render_fingerprint_with(ink: u64, paper: &dyn Fn(&mut Canvas, PaperKind, Rect, f32)) -> u64 {
+    if ink == 0 {
+        return 0;
+    }
+    let mut c = Canvas::default();
+    let mut fp = ink;
+    for k in paper_every_drawing() {
+        let (w, h) = paper_fingerprint_page(k);
+        if (c.w, c.h) != (w, h) && canvas_init(&mut c, w, h) != 0 {
             return 0;
         }
-        // (a few milliseconds that read no pens: work_pump_off)
-        work_pump_off(|| page_render(&mut c, &p, Rect { x: 0, y: 0, w: p.w, h: p.h }, 300.0));
-        c.px.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
-    })
+        let whole = Rect { x: 0, y: 0, w, h };
+        // (a few milliseconds more that read no pens: work_pump_off)
+        work_pump_off(|| paper(&mut c, k, whole, 300.0));
+        fp = fnv_words(fp ^ k.0 as u64, &c.px[..(w * h) as usize]);
+    }
+    fp
+}
+
+/// The ink half of the renderer's fingerprint: a small fixed page with a stroke of every tool (ink and
+/// white), drawn and hashed (0 when there is no memory for it). The whole fingerprint until 2.3.0.
+pub fn page_ink_fingerprint() -> u64 {
+    let mut p = page_new(240, 160, PAPER_NARROW);
+    for t in 0..TOOL_COUNT as i32 {
+        let mut prm = ToolParams::default();
+        tool_params_default(ToolKind(t), &mut prm);
+        let mut s = stroke_new(ToolKind(t), &prm, 0x5EED_0000 ^ (t as u32).wrapping_mul(2654435761));
+        for k in 0..24 {
+            let f = k as f32 / 23.0;
+            let pt = PenSample { x: 12.0 + 216.0 * f, y: 10.0 + 14.0 * t as f32 + 6.0 * (f * 9.0).sin(),
+                pressure: 0.2 + 0.7 * f, tilt_x: 30.0 * f - 15.0, tilt_y: 10.0, t_ms: k * 8, ..Default::default() };
+            stroke_append(&mut s, &pt, 300.0);
+        }
+        page_add(&mut p, s);
+    }
+    let mut c = Canvas::default();
+    if canvas_init(&mut c, p.w, p.h) != 0 {
+        return 0;
+    }
+    // (a few milliseconds that read no pens: work_pump_off)
+    work_pump_off(|| page_render(&mut c, &p, Rect { x: 0, y: 0, w: p.w, h: p.h }, 300.0));
+    c.px.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
 }
 
 /// Renders the whole page then box-downsamples into thumb (thumb size sets the scale).

@@ -81,12 +81,12 @@ expect editor.widget.0.status is 6
 expect display.presents is ui 1456 106 220 160
 shot 01-after-the-pen
 # A pen's tap on the frame itself is drawn at its lift, as a finger's is (the frame's own drawing, not a pass that
-# came due): one pass and one refresh at once, with the pen still near. The pass that then comes due waits for
-# the pen like any other.
+# came due): one pass at once, with the pen still near, and only what it changed refreshed: Ticker's picture is
+# the same, so nothing. The pass that then comes due waits for the pen like any other.
 pentap panel widget.0.body
 wait 300
 expect editor.widget.0.status is 7
-expect display.presents is ui 1456 106 220 160
+expect display.presents is
 wait 1200
 expect editor.widget.0.status is 7
 expect display.presents is

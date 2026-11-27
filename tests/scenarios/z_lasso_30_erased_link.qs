@@ -6,6 +6,8 @@
 # takes the link too, as a link goes with every ink stroke inside its area (docs/beta2/LASSO-DESIGN.md 6.2), and
 # the link shows (its area drawn dashed): the lasso selects both, as before 2.2. Round such ink with no link, it
 # selects nothing (z_lasso_29).
+# (Since 2.3.0 the paper's rules are darker than mid-gray, issue #314, so display.dark counts them: a place with no
+# ink counts its rules' pixels, two rows of each rule across it, and "not N" there says ink shows beside them.)
 wait 300
 tap library card.1
 wait 300
@@ -16,7 +18,7 @@ wait 100
 eraser line 360 1110 840 1110 30
 waitfor display.stale.380.1060.440.100 is 0
 expect editor.strokes is 2
-expect display.dark.380.1085.440.50 is 0
+expect display.dark.380.1085.440.50 is 880
 tap panel tool-picker
 wait 100
 tap panel picker.select
