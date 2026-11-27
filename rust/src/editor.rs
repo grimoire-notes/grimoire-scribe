@@ -12764,7 +12764,8 @@ fn settle_solid(a: &mut App, r: Rect) {
 /// Ink edges changed (Settings > Pen, 2.3, #320), maybe over an open notebook (the quick settings' Settings): what the
 /// notebook keeps drawn under the setting before goes (its undo steps' patches, the pages kept in memory, the pages
 /// drawn ahead), and its open page is drawn again with the new one at once, before anything can keep a picture of
-/// the canvas (a kept drawing's or a preview's stamp names the setting it is written under, store.rs). Its card
+/// the canvas (a kept drawing's or a preview's stamp names the setting it is written under, store.rs): as a page
+/// opens, with "Loading page..." first when it is slow and has no drawing kept under the new setting. Its card
 /// follows. With no notebook open there is nothing to do: a notebook opens with the setting in force.
 pub fn editor_ink_edges_changed(a: &mut App) {
     let Some(s) = a.ed.as_deref_mut() else { return };
@@ -12778,7 +12779,7 @@ pub fn editor_ink_edges_changed(a: &mut App) {
     cache_free(s);
     s.thumb_dirty = true;
     if s.page_ix().is_some() && !s.page_canvas.px.is_empty() {
-        render_page_full(a);
+        render_page_open(a);
     }
 }
 
