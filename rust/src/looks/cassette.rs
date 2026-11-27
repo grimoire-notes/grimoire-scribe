@@ -4,7 +4,8 @@
 
 mod ink;
 
-use super::{Look, NewFoot, NewSheetSpacing, ScreenInfo, ShelfInfo};
+use super::{Look, NewFoot, NewSheetSpacing, ScreenInfo};
+use crate::globalui::button_row_parts;
 use crate::font::{fm, fm_bold, FaceMap, TTF_ARCHIVO, TTF_JETBRAINS, TTF_JETBRAINS_BOLD, TTF_SPACEMONO, TTF_SPACEMONO_BOLD, TTF_TERM};
 use crate::prelude::*;
 use crate::ui::{icon_label_px, label_inset, text_label_px};
@@ -246,13 +247,55 @@ impl Look for Cassette {
         ui_sheet_inner(card, true)
     }
     // the same small spaced capitals as a sheet's title, sprayed at the end, left-aligned, centred vertically
-    fn page_title(&self, c: &mut Canvas, r: Rect, title: &str) {
+    // (its own sizes, whatever page_title_scale: small capitals, not a headline)
+    fn page_title(&self, c: &mut Canvas, r: Rect, _px: f32, title: &str) {
         tracked_title(c, r, title, "MOD");
     }
-    // a screen's header (Files, a folder) as a page's heading
-    fn header_title(&self, c: &mut Canvas, r: Rect, title: &str) -> bool {
-        tracked_title(c, r, title, "DIR");
-        true
+    // a field outlined as every other box is: the hairline (a select keeps the kit's gray rule)
+    fn field_rule_gray(&self) -> u8 {
+        CS_INK
+    }
+    // The kit's buttons are Cassette's own: brackets on paper, a gray panel when chosen or primary.
+    fn kit_button(&self, c: &mut Canvas, r: Rect, icon: IconKind, label: &str, st: ButtonStyle) {
+        self.button(c, r, icon, label, st, 0.0);
+    }
+    // the button's brackets, then its sign and its word in capitals on one line
+    fn kit_button_row(&self, c: &mut Canvas, r: Rect, icon: IconKind, label: &str, st: ButtonStyle) {
+        if r.w <= 0 || r.h <= 0 {
+            return;
+        }
+        panel(c, r, st);
+        let fg = self.style_fg(st);
+        let (pad, isz, gap, ts) = button_row_parts(r.h);
+        let isz = isz.min(ui_px(48.0));
+        ui_icon(c, icon, Rect::new(r.x + pad, r.y + (r.h - isz) / 2, isz, isz), fg);
+        let lx = r.x + pad + isz + gap;
+        let lw = (r.x + r.w - pad - lx).max(0);
+        ui_text(c, FontFace::Caps, ts, ui_small_size().min(ts), Rect::new(lx, r.y, lw, r.h), &label.to_uppercase(), 1, false, fg);
+    }
+    fn kit_button_need_w(&self, h: i32, icon: bool, label: &str) -> i32 {
+        if icon && !label.is_empty() {
+            let (pad, isz, gap, ts) = button_row_parts(h);
+            pad + isz.min(ui_px(48.0)) + gap + font_measure(FontFace::Caps, ts, &label.to_uppercase()) + pad
+        } else {
+            ui_button_need_w(h, if icon { IconKind::Grid } else { IconKind::None }, label, ButtonStyle::Plain)
+        }
+    }
+    // the header's actions, a sheet's close: the dot-matrix sign alone, as Cassette's other bare signs
+    fn icon_button(&self, c: &mut Canvas, r: Rect, icon: IconKind, st: ButtonStyle) {
+        self.button(c, r, icon, "", st, 0.0);
+    }
+    // an ink square with paper brackets inside its corners, as a toast's plate
+    fn fab_plate(&self, c: &mut Canvas, r: Rect) {
+        canvas_fill(c, r, CS_INK);
+        cs_brackets(c, rect_inflate(r, -ui_px(12.0)), ui_px(20.0).min(r.w / 4), ui_px(3.0), 255);
+    }
+    // clean paper held by big brackets, as a sheet is; a crosshair for the grabber
+    fn slide_up_card(&self, c: &mut Canvas, card: Rect) {
+        canvas_fill(c, card, 255);
+        canvas_hline(c, card.x, card.x + card.w, card.y, ui_px(2.0).max(1), CS_LINE);
+        cs_brackets(c, card, ui_px(42.0), ui_px(5.0), CS_INK);
+        cs_cross(c, card.x + card.w / 2, card.y + ui_px(18.0), ui_px(12.0), ui_px(2.0), CS_TL);
     }
     // an ink plate with paper brackets inside its corners
     fn toast_plate(&self, c: &mut Canvas, r: Rect, _ends: i32) {
@@ -344,22 +387,6 @@ impl Look for Cassette {
         canvas_fill(c, r, if matches!(st, ButtonStyle::Selected | ButtonStyle::Primary) { CS_SEL } else { 255 });
         CS_INK
     }
-    fn status_box(&self, c: &mut Canvas, r: Rect) {
-        canvas_fill(c, r, 255);
-        cs_brackets(c, r, ui_px(18.0).min(r.h / 3), ui_px(4.0), CS_INK);
-    }
-    // each lit unit a dot, the battery a dot-matrix sign
-    fn battery_units(&self, c: &mut Canvas, r: Rect, u: i32, gray: u8) {
-        if gray != 0 {
-            canvas_fill(c, r, gray);
-            return;
-        }
-        for y in (r.y..r.y + r.h).step_by(u.max(1) as usize) {
-            for x in (r.x..r.x + r.w).step_by(u.max(1) as usize) {
-                canvas_disc_aa(c, x as f32 + u as f32 / 2.0, y as f32 + u as f32 / 2.0, u as f32 * 0.42, 0, 1.0);
-            }
-        }
-    }
     // a ring of dots: the selection and the open page as a plotter marks them
     fn map_ring(&self, c: &mut Canvas, x: f32, y: f32, r: f32, t: f32) -> bool {
         if r <= ui_px(10.0) as f32 {
@@ -387,22 +414,6 @@ impl Look for Cassette {
         true
     }
 
-    // the app's name as a maker's mark: small spaced capitals, the mark and the name sprayed into grain at
-    // both ends, as a worn photocopy
-    fn library_mark(&self, c: &mut Canvas, r: Rect, title: &str, x0: i32, x: i32, header_h: i32) -> Option<i32> {
-        let name_w = cs_tracked(c, FontFace::Title, ui_px(46.0) as f32, r, &title.to_uppercase(), ui_px(14.0), CS_INK);
-        let ys = ui_px(36.0);
-        cs_spray_at(c, Rect::new(x0 - ui_px(12.0), ys, x + name_w + ui_px(24.0) - (x0 - ui_px(12.0)), header_h - ys - ui_px(24.0)), x0, x + name_w, 7, ui_px(6.0));
-        Some(name_w)
-    }
-    // a readout under the rule: what this shelf holds, and a rail to the edge
-    fn library_readout(&self, c: &mut Canvas, s: &ShelfInfo) {
-        let where_ = if s.folder.is_empty() { "ROOT".to_string() } else { s.folder.to_uppercase() };
-        let line = format!("ARCHIVE // {where_} // {:02} NB // {:02} DIR", s.notebooks, s.folders);
-        let ry = s.header_h + ui_px(14.0);
-        let w = cs_tracked(c, FontFace::Fixed, ui_px(21.0) as f32, Rect::new(s.margin, ry, s.w / 2, ui_px(26.0)), &line, ui_px(3.0), CS_DIM);
-        cs_rail(c, s.margin + w + ui_px(30.0), s.w - s.margin, ry + ui_px(13.0), "");
-    }
     // PAGE 1 / 1: the word as a caption (the translation's, before its number), the count in figures
     fn library_pager(&self, c: &mut Canvas, pr: Rect, nr: Rect, page: i32, pages: i32) -> bool {
         let fmt = tr("Page %d of %d");
@@ -424,7 +435,7 @@ impl Look for Cassette {
         let t = sys_wall_clock();
         let tm = local_tm(t);
         let hm = format!("{:02}:{:02}", tm.tm_hour, tm.tm_min);
-        let pct = status_battery_percent();
+        let pct = crate::globalui::battery_cached().map_or(-1, |b| b.percent);
         let left = format!("SYS.GRIMOIRE {} // {}x{} @{}DPI // IDX {:02}", GRIMOIRE_VERSION.to_uppercase(), info.w, info.h, info.dpi.round() as i32, info.items);
         let right = format!(
             "{:02}.{:02}.{} // {} // PWR {}",

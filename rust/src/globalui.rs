@@ -589,7 +589,7 @@ thread_local! {
     static BATTERY: Cell<(u32, i32, bool)> = const { Cell::new((0, -1, false)) };
 }
 
-fn battery_cached() -> Option<Battery> {
+pub(crate) fn battery_cached() -> Option<Battery> {
     const REFRESH_MS: u32 = 30_000;
     BATTERY.with(|cell| {
         let (at, percent, charging) = cell.get();
