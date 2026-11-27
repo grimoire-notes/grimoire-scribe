@@ -869,8 +869,8 @@ fn start_job(j: Job, extra: bool) -> bool {
             || (j.kind == BgKind::FontCheck && (rc == 3 || rc == 4 || rc == 5 || rc == 6))
             || (j.kind == BgKind::CopyFile && (rc == 2 || rc == 3 || rc == 4))
             || (template_pdf(&j) && (rc == crate::bgwork_tplpdf::CODE_MORE || rc == crate::bgwork_tplpdf::CODE_SANDBOX))
-            || (j.kind == BgKind::PackagePictures && rc == crate::pkgpics::CODE_SANDBOX)
-            || (j.kind == BgKind::EmptyTrash && rc == crate::bgwork_empty::CODE_MORE);
+            || (j.kind == BgKind::EmptyTrash && rc == crate::bgwork_empty::CODE_MORE)
+            || (j.kind == BgKind::PackagePictures && rc == crate::pkgpics::CODE_SANDBOX);
         unsafe { libc::_exit(if rc == 0 { 0 } else if says_more { rc } else { 1 }) };
     }
     let beside = with(|s| {
