@@ -444,15 +444,22 @@ pub fn gui_select(c: &mut Canvas, r: Rect, caption: &str, value: &str) {
     ui_text(c, FontFace::Bold, px, ui_small_size(), Rect::new(tx, r.y, tw, r.h), &line, 1, false, 0);
 }
 
-/// The floating action button: a black disc in Classic, a carved black square in Gothic, with the
-/// icon in white.
-pub fn gui_fab(c: &mut Canvas, r: Rect, icon: IconKind) {
+/// The radius `gui_fab` gives ui_frame: Gothic's carved square (its corners cut by 18 + 18 / 4 px), Classic's
+/// rounded rectangle at the theme's own radius (`gui_radius`), as its cards and buttons have (#332: it was a disc).
+pub fn gui_fab_radius() -> i32 {
     if gui_gothic() {
-        ui_frame(c, r, ui_px(18.0), 0, true, 0);
-        ui_frame(c, rect_inflate(r, -ui_px(9.0)), ui_px(12.0), 255, false, ui_px(2.0));
+        ui_px(18.0)
     } else {
-        let rad = r.w.min(r.h) as f32 / 2.0;
-        canvas_disc_aa(c, r.x as f32 + r.w as f32 / 2.0, r.y as f32 + r.h as f32 / 2.0, rad, 0, 1.0);
+        gui_radius()
+    }
+}
+
+/// The floating action button: a black rounded rectangle in Classic, a carved black square in Gothic,
+/// with the icon in white. The home's + and an app's `fab` draw it.
+pub fn gui_fab(c: &mut Canvas, r: Rect, icon: IconKind) {
+    ui_frame(c, r, gui_fab_radius(), 0, true, 0);
+    if gui_gothic() {
+        ui_frame(c, rect_inflate(r, -ui_px(9.0)), ui_px(12.0), 255, false, ui_px(2.0));
     }
     let isz = ((r.w.min(r.h) as f32 * 0.44) as i32).max(ui_px(30.0));
     ui_icon(c, icon, Rect::new(r.x + (r.w - isz) / 2, r.y + (r.h - isz) / 2, isz, isz), 255);
@@ -1000,6 +1007,41 @@ mod tests {
             for c in [&mut plain, &mut none, &mut led] {
                 canvas_free(c);
             }
+        }
+        ui_set_theme(UiTheme::Gothic);
+    }
+
+    // Classic's + button is a rounded rectangle at the theme's radius (#332; it was a disc), the same size: a point
+    // 10 px in from its corner is inside it, which a disc's would not be, and the corner itself is outside. Gothic's
+    // carved square keeps its cut corners and its white inner line.
+    #[test]
+    fn classics_plus_button_is_a_rounded_rectangle_and_gothics_is_carved() {
+        ui_init(300.0);
+        assert_eq!(font_init(), 0);
+        let r = Rect::new(20, 20, 144, 144);
+        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+            ui_set_theme(theme);
+            let mut c = Canvas::default();
+            assert_eq!(canvas_init(&mut c, 184, 184), 0);
+            canvas_fill(&mut c, Rect::new(0, 0, 184, 184), 255);
+            gui_fab(&mut c, r, IconKind::Plus);
+            let px = |x: i32, y: i32| c.px[(y * c.stride + x) as usize];
+            for (cx, cy) in [(r.x, r.y), (r.x + r.w - 1, r.y), (r.x, r.y + r.h - 1), (r.x + r.w - 1, r.y + r.h - 1)] {
+                assert_eq!(px(cx, cy), 255, "{theme:?}: the corner ({cx}, {cy}) is outside");
+            }
+            if theme == UiTheme::Classic {
+                assert_eq!(gui_fab_radius(), gui_radius());
+                for (x, y) in [(r.x + 10, r.y + 10), (r.x + r.w - 11, r.y + 10), (r.x + 10, r.y + r.h - 11), (r.x + r.w - 11, r.y + r.h - 11)] {
+                    assert_eq!(px(x, y), 0, "{theme:?}: ({x}, {y}) is inside the rounded rectangle");
+                }
+            } else {
+                assert_eq!(gui_fab_radius(), ui_px(18.0));
+                // (the cut corner, 22 px, leaves (r.x + 10, r.y + 10) outside; the white line 9 px in)
+                assert_eq!(px(r.x + 10, r.y + 10), 255, "{theme:?}");
+                assert_eq!(px(r.x + 40, r.y + 10), 255, "{theme:?}: the inner line");
+                assert_eq!(px(r.x + 40, r.y + 4), 0, "{theme:?}");
+            }
+            canvas_free(&mut c);
         }
         ui_set_theme(UiTheme::Gothic);
     }
