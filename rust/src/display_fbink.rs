@@ -1461,6 +1461,38 @@ pub fn display_close() {
 /// Last Fast frame needed the existing colour-panel driver wait; reads cached state only.
 pub fn display_last_fast_waiting() -> bool { with(|s| s.last_fast_wait) }
 
+/// What display_settle_area's scan reads of the state, taken before its first strip and compared again at every
+/// strip and at its end: each is a hold of the state of its own, with the pens read between them (work_pump). The
+/// pump moves input into its queue and reaches nothing of the display, which copy_rect relies on as well. Were any
+/// of this to differ all the same (a refresh sent, which alone writes the shadow and counts in g_presents; the
+/// screen turned, flipped or inverted; the frame no longer known; the panel closed), the rows scanned before would
+/// be those of another record, and the answer is the whole rect.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SettleStamp {
+    fd: i32,
+    known: bool,
+    presents: i32,
+    rot: i32,
+    flip: bool,
+    /// as copy_row writes
+    flip_px: bool,
+    logical: (i32, i32),
+    shown: usize,
+}
+
+fn settle_stamp(s: &State) -> SettleStamp {
+    SettleStamp {
+        fd: s.g_fd,
+        known: s.g_frame_known,
+        presents: s.g_presents,
+        rot: s.g_rot,
+        flip: s.g_flip,
+        flip_px: if s.g_st.bpp == 8 { s.g_st.inverted_grayscale != s.g_invert } else { s.g_invert },
+        logical: (s.LW, s.LH),
+        shown: s.g_shown.px.len(),
+    }
+}
+
 /// display.rs display_settle_area. The record is g_shown, the RAM shadow of the bytes written to the framebuffer (each
 /// with the refresh that sent it), compared with the screen row by row as copy_row writes the row (fbpack_level_span).
 /// r whole while the record may not be what the panel shows: no panel, no frame known (a refresh failed, the screen
@@ -1468,31 +1500,46 @@ pub fn display_last_fast_waiting() -> bool { with(|s| s.last_fast_wait) }
 /// frames are not waited for and may be read half done. An empty answer leaves pen mode, as the grayscale refresh
 /// would have (the status bar waits for it), and the live area the answer covers is one no longer: its pixels are the
 /// screen's within a level, inside the guard's tolerance.
+///
+/// The rect is everything written since the last pause, most of the screen after a long burst, so the scan pumps
+/// input as a full-screen copy does (copy_rect): strips of 64 rows, each under one state borrow that is released
+/// for the pump, and the pens read once more before pen_leave, whose wait reads none (display.rs settle_area_strips
+/// walks the strips; never a pump inside a borrow). The answer is the one pass's: r whole if the state the scan
+/// reads changed between two strips (SettleStamp), which the pump cannot do.
 pub fn display_settle_area(screen: &Canvas, r: Rect) -> Rect {
-    with(|s| {
+    let Some((c, stamp)) = with(|s| {
         if s.g_fd < 0 || !s.g_frame_known || s.g_shown.px.is_empty() || s.g_st.has_color_panel {
-            return r;
+            return None;
         }
         let c = rect_intersect(rect_intersect(r, Rect { x: 0, y: 0, w: s.LW, h: s.LH }), Rect { x: 0, y: 0, w: screen.w, h: screen.h });
-        let flip_px = if s.g_st.bpp == 8 { s.g_st.inverted_grayscale != s.g_invert } else { s.g_invert }; // as copy_row writes
-        let stride = s.g_shown.stride as isize;
-        let mut found = RECT_EMPTY;
-        for y in c.y..c.y + c.h {
-            // (along a logical row the shadow moves by a constant step, as copy_row's previous_at and previous_step)
-            let (fx0, fy0) = to_fb(s, c.x, y);
-            let (fx1, fy1) = to_fb(s, c.x + 1, y);
-            let at = fy0 as isize * stride + fx0 as isize;
-            let step = (fy1 - fy0) as isize * stride + (fx1 - fx0) as isize;
-            let last = at + step * (c.w - 1) as isize;
-            if at < 0 || last < 0 || at.max(last) as usize >= s.g_shown.px.len() {
-                return r;
-            }
-            let src = &screen.px[(y * screen.stride + c.x) as usize..][..c.w as usize];
-            if let Some((a, b)) = fbpack_level_span(src, &s.g_shown.px, at as usize, step, flip_px) {
-                found = rect_union(found, Rect { x: c.x + a as i32, y, w: (b - a + 1) as i32, h: 1 });
-            }
-        }
-        let d = settle_area_pad(found, c);
+        Some((c, settle_stamp(s)))
+    }) else {
+        return r;
+    };
+    let found = settle_area_strips(
+        c,
+        |y0, y1| {
+            with(|s| {
+                if settle_stamp(s) != stamp {
+                    return None;
+                }
+                let s = &*s;
+                let stride = s.g_shown.stride as isize;
+                // (along a logical row the shadow moves by a constant step, as copy_row's previous_at and previous_step)
+                settle_strip_by_bytes(screen, c, y0, y1, &s.g_shown.px, stamp.flip_px, |y| {
+                    let (fx0, fy0) = to_fb(s, c.x, y);
+                    let (fx1, fy1) = to_fb(s, c.x + 1, y);
+                    (fy0 as isize * stride + fx0 as isize, (fy1 - fy0) as isize * stride + (fx1 - fx0) as isize)
+                })
+            })
+        },
+        work_pump,
+    );
+    with(|s| {
+        // (after the last pump: what is decided here, and pen_leave's wait, come under this one borrow)
+        let Some(d) = found.filter(|_| settle_stamp(s) == stamp) else {
+            return r;
+        };
         if !rect_is_empty(s.g_live_area) && rect_contains_rect(c, s.g_live_area) {
             s.g_live_area = d;
         }

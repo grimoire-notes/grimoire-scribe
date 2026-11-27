@@ -304,6 +304,68 @@ pub fn settle_area_pad(found: Rect, r: Rect) -> Rect {
     rect_intersect(rect_inflate(found, SETTLE_MARGIN), r)
 }
 
+/// The rows a display_settle_area that scans its record under a hold of its state takes between two reads of the
+/// pens: a full-screen copy's strip (display_fbink.rs copy_rect).
+pub const SETTLE_STRIP_ROWS: i32 = 64;
+
+/// display_settle_area's scan of c (clipped already) in strips of SETTLE_STRIP_ROWS rows, top to bottom, every row
+/// in exactly one strip. `strip(y0, y1)` scans rows y0..y1 and answers the box of the pixels it found there
+/// (RECT_EMPTY for none), or None when it cannot answer for them: the walk ends there with None, and the caller
+/// answers its whole rect. `pump()` (util.rs work_pump: the pens are read) runs after every strip of
+/// SETTLE_STRIP_ROWS rows, as after a full-screen copy's, and once more after a last, shorter strip (or after none)
+/// when no pixel was found: an empty answer is followed by leaving pen mode, which may wait, and a wait reads no
+/// pens. It never runs inside `strip`, so a strip may hold its platform's state. Some(the box of all that was found,
+/// padded by SETTLE_MARGIN and clipped to c): what one pass over c gives.
+pub fn settle_area_strips(c: Rect, mut strip: impl FnMut(i32, i32) -> Option<Rect>, mut pump: impl FnMut()) -> Option<Rect> {
+    let mut found = RECT_EMPTY;
+    let mut pumped = false;
+    let mut y = c.y;
+    let y_end = c.y + c.h;
+    while y < y_end {
+        let strip_end = (y + SETTLE_STRIP_ROWS).min(y_end);
+        found = rect_union(found, strip(y, strip_end)?);
+        pumped = strip_end - y == SETTLE_STRIP_ROWS;
+        if pumped {
+            pump();
+        }
+        y = strip_end;
+    }
+    if rect_is_empty(found) && !pumped {
+        pump();
+    }
+    Some(settle_area_pad(found, c))
+}
+
+/// One strip of the scan (settle_area_strips) for a platform whose record is the bytes it last wrote for the panel,
+/// one a pixel (`shown`: display_fbink.rs's RAM shadow): rows y0..y1 of c (inside `screen`), each compared level by
+/// level with its bytes as the row was written (fbpack_level_span, `invert` as the copy inverts). `row_at(y)` says
+/// where the byte of row y's first pixel (c.x, y) is in `shown` and the step from a pixel to the next (a pixel or a
+/// whole line, either direction, by the rotation). The box of the pixels found (RECT_EMPTY for none); None when a
+/// row's bytes are not all inside `shown`.
+pub fn settle_strip_by_bytes(
+    screen: &Canvas,
+    c: Rect,
+    y0: i32,
+    y1: i32,
+    shown: &[u8],
+    invert: bool,
+    mut row_at: impl FnMut(i32) -> (isize, isize),
+) -> Option<Rect> {
+    let mut found = RECT_EMPTY;
+    for y in y0..y1 {
+        let (at, step) = row_at(y);
+        let last = at + step * (c.w - 1) as isize;
+        if at < 0 || last < 0 || at.max(last) as usize >= shown.len() {
+            return None;
+        }
+        let src = &screen.px[(y * screen.stride + c.x) as usize..][..c.w as usize];
+        if let Some((a, b)) = fbpack_level_span(src, shown, at as usize, step, invert) {
+            found = rect_union(found, Rect { x: c.x + a as i32, y, w: (b - a + 1) as i32, h: 1 });
+        }
+    }
+    Some(found)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,5 +444,226 @@ mod tests {
         assert!(du_wear_due(&w, W, H) && w.area == 0 && w.at == 4);
         du_wear_presented(&mut w, r(1600, 0, 260, 2480), RefreshMode::Clean);
         assert!(!du_wear_due(&w, W, H));
+    }
+
+    // ---- the settle's scan in strips (settle_area_strips, settle_strip_by_bytes; Ink edges at Solid, #320) ----
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Step {
+        /// rows y0..y1 scanned
+        Strip(i32, i32),
+        /// the pens read
+        Pump,
+    }
+    use Step::{Pump, Strip};
+
+    /// The first row of the walks' rect.
+    const TOP: i32 = 40;
+
+    /// The walk over a rect of h rows whose strips find one pixel run, in row `hit`, or nothing: what ran, in order,
+    /// and the answer.
+    fn walk(h: i32, hit: Option<i32>) -> (Vec<Step>, Option<Rect>) {
+        let steps = std::cell::RefCell::new(Vec::new());
+        let d = settle_area_strips(
+            r(10, TOP, 300, h),
+            |y0, y1| {
+                steps.borrow_mut().push(Strip(y0, y1));
+                Some(match hit {
+                    Some(y) if y0 <= y && y < y1 => r(50, y, 20, 1),
+                    _ => RECT_EMPTY,
+                })
+            },
+            || steps.borrow_mut().push(Pump),
+        );
+        (steps.into_inner(), d)
+    }
+
+    #[test]
+    fn the_scan_reads_the_pens_after_each_full_strip_and_before_an_empty_answer() {
+        // nothing found: the pens are read after each strip of 64 rows, and once more when the last was shorter
+        // (or there was none), so that they are read between the last row and the wait that may follow
+        assert_eq!(walk(0, None).0, [Pump]);
+        assert_eq!(walk(1, None).0, [Strip(40, 41), Pump]);
+        assert_eq!(walk(63, None).0, [Strip(40, 103), Pump]);
+        assert_eq!(walk(64, None).0, [Strip(40, 104), Pump]);
+        assert_eq!(walk(65, None).0, [Strip(40, 104), Pump, Strip(104, 105), Pump]);
+        assert_eq!(walk(128, None).0, [Strip(40, 104), Pump, Strip(104, 168), Pump]);
+        // something found: a refresh follows, not a wait, and the pens are read as a full-screen copy reads them
+        assert_eq!(walk(1, Some(40)).0, [Strip(40, 41)]);
+        assert_eq!(walk(63, Some(102)).0, [Strip(40, 103)]);
+        assert_eq!(walk(64, Some(40)).0, [Strip(40, 104), Pump]);
+        assert_eq!(walk(65, Some(104)).0, [Strip(40, 104), Pump, Strip(104, 105)]);
+        assert_eq!(walk(128, Some(41)).0, [Strip(40, 104), Pump, Strip(104, 168), Pump]);
+    }
+
+    #[test]
+    fn the_scan_takes_every_row_in_exactly_one_strip() {
+        for h in [0, 1, 63, 64, 65, 128, 1000] {
+            let hits: Vec<Option<i32>> = if h == 0 { vec![None] } else { vec![None, Some(TOP), Some(TOP + h / 2), Some(TOP + h - 1)] };
+            for hit in hits {
+                let (steps, d) = walk(h, hit);
+                let mut seen = vec![0u32; h as usize];
+                let mut next = TOP;
+                let mut pumps = 0;
+                for (i, s) in steps.iter().enumerate() {
+                    match *s {
+                        Strip(y0, y1) => {
+                            assert_eq!(y0, next, "h {h}: the strips follow one another");
+                            assert!(y1 > y0 && y1 - y0 <= SETTLE_STRIP_ROWS, "h {h}: {s:?}");
+                            assert!(y1 - y0 == SETTLE_STRIP_ROWS || y1 == TOP + h, "h {h}: only the last strip is shorter");
+                            for y in y0..y1 {
+                                seen[(y - TOP) as usize] += 1;
+                            }
+                            next = y1;
+                            // a full strip is followed by a read of the pens, at once
+                            if y1 - y0 == SETTLE_STRIP_ROWS {
+                                assert_eq!(steps.get(i + 1), Some(&Pump), "h {h}: after {s:?}");
+                            }
+                        }
+                        Pump => {
+                            pumps += 1;
+                            // never two in a row: each follows a strip (or is the only step, for no rows)
+                            if i == 0 {
+                                assert_eq!(h, 0);
+                            } else {
+                                assert!(matches!(steps[i - 1], Strip(..)), "h {h}: step {i}");
+                            }
+                        }
+                    }
+                }
+                assert_eq!(next, TOP + h, "h {h}");
+                assert!(seen.iter().all(|&n| n == 1), "h {h}: every row once");
+                let last_short = h % SETTLE_STRIP_ROWS != 0 || h == 0;
+                assert_eq!(pumps, h / SETTLE_STRIP_ROWS + (hit.is_none() && last_short) as i32, "h {h} hit {hit:?}");
+                // the answer: the found pixels padded by the margin and clipped to the rect, or none
+                let want = match hit {
+                    Some(y) => rect_intersect(r(47, y - 3, 26, 7), r(10, TOP, 300, h)),
+                    None => RECT_EMPTY,
+                };
+                assert_eq!(d, Some(want), "h {h} hit {hit:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_strip_that_cannot_answer_ends_the_scan() {
+        let steps = std::cell::RefCell::new(Vec::new());
+        let d = settle_area_strips(
+            r(0, 0, 100, 400),
+            |y0, y1| {
+                steps.borrow_mut().push(Strip(y0, y1));
+                if y0 == 128 { None } else { Some(r(5, y0, 1, 1)) }
+            },
+            || steps.borrow_mut().push(Pump),
+        );
+        assert_eq!(d, None);
+        // no strip after it, and no read of the pens on its account
+        assert_eq!(steps.into_inner(), [Strip(0, 64), Pump, Strip(64, 128), Pump, Strip(128, 192)]);
+    }
+
+    /// xorshift32
+    fn rnd(s: &mut u32) -> u32 {
+        *s ^= *s << 13;
+        *s ^= *s >> 17;
+        *s ^= *s << 5;
+        *s
+    }
+
+    // A record kept as bytes, one a panel pixel, of a logical screen turned and flipped onto the panel as
+    // display_fbink.rs maps it (to_fb), inverted or not: over random pictures and rects the scan in strips answers
+    // what one pass over the rect answers (settle_area_by), and what the scan in one strip does.
+    #[test]
+    fn the_scan_in_strips_answers_what_one_pass_answers() {
+        const PW: i32 = 150;
+        const PH: i32 = 210;
+        let mut seed = 0x0320_2023u32;
+        let (mut answers, mut empties, mut tall, mut read) = (0, 0, 0, 0);
+        for rot in 0..4 {
+            for flip in [false, true] {
+                for invert in [false, true] {
+                    let (lw, lh) = if rot & 1 != 0 { (PH, PW) } else { (PW, PH) };
+                    let to_fb = |lx: i32, ly: i32| {
+                        let (px, py) = match rot {
+                            1 => (ly, PH - 1 - lx),
+                            2 => (PW - 1 - lx, PH - 1 - ly),
+                            3 => (PW - 1 - ly, lx),
+                            _ => (lx, ly),
+                        };
+                        if flip { (PW - 1 - px, PH - 1 - py) } else { (px, py) }
+                    };
+                    let mut screen = Canvas::default();
+                    assert_eq!(canvas_init(&mut screen, lw, lh), 0);
+                    for p in screen.px.iter_mut() {
+                        *p = rnd(&mut seed) as u8;
+                    }
+                    // the panel was given the picture as it is
+                    let mut shown = vec![0u8; (PW * PH) as usize];
+                    for ly in 0..lh {
+                        for lx in 0..lw {
+                            let (fx, fy) = to_fb(lx, ly);
+                            let v = screen.px[(ly * lw + lx) as usize];
+                            shown[(fy * PW + fx) as usize] = if invert { 255 - v } else { v };
+                        }
+                    }
+                    for round in 0..60 {
+                        // since then a few pixels changed (none in some rounds), within their level or out of it
+                        if round % 5 == 0 {
+                            for ly in 0..lh {
+                                for lx in 0..lw {
+                                    let (fx, fy) = to_fb(lx, ly);
+                                    let b = shown[(fy * PW + fx) as usize];
+                                    screen.px[(ly * lw + lx) as usize] = if invert { 255 - b } else { b };
+                                }
+                            }
+                        } else {
+                            for _ in 0..rnd(&mut seed) % 4 {
+                                let at = (rnd(&mut seed) % (lw * lh) as u32) as usize;
+                                screen.px[at] = rnd(&mut seed) as u8;
+                            }
+                        }
+                        // a rect of any place and size, clipped to the screen as display_settle_area clips it
+                        let (x, y) = ((rnd(&mut seed) % (lw as u32 + 20)) as i32 - 10, (rnd(&mut seed) % (lh as u32 + 20)) as i32 - 10);
+                        let (w, h) = ((rnd(&mut seed) % (lw as u32 + 20)) as i32, (rnd(&mut seed) % (lh as u32 + 20)) as i32);
+                        let c = rect_intersect(r(x, y, w, h), r(0, 0, lw, lh));
+                        let want = settle_area_by(&screen, c, |x, y| {
+                            let (fx, fy) = to_fb(x, y);
+                            let b = shown[(fy * PW + fx) as usize];
+                            (if invert { 255 - b } else { b }) >> 4
+                        });
+                        let row_at = |y: i32| {
+                            let ((fx0, fy0), (fx1, fy1)) = (to_fb(c.x, y), to_fb(c.x + 1, y));
+                            ((fy0 * PW + fx0) as isize, ((fy1 - fy0) * PW + (fx1 - fx0)) as isize)
+                        };
+                        let got = settle_area_strips(c, |y0, y1| settle_strip_by_bytes(&screen, c, y0, y1, &shown, invert, row_at), || read += 1);
+                        assert_eq!(got, Some(want), "rot {rot} flip {flip} invert {invert} round {round} rect {c:?}");
+                        let one = settle_strip_by_bytes(&screen, c, c.y, c.y + c.h, &shown, invert, row_at);
+                        assert_eq!(one.map(|f| settle_area_pad(f, c)), Some(want), "rot {rot} flip {flip} invert {invert} round {round} rect {c:?}");
+                        answers += 1;
+                        empties += rect_is_empty(want) as i32;
+                        tall += (c.h > SETTLE_STRIP_ROWS) as i32;
+                    }
+                }
+            }
+        }
+        // (the pictures gave both answers, over rects of more than one strip too, with the pens read)
+        assert!(empties > 100 && answers - empties > 100 && tall > 100 && read > 100, "{empties} of {answers} empty, {tall} tall, {read} reads");
+    }
+
+    #[test]
+    fn a_row_outside_the_record_has_no_answer() {
+        let mut screen = Canvas::default();
+        assert_eq!(canvas_init(&mut screen, 40, 30), 0);
+        let shown = vec![255u8; 40 * 30];
+        let c = r(0, 0, 40, 30);
+        let plain = |y: i32| ((y * 40) as isize, 1isize);
+        assert_eq!(settle_strip_by_bytes(&screen, c, 0, 30, &shown, false, plain), Some(RECT_EMPTY));
+        // a record a row short, one whose rows begin before it, and a row walked backward out of it
+        assert_eq!(settle_strip_by_bytes(&screen, c, 0, 30, &shown[..40 * 29], false, plain), None);
+        assert_eq!(settle_strip_by_bytes(&screen, c, 0, 29, &shown[..40 * 29], false, plain), Some(RECT_EMPTY));
+        assert_eq!(settle_strip_by_bytes(&screen, c, 0, 30, &shown, false, |y| ((y * 40 - 1) as isize, 1)), None);
+        assert_eq!(settle_strip_by_bytes(&screen, c, 0, 30, &shown, false, |y| ((y * 40 + 38) as isize, -1)), None);
+        assert_eq!(settle_strip_by_bytes(&screen, c, 0, 30, &shown, false, |y| ((y * 40 + 39) as isize, -1)), Some(RECT_EMPTY));
+        // and the scan in strips answers none then
+        assert_eq!(settle_area_strips(c, |y0, y1| settle_strip_by_bytes(&screen, c, y0, y1, &shown[..40 * 29], false, plain), || {}), None);
     }
 }
