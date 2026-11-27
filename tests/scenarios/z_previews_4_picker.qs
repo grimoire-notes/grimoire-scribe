@@ -18,14 +18,14 @@ tap panel pages.copy-to-notebook
 expect editor.destination is 1
 tap panel elsewhere.book.other
 expect editor.destination.notebook is other
-wait 1500
+# (the light pages' previews waited for, not a time they take on a quiet machine: the dense page's own 4 s, which
+# the job spends last, keep the tiles so until they are counted from)
+waitfor editor.destination.shows is pppppppplp
 expect bg.busy is 1
-expect editor.destination.shows is pppppppplp
 shot 01-loading
 expect display.presents not -1
 waitbg 30000
-wait 400
-expect editor.destination.shows is pppppppppp
+waitfor editor.destination.shows is pppppppppp
 expect display.presents is ui 35 900 421 325
 shot 02-ready
 quit

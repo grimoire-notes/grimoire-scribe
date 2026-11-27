@@ -13,16 +13,16 @@ tap library notebook.previews
 expect editor.page is 2
 tap panel pages
 expect editor.modal is pages
-wait 1500
 # the light pages' previews have come, page 2's from its canvas as the view opened; page 1 is still drawn
+# (waited for, not a time they take on a quiet machine: the dense page's own 4 s, which the job spends last, keep
+# the tiles so until they are counted from)
+waitfor editor.pages.shows is lpppppppp
 expect bg.busy is 1
-expect editor.pages.shows is lpppppppp
 shot 01-loading
 expect display.presents not -1
 waitbg 30000
-wait 400
 # the dense page's preview in its tile, that tile alone refreshed (a GL16, no flash)
-expect editor.pages.shows is ppppppppp
+waitfor editor.pages.shows is ppppppppp
 expect display.presents is ui 24 292 588 648
 shot 02-ready
 quit

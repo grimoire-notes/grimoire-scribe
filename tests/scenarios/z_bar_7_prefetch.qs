@@ -11,8 +11,10 @@ swipe 2 930 1300 0 -400
 wait 300
 expect editor.bar is open
 expect main.longest_unpumped_ms not -1
-wait 1500
-expect editor.canvas_cache is 0 0 2
+# (waited for by what the cache holds, not by a time: a band a pass of the main loop comes as fast as the machine's
+# passes do. Two pages held: the first entry's whole, the second's begun; its bands go on in the wait after)
+waitfor editor.canvas_cache is 0 0 2
+wait 600
 tap 479 2218
 wait 300
 expect editor.canvas_cache is 1 0 2
