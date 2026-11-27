@@ -12712,6 +12712,25 @@ fn settle_now_in(a: &mut App) {
     ed(a).panel_stale = false;
 }
 
+// Ink edges at Solid (2.3, #320): whether the pause's settle (editor_tick) waits for this pass's flush. The settle
+// judges what the panel shows (settle_solid), so it is taken only after the flush that put the stroke's last live
+// frames there, and a tick comes before its pass's flush (mainloop.rs: the input batch, the tick, the flush). While
+// something still waits for the flush where the settle's rect is on screen (App.dirty: the frames of a stroke this
+// very pass handled, when the loop comes to the pen's leaving SETTLE_LEFT_MS late), the settle stays due; the flush
+// sends the frames and empties App.dirty, and the next tick takes the settle. Taken at once it would find the panel
+// without those frames and send them again in grays, the second pass Solid is there to spare. Only the settle's own
+// rect is asked about: a refresh waiting elsewhere (a toolbar change) holds nothing back. Nothing is flushed from the
+// tick. With Smooth the settle is not judged against the panel and goes out with the waiting frames as ever; a
+// settle an action forces (settle_now from Undo, a tap on the toolbar, Settings) is taken at once; and under the
+// Pages view nothing is settled at all (settle_now_in).
+fn settle_waits_for_flush(a: &App) -> bool {
+    if ink_edges() != InkEdges::Solid || rect_is_empty(a.dirty) {
+        return false;
+    }
+    let s = ed_ref(a);
+    !s.pv.open && !rect_is_empty(s.settle) && rect_overlaps(a.dirty, page_to_screen(a, s.settle))
+}
+
 // The settle with Ink edges at Solid (2.3, #320): page rect r composed on the screen, then refreshed in grays only
 // where the panel shows another level than the screen now holds (display_settle_area: the platform's record of what
 // it last gave the panel, lighter pixels as well as darker ones, with a margin), and not at all where it shows them
@@ -12892,7 +12911,9 @@ pub fn editor_tick(a: &mut App, now: u32) {
     let s = ed(a);
     // The pen gone for SETTLE_LEFT_MS (not just lifted high for a moment), or near for too long.
     let stopped = now.wrapping_sub(s.settle_from) >= SETTLE_NEAR_MS || (!s.pen_near && now.wrapping_sub(s.pen_left) >= SETTLE_LEFT_MS);
-    if s.open && s.owner == Owner::None && !s.pinching && (!rect_is_empty(s.settle) || s.panel_stale) && stopped {
+    if s.open && s.owner == Owner::None && !s.pinching && (!rect_is_empty(s.settle) || s.panel_stale) && stopped
+        && !settle_waits_for_flush(a)
+    {
         settle_now(a);
     }
     du_wear_tick(a, now);
@@ -14596,13 +14617,18 @@ mod tests {
         assert!(rect_is_empty(editor_live_panel(&a)));
     }
     fn fshape_app() -> App {
+        fshape_app_of(1000, 1400)
+    }
+    // The same on a w x h screen with pages of its size (1860 x 2480 is the simulated panel's: what a settle with Ink
+    // edges at Solid compares the screen with).
+    fn fshape_app_of(w: i32, h: i32) -> App {
         #[cfg(feature = "sim")]
         {
             // Allocate the simulator's presented buffer without opening a window or script.
             let (mut w, mut h) = (0, 0);
             crate::sim_sdl::display_set_orientation(0, &mut w, &mut h);
         }
-        let mut a = app(1000, 1400, 1000, 1400);
+        let mut a = app(w, h, w, h);
         a.scr = ScreenId::Editor;
         a.settings.status_on = false;
         a.settings.status_mode = 2;
@@ -14617,15 +14643,89 @@ mod tests {
         s.nb.page_ids = vec![1, 2];
         for pid in [1, 2] {
             let i = s.entry_for(pid).unwrap();
-            s.hist[i].page = Some(page_new(1000, 1400, PAPER_BLANK));
+            s.hist[i].page = Some(page_new(w, h, PAPER_BLANK));
         }
         s.page = Some(1);
-        assert_eq!(canvas_init(&mut s.page_canvas, 1000, 1400), 0);
+        assert_eq!(canvas_init(&mut s.page_canvas, w, h), 0);
         render_page_full(&mut a);
         view_reset(&mut a);
         compose_all(&mut a, RefreshMode::Ui);
         app_flush(&mut a);
         a
+    }
+
+    // A ballpoint line from (x0, y) to (x1, y) on the open page and the pen's leaving, all at time t: the events of
+    // one batch, as the loop hands them over when it comes to them late.
+    #[cfg(feature = "sim")]
+    fn solid_line_in_one_batch(a: &mut App, x0: f32, x1: f32, y: f32, t: u32) {
+        tool_params_default(TOOL_BALLPOINT, &mut a.settings.tools[TOOL_BALLPOINT.0 as usize]);
+        a.settings.current_tool = TOOL_BALLPOINT;
+        a.settings.draw_tool = TOOL_BALLPOINT;
+        let mut ev = InEvent { type_: InType::PenDown, x: x0, y, pressure: 0.6, t_ms: t, ..Default::default() };
+        editor_event(a, &ev);
+        ev.type_ = InType::PenMove;
+        for k in 1..=20 {
+            ev.x = x0 + (x1 - x0) * k as f32 / 20.0;
+            editor_event(a, &ev);
+        }
+        ev.type_ = InType::PenUp;
+        app_pen_feedback_end(a);
+        editor_event(a, &ev);
+        ev.type_ = InType::PenLeave;
+        ev.pressure = 0.0;
+        editor_event(a, &ev);
+    }
+
+    // Ink edges at Solid (#320): the pause's settle follows the flush of the stroke's own live frames. The loop
+    // handles a batch of input, ticks, then flushes. When it comes to a stroke and the pen's leaving SETTLE_LEFT_MS
+    // late, the tick of that pass finds the settle due while the stroke's frames still wait for the flush: it leaves
+    // the settle due, the flush puts the frames on the panel, and the next tick settles with nothing to send. Taken
+    // in the first tick the settle compares the screen with a panel that was not given the frames, and sends them
+    // again in grays. A refresh waiting elsewhere on the screen holds no settle back, and with Smooth the settle
+    // goes out with the frames in one refresh as ever.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn the_solid_settle_waits_for_the_flush_of_the_strokes_own_frames() {
+        let _solid = InkEdgesScope::new(InkEdges::Solid);
+        let mut a = fshape_app_of(1860, 2480);
+        let counts = |a: &App| (ed_ref(a).settles_quiet, ed_ref(a).settles_sent);
+        let t = now_ms();
+        let late = t.wrapping_add(SETTLE_LEFT_MS + 250);
+        a.last_input = late; // (the batch was just handled: none of the tick's idle work is due)
+        solid_line_in_one_batch(&mut a, 400.0, 1000.0, 900.0, t);
+        assert_eq!(ed_ref(&a).open_page().unwrap().strokes.len(), 1);
+        let frames = a.dirty;
+        assert!(!rect_is_empty(frames) && a.dirty_mode == RefreshMode::Fast, "the stroke's frames wait for the flush");
+        // the tick of the batch's own pass, late: the settle is due and stays so
+        editor_tick(&mut a, late);
+        assert!(!rect_is_empty(ed_ref(&a).settle), "the settle waits");
+        assert_eq!(counts(&a), (0, 0));
+        assert_eq!((a.dirty, a.dirty_mode), (frames, RefreshMode::Fast), "the tick adds nothing to the frames' refresh");
+        app_flush(&mut a);
+        assert!(rect_is_empty(a.dirty));
+        // the next pass: the panel shows the stroke, the settle sends nothing for it
+        editor_tick(&mut a, late.wrapping_add(30));
+        assert!(rect_is_empty(ed_ref(&a).settle));
+        assert_eq!(counts(&a), (1, 0), "a solid stroke settles with nothing sent");
+        app_flush(&mut a);
+        // a refresh waiting elsewhere on the screen is not the stroke's: the settle is taken in that very tick
+        let t = now_ms();
+        solid_line_in_one_batch(&mut a, 400.0, 1000.0, 1200.0, t);
+        app_flush(&mut a);
+        app_invalidate(&mut a, Rect::new(100, 2000, 300, 100), RefreshMode::Ui);
+        editor_tick(&mut a, t.wrapping_add(SETTLE_LEFT_MS + 250));
+        assert!(rect_is_empty(ed_ref(&a).settle));
+        assert_eq!(counts(&a), (2, 0));
+        app_flush(&mut a);
+        // Smooth: the settle goes out with the frames that wait, one grayscale refresh
+        drop(_solid);
+        let t = now_ms();
+        solid_line_in_one_batch(&mut a, 400.0, 1000.0, 1500.0, t);
+        assert_eq!(a.dirty_mode, RefreshMode::Fast);
+        editor_tick(&mut a, t.wrapping_add(SETTLE_LEFT_MS + 250));
+        assert!(rect_is_empty(ed_ref(&a).settle));
+        assert!(!rect_is_empty(a.dirty) && a.dirty_mode == RefreshMode::Ui);
+        assert_eq!(counts(&a), (2, 0));
     }
 
     #[test]
