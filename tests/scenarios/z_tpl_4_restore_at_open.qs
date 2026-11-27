@@ -22,7 +22,8 @@ pentap panel library
 wait 600
 expect screen is library
 expect library.card.1 is thumb
-expect library.card.1.luma is 252
+# (page 2's Medium rule, its lines darker since 2.3.0, issue #314: 252 before)
+expect library.card.1.luma is 251
 shot 01-card-drawn-again
 tap library card.1
 wait 600

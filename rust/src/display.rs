@@ -227,9 +227,27 @@ pub fn display_close() {
 }
 /// Whether the last fast refresh sent may still be on the panel, its waveform not ended: a held delete's
 /// next repeat waits for it rather than queue behind it in the driver (keyboard_repeat). No display
-/// operation is issued. Never in the simulator, whose refreshes are done when they are sent.
+/// operation is issued. Never in the simulator, whose refreshes are done when they are sent, unless a
+/// test says so (`sim_fast_busy_set`).
 pub fn display_fast_busy() -> bool {
+    #[cfg(feature = "sim")]
+    if SIM_FAST_BUSY.with(|b| b.get()) {
+        return true;
+    }
     active().display_fast_busy()
+}
+
+#[cfg(feature = "sim")]
+thread_local! {
+    static SIM_FAST_BUSY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Tests, in the simulator's build: the last fast refresh taken as still on the panel (`busy`), as a Kindle's is for a
+/// few hundred ms after it is sent, so that what waits for it can be seen to wait; false again for the simulator's own
+/// answer. The main thread's alone.
+#[cfg(feature = "sim")]
+pub fn sim_fast_busy_set(busy: bool) {
+    SIM_FAST_BUSY.with(|b| b.set(busy));
 }
 /// Cached indication for pacing non-ink trails on a colour panel. No display operation is issued.
 pub fn display_last_fast_waiting() -> bool {

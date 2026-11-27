@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "packages": [
+    {"id":"test.kit.input","name":"Input app","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/apps/test.kit.input/app.wasm","sha":"bbfe787f8cd0e6878d5c55c7cfef3815ebb5a04f3d4b200dfea78d4880dc59f6","installed_at":1,"source_url":""},
+    {"id":"test.kit.pointer","name":"Pointer app","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/apps/test.kit.pointer/app.wasm","sha":"f6e6f0c92effb91a241d998952268c672af728319db897c0c9835a797030bd5a","installed_at":1,"source_url":""},
+    {"id":"test.kit.quiet","name":"Quiet app","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/apps/test.kit.quiet/app.wasm","sha":"8c7bc33f36e5d82affdc032827b3e852d50f398c46f9ce82e4631ed6b8789f3c","installed_at":1,"source_url":""}
+  ]
+}

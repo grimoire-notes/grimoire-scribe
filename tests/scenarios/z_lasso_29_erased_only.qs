@@ -11,6 +11,8 @@
 # a box round nothing. Beside ink that shows, erased ink is selected as before, and Delete takes it with the rest.
 # A lasso round empty paper answers as before.
 # (the clock corner held still: its minute's refresh would land among the counted ones)
+# (Since 2.3.0 the paper's rules are darker than mid-gray, issue #314, so display.dark counts them: a place with no
+# ink counts its rules' pixels, two rows of each rule across it, and "not N" there says ink shows beside them.)
 clock 1700000000
 wait 300
 tap library add
@@ -59,9 +61,9 @@ waitfor display.stale.300.600.1000.1000 is 0
 expect editor.strokes is 8
 expect editor.erase_strokes is 4
 expect editor.live_matches_render is 1
-expect display.dark.360.640.540.120 not 0
-expect display.dark.360.850.540.100 is 0
-expect display.dark.360.1050.540.100 is 0
+expect display.dark.360.640.540.120 not 2160
+expect display.dark.360.850.540.100 is 1080
+expect display.dark.360.1050.540.100 is 1080
 # Select mode: a lasso round the word the eraser took away selects nothing
 tap panel tool-picker
 wait 100
@@ -77,7 +79,7 @@ wait 300
 expect editor.select is armed
 expect editor.selected is 0
 expect toast is Nothing to select.
-expect display.dark.360.850.540.100 is 0
+expect display.dark.360.850.540.100 is 1080
 # round the word white ink covers: the same (the last toast gone first, so the one checked is this lasso's)
 waitfor toast is
 pen down 650 1165

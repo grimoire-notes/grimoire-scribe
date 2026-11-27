@@ -1,0 +1,15 @@
+name: Gray app
+id: test.kit.gray
+type: app
+version: 1.0.0
+author: Grimoire tests
+description: A module of the package kit's tests.
+platforms: [all]
+artifact:
+  path: app.wasm
+  sha256: 0a41ce313d45e90c3f809be08261b26b0ba25ba607154da7b0d48c86783d5443
+  size: 1912
+capabilities: []
+spec:
+  runtime: wasm
+  status_bar: true

@@ -123,7 +123,7 @@ fn load(id: &str, kit: &Kit, overlay: bool) -> Result<Rt, String> {
                 let text = std::fs::read_to_string(&yaml).unwrap().replace("capabilities: [editor:overlay, storage:widget-local]", "capabilities: [storage:widget-local]");
                 std::fs::write(&yaml, text).unwrap();
             }
-            let rt = WidgetRuntime::new(id).map(Rt::W);
+            let rt = WidgetRuntime::new(id, (WIDGET_BODY.w, WIDGET_BODY.h)).map(Rt::W);
             widget_package_remove(id, false).unwrap();
             rt
         }
