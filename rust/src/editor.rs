@@ -3594,6 +3594,44 @@ fn refresh_library_thumb(s: &mut EditorState, dpi: f32) {
     }
 }
 
+/// In a background job (bgjob.rs BgKind::Cards, queued as Ink edges changes, 2.3, #320): every notebook's Library card
+/// that is not of the page it is drawn from as this process draws it now (thumb.src against card_page_source, whose
+/// identity names the renderer of the setting the job was forked with) is drawn again from that page. A notebook with
+/// no card yet is left so (the Library shows its paper). The editor may write a card meanwhile (leaving or closing
+/// the notebook): store_replace_thumb_if_same then keeps the editor's. 0.
+pub fn bg_redraw_cards(dpi: f32) -> i32 {
+    let mut drawn = 0;
+    for id in store_notebook_ids() {
+        let mut nb = NotebookInfo::default();
+        if store_load_info(&id, &mut nb) != 0 || nb.page_ids.is_empty() {
+            continue;
+        }
+        let source = card_page_source(&nb);
+        if source.is_empty() || store_thumb_source(&id).as_deref() == Some(source.as_str()) {
+            continue;
+        }
+        let Some(was) = store_read_thumb_file(&id) else { continue };
+        let mut p = None;
+        if store_read_page(&nb, clampi(nb.last_page, 0, nb.npages() - 1), &mut p) != 0 {
+            continue;
+        }
+        let Some(p) = p else { continue };
+        let (mut pw, mut ph) = (0, 0);
+        store_notebook_page_size(&nb, &mut pw, &mut ph);
+        let mut t = Canvas::default();
+        if canvas_init(&mut t, pw / 3, ph / 3) == 0 {
+            page_render_thumb(&mut t, &p, dpi);
+            if store_replace_thumb_if_same(&id, &t, &was) == 0 {
+                store_note_thumb_source(&id, &source);
+                drawn += 1;
+            }
+        }
+        page_free(p);
+    }
+    qlog!("cards: %d drawn again", drawn);
+    0
+}
+
 // Draws r of the open page into the page canvas. An image paper's picture that is not there (a
 // template's, made in the background) draws white: noted, to be drawn once it is (editor_tick).
 // ---- the base canvas and the steps' patches ----

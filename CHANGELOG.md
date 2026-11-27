@@ -113,8 +113,9 @@
   no second redraw, zoomed in and sideways too. White ink and the precise eraser take a solid stroke's black back to
   the paper whole where they reach it, leaving no gray rim. The pencils, charcoal, the highlighter and a pen turned
   down to a light gray draw as before, and PDF and PNG exports, Share and the USB mirror always draw with Smooth.
-  Pages kept drawn to open quickly, the Pages view's previews and Library cards are drawn again once after a change.
-  In Polish and Japanese its texts are in English until they are translated.
+  Pages kept drawn to open quickly and the Pages view's previews are drawn again once after a change, as each is
+  next shown, and the Library's cards at once, in the background. In Polish and Japanese its texts are in English
+  until they are translated.
 - **Polish and Japanese** (#315, nebuff). The texts of the new home, Apps, the Package Store and the rest of 2.2's
   and 2.3's screens are translated. In this beta 39 of 1,261 texts are still in English in each language: the
   Package Store's license steps, the package kit's messages, Manage apps... and Settings > Updates' version line.
