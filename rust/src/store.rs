@@ -2528,7 +2528,7 @@ pub fn store_list_folders_from(nbs: &[NotebookInfo], out: &mut Vec<String>) -> i
     0
 }
 
-// ---- folder looks (root/folder-looks.ini, 2.2, issue #230) ----
+// ---- folder looks (root/folder-looks.ini, 2.3, issue #230) ----
 //
 // # Grimoire: folder icons and pictures
 // folder=School
@@ -4370,11 +4370,28 @@ fn page_preview_files(nb: &NotebookInfo, pid: u32) -> Option<(String, String, St
     let cache = format!("{dir}/.page-previews");
     Some((source, format!("{cache}/p{pid}.pgm"), format!("{cache}/p{pid}.stamp")))
 }
+// What a preview, a card (editor.rs card_page_source) and a kept drawing are of: the page file (inode, size, times),
+// the previews' generation, and since 2.3.0 the renderer that draws them (page.rs page_render_fingerprint, 16 hex
+// digits after a colon). A version that draws a paper or ink otherwise (2.3.0's darker papers, #314) then takes none
+// of the pictures another drew for its own, and draws each again as it is next asked for: a preview as its Pages view
+// opens, a card as its notebook is next left. That holds for pictures an earlier version drew before the update and
+// after it (moved back and forth between versions), for a notebook back from the trash or a backup, and for a job an
+// earlier version left running, with nothing written to make it so and nothing done as the app starts.
 fn preview_stamp(source: &str) -> Option<String> {
     let st = std::fs::metadata(source).ok()?;
     let generation=std::path::Path::new(source).parent()?.join(".page-previews/generation");
     let gen=std::fs::metadata(generation).map(|g|format!("{}:{}:{}",g.ino(),g.mtime(),g.mtime_nsec())).unwrap_or_default();
-    Some(format!("{}:{}:{}:{}:{}:{gen}", st.ino(), st.size(), st.mtime(), st.mtime_nsec(), st.ctime_nsec()))
+    Some(format!("{}:{}:{}:{}:{}:{gen}{}", st.ino(), st.size(), st.mtime(), st.mtime_nsec(), st.ctime_nsec(), preview_renderer()))
+}
+// ":" and the renderer's fingerprint. Tests (the simulator): GRIMOIRE_SIM_PREVIEWS_CURRENT=1 leaves it out, so
+// stamps are as before 2.3.0 and a scenario's fixture can hold previews made as an earlier version made them
+// (tests/previews_fixture.py ghosts).
+fn preview_renderer() -> String {
+    #[cfg(feature = "sim")]
+    if std::env::var("GRIMOIRE_SIM_PREVIEWS_CURRENT").is_ok_and(|v| v == "1") {
+        return String::new();
+    }
+    format!(":{:016x}", page_render_fingerprint())
 }
 fn preview_tag(path:&str)->Option<String> {
     use std::io::Read;
@@ -4409,8 +4426,8 @@ pub fn store_retag_compacted_preview(nb:&NotebookInfo,pid:u32,before:Option<&str
     let Some(before)=before else{return};
     let Some((source,_,stamp))=page_preview_files(nb,pid)else{return};
     let Some(now)=preview_stamp(&source)else{return};
-    // The final component is the explicit/background-image invalidation generation. A
-    // lossless QPG rewrite can keep its pixels, but must not acknowledge a newer generation.
+    // The rest after the page file's five fields is the explicit/background-image invalidation generation and
+    // the renderer. A lossless QPG rewrite can keep its pixels, but must not acknowledge a newer generation.
     if before.splitn(6,':').nth(5)!=now.splitn(6,':').nth(5){return;}
     if preview_tag(&stamp).as_deref()==Some(before)
         && read_file(&source).as_deref()==Some(data)
@@ -6093,7 +6110,7 @@ mod tests {
             .collect()
     }
 
-    // A folder's icon and picture are kept apart from folders.ini (2.2, issue #230): read back as written, a folder
+    // A folder's icon and picture are kept apart from folders.ini (2.3, issue #230): read back as written, a folder
     // with neither has no block, a rename or merge carries the subtree's looks, and one gone takes its look.
     #[test]
     fn folder_looks_read_write_and_follow_renames() {

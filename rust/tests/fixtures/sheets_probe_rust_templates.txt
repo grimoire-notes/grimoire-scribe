@@ -5,7 +5,8 @@
 # The tiles' labels are drawn in each language, so a language's empty-sheet lines follow its "From a file...": when
 # that translation changes, look at the 16 sheets again and record their lines (the ja lines were, when #136
 # translated it; the empty sheets were recorded again for #195's tiles and 18-a-page grid, and every Classic line
-# for 2.3's Classic, #209: rounder corners, and no rule under a sheet's title).
+# for 2.3's Classic, #209: rounder corners, and no rule under a sheet's title; the ja and pl Templates lines again
+# when #315 translated From a notebook..., looked at in all four layouts).
 tplsheet empty0 en pg templates d2d54c54ac8bf3f0
 tplsheet empty0 en pg photos fe290deb3196fe43
 tplsheet empty0 en pc templates 1ec5b58b4a4ddb9c
@@ -22,21 +23,21 @@ tplsheet empty0 es lg templates 2632e8e159a24c38
 tplsheet empty0 es lg photos ab4a8dba62126326
 tplsheet empty0 es lc templates 98fb46cee3739e2f
 tplsheet empty0 es lc photos f2fc6dbf8cddde7e
-tplsheet empty0 ja pg templates 5e3e91c6422d9829
+tplsheet empty0 ja pg templates aa2a094c449a3cf4
 tplsheet empty0 ja pg photos 2b56c2b2764afd29
-tplsheet empty0 ja pc templates c24bbadc839f46fe
+tplsheet empty0 ja pc templates 238510380eeff3b8
 tplsheet empty0 ja pc photos d3427a0bbab49f89
-tplsheet empty0 ja lg templates ec8b8598a1a70a93
+tplsheet empty0 ja lg templates 4f5ca987d81eba82
 tplsheet empty0 ja lg photos b0450805dbb0b0cc
-tplsheet empty0 ja lc templates 2dbef91786052b6d
+tplsheet empty0 ja lc templates a72b1c54316d4b97
 tplsheet empty0 ja lc photos d8a7a4314444590a
-tplsheet empty0 pl pg templates dd5d234cbf67fefe
+tplsheet empty0 pl pg templates e84182cb60683eee
 tplsheet empty0 pl pg photos 9419f6c23ed1926d
-tplsheet empty0 pl pc templates 00143cde7f809574
+tplsheet empty0 pl pc templates b26f12e1384a2d77
 tplsheet empty0 pl pc photos 78836a863ca5ae7f
-tplsheet empty0 pl lg templates 4fa47eeabc251114
+tplsheet empty0 pl lg templates 6c0b6601698dcc3c
 tplsheet empty0 pl lg photos 689f033c3b09c580
-tplsheet empty0 pl lc templates 6e66b16618493407
+tplsheet empty0 pl lc templates c9c2753d36fb30a6
 tplsheet empty0 pl lc photos dd3215625c02652e
 tplsheet empty1 en pg templates e963eab281f15df0
 tplsheet empty1 en pg photos fe290deb3196fe43
@@ -54,21 +55,21 @@ tplsheet empty1 es lg templates 529f36e520595438
 tplsheet empty1 es lg photos ab4a8dba62126326
 tplsheet empty1 es lc templates 68d1369b7bcc5ed5
 tplsheet empty1 es lc photos f2fc6dbf8cddde7e
-tplsheet empty1 ja pg templates d9cf2c9680e6f552
+tplsheet empty1 ja pg templates eaa119794376d01f
 tplsheet empty1 ja pg photos 2b56c2b2764afd29
-tplsheet empty1 ja pc templates d70a475d120f93a5
+tplsheet empty1 ja pc templates 47fd831950fda70f
 tplsheet empty1 ja pc photos d3427a0bbab49f89
-tplsheet empty1 ja lg templates d0dfc1934c92ff10
+tplsheet empty1 ja lg templates 66614f6a688c0351
 tplsheet empty1 ja lg photos b0450805dbb0b0cc
-tplsheet empty1 ja lc templates 385002e5ab169096
+tplsheet empty1 ja lc templates abe9de071f97fc90
 tplsheet empty1 ja lc photos d8a7a4314444590a
-tplsheet empty1 pl pg templates c1cc5ffff506a346
+tplsheet empty1 pl pg templates 1abd887681382276
 tplsheet empty1 pl pg photos 9419f6c23ed1926d
-tplsheet empty1 pl pc templates 4a8f9478c7aa2fa0
+tplsheet empty1 pl pc templates 778081c308f2e13b
 tplsheet empty1 pl pc photos 78836a863ca5ae7f
-tplsheet empty1 pl lg templates bf7d09d080465c5c
+tplsheet empty1 pl lg templates c33f675edacec4a4
 tplsheet empty1 pl lg photos 689f033c3b09c580
-tplsheet empty1 pl lc templates 9e83bf5f8dd832cf
+tplsheet empty1 pl lc templates 5b842ff04ac29dbe
 tplsheet empty1 pl lc photos dd3215625c02652e
 tplsheet pg waiting page 1 of 2 selected 16 hash 97fd54e1ec6959cf
 tplsheet pg ready tick 1 dirty 70 60 1720 2300 page 1 of 2 hash 0f54d917c5250020

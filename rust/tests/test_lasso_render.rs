@@ -204,10 +204,12 @@ fn unlayered_pages_draw_as_before() {
     check!(same == 200);
 }
 
-// The renderer's fingerprint stays what 2.0.0-beta.1's is: no kept drawing or preview is retired by it. (2.1.0
-// sets 2.0.0's and 2.0.1's kept drawings aside by their version instead, store.rs RENDER_TAG_VERSION, and knows
-// them by its absence: store_retire_page_render.)
-fn fingerprint_unchanged() {
+// The ink half of the renderer's fingerprint stays what 2.0.0-beta.1's whole fingerprint is: floors retire no kept
+// drawing or preview by it. (2.1.0 sets 2.0.0's and 2.0.1's kept drawings aside by their version instead, store.rs
+// RENDER_TAG_VERSION, and knows them by its absence: store_retire_page_render. Since 2.3.0 the fingerprint hashes
+// every paper after the ink, so the darker papers of issue #314 retired the kept drawings once:
+// page_render_fingerprint_with.)
+fn ink_fingerprint_unchanged() {
     // (recorded from 2.0.0-beta.1's renderer on this processor family: the fingerprint is the hash of a
     // fixed page; floors never run on it, which the identity test above already proves)
     let mut p = page_new(240, 160, PAPER_NARROW);
@@ -226,7 +228,8 @@ fn fingerprint_unchanged() {
     let mut c = canvas(p.w, p.h);
     frozen(&mut c, &p, whole(&p), 300.0, PAGE_LAYER_ALL, None);
     let fp = c.px.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3));
-    check!(page_render_fingerprint() == fp);
+    check!(page_ink_fingerprint() == fp);
+    check!(page_render_fingerprint() == page_render_fingerprint_with(fp, &paper_render) && page_render_fingerprint() != fp);
 }
 
 // A marker of layer 1 at index 0 and every erase stroke scoped to it: the floor is the paper, so the
@@ -503,7 +506,7 @@ fn layered_pages_in_the_store() {
 #[test]
 fn test_lasso_render() {
     run!(unlayered_pages_draw_as_before);
-    run!(fingerprint_unchanged);
+    run!(ink_fingerprint_unchanged);
     run!(forced_floor_path_draws_the_same);
     run!(scoped_erase_stops_at_its_floor);
     run!(scoped_over_paper_is_plain);
