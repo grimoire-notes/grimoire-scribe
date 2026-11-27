@@ -781,10 +781,11 @@ pub fn app_init(a: &mut App, w: i32, h: i32, dpi: f32) -> i32 {
     // before the first screen is drawn, so that screen is the one the guard waits for.
     crate::userfonts::userfonts_apply(a);
     display_set_invert(a.settings.invert);
-    // Pages previews and Library cards drawn by another renderer (a version before 2.3.0, whose papers' lines were
-    // lighter: #314) go out of date, every notebook's at once, before any screen reads one. Here, as the renderer's
-    // fingerprint draws Cornell's headings and the clefs in the fonts just loaded, and Seyes at the panel's density.
-    store_previews_follow_renderer(page_render_fingerprint());
+    // The renderer's fingerprint, taken here once for the process and the jobs it forks: before any screen reads a
+    // Pages preview, a Library card or a kept drawing (their stamps name it, store.rs preview_stamp: pictures another
+    // renderer drew are drawn again, #314), and after the fonts just loaded and the panel's density, which its papers
+    // draw Cornell's headings, the clefs and Seyes with. It writes nothing and reads no notebook.
+    let _ = page_render_fingerprint();
     for op in K_SCREENS.iter() {
         (op.init)(a);
     }

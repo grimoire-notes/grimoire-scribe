@@ -1,8 +1,8 @@
 # rust-only
 # generate: tests/previews_fixture.py ghosts
 # env: GRIMOIRE_SIM_PREVIEWS_CURRENT=1
-# (The fixture's previews and card are as 2.0.0 or 2.0.1 left them, current for their page files: the knob keeps
-# them so as the app starts, where 2.3.0 puts every preview an earlier renderer drew out of date, #314.)
+# (The fixture's previews and card are as 2.0.0 or 2.0.1 left them, current for their page files: the knob makes
+# stamps as before 2.3.0, with no renderer at their end, so they stay current here, #314.)
 # A page entered from the Links bar comes from the bar's canvas, drawn from its strokes ahead of the tap, not drawn
 # again as a page that opens is ("barghost": page 1 links to page 2, cleared under 2.0.0 or 2.0.1 with its drawing
 # current, its Pages preview of the old ink; it opens on page 1). Staying on page 2 from the bar takes the old

@@ -4370,11 +4370,28 @@ fn page_preview_files(nb: &NotebookInfo, pid: u32) -> Option<(String, String, St
     let cache = format!("{dir}/.page-previews");
     Some((source, format!("{cache}/p{pid}.pgm"), format!("{cache}/p{pid}.stamp")))
 }
+// What a preview, a card (editor.rs card_page_source) and a kept drawing are of: the page file (inode, size, times),
+// the previews' generation, and since 2.3.0 the renderer that draws them (page.rs page_render_fingerprint, 16 hex
+// digits after a colon). A version that draws a paper or ink otherwise (2.3.0's darker papers, #314) then takes none
+// of the pictures another drew for its own, and draws each again as it is next asked for: a preview as its Pages view
+// opens, a card as its notebook is next left. That holds for pictures an earlier version drew before the update and
+// after it (moved back and forth between versions), for a notebook back from the trash or a backup, and for a job an
+// earlier version left running, with nothing written to make it so and nothing done as the app starts.
 fn preview_stamp(source: &str) -> Option<String> {
     let st = std::fs::metadata(source).ok()?;
     let generation=std::path::Path::new(source).parent()?.join(".page-previews/generation");
     let gen=std::fs::metadata(generation).map(|g|format!("{}:{}:{}",g.ino(),g.mtime(),g.mtime_nsec())).unwrap_or_default();
-    Some(format!("{}:{}:{}:{}:{}:{gen}", st.ino(), st.size(), st.mtime(), st.mtime_nsec(), st.ctime_nsec()))
+    Some(format!("{}:{}:{}:{}:{}:{gen}{}", st.ino(), st.size(), st.mtime(), st.mtime_nsec(), st.ctime_nsec(), preview_renderer()))
+}
+// ":" and the renderer's fingerprint. Tests (the simulator): GRIMOIRE_SIM_PREVIEWS_CURRENT=1 leaves it out, so
+// stamps are as before 2.3.0 and a scenario's fixture can hold previews made as an earlier version made them
+// (tests/previews_fixture.py ghosts).
+fn preview_renderer() -> String {
+    #[cfg(feature = "sim")]
+    if std::env::var("GRIMOIRE_SIM_PREVIEWS_CURRENT").is_ok_and(|v| v == "1") {
+        return String::new();
+    }
+    format!(":{:016x}", page_render_fingerprint())
 }
 fn preview_tag(path:&str)->Option<String> {
     use std::io::Read;
@@ -4409,8 +4426,8 @@ pub fn store_retag_compacted_preview(nb:&NotebookInfo,pid:u32,before:Option<&str
     let Some(before)=before else{return};
     let Some((source,_,stamp))=page_preview_files(nb,pid)else{return};
     let Some(now)=preview_stamp(&source)else{return};
-    // The final component is the explicit/background-image invalidation generation. A
-    // lossless QPG rewrite can keep its pixels, but must not acknowledge a newer generation.
+    // The rest after the page file's five fields is the explicit/background-image invalidation generation and
+    // the renderer. A lossless QPG rewrite can keep its pixels, but must not acknowledge a newer generation.
     if before.splitn(6,':').nth(5)!=now.splitn(6,':').nth(5){return;}
     if preview_tag(&stamp).as_deref()==Some(before)
         && read_file(&source).as_deref()==Some(data)
@@ -6642,51 +6659,6 @@ pub fn store_invalidate_page_previews(id:&str) {
     if std::fs::create_dir_all(&path).is_ok() && write_file_atomic(&format!("{path}/generation"),b"changed")==0 {
         page_previews_changed(id);
     }
-}
-
-/// The renderer (page.rs page_render_fingerprint) the notebooks' Pages previews and Library cards were last drawn by,
-/// noted in root/.previews-renderer since 2.3.0. A preview's stamp and a card's source are the page file's identity and
-/// the previews' generation, with no renderer in them: a version that draws a paper or ink otherwise (2.3.0's darker
-/// papers, #314) showed the pictures the one before made until their pages changed. Given another fingerprint than the
-/// one noted, or none noted (a store of a version before 2.3.0), every notebook's previews go out of date at once
-/// (store_invalidate_page_previews: their generation), then this fingerprint is noted. Each Pages view draws its previews
-/// again as it opens (the previews job), and a card is drawn again as its notebook is next left (its source names the
-/// generation, editor.rs card_page_source). A notebook that is a link, or whose .page-previews is one, is left alone.
-/// The number of notebooks put out of date (0 when the renderer is the one noted). The app calls it as it starts, once
-/// the fonts are loaded and the panel's density set, which the fingerprint's papers draw with (app.rs app_init).
-pub fn store_previews_follow_renderer(fingerprint:u64)->i32 {
-    let path=cformat!("%s/.previews-renderer",&g_root());
-    let now=format!("{fingerprint:016x}\n");
-    let was=preview_tag(&path);
-    if was.as_deref()==Some(now.as_str()) {return 0;}
-    // Tests (the simulator): GRIMOIRE_SIM_PREVIEWS_CURRENT=1 takes a store's previews as this renderer's, so a
-    // scenario's fixture can hold previews made as an earlier version made them (tests/previews_fixture.py ghosts).
-    #[cfg(feature = "sim")]
-    if std::env::var("GRIMOIRE_SIM_PREVIEWS_CURRENT").is_ok_and(|v| v == "1") {
-        let _=write_file_atomic(&path,now.as_bytes());
-        return 0;
-    }
-    let mut marked=0;
-    if let Ok(entries)=std::fs::read_dir(cformat!("%s/notebooks",&g_root())) {
-        for e in entries.flatten() {
-            let name=e.file_name();
-            let Some(id)=name.to_str().filter(|n| !n.starts_with('.') && id_ok(n.as_bytes())) else{continue};
-            let Some(dir)=notebook_dir(id.as_bytes()) else{continue};
-            let plain_dir=|p:&str| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir());
-            let cache=format!("{dir}/.page-previews");
-            // (a notebook with neither previews nor a card has nothing drawn to go out of date)
-            let has_cache=std::fs::symlink_metadata(&cache).is_ok();
-            if !plain_dir(&dir) || (has_cache && !plain_dir(&cache)) || (!has_cache && std::fs::symlink_metadata(format!("{dir}/thumb.pgm")).is_err()) {continue;}
-            store_invalidate_page_previews(id);
-            marked+=1;
-        }
-    }
-    if write_file_atomic(&path,now.as_bytes())!=0 {
-        qlog!("previews: %s could not be written: the previews go out of date again at the next start",&path);
-    }
-    qlog!("previews: another renderer (was %s, now %s): notebooks whose previews and card go out of date: %d",
-        was.as_deref().map(str::trim).unwrap_or("none noted"),now.trim(),marked);
-    marked
 }
 pub fn store_cleanup_preview_work(id:&str,pid:i32) {
     let Some(dir)=notebook_dir(id.as_bytes())else{return};let path=format!("{dir}/.page-previews");

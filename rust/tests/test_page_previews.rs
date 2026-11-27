@@ -299,53 +299,115 @@ fn cut_short_preview_made_again() {
     check!(store_page_preview_ok(&nb, pid) && preview_of(&nb, pid).is_some());
 }
 
-// Previews and cards drawn by another renderer (a version before 2.3.0, whose papers' lines were lighter, #314) go
-// out of date at once as the app starts (store_previews_follow_renderer, from app_init): the job draws the previews
-// again, and a card noted as drawn from its page's file is no longer of it (editor.rs card_page_source). Once this
-// renderer is noted it leaves them alone; a later one puts them out of date again. A notebook with no previews and
-// no card is left as it is, and so is one whose previews folder is a link (nothing is written behind it).
+// A page file's stamp as the versions before 2.3.0 wrote it (their store.rs preview_stamp): the page file's inode,
+// size and times, then the previews' generation, with no renderer after it.
+fn stamp_before_2_3(dir: &str, pid: u32) -> String {
+    use std::os::unix::fs::MetadataExt;
+    let st = std::fs::metadata(format!("{dir}/p{pid}.qpg")).unwrap();
+    let generation = std::fs::metadata(format!("{dir}/.page-previews/generation"));
+    let gen = generation.map(|g| format!("{}:{}:{}", g.ino(), g.mtime(), g.mtime_nsec())).unwrap_or_default();
+    format!("{}:{}:{}:{}:{}:{gen}", st.ino(), st.size(), st.mtime(), st.mtime_nsec(), st.ctime_nsec())
+}
+
+// Every file under root, with its length, inode and modification time: what a check that writes nothing leaves.
+fn files_under(root: &str) -> Vec<(String, u64, u64, std::time::SystemTime)> {
+    use std::os::unix::fs::MetadataExt;
+    let mut out = Vec::new();
+    let mut dirs = vec![root.to_string()];
+    while let Some(d) = dirs.pop() {
+        for e in std::fs::read_dir(&d).unwrap().flatten() {
+            let path = e.path().to_string_lossy().into_owned();
+            let m = std::fs::symlink_metadata(&path).unwrap();
+            if m.is_dir() {
+                dirs.push(path.clone());
+            }
+            out.push((path, m.len(), m.ino(), m.modified().unwrap()));
+        }
+    }
+    out.sort();
+    out
+}
+
+// Previews and Library cards drawn by another renderer (a version before 2.3.0, whose papers' lines were lighter,
+// #314) are not taken for this build's: since 2.3.0 each preview's stamp, and so what a card was drawn from
+// (editor.rs card_page_source), ends with the renderer's fingerprint (store.rs preview_stamp). Nothing is written to
+// make it so: the app's start walks no notebook (a walk that rewrote every notebook's generation, two fsyncs each
+// before the first frame, held a large library's start past the launcher's watchdog). The same holds for another
+// fingerprint at a stamp's end (a later renderer, or one moved back to between two starts of this one) and for a
+// notebook deleted to the trash and restored; the previews this build drew stay current through the trash. The job
+// draws the others again, and then they are this renderer's.
 fn previews_of_another_renderer_drawn_again() {
     let root = fresh_root("renderer");
-    let nb = notebook("Renderer", 2);
-    let (p1, p2) = (nb.page_ids[0], nb.page_ids[1]);
-    for i in 0..2 {
-        check!(store_save_page(&nb, i, &page_of(2, 40, 50 + i as u32)) == 0);
+    let fp = format!(":{:016x}", page_render_fingerprint());
+    let mut books = Vec::new();
+    for k in 0..3u32 {
+        let nb = notebook(&format!("Renderer {k}"), 2);
+        for i in 0..2 {
+            check!(store_save_page(&nb, i, &page_of(2, 40, 50 + 2 * k + i as u32)) == 0);
+        }
+        check!(store_build_page_previews(nb.id.as_str(), "0:2", 300.0) == 0);
+        let mut card = Canvas::default();
+        check!(canvas_init(&mut card, W / 3, H / 3) == 0);
+        canvas_fill(&mut card, Rect::new(0, 0, W / 3, H / 3), 255);
+        check!(store_save_thumb(nb.id.as_str(), &card) == 0);
+        books.push(nb);
     }
-    // as an earlier version left them: the previews made, a card drawn from page 1, no renderer noted
-    check!(store_build_page_previews(nb.id.as_str(), "0:2", 300.0) == 0);
-    check!(store_page_preview_ok(&nb, p1) && store_page_preview_ok(&nb, p2));
-    let mut card = Canvas::default();
-    check!(canvas_init(&mut card, W / 3, H / 3) == 0);
-    canvas_fill(&mut card, Rect::new(0, 0, W / 3, H / 3), 255);
-    check!(store_save_thumb(nb.id.as_str(), &card) == 0);
-    let source = store_page_source_identity(&nb, p1);
-    check!(source.is_some());
-    let bare = notebook("Bare", 1);
-    let linked = notebook("Linked", 1);
-    check!(store_save_page(&linked, 0, &page_of(2, 40, 60)) == 0);
-    let outside = format!("{root}-outside");
-    let _ = std::fs::remove_dir_all(&outside);
-    std::fs::create_dir_all(&outside).unwrap();
-    std::os::unix::fs::symlink(&outside, format!("{}/.page-previews", dir_of(&linked))).unwrap();
-    let noted = format!("{root}/.previews-renderer");
-    let exists = |p: &str| std::fs::symlink_metadata(p).is_ok();
-    check!(!exists(&noted) && !exists(&format!("{}/thumb.pgm", dir_of(&bare))));
-    let fp = page_render_fingerprint();
-    check!(store_previews_follow_renderer(fp) == 1);
-    check!(!store_page_preview_ok(&nb, p1) && !store_page_preview_ok(&nb, p2) && preview_of(&nb, p1).is_none());
-    check!(store_page_source_identity(&nb, p1).is_some_and(|s| Some(s) != source));
-    check!(std::fs::read_to_string(&noted).ok() == Some(format!("{fp:016x}\n")));
-    check!(std::fs::read_dir(&outside).unwrap().count() == 0 && !exists(&format!("{}/.page-previews", dir_of(&bare))));
-    // drawn again by the job, then left alone by the same renderer
-    check!(store_build_page_previews(nb.id.as_str(), "0:2", 300.0) == 0);
-    check!(store_page_preview_ok(&nb, p1) && store_page_preview_ok(&nb, p2));
-    let again = store_page_source_identity(&nb, p1);
-    check!(store_previews_follow_renderer(fp) == 0);
-    check!(store_page_preview_ok(&nb, p1) && store_page_preview_ok(&nb, p2) && store_page_source_identity(&nb, p1) == again);
-    // a later renderer: out of date again
-    check!(store_previews_follow_renderer(fp ^ 1) == 1);
-    check!(!store_page_preview_ok(&nb, p1) && !store_page_preview_ok(&nb, p2));
-    let _ = std::fs::remove_dir_all(&outside);
+    // (what the editor names a card's source by: page 1 and its file's stamp)
+    let card_source = |nb: &NotebookInfo| format!("{}:{}", nb.page_ids[0], store_page_source_identity(nb, nb.page_ids[0]).unwrap());
+    for nb in &books {
+        for &pid in &nb.page_ids {
+            check!(store_page_preview_ok(nb, pid) && store_page_source_identity(nb, pid).is_some_and(|s| s.ends_with(&fp)));
+        }
+        store_note_thumb_source(nb.id.as_str(), &card_source(nb));
+        check!(store_thumb_source(nb.id.as_str()) == Some(card_source(nb)));
+    }
+    let stamp_file = |nb: &NotebookInfo, pid: u32| format!("{}/.page-previews/p{pid}.stamp", dir_of(nb));
+    // "Renderer 0" as a version before 2.3.0 left it: both previews and the card noted from page 1's stamp then
+    let before = &books[0];
+    let dir = dir_of(before);
+    for &pid in &before.page_ids {
+        std::fs::write(stamp_file(before, pid), stamp_before_2_3(&dir, pid)).unwrap();
+    }
+    let noted_before = format!("{}:{}", before.page_ids[0], stamp_before_2_3(&dir, before.page_ids[0]));
+    store_note_thumb_source(before.id.as_str(), &noted_before);
+    // "Renderer 1" as another renderer of 2.3.0's kind left it: another fingerprint at each stamp's end
+    let other = &books[1];
+    for &pid in &other.page_ids {
+        let stamp = std::fs::read_to_string(stamp_file(other, pid)).unwrap();
+        let head = stamp.strip_suffix(fp.as_str());
+        check!(head.is_some());
+        std::fs::write(stamp_file(other, pid), format!("{}:{:016x}", head.unwrap_or(""), page_render_fingerprint() ^ 1)).unwrap();
+    }
+    // "Renderer 2" with page 1's preview from before 2.3.0 and page 2's this build's, deleted and restored
+    let back = books[2].clone();
+    let (b1, b2) = (back.page_ids[0], back.page_ids[1]);
+    std::fs::write(stamp_file(&back, b1), stamp_before_2_3(&dir_of(&back), b1)).unwrap();
+    check!(store_delete(back.id.as_str()) == 0 && !std::path::Path::new(&format!("{root}/notebooks/{}", back.id.as_str())).exists());
+    let trashed = std::fs::read_dir(format!("{root}/trash")).unwrap().flatten()
+        .find(|e| e.file_name().to_string_lossy().starts_with(&format!("{}-", back.id.as_str())));
+    check!(trashed.is_some());
+    std::fs::rename(trashed.unwrap().path(), format!("{root}/notebooks/{}", back.id.as_str())).unwrap();
+    let (mut restored, mut all) = (NotebookInfo::default(), Vec::new());
+    check!(store_restored(back.id.as_str(), &mut restored, &mut all) == 0);
+    // Asked about, none of the other renderers' previews is current and neither card is of its page 1 as it is now,
+    // and nothing in the store was written to make it so.
+    let files = files_under(&root);
+    for nb in [before, other] {
+        for &pid in &nb.page_ids {
+            check!(!store_page_preview_ok(nb, pid) && store_page_preview_fresh(nb, pid).is_none() && preview_of(nb, pid).is_none());
+        }
+    }
+    check!(store_thumb_source(before.id.as_str()) == Some(noted_before) && store_thumb_source(before.id.as_str()) != Some(card_source(before)));
+    check!(!store_page_preview_ok(&back, b1) && store_page_preview_ok(&back, b2) && preview_of(&back, b2).is_some());
+    check!(store_thumb_source(back.id.as_str()) == Some(card_source(&back)));
+    check!(files_under(&root) == files);
+    // drawn again by the job: this renderer's from then on
+    for nb in [before, other, &back] {
+        check!(store_build_page_previews(nb.id.as_str(), "0:2", 300.0) == 0);
+        for &pid in &nb.page_ids {
+            check!(store_page_preview_ok(nb, pid) && std::fs::read_to_string(stamp_file(nb, pid)).is_ok_and(|s| s.ends_with(&fp)));
+        }
+    }
 }
 
 #[test]
