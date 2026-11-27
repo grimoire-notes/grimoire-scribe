@@ -16995,6 +16995,49 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_ruled_view_draws_only_the_open_pages_paper_under_a_whole_canvas() {
+        // The paper drawn at the screen's scale is the open page's, under a canvas drawn to its last row. The
+        // Links bar looking at a page on another paper of rulings (Medium from a Seyes page), or at one whose
+        // canvas is drawn to row 1000 only, samples it as ever; so does a view of a page canvas that is not the
+        // open page's (a page still being drawn, its lower half white).
+        let _panel = paper_panel_lock();
+        let whole = Rect::new(0, 0, 2480, 1860);
+        for (k2, rows_done) in [(PAPER_MEDIUM, 2480), (PAPER_SEYES, 1000)] {
+            let mut a = ruled_app(2480, 1860, 1860, 2480, PAPER_SEYES);
+            let dpi = a.dpi;
+            let s = ed(&mut a);
+            s.nb.page_ids = vec![1, 2];
+            let e = s.entry_for(2).unwrap();
+            s.hist[e].page = Some(page_new(1860, 2480, k2));
+            let mut peeked = Canvas::default();
+            assert_eq!(canvas_init(&mut peeked, 1860, 2480), 0);
+            page_render(&mut peeked, s.hist[e].page.as_deref().unwrap(), Rect::new(0, 0, 1860, 2480), dpi);
+            scatter_ink(&mut peeked, 3000, 7);
+            let w = peeked.stride as usize;
+            peeked.px[rows_done as usize * w..].fill(255);
+            s.ccache[0] = CacheEntry { pid: 2, w: 1860, h: 2480, pic_gen: bgimage_generation(), canvas: peeked, rows_done, from_hist: true, ..Default::default() };
+            s.peek = Peek { active: true, index: 1, pid: 2, slot: 0, count: 1, from_back: false };
+            compose(&mut a, whole);
+            let shown = a.screen.px.clone();
+            let s = ed_ref(&a);
+            let (zoom, ox, oy) = peek_view(2480, 1860, 1860, 2480, true);
+            let mut sampled = a.screen.clone();
+            blit_canvas(&mut sampled, &s.ccache[0].canvas, zoom, ox, oy, whole);
+            assert!(shown == sampled.px, "the bar on paper {} drawn to row {rows_done}", k2.0);
+        }
+        let mut a = ruled_app(2480, 1860, 1860, 2480, PAPER_SEYES);
+        let s = ed(&mut a);
+        s.canvas_page = 0;
+        let w = s.page_canvas.stride as usize;
+        s.page_canvas.px[1240 * w..].fill(255);
+        blit_view(&mut a, whole);
+        let s = ed_ref(&a);
+        let mut sampled = a.screen.clone();
+        blit_canvas(&mut sampled, &s.page_canvas, s.zoom, s.ox, s.oy, whole);
+        assert!(a.screen.px == sampled.px, "a page canvas that is not the open page's");
+    }
+
 
     // A drag of the panel's grip moves the panel itself where the finger takes it, drawn in black and
     // white alone while it moves, and in grays again where it lands on release.

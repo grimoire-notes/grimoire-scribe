@@ -487,7 +487,6 @@ impl<'a> Rules<'a> {
     // one that reaches the far side of the staff line it ends on (dy = that line's width). The page draws it at
     // x + dx down to y1 + dy as ever; through a view the offsets are added once x and y1 are placed, unscaled as
     // the lines' widths are, so it still ends where the staff's lines end.
-    #[allow(clippy::too_many_arguments)]
     fn vline_by(&mut self, x: i32, dx: i32, y0: i32, y1: i32, dy: i32, t: i32, gray: u8) {
         if self.view.is_none() {
             canvas_vline(self.c, x + dx, y0, y1 + dy, t, gray);
