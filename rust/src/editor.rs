@@ -9,14 +9,15 @@
 
 use crate::browser::{Browser, BrowserResult, FilesPrefs, PickSpec};
 use crate::globalui::gui_status_h;
+use crate::kithost::{kit_keep, KitEvent};
 use crate::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 // The grayscale settle (see EditorState.settle): this long after a stroke with the pen still near,
 // or once the pen has been gone this long.
-const SETTLE_NEAR_MS: u32 = 1500;
-const SETTLE_LEFT_MS: i32 = 150;
+pub(crate) const SETTLE_NEAR_MS: u32 = 1500;
+pub(crate) const SETTLE_LEFT_MS: u32 = 150;
 // The band of the page an erased stroke counts as toward DU wear (stroke_wear_area): its ink and the
 // paper right around it, about the height of a small handwritten letter.
 const WEAR_BAND_MM: f32 = 4.0;
@@ -438,7 +439,9 @@ pub struct EditorState {
     // panel (a stroke that does keeps plain DU instead of the pen mode, display_fbink.c).
     /// page rect still showing dithered live ink
     settle: Rect,
-    settle_at: u32,
+    /// when the settle's wait began (a stroke ended): with the pen still near, the settle comes SETTLE_NEAR_MS after
+    /// it (a duration on the u32 clock, so the same at any uptime)
+    settle_from: u32,
     /// the pen is near the page (hovering or touching)
     pen_near: bool,
     /// when it last left
@@ -2619,22 +2622,15 @@ fn draw_widget_frame(a: &mut App, i: usize) {
         f.ensure_runtime();
         if let Some(rt) = f.runtime.as_mut() {
             rt.draw(c, body);
+            // (a pass answers what input owed only when it drew the whole body, which the compose that drew it then
+            // refreshes: one drawn for a region that holds part of the body left the rest of the body as it was, on
+            // the screen and on the panel, and the owed pass is widget_input_tick's still)
+            if rect_contains_rect(c.clip, body) {
+                f.input.answered();
+            }
         }
         if let Some((reason, whose)) = f.says() {
-            // The reason first, in as many lines as it needs and the body holds, so that a small body shows it;
-            // under it, where lines are left, whose widget it is. Nothing of either leaves the body.
-            let px = ui_small_size();
-            let lh = (font_ascent(FontFace::Regular, px) + font_descent(FontFace::Regular, px)).max(1);
-            let room = (body.h / lh).clamp(1, 6);
-            let lines = font_wrap_lines(FontFace::Regular, px, &reason, body.w, None).clamp(1, room);
-            let clip = c.clip;
-            canvas_set_clip(c, rect_intersect(clip, body));
-            ui_text(c, FontFace::Regular, px, px, Rect { x: body.x, y: body.y, w: body.w, h: lines * lh }, &reason, lines, false, 0);
-            if room > lines {
-                let under = (room - lines).min(2);
-                ui_text(c, FontFace::Regular, px, px, Rect { x: body.x, y: body.y + lines * lh, w: body.w, h: under * lh }, &whose, under, false, 0);
-            }
-            c.clip = clip;
+            draw_widget_says(c, body, &reason, &whose);
         } else if f.runtime.is_none() {
             let mut text = f.def.name.to_string();
             if !f.def.version.is_empty() {
@@ -2653,6 +2649,24 @@ fn draw_widget_frame(a: &mut App, i: usize) {
         let gr = f.resize_rect();
         ui_icon(c, IconKind::Expand, Rect::new(gr.x + ui_px(18.0), gr.y + ui_px(18.0), gr.w - ui_px(36.0), gr.h - ui_px(36.0)), 150);
     }
+}
+
+/// What a frame whose module failed says in its body (`WidgetFrame::says`): the reason first, in as many lines as
+/// it needs and the body holds, so that a small body shows it; under it, where lines are left, whose widget it is.
+/// Nothing of either leaves the body.
+pub fn draw_widget_says(c: &mut Canvas, body: Rect, reason: &str, whose: &str) {
+    let px = ui_small_size();
+    let lh = (font_ascent(FontFace::Regular, px) + font_descent(FontFace::Regular, px)).max(1);
+    let room = (body.h / lh).clamp(1, 6);
+    let lines = font_wrap_lines(FontFace::Regular, px, reason, body.w, None).clamp(1, room);
+    let clip = c.clip;
+    canvas_set_clip(c, rect_intersect(clip, body));
+    ui_text(c, FontFace::Regular, px, px, Rect { x: body.x, y: body.y, w: body.w, h: lines * lh }, reason, lines, false, 0);
+    if room > lines {
+        let under = (room - lines).min(2);
+        ui_text(c, FontFace::Regular, px, px, Rect { x: body.x, y: body.y + lines * lh, w: body.w, h: under * lh }, whose, under, false, 0);
+    }
+    c.clip = clip;
 }
 
 fn draw_shape_menu(a: &mut App) {
@@ -4503,7 +4517,7 @@ fn draw_end_stroke(a: &mut App) {
     }
     // Settle later, once the writer stops (see settle_now).
     s.settle = rect_union(s.settle, st.bbox);
-    s.settle_at = now_ms().wrapping_add(SETTLE_NEAR_MS);
+    s.settle_from = now_ms();
     if stroke_is_erase(&st) && !s.bs.restored {
         // An erase stroke that changed no pixel of the page (over blank paper, or ink the eraser
         // had taken already): not kept, and no undo step that would do nothing. Its fast frames
@@ -8505,7 +8519,75 @@ fn widget_runtime_tick(a: &mut App, now: u32) {
     }
 }
 
+/// The events a frame's contact (or its tick) made, handed to its module (`kit_event`); a drawing pass is owed for
+/// each that changed its picture. Nothing for a module without `kit_event`.
+fn widget_events(f: &mut WidgetFrame, events: &[KitEvent]) {
+    let Some(rt) = f.runtime.as_mut() else { return };
+    let owe = events.iter().fold(false, |owe, e| rt.event(e) == Some(true) || owe);
+    if owe {
+        f.input.owe();
+    }
+}
+
+/// editor_tick: the package kit's input in the frames (kithost.rs KitInput). A contact held still on a body is a
+/// press; on the pace's turn a drag's gathered samples go to its module; and the drawing pass that input owes a
+/// frame is drawn once for all its input since the last, and only the part of its body the pass changed is
+/// refreshed: fast while the contact is down, as the screen's UI after it, and what the fast refreshes covered cleaned
+/// once after the lift (du_wear_owe). A tap's pass is drawn at its lift, the pen near or not, as a tap's always was;
+/// the passes a module asks for itself wait for the pen (widget_runtime_tick).
+/// Nothing while a sheet, the peek or Settings is over the frames. A minimized frame draws no body: what was owed
+/// is dropped.
+fn widget_input_tick(a: &mut App, now: u32) {
+    let s = ed_ref(a);
+    if !s.open || a.asleep || s.peek.active || sheet_open(s) || crate::library::library_settings_active(a) {
+        return;
+    }
+    let fast_busy = display_fast_busy();
+    for i in 0..ed_ref(a).widgets.frames.len() {
+        let f = &mut ed(a).widgets.frames[i];
+        let mut events: Vec<KitEvent> = f.input.pointer.tick(now).into_iter().collect();
+        let turn = f.input.turn(now, fast_busy);
+        if turn {
+            events.extend(f.input.pointer.take_moves());
+        }
+        widget_events(f, &events);
+        if f.layout.minimized {
+            f.input.answered();
+            continue;
+        }
+        if let Some(mode) = f.input.pass_now(turn, fast_busy) {
+            let body = widget_body(f);
+            let kept = kit_keep(&a.screen, body);
+            compose(a, body);
+            ed(a).widgets.frames[i].input.answered();
+            let changed = kept.map_or(body, |(k, at)| canvas_changed_rect(&k, &a.screen, at));
+            if !rect_is_empty(changed) {
+                app_invalidate(a, changed, mode);
+                ed(a).widgets.frames[i].input.refreshed(changed, mode);
+            }
+        }
+        // (once the contact has lifted, all its fast refreshes covered is owed one Clean refresh, whatever its size,
+        // after the pause du_wear_tick waits, as a toolbar drag's is)
+        if let Some(worn) = ed(a).widgets.frames[i].input.take_worn() {
+            du_wear_owe(&mut a.du_wear, worn, now);
+        }
+    }
+}
+
 fn widget_down(a: &mut App, index: usize, part: WidgetPart, ev: &InEvent, pen: bool) {
+    if part == WidgetPart::Body {
+        // The body's contact: the kit's recogniser (a tap, a press, a drag), and the module loaded for it.
+        let slop = mm_to_px(TAP_SLOP_MM, a.dpi) as i32;
+        let palm = !pen && ev.value & TOUCH_F_BROAD != 0;
+        let (x, y) = (ev.x.round_ties_even() as i32, ev.y.round_ties_even() as i32);
+        if let Some(f) = ed(a).widgets.frames.get_mut(index) {
+            f.ensure_runtime();
+            let body = widget_body(f);
+            let id = f.runtime.as_ref().map_or(-1, |rt| rt.hit_at(x - body.x, y - body.y));
+            let events = f.input.pointer.down(x - body.x, y - body.y, pen as i32, id, now_ms(), slop, palm);
+            widget_events(f, &events);
+        }
+    }
     let s = ed(a);
     s.widgets.raise(index);
     s.widget_drag_view = WidgetDragView::default();
@@ -8558,6 +8640,15 @@ fn widget_pointer(a: &mut App, ph: i32, ev: &InEvent, pen: bool) {
             v.moved_at = now_ms();
             v.samples = v.samples.wrapping_add(1);
         }
+        if d.part == WidgetPart::Body {
+            // (the body's contact: past the slop it is a drag, its samples gathered for the module)
+            let palm = !pen && ev.value & TOUCH_F_BROAD != 0;
+            if let Some(f) = ed(a).widgets.frames.get_mut(d.index) {
+                let body = widget_body(f);
+                let events = f.input.pointer.moved(ev.x.round_ties_even() as i32 - body.x, ev.y.round_ties_even() as i32 - body.y, palm);
+                widget_events(f, &events);
+            }
+        }
         ed(a).widget_drag = Some(d);
         return;
     }
@@ -8569,6 +8660,24 @@ fn widget_pointer(a: &mut App, ph: i32, ev: &InEvent, pen: bool) {
     }
     ed(a).owner = Owner::None;
     let cancelled = touch_cancelled(ev);
+    if d.part == WidgetPart::Body {
+        // The body's contact ends: a module with `kit_event` is told what it was (a TAP, a drag's end, nothing after a
+        // press or a cancel); one without it gets `widget_tap` for a lift within the slop, held or not, as before. The
+        // drawing pass either owes is widget_input_tick's.
+        if let Some(f) = ed(a).widgets.frames.get_mut(d.index) {
+            let body = widget_body(f);
+            let events = f.input.pointer.up(ev.x.round_ties_even() as i32 - body.x, ev.y.round_ties_even() as i32 - body.y, cancelled);
+            if f.runtime.as_ref().is_some_and(WidgetRuntime::has_events) {
+                widget_events(f, &events);
+            } else if !cancelled && !d.moved && f.runtime.as_mut().is_some_and(|rt| rt.tap(d.down_x - body.x, d.down_y - body.y)) {
+                f.input.owe();
+            }
+        }
+        ed(a).widget_drag = None;
+        ed(a).widget_drag_view = WidgetDragView::default();
+        let _ = pen;
+        return;
+    }
     let area = widget_area(a);
     let mut redraw = d.start;
     if let Some(p) = ed(a).widget_drag_view.shown {
@@ -8595,14 +8704,6 @@ fn widget_pointer(a: &mut App, ph: i32, ev: &InEvent, pen: bool) {
                     f.clamp(area);
                     redraw = rect_union(redraw, f.rect());
                     save = true;
-                }
-                WidgetPart::Body => {
-                    let body = widget_body(f);
-                    f.ensure_runtime();
-                    if let Some(rt) = f.runtime.as_mut() {
-                        rt.tap(d.down_x - body.x, d.down_y - body.y);
-                        redraw = rect_union(redraw, body);
-                    }
                 }
                 _ => {}
             }
@@ -11364,7 +11465,7 @@ fn fs_abort_view(a: &mut App, view: FsAbortView) {
                 let page = fs_screen_to_page(a, r);
                 let s = ed(a);
                 s.settle = rect_union(s.settle, page);
-                s.settle_at = now_ms().wrapping_add(SETTLE_NEAR_MS);
+                s.settle_from = now_ms();
                 app_flush(a);
             }
             ed(a).fs_trail = RECT_EMPTY;
@@ -12445,9 +12546,11 @@ fn du_wear_tick(a: &mut App, now: u32) {
     let s = ed_ref(a);
     // (with the pen near: nothing added, and no stroke ended, for SETTLE_NEAR_MS; with it gone, SETTLE_LEFT_MS
     // since then and since the last was added, which gives a pen that is arriving the time to say so)
-    let since_added = now.wrapping_sub(a.du_wear.at) as i32;
-    let paused = (since_added >= SETTLE_NEAR_MS as i32 && (now.wrapping_sub(s.settle_at) as i32) >= 0)
-        || (!s.pen_near && (now.wrapping_sub(s.pen_left) as i32) >= SETTLE_LEFT_MS && since_added >= SETTLE_LEFT_MS);
+    // (each a duration on the u32 clock, `now.wrapping_sub(then)`, so the pause is the same at any uptime, also
+    // before the pen first came near or wrote, when pen_left and settle_from are 0)
+    let since_added = now.wrapping_sub(a.du_wear.at);
+    let paused = (since_added >= SETTLE_NEAR_MS && now.wrapping_sub(s.settle_from) >= SETTLE_NEAR_MS)
+        || (!s.pen_near && now.wrapping_sub(s.pen_left) >= SETTLE_LEFT_MS && since_added >= SETTLE_LEFT_MS);
     if !s.open || s.owner != Owner::None || s.pinching || s.pv.open || s.map.open || s.destination.open || !paused {
         return;
     }
@@ -12629,7 +12732,7 @@ pub fn editor_tick(a: &mut App, now: u32) {
     pb_drag_tick(a, now);
     let s = ed(a);
     // The pen gone for SETTLE_LEFT_MS (not just lifted high for a moment), or near for too long.
-    let stopped = (now.wrapping_sub(s.settle_at) as i32) >= 0 || (!s.pen_near && (now.wrapping_sub(s.pen_left) as i32) >= SETTLE_LEFT_MS);
+    let stopped = now.wrapping_sub(s.settle_from) >= SETTLE_NEAR_MS || (!s.pen_near && now.wrapping_sub(s.pen_left) >= SETTLE_LEFT_MS);
     if s.open && s.owner == Owner::None && !s.pinching && (!rect_is_empty(s.settle) || s.panel_stale) && stopped {
         settle_now(a);
     }
@@ -12670,6 +12773,7 @@ pub fn editor_tick(a: &mut App, now: u32) {
     if ed(a).open {
         sel_tick(a, now);
         widget_runtime_tick(a, now);
+        widget_input_tick(a, now);
         if ed_ref(a).owner == Owner::Widget {
             widget_tick(a, now);
         }
@@ -14145,6 +14249,51 @@ mod tests {
         assert_eq!(store_load_thumb(s.nb.id.as_str(), &mut card), 0);
         assert!(card.px.iter().all(|&v| v == 255), "the card follows the page left off on");
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A frame's input waits while a sheet or the peek is over the frames and while the Kindle sleeps: no PRESS is
+    /// made, no turn taken and no pass drawn for a contact on its body (widget_input_tick), and all go on after.
+    #[test]
+    fn a_frames_input_waits_while_a_sheet_is_up_or_the_kindle_sleeps() {
+        static DEF: crate::widgets::WidgetDef = crate::widgets::WidgetDef {
+            id: "test.waits",
+            name: "Waits",
+            icon: IconKind::None,
+            default_w: 400.0,
+            default_h: 300.0,
+            min_w: 400.0,
+            min_h: 300.0,
+            max_w: 400.0,
+            max_h: 300.0,
+            resizable: false,
+            version: "",
+            author: "",
+            description: "",
+        };
+        let mut a = app(1860, 2480, 1860, 2480);
+        ed(&mut a).open = true;
+        let mut f = crate::widgets::WidgetFrame::new(&DEF);
+        // (no module to load: the frame's recogniser and pace alone)
+        f.runtime_error = Some(String::new());
+        f.input.pointer.down(10, 10, 0, -1, 1000, 59, false);
+        ed(&mut a).widgets.frames.push(f);
+        let undecided = |a: &App| ed_ref(a).widgets.frames[0].input.pointer.undecided();
+        ed(&mut a).widgets_open = true;
+        widget_input_tick(&mut a, 1000 + HOLD_MS);
+        assert!(undecided(&a), "no PRESS under a sheet");
+        ed(&mut a).widgets_open = false;
+        ed(&mut a).peek.active = true;
+        widget_input_tick(&mut a, 1000 + HOLD_MS);
+        assert!(undecided(&a), "nor under the peek");
+        ed(&mut a).peek.active = false;
+        a.asleep = true;
+        widget_input_tick(&mut a, 1000 + HOLD_MS);
+        assert!(undecided(&a), "nor while the Kindle sleeps");
+        a.asleep = false;
+        widget_input_tick(&mut a, 1000 + HOLD_MS);
+        assert!(!undecided(&a), "the PRESS once nothing is over the frames");
+        ed(&mut a).widgets.frames.clear();
+        canvas_free(&mut a.screen);
     }
 
     /// The quick sizes card is a sheet in every check that asks whether something is in front, and Live view's fast

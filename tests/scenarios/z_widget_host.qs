@@ -4,6 +4,8 @@
 # What the widget host lets an installed module do (issue #208), with the packages of tests/fixtures/widgethost
 # (written by rust/tests/widgetfix: `make widget-fixtures`). Each is a module written for one rule of the host,
 # which it reaches and passes.
+# (Since 2.3.0 the paper's rules are darker than mid-gray, issue #314, so display.dark counts them: a place with no
+# ink counts its rules' pixels, two rows of each rule across it, and "not N" there says ink shows beside them.)
 wait 3600
 tap library add
 tap library add.new-notebook
@@ -26,12 +28,12 @@ shot 01-wide
 # (every pixel of the body is black, so the module did draw)
 expect display.dark.1290.178.372.214 is 79608
 # The title bar between the name and the minimize button, the page above, left of, right of and below the frame
-# (where the popup was, too) are as they were: nothing dark.
+# (where the popup was, too) are as they were: nothing dark but the paper's rules.
 expect display.dark.1430.114.110.44 is 0
 expect display.dark.1276.80.400.24 is 0
-expect display.dark.1000.108.270.220 is 0
-expect display.dark.1680.108.20.180 is 0
-expect display.dark.1280.412.390.50 is 0
+expect display.dark.1000.108.270.220 is 1350
+expect display.dark.1680.108.20.180 is 60
+expect display.dark.1280.412.390.50 is 780
 # A tap in the body reaches the module's region; the status line says which region the last tap hit.
 expect editor.widget.0.hits is 2
 tap panel widget.0.hit.7
@@ -47,8 +49,8 @@ wait 600
 expect editor.page is 2
 expect display.dark.1290.178.372.214 is 79608
 expect display.dark.1430.114.110.44 is 0
-expect display.dark.1000.108.270.220 is 0
-expect display.dark.1280.412.390.50 is 0
+expect display.dark.1000.108.270.220 is 1350
+expect display.dark.1280.412.390.50 is 780
 expect display.dark.200.400.900.40 is 0
 shot 02-wide-new-page
 tap panel widget.0.close

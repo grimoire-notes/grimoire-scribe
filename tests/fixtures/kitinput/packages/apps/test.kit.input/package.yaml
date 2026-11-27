@@ -1,0 +1,20 @@
+name: Input app
+id: test.kit.input
+type: app
+version: 1.0.0
+author: Grimoire tests
+description: A module of the package kit's tests.
+platforms: [all]
+artifact:
+  path: app.wasm
+  sha256: bbfe787f8cd0e6878d5c55c7cfef3815ebb5a04f3d4b200dfea78d4880dc59f6
+  size: 1909
+capabilities: []
+spec:
+  runtime: wasm
+  status_bar: true
+settings:
+  - key: mode
+    label: Mode
+    type: toggle
+    default: true

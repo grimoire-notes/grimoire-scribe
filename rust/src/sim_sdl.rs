@@ -2799,8 +2799,9 @@ pub fn input_open(screen_w: i32, screen_h: i32, dpi: f32, pen: Option<&InputCali
     }
     if std::env::var("GRIMOIRE_SIM_CLOCK").as_deref() == Ok("script") {
         // GRIMOIRE_SIM_UPTIME_MS: the scripted clock starts there, as on a machine up that long, in
-        // place of the host's own time since it started.
-        let start = std::env::var_os("GRIMOIRE_SIM_UPTIME_MS").map_or_else(real_now_ms, |v| atoi(v.as_bytes()).max(0) as u32);
+        // place of the host's own time since it started: anywhere in the u32 clock's range, so a script
+        // can run past 2^31 ms or across the wrap at 2^32.
+        let start = std::env::var_os("GRIMOIRE_SIM_UPTIME_MS").map_or_else(real_now_ms, |v| strtol10(v.as_bytes()).0.clamp(0, u32::MAX as i64) as u32);
         crate::util::sim_clock_set(Some(start));
     }
     if let Some(late) = std::env::var_os("GRIMOIRE_SIM_LATE_MS") {

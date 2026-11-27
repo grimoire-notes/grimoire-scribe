@@ -119,6 +119,12 @@ fn body(ops: &[Op]) -> Vec<u8> {
 
 /// A module whose `widget_draw` and `widget_tap` run these steps, with `data` in its memory (address, bytes).
 pub fn module(draw: &[Op], tap: &[Op], data: &[(u32, &[u8])]) -> Vec<u8> {
+    module_importing(draw, tap, data, &[])
+}
+
+/// `module`'s module that imports these functions from `grimoire` too, after the ABI's, each with one i32
+/// parameter and no result.
+pub fn module_importing(draw: &[Op], tap: &[Op], data: &[(u32, &[u8])], more: &[&str]) -> Vec<u8> {
     let mut out = b"\0asm\x01\0\0\0".to_vec();
     let mut s = Vec::new();
     uleb(&mut s, TYPES.len() as u32);
@@ -134,8 +140,8 @@ pub fn module(draw: &[Op], tap: &[Op], data: &[(u32, &[u8])]) -> Vec<u8> {
     }
     section(&mut out, 1, &s);
     s.clear();
-    uleb(&mut s, IMPORTS.len() as u32);
-    for (import, ty) in IMPORTS {
+    uleb(&mut s, (IMPORTS.len() + more.len()) as u32);
+    for (import, ty) in IMPORTS.into_iter().chain(more.iter().map(|m| (*m, TYPE_TAP))) {
         name(&mut s, "grimoire");
         name(&mut s, import);
         s.extend_from_slice(&[0x00, ty]);
@@ -143,14 +149,17 @@ pub fn module(draw: &[Op], tap: &[Op], data: &[(u32, &[u8])]) -> Vec<u8> {
     section(&mut out, 2, &s);
     section(&mut out, 3, &[2, TYPE_DRAW, TYPE_TAP]);
     section(&mut out, 5, &[1, 0x00, 1]); // one memory, one page, no maximum
+    let first = (IMPORTS.len() + more.len()) as u32; // widget_draw's index, after the imports
     s.clear();
     s.push(3);
     name(&mut s, "memory");
     s.extend_from_slice(&[0x02, 0]);
     name(&mut s, "widget_draw");
-    s.extend_from_slice(&[0x00, IMPORTS.len() as u8]);
+    s.push(0x00);
+    uleb(&mut s, first);
     name(&mut s, "widget_tap");
-    s.extend_from_slice(&[0x00, IMPORTS.len() as u8 + 1]);
+    s.push(0x00);
+    uleb(&mut s, first + 1);
     section(&mut out, 7, &s);
     s.clear();
     s.push(2);

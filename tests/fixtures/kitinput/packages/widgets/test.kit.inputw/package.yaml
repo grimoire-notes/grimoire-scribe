@@ -1,0 +1,22 @@
+name: Input widget
+id: test.kit.inputw
+type: widget
+version: 1.0.0
+author: Grimoire tests
+description: A module of the package kit's tests.
+platforms: [all]
+artifact:
+  path: module.bin
+  sha256: 645fd60ac7ee475c06962534b387e69dcbd5e051129befc56339c83895b3bd44
+  size: 1862
+capabilities: [editor:overlay, storage:widget-local]
+spec:
+  runtime: wasm
+  size:
+    mode: fixed
+    default: [900, 1100]
+settings:
+  - key: mode
+    label: Mode
+    type: toggle
+    default: true
