@@ -2469,7 +2469,7 @@ fn app_tick_screens(a: &mut App, now: u32) {
     if bg != 0 {
         let mut msg = String::new();
         // TRANSLATORS: a PDF saved in the background, and where (the Kindle's folder of them).
-        if bg > 0 { csnprintf!(&mut msg, 256, tr("PDF saved to %s"), "grimoire/PDFs"); }
+        if bg > 0 { csnprintf!(&mut msg, 256, tr("PDF saved to %s"), crate::pdfimport::own_folder_shown("PDFs").as_str()); }
         app_toast(a, if bg > 0 { msg.as_str() } else { tr("Couldn't save PDF") }, 2500,
         );
     }
