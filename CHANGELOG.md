@@ -112,6 +112,12 @@
   screen's width. Its ink shows pixel for pixel as it was written, without the softening the enlargement gave it,
   and zooming back out, by a pinch or Fit page, returns to that view. Turned sideways, and on a screen of its own
   size or one further from it, a notebook opens as before.
+- **Even paper lines below 100%** (#308). Where a page shows smaller than 100% (the whole page sideways, a
+  notebook from a larger screen fitted to this one, or a page zoomed out to between 50% and 100%), the lines of
+  the ruled papers, Cornell notes, Graph paper, Cross grid, Seyes rule and the music papers are drawn at the
+  screen's own scale, every one as wide and as gray as at 100%, where until now each line came out at a weight of
+  its own (Seyes rule's inner lines in four shapes sideways). So the lines read darker sideways than they did.
+  Dot grid, Isometric, Hexagon and pages on a picture show as before.
 
 ## 2.2.0 (2026-11-26)
 
