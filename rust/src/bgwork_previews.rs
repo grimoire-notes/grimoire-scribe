@@ -339,7 +339,7 @@ pub fn bg_file_preview(path: &str) -> i32 {
     let ms = real_now_ms().wrapping_sub(t0);
     let rc = match &r {
         Ok((kind, Outcome::Made)) => {
-            qlog!("file previews: a %s made in %u ms (the worker's peak %d kB, this job's %d kB)", kind.word(), ms, workers_peak_kb(), own_peak_kb());
+            qlog!("file previews: a %s made in %u ms (the worker's peak %d kB, this job's %d kB)", kind.word(), ms, peak_kb(libc::RUSAGE_CHILDREN), peak_kb(libc::RUSAGE_SELF));
             0
         }
         Ok((kind, Outcome::Marked(why))) => {
@@ -576,21 +576,14 @@ fn font_preview(data: &[u8]) -> Result<Canvas, Fail> {
     }
 }
 
-/// The largest peak resident memory of this process's reaped children (the worker), in kB.
-fn workers_peak_kb() -> i32 {
+/// A peak resident memory in kB: `who` RUSAGE_SELF, this process's own, or RUSAGE_CHILDREN, the largest of its
+/// reaped children's (the worker's).
+fn peak_kb(who: libc::c_int) -> i32 {
     // SAFETY: ru is written by getrusage before it is read.
     let mut ru: libc::rusage = unsafe { std::mem::zeroed() };
-    unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, &mut ru) };
-    // (Linux counts kB; macOS bytes)
-    (if cfg!(target_os = "linux") { ru.ru_maxrss } else { ru.ru_maxrss / 1024 }) as i32
-}
-
-/// This process's own peak resident memory, in kB.
-fn own_peak_kb() -> i32 {
-    // SAFETY: as workers_peak_kb.
-    let mut ru: libc::rusage = unsafe { std::mem::zeroed() };
-    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut ru) };
-    (if cfg!(target_os = "linux") { ru.ru_maxrss } else { ru.ru_maxrss / 1024 }) as i32
+    unsafe { libc::getrusage(who, &mut ru) };
+    // (macOS counts bytes; a Linux kernel, under any system's name, and the BSDs count kB)
+    (if cfg!(target_vendor = "apple") { ru.ru_maxrss / 1024 } else { ru.ru_maxrss }) as i32
 }
 
 // ---- the cache tidied: the files that are gone, and the prune ----
@@ -1026,6 +1019,16 @@ mod tests {
         }
         assert_eq!(preview_key(b"x", 1, 2), h);
         assert!(preview_file(k, "pgm").ends_with(&format!("/.cache/files/{k:016x}.pgm")));
+    }
+
+    // A peak is in kB on every system: after 16 MiB written, this process's own is at least 16384 kB, and less than
+    // 16 GiB in kB (a system's bytes taken for kB would read above it, a kB figure divided again below 16384).
+    #[test]
+    fn a_peak_is_in_kb() {
+        let held = std::hint::black_box(vec![1u8; 16 << 20]);
+        let own = peak_kb(libc::RUSAGE_SELF);
+        assert!(own >= 16 << 10 && own < 16 << 20, "{own} kB");
+        drop(held);
     }
 
     fn info(made: Made) -> PreviewInfo {
