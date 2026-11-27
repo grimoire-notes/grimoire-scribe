@@ -1,11 +1,15 @@
 # settings: status_mode=1
+# env: TZ=UTC
 # What's new is a full-screen browser in the Settings frame: the title and X at the top, every
 # version down the left, and the selected version's notes in the reader at the right. Opening it
 # selects this version. The Apps page has What's new and About as its two buttons at the foot:
 # About opens Settings > System > About, and its Back returns to Settings. The notes are set to fit
 # the reader (body_px, lead), upright and sideways. The numbers are this release's notes' again
 # (docs/RELEASING.md, The bump commit).
+# (the status bar's clock held still, in UTC: 01-browser.png is docs/screens/whatsnew.png's source
+# and is the same on every run)
 # rust-only
+clock 1700000000
 wait 200
 expect screen is library
 expect library.sheet is none
@@ -37,8 +41,8 @@ expect library.about.view is browser
 expect library.about.full is 1
 expect library.about.entries is 6
 expect library.about.rows is 6
-expect library.about.note is 2.1.0
-expect library.about.marked is 2
+expect library.about.note is 2.2.0
+expect library.about.marked is 1
 expect library.about.pages is 1
 expect library.about.page is 1
 expect library.about.body_px is 43
@@ -51,7 +55,7 @@ rotate 1
 wait 200
 expect library.sheet is about
 expect library.about.rows is 6
-expect library.about.note is 2.1.0
+expect library.about.note is 2.2.0
 expect library.about.pages is 1
 expect library.about.signature is 1
 shot 02-browser-sideways

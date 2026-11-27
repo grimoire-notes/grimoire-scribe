@@ -20,8 +20,9 @@ expect toast is The app stopped: all fuel consumed by WebAssembly
 expect screen is library
 expect library.sheet is none
 shot 01-loop-stopped
-# The host and the main loop go on: another app opens, draws, is drawn again for a touch, and leaves by the
-# system swipe; and Loop, opened again, stops again.
+# The host and the main loop go on: another app opens, draws, is drawn again for a touch (once: a tap's two
+# phases are two calls of the module, and one drawing pass follows them), and leaves by the system swipe; and
+# Loop, opened again, stops again.
 wait 5200
 expect toast is
 tap library apps
@@ -35,7 +36,7 @@ expect library.app.status is 000001
 expect display.dark.40.40.200.100 is 20000
 tap 930 1300
 wait 300
-expect library.app.status is 000003
+expect library.app.status is 000002
 shot 02-counts
 swipe 2 930 2200 0 -1000
 wait 300

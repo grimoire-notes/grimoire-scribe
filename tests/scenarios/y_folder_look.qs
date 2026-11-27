@@ -1,7 +1,7 @@
 # settings: status_mode=1
 # storage: 1
 # generate: tests/folder_look_tree.py
-# A folder's icon and picture (2.2, issue #230): School's menu opens its icon sheet, where one of the icons is
+# A folder's icon and picture (2.3, issue #230): School's menu opens its icon sheet, where one of the icons is
 # picked and saved; the picture sheet lists the pictures of grimoire/photos/ (From a file... opens the picker over
 # it, and Back comes back), and a picture picked takes its place on the folder's card and clears its icon. Done
 # closes; the look is read back when the sheet opens again; No picture goes back to the plain folder, and the

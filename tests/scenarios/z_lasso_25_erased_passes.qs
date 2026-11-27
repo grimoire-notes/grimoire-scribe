@@ -13,6 +13,8 @@
 # counts ink erased only where one pass covers its whole width: a halo bridged the erased stretch of a wide marker
 # line, and dotted a thin line scrubbed out by passes across it (the faint marks again).
 # (the clock corner held still: its minute's refresh would land among the counted ones)
+# (Since 2.3.0 the paper's rules are darker than mid-gray, issue #314, so display.dark counts them: a place with no
+# ink counts its rules' pixels, two rows of each rule across it, and "not N" there says ink shows beside them.)
 clock 1700000000
 wait 300
 tap library add
@@ -28,7 +30,7 @@ pen line 150 600 150 1650 40 0.6 0.6
 pen line 400 1150 1400 1150 60 0.6 0.6
 pen leave
 wait 300
-expect display.dark.750.1110.200.80 not 0
+expect display.dark.750.1110.200.80 not 400
 eraser line 700 1132 1000 1132 30
 eraser line 700 1138 1000 1138 30
 eraser line 700 1144 1000 1144 30
@@ -46,7 +48,7 @@ expect editor.tool is ballpoint
 pen line 400 1450 1400 1450 60 0.6 0.6
 pen leave
 wait 300
-expect display.dark.750.1430.200.40 not 0
+expect display.dark.750.1430.200.40 not 200
 eraser line 700 1400 700 1500 10 0.6 0.6
 eraser line 718 1400 718 1500 10 0.6 0.6
 eraser line 736 1400 736 1500 10 0.6 0.6
@@ -71,8 +73,8 @@ waitfor display.stale.750.1110.200.80 is 0
 waitfor display.stale.750.1430.200.40 is 0
 expect editor.strokes is 27
 expect editor.live_matches_render is 1
-expect display.dark.750.1110.200.80 is 0
-expect display.dark.750.1430.200.40 is 0
+expect display.dark.750.1110.200.80 is 400
+expect display.dark.750.1430.200.40 is 200
 # a lasso round the page, drawn slowly: the preview's halo takes the marker line in, and nothing over its erased
 # middle (between two of the paper's rules: the lasso's fast refreshes show the gray rules dark until the lift)
 tap panel tool-picker
@@ -93,11 +95,11 @@ wait 300
 expect editor.select is selected
 expect editor.selected is 3
 expect editor.halo is 3
-expect display.dark.750.1110.200.80 is 0
-expect display.dark.750.1430.200.40 is 0
-expect display.dark.0.550.1650.1250 not 0
+expect display.dark.750.1110.200.80 is 400
+expect display.dark.750.1430.200.40 is 200
+expect display.dark.0.550.1650.1250 not 62700
 tap panel select.done
 wait 300
-expect display.dark.750.1110.200.80 is 0
-expect display.dark.750.1430.200.40 is 0
+expect display.dark.750.1110.200.80 is 400
+expect display.dark.750.1430.200.40 is 200
 quit
