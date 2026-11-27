@@ -3710,12 +3710,14 @@ Not run on a Scribe. The Mac's tests cover the drawing and the settle's logic: `
 is the threshold of Smooth over every background, the other tools unchanged, every way of drawing a page the same,
 exports Smooth), `test_fbpack.rs` (a solid word's live frames through the RAM shadow leave nothing to settle,
 `fbpack_level_span` in every rotation), `test_render_keep.rs`, `test_erase.rs` (compaction under both settings),
-`test_store.rs`, `test_tplsheet.rs` (a page made into a template's picture is Smooth), the editor's unit test of the
-scaled view, `display.rs`'s unit tests (the scan in strips of 64 rows: every row read once, the pump called after each
+`test_store.rs`, `test_tplsheet.rs` (a page made into a template's picture is Smooth), the editor's unit tests of the
+scaled view (black from half the weight, never lighter beside other ink, the page's own paper) and of the settle's
+order, `display.rs`'s unit tests (the scan in strips of 64 rows: every row read once, the pump called after each
 full strip and before an empty answer, the answer one pass gives in every rotation, no answer for a row that would
 leave the record; the log's counts), and the scenarios
-`z_ink_edges_1_row` to `_11_dense_switch` (zoomed in and sideways, a card that follows a change when its
-notebook is next opened and left, a change over a dense page). The Kindle's own answer
+`z_ink_edges_1_row` to `_13_erase` (zoomed in and sideways, a card that follows a change when its
+notebook is next opened and left, a change over a dense page, a highlight beside a solid word in a scaled view,
+erasing with undo, redo and a reopen). The Kindle's own answer
 (display_fbink.rs `display_settle_area`: its row mapping, inversion, pen mode left when it answers empty) runs only
 on a device: it was read against the driver's rules and compiled, never run.
 
