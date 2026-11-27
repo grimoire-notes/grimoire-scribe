@@ -11106,7 +11106,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
         return 0;
     }
     // The full-screen app (2.3): its id, status line, drawn text, error and status-bar choice. "apps"
-    // lists installed app package ids in launcher order; "recent-apps" is the home row's token order.
+    // lists installed app package ids in launcher order; "recent-apps" is settings.ini recent_apps.
     if key == "apps" {
         let ids: Vec<String> = crate::apppkg::app_package_list().into_iter().map(|p| p.id).collect();
         csnprintf!(out, cap, "%s", &ids.join(" "));
@@ -11120,7 +11120,8 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
         return 0;
     }
     if key == "recent-apps" {
-        // The home row's order as settings.ini recent_apps keeps it: built-in names and pkg:<id> tokens.
+        // settings.ini recent_apps as it is kept: built-in names and pkg:<id> tokens, most recently used
+        // first. The home row takes only the packages' order from it, after its pinned three (#319).
         csnprintf!(out, cap, "%s", a.settings.recent_apps.as_str());
         return 0;
     }
