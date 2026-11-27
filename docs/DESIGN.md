@@ -820,7 +820,13 @@ announcements: goingToScreenSaver draws the sleep screen, outOfScreenSaver is th
 - tests/test_golden.c holds renders recorded from 1.0.0-beta: every paper it knows, a stroke of
   every tool, and a page's bytes. A page someone already wrote must look exactly the same in every
   later version, so it is never re-recorded to make a change pass. It compares on the recording
-  host only (clang on arm64 macOS).
+  host only (clang on arm64 macOS). 2.3.0 changes the papers on purpose, the owner's ask (issue
+  #314): of the papers the table knows, the ruled, Cornell, graph and dot papers draw darker lines,
+  rust/tests/test_golden.rs lists those renders apart (K_DARKER_PAPERS), and every render of the
+  ink alone still matches the table. The papers that came after 1.0.0-beta (Cross grid, Isometric,
+  Hexagon and Seyes rule) are recorded from 2.3.0 in a table of their own (K_LATER_PAPERS), Seyes's
+  render unchanged since 2.2.0. The renderer's whole fingerprint, which every kept drawing, Pages
+  preview and Library card is stamped with, is recorded from 2.3.0 too (K_RENDER_FINGERPRINT).
 - tests/test_format.c checks pages against tests/beta_format.h, a frozen copy of the 1.0.0-beta
   page reader and writer (the "Moving between versions" table in docs/FORMAT.md).
 - tests/test_font.c pins text renders by CRC, recorded at 56d931c: all printable ASCII in every
@@ -1567,7 +1573,7 @@ FORMAT.md): a record that does not read or whose stamp is not the page's today i
 while its picture was missing or did not decode is never kept, so the cache can only make a PDF faster, never
 different (tests hold the streamed bytes equal to a render with the cache off, count the pages drawn, and make a
 page's picture only after a mirror drew the page without it). The stamp has the page file's identity, the
-notebook's page size and paper, the dpi, the version and the ink renderer's fingerprint; the record has the
+notebook's page size and paper, the dpi, the version and the renderer's fingerprint (its ink and its papers); the record has the
 picture file's channels, size and time, taken before any page on it is drawn; a picture job's end takes the
 notebook's records away (as it makes the page previews again). Links are not cached: the page is read for them
 only when the notebook has a link on it (the user's, or a document link), since they depend on `nav.ini` and

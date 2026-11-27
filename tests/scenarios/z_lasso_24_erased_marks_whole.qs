@@ -5,8 +5,10 @@
 # copied from erased with white ink, which is erasing too (a gap in a line, white fountain pen). The stroke
 # eraser takes the strokes it touches off the page whole: nothing of them is left behind. The white ink that goes
 # with the pasted line stays with it, and the halo of a selection never crosses it (z_lasso_23 has the precise
-# eraser). display.dark counts what the panel shows dark in a place: 0 at every erased place.
+# eraser). display.dark counts what the panel shows dark in a place: only the paper's rules at every erased place.
 # (the clock corner held still: its minute's refresh would land among the counted ones)
+# (Since 2.3.0 the paper's rules are darker than mid-gray, issue #314, so display.dark counts them: a place with no
+# ink counts its rules' pixels, two rows of each rule across it, and "not N" there says ink shows beside them.)
 clock 1700000000
 wait 300
 tap library add
@@ -95,8 +97,8 @@ wait 2000
 expect editor.strokes is 7
 expect editor.erase_strokes is 5
 expect editor.live_matches_render is 1
-expect display.dark.400.690.500.110 is 0
-expect display.dark.450.1430.600.40 is 0
+expect display.dark.400.690.500.110 is 2000
+expect display.dark.450.1430.600.40 is 600
 expect display.dark.822.1135.16.30 is 0
 # a lasso round where the word was: the stroke eraser left nothing of it, nothing to select (as a lasso round ink
 # the precise eraser or white ink erased wholly, issue #205: z_lasso_29)
