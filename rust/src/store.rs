@@ -225,6 +225,10 @@ pub struct Settings {
     /// at, by `pdfwork::Gamma`'s index (settings.ini `pdf_gamma`, `Gamma::NAMES`: absent at Off, the default; a value
     /// this build does not have is Off and is written back as it was).
     pub pdf_gamma: i32,
+    /// Ink edges (2.3, #320): how the solid pens draw, by `InkEdges`' index (settings.ini `ink_edges`,
+    /// `InkEdges::NAMES`: absent at smooth, the default; a value this build does not have is Smooth and is written back
+    /// as it was). brush.rs reads it from ink_edges(), which app_init and the Settings row set.
+    pub ink_edges: i32,
 }
 
 /// settings.ini files_sort's values, by Settings.files_sort (2.2).
@@ -5028,6 +5032,7 @@ pub fn settings_default(s: &mut Settings) {
     s.hints = 0;
     s.recent_apps.set("files,share,settings,store");
     s.link_areas = false;
+    s.ink_edges = 0; // Smooth: as before 2.3
 }
 
 /// pen.panel / touch.panel: the panel the calibration was made on, "WxH" (1.1 on). A value that does
@@ -5405,6 +5410,8 @@ fn settings_cb(s: &mut Settings, k: &[u8], v: &[u8]) -> bool {
         b"home_sort" => s.home_sort = keep_int("home_sort", v, 0, 3),
         // 2.2: darker lines in imported PDFs (issue #173), read strictly: only the three known values
         b"pdf_gamma" => s.pdf_gamma = keep_named("pdf_gamma", v, &crate::pdfwork::Gamma::NAMES),
+        // 2.3: Ink edges (#320), read strictly: smooth or solid
+        b"ink_edges" => s.ink_edges = keep_named("ink_edges", v, &InkEdges::NAMES),
         b"recent_apps" => {
             s.recent_apps.set(&app_order_canonical(v));
         }
@@ -5834,6 +5841,8 @@ pub fn settings_save(s: &Settings) -> i32 {
     } else {
         put(&mut b, "recent_apps", s.recent_apps.as_str());
     }
+    // 2.3: Ink edges (#320), a line only at Solid (or a value this build does not have, written back as it was).
+    put_unless_default(&mut b, "ink_edges", InkEdges::from_index(s.ink_edges).name(), InkEdges::Smooth.name());
     // Lines this build does not know, as they were; but a pen.panel or touch.panel this build could
     // not read goes once the calibration's panel is recorded (written above in its place).
     let unknown = with(|st| st.g_set_unknown.clone());

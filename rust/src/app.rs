@@ -703,6 +703,8 @@ pub fn app_init(a: &mut App, w: i32, h: i32, dpi: f32) -> i32 {
     settings_load(&mut a.settings);
     // (darker lines in imported PDFs: the imports this process queues are drawn at the setting, 2.2)
     crate::pdfimport::set_darker(crate::pdfwork::Gamma::from_index(a.settings.pdf_gamma));
+    // (Ink edges: how every brush this thread begins draws the solid pens, 2.3)
+    ink_edges_set(InkEdges::from_index(a.settings.ink_edges));
     let mut shortcuts_path = String::new();
     csnprintf!(&mut shortcuts_path, 600, "%s/shortcuts.ini", &store_root());
     // A starter map nobody edited becomes this build's (grimoire.log says so; no toast); edited files stay.
@@ -786,6 +788,9 @@ pub fn app_init(a: &mut App, w: i32, h: i32, dpi: f32) -> i32 {
     // renderer drew are drawn again, #314), and after the fonts just loaded and the panel's density, which its papers
     // draw Cornell's headings, the clefs and Seyes with. It writes nothing and reads no notebook.
     let _ = page_render_fingerprint();
+    // (and the one of the Ink edges setting in force, which the screen's pictures are stamped with: page.rs
+    // page_render_fingerprint_screen)
+    let _ = page_render_fingerprint_screen();
     for op in K_SCREENS.iter() {
         (op.init)(a);
     }
@@ -3299,6 +3304,12 @@ pub fn app_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
     } else if key == "settings.pdf_gamma" {
         // darker lines in imported PDFs as settings.ini says it (2.2): 1.0, 1.5 or 2.0
         csnprintf!(out, cap, "%s", crate::pdfwork::Gamma::from_index(st.pdf_gamma).name());
+    } else if key == "settings.ink_edges" {
+        // Ink edges as settings.ini says it (2.3): smooth or solid
+        csnprintf!(out, cap, "%s", InkEdges::from_index(st.ink_edges).name());
+    } else if key == "ink_edges" {
+        // the setting the brushes follow now (brush.rs ink_edges): smooth or solid
+        csnprintf!(out, cap, "%s", ink_edges().name());
     } else if key == "settings.home" {
         // the home folder as settings.ini keeps it (2.2): empty for Notebooks, notebooks/<folder>, files/<path>
         csnprintf!(out, cap, "%s", st.home.as_str());

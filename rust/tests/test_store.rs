@@ -989,6 +989,39 @@ fn pdf_gamma_key() {
     unlink(&path);
 }
 
+// Ink edges (2.3, #320): ink_edges is absent at smooth and written only at solid, after recent_apps; it is read strictly,
+// so only the two known values are taken, and anything else is Smooth, written back as it was until the setting
+// changes. A file of a version without it reads as Smooth.
+fn ink_edges_key() {
+    let path = format!("{}/settings.ini", store_root());
+    let mut s = Settings::default();
+    let any_line = |p: &str| read_file(p).is_some_and(|t| find(&t, "\nink_edges=").is_some());
+    check!(write_file_atomic(&path, b"invert=1\n") == 0);
+    check!(settings_load(&mut s) == 0 && s.ink_edges == 0);
+    check!(settings_save(&s) == 0 && !any_line(&path));
+    check!(write_file_atomic(&path, b"ink_edges=solid\n") == 0);
+    check!(settings_load(&mut s) == 0 && s.ink_edges == 1);
+    check!(settings_save(&s) == 0 && has_pins_line(&path, "ink_edges=solid"));
+    let text = read_file(&path).unwrap_or_default();
+    check!(find(&text, "\nrecent_apps=").is_some_and(|a| find(&text, "\nink_edges=").is_some_and(|b| a < b)));
+    // Smooth, said as the file says it, is no line
+    check!(write_file_atomic(&path, b"ink_edges=smooth\n") == 0);
+    check!(settings_load(&mut s) == 0 && s.ink_edges == 0);
+    check!(settings_save(&s) == 0 && !any_line(&path));
+    // anything else is Smooth, and goes back as it was
+    for v in ["1", "Solid", "solid ", "hard", ""] {
+        check!(write_file_atomic(&path, format!("ink_edges={v}\n").as_bytes()) == 0);
+        check!(settings_load(&mut s) == 0 && s.ink_edges == 0);
+        check!(settings_save(&s) == 0 && has_pins_line(&path, &format!("ink_edges={v}")));
+    }
+    // changed, it is written as set; set back to Smooth, its line goes
+    s.ink_edges = 1;
+    check!(settings_save(&s) == 0 && has_pins_line(&path, "ink_edges=solid"));
+    s.ink_edges = 0;
+    check!(settings_save(&s) == 0 && !any_line(&path));
+    unlink(&path);
+}
+
 // What's new after every update (the owner's rule of 2026-11-05): due when a file a Grimoire saved
 // names another version's notes as seen, whatever whatsnew_hide says (the 2.0.0 betas' box, read and
 // written back as it was); not due for this version's, nor for a file without settings_version.
@@ -1480,6 +1513,7 @@ fn test_store() {
     run!(files_keys);
     run!(home_key);
     run!(pdf_gamma_key);
+    run!(ink_edges_key);
     run!(whatsnew_due_after_every_update);
     run!(gesture_keys);
     run!(rotation_lock_key);

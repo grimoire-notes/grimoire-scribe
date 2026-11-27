@@ -63,6 +63,9 @@ enum Modal {
     /// Settings > System > Darker lines in imported PDFs (2.2, issue #173, Rust only; a number of its own, beside the
     /// eraser's): Off, Medium, Strong, as the eraser's list
     DarkerLines = 385,
+    /// Settings > Pen > Ink edges (2.3, #320, Rust only; a number of its own, beside Darker lines'): Smooth or Solid, as
+    /// the eraser's list
+    InkEdges = 386,
     /// The home's All apps page (2.3, issue #209, Rust only; numbered past the C's sheets as Exit's)
     Apps = 301,
     /// The home's + slide-up (2.3, issue #209): New notebook, New folder, Import over Wi-Fi
@@ -268,6 +271,11 @@ const H_LOOK_ICON_PAGE: i32 = 300;
 const H_SET_DARKER: i32 = 250;
 const H_DARKER_PICK: i32 = 251;
 const H_DARKER_BACK: i32 = 252;
+// Settings > Pen's Ink edges row (2.3, #320), its list's choices (arg: InkEdges' index, 0 Smooth, 1 Solid) and its
+// Back. (Numbered at the issue's number, apart from other work's ids.)
+const H_SET_INK: i32 = 320;
+const H_INK_PICK: i32 = 321;
+const H_INK_BACK: i32 = 322;
 // Settings > General's Import Kindle notebooks (2.3, issue #196): copies the Kindle's own notebooks from
 // .notebooks/ into import/ and queues them (bgwork_template.rs).
 const H_SET_KINDLE: i32 = 283;
@@ -5976,6 +5984,7 @@ fn setting_hit(id: settingsmenu::SettingId) -> i32 {
         Updates => H_UPDATES,
         AboutDevice => H_SET_DEVICE,
         DarkerLines => H_SET_DARKER,
+        InkEdges => H_SET_INK,
     }
 }
 
@@ -6142,6 +6151,18 @@ fn draw_settings(a: &mut App) {
                     // on are drawn. A PDF already imported stays as it is.
                     tr("Darker lines in imported PDFs: %s"),
                     c_(settingsmenu::DARKER_CTX, settingsmenu::DARKER_NAMES[clampi(settings.pdf_gamma, 0, 2) as usize])
+                );
+                &label_buf
+            }
+            settingsmenu::Label::InkEdges => {
+                label_buf.clear();
+                csnprintf!(
+                    &mut label_buf,
+                    160,
+                    // TRANSLATORS: Settings' Pen category row that opens the Ink edges choices, with the one in use
+                    // ("Ink edges: Solid"): how the pens' strokes are drawn on the screen.
+                    tr("Ink edges: %s"),
+                    c_(settingsmenu::INK_EDGES_CTX, settingsmenu::INK_EDGES_NAMES[clampi(settings.ink_edges, 0, 1) as usize])
                 );
                 &label_buf
             }
@@ -7481,6 +7502,16 @@ fn draw_modal(a: &mut App) {
             // (one column, so the levels read in their order)
             draw_pick_cards(a, title, &rows, H_DARKER_PICK, H_DARKER_BACK, 1);
         }
+        Modal::InkEdges => {
+            let cur = clampi(a.settings.ink_edges, 0, 1);
+            let rows: Vec<(String, i32, bool)> = settingsmenu::INK_EDGES_LABELS
+                .iter()
+                .enumerate()
+                .map(|(i, label)| (tr(label).to_string(), i as i32, i as i32 == cur))
+                .collect();
+            // TRANSLATORS: the title of the list of how the pens' strokes are drawn (Settings > Pen): Smooth or Solid.
+            draw_pick_sheet(a, tr("Ink edges"), &rows, H_INK_PICK, H_INK_BACK);
+        }
         Modal::DeviceInfo => draw_device(a),
         Modal::LinkQr => draw_link(a),
         Modal::Kb => {
@@ -7954,6 +7985,7 @@ fn settings_sheet(m: Modal) -> bool {
             | Modal::SideButton
             | Modal::EraserMode
             | Modal::DarkerLines
+            | Modal::InkEdges
             | Modal::DeviceInfo
             | Modal::LinkQr
             | Modal::Updates
@@ -8951,6 +8983,25 @@ fn act(a: &mut App, h: &Hit) {
             redraw(a, RefreshMode::Ui);
         }
         H_DARKER_BACK => {
+            lib(a).modal = Modal::Settings;
+            redraw(a, RefreshMode::Ui);
+        }
+        // Ink edges (settings.ini ink_edges, 2.3): every brush begun from now on follows it, the open notebook's page
+        // is drawn again with it, and the pictures kept under the other one are not shown (their stamps name it).
+        H_SET_INK => open_modal(a, Modal::InkEdges),
+        H_INK_PICK => {
+            let pick = clampi(h.arg, 0, 1);
+            if a.settings.ink_edges != pick {
+                a.settings.ink_edges = pick;
+                settings_save(&a.settings);
+                ink_edges_set(InkEdges::from_index(pick));
+                let _ = page_render_fingerprint_screen();
+                crate::editor::editor_ink_edges_changed(a);
+            }
+            lib(a).modal = Modal::Settings;
+            redraw(a, RefreshMode::Ui);
+        }
+        H_INK_BACK => {
             lib(a).modal = Modal::Settings;
             redraw(a, RefreshMode::Ui);
         }
@@ -10110,7 +10161,7 @@ pub fn library_back(a: &mut App) -> bool {
         Modal::FolderPicture => tap(a, H_LOOK_BACK),
         Modal::FolderLook => tap(a, H_LOOK_DONE),
         Modal::Language | Modal::Koreader | Modal::Shortcuts | Modal::PairMenu | Modal::Updates | Modal::Wifi
-        | Modal::SideButton | Modal::EraserMode | Modal::DarkerLines | Modal::DeviceInfo => {
+        | Modal::SideButton | Modal::EraserMode | Modal::DarkerLines | Modal::InkEdges | Modal::DeviceInfo => {
             if modal == Modal::Updates {
                 crate::packagestore::updates_close(a);
             }
@@ -11257,6 +11308,8 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
         csnprintf!(out, cap, "eraser-mode");
     } else if key == "sheet" && s.modal == Modal::DarkerLines {
         csnprintf!(out, cap, "darker-lines");
+    } else if key == "sheet" && s.modal == Modal::InkEdges {
+        csnprintf!(out, cap, "ink-edges");
     } else if key == "sheet" && s.modal == Modal::DeviceInfo {
         csnprintf!(out, cap, "about-device");
     } else if key == "sheet" && s.modal == Modal::LinkQr {
@@ -11447,6 +11500,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                 H_SET_SIDE => "pen-button", H_SIDE_PICK => "pen-button.", H_SIDE_BACK => "pen-button.back",
                 H_SET_ERASER => "eraser-mode", H_ERASER_PICK => "eraser-mode.", H_ERASER_BACK => "eraser-mode.back",
                 H_SET_DARKER => "darker-lines", H_DARKER_PICK => "darker-lines.", H_DARKER_BACK => "darker-lines.back",
+                H_SET_INK => "ink-edges", H_INK_PICK => "ink-edges.", H_INK_BACK => "ink-edges.back",
                 H_SET_KINDLE => "kindle-notebooks",
                 H_SET_PINCH => "pinch", H_SET_MIRROR => "mirror",
                 H_SET_DEVICE => "about-device", H_DEVICE_BACK => "about-device.back",
@@ -11455,7 +11509,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
             if hit.id == H_LANG_PICK {
                 name.push_str(i18n_language_code(hit.arg).unwrap_or("auto"));
             }
-            if matches!(hit.id, H_SIDE_PICK | H_ERASER_PICK | H_DARKER_PICK) { name.push_str(&hit.arg.to_string()); }
+            if matches!(hit.id, H_SIDE_PICK | H_ERASER_PICK | H_DARKER_PICK | H_INK_PICK) { name.push_str(&hit.arg.to_string()); }
             // A folder look's tiles by name (2.3, issue #230): the icon's, or the picture's file name.
             if hit.id == H_LOOK_ICON {
                 name.push_str(FOLDER_ICONS.get(hit.arg as usize).map_or("", |def| def.name));
@@ -13884,6 +13938,54 @@ mod tests {
         assert_eq!(crate::pdfimport::darker(), crate::pdfwork::Gamma::Off);
         let ini = std::fs::read_to_string(root.join("settings.ini")).unwrap_or_default();
         assert!(!ini.contains("pdf_gamma"), "{ini}");
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
+        i18n_set("en");
+        ui_init(300.0);
+        ui_set_theme(UiTheme::Gothic);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Settings > Pen > Ink edges (2.3, #320): the Pen category's last row shows the setting in use and opens its list as
+    // the eraser's does; a pick is saved, is what every brush begun from then on follows, and comes back to Settings.
+    // Back changes nothing; Smooth again leaves no line in settings.ini.
+    #[test]
+    fn ink_edges_row_opens_its_list_and_a_pick_is_kept() {
+        let root = std::env::temp_dir().join(format!("grimoire-ink-edges-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        assert_eq!(font_init(), 0);
+        ui_init(300.0);
+        ui_set_theme(UiTheme::Gothic);
+        i18n_set("en");
+        let mut a = App { w: 1860, h: 2480, dpi: 300.0, input_drained: true, ..Default::default() };
+        assert_eq!(canvas_init(&mut a.screen, a.w, a.h), 0);
+        library_init(&mut a);
+        ink_edges_set(InkEdges::Smooth);
+        lib(&mut a).modal = Modal::Settings;
+        lib(&mut a).settings_cat = settings_cat_of(settingsmenu::SettingId::InkEdges);
+        assert_eq!(lib(&mut a).settings_cat, 3, "the Pen category");
+        hits_clear(&mut lib(&mut a).hits);
+        draw_settings(&mut a);
+        assert!(a.lib.as_ref().unwrap().hits.h.iter().any(|h| h.id == H_SET_INK), "the Pen row");
+        act(&mut a, &Hit { r: RECT_EMPTY, id: H_SET_INK, arg: 0 });
+        assert_eq!(lib(&mut a).modal, Modal::InkEdges);
+        for e in 0..2 {
+            assert!(a.lib.as_ref().unwrap().hits.h.iter().any(|h| h.id == H_INK_PICK && h.arg == e), "choice {e}");
+        }
+        act(&mut a, &Hit { r: RECT_EMPTY, id: H_INK_BACK, arg: 0 });
+        assert_eq!((a.settings.ink_edges, lib(&mut a).modal, ink_edges()), (0, Modal::Settings, InkEdges::Smooth));
+        act(&mut a, &Hit { r: RECT_EMPTY, id: H_SET_INK, arg: 0 });
+        act(&mut a, &Hit { r: RECT_EMPTY, id: H_INK_PICK, arg: 1 });
+        assert_eq!((a.settings.ink_edges, lib(&mut a).modal, ink_edges()), (1, Modal::Settings, InkEdges::Solid));
+        let ini = std::fs::read_to_string(root.join("settings.ini")).unwrap_or_default();
+        assert!(ini.lines().any(|l| l == "ink_edges=solid"), "saved when picked:\n{ini}");
+        // Smooth again: no line
+        act(&mut a, &Hit { r: RECT_EMPTY, id: H_SET_INK, arg: 0 });
+        act(&mut a, &Hit { r: RECT_EMPTY, id: H_INK_PICK, arg: 0 });
+        assert_eq!((a.settings.ink_edges, ink_edges()), (0, InkEdges::Smooth));
+        let ini = std::fs::read_to_string(root.join("settings.ini")).unwrap_or_default();
+        assert!(!ini.contains("ink_edges"), "{ini}");
         library_free(&mut a);
         canvas_free(&mut a.screen);
         i18n_set("en");

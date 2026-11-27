@@ -12595,6 +12595,27 @@ fn settle_now_in(a: &mut App) {
     ed(a).panel_stale = false;
 }
 
+/// Ink edges changed (Settings > Pen, 2.3, #320), maybe over an open notebook (the quick settings' Settings): what the
+/// notebook keeps drawn under the setting before goes (its undo steps' patches, the pages kept in memory, the pages
+/// drawn ahead), and its open page is drawn again with the new one at once, before anything can keep a picture of
+/// the canvas (a kept drawing's or a preview's stamp names the setting it is written under, store.rs). Its card
+/// follows. With no notebook open there is nothing to do: a notebook opens with the setting in force.
+pub fn editor_ink_edges_changed(a: &mut App) {
+    let Some(s) = a.ed.as_deref_mut() else { return };
+    if !s.open {
+        return;
+    }
+    for e in s.hist.iter_mut() {
+        history_trim_patches(&mut e.h, 0);
+    }
+    page_views_clear(s);
+    cache_free(s);
+    s.thumb_dirty = true;
+    if s.page_ix().is_some() && !s.page_canvas.px.is_empty() {
+        render_page_full(a);
+    }
+}
+
 fn write_thumb_if_needed(a: &mut App) {
     let s = ed(a);
     // The card is the page the notebook opens at, and the open page's canvas is that page's only when they are
