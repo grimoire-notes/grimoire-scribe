@@ -331,6 +331,77 @@ fn smooth_fingerprint_whatever_the_setting() {
     check!(ink_edges() == InkEdges::Smooth);
 }
 
+// Solid's fingerprint's second page (page.rs page_solid_fingerprint_page) drawn with Ink edges at Solid as the pen
+// writes it, each stroke's brush Solid or not as `flag` says (given the stroke's place on the page, the stroke, and
+// what the rule and the setting say).
+fn second_page_drawn(flag: impl Fn(usize, &Stroke, bool) -> bool) -> Canvas {
+    let p = page_solid_fingerprint_page();
+    let mut paper = canvas(p.w, p.h);
+    page_paper_render(&mut paper, &p, Rect { x: 0, y: 0, w: p.w, h: p.h }, DPI);
+    let mut c = paper.clone();
+    ink_edges_as(InkEdges::Solid, || {
+        for (i, s) in p.strokes.iter().enumerate() {
+            let mut b = BrushState::default();
+            stroke_brush_begin(&mut b, s, DPI, Some(Rc::new(paper.px.clone())), 0, 0, c.stride);
+            b.solid = flag(i, s, b.solid);
+            for q in &s.pts {
+                brush_add(&mut b, &mut c, q);
+            }
+        }
+    });
+    c
+}
+
+// Solid's fingerprint covers the rule for a pen's own grain and tilt shading: its second page has a marker given
+// Grain past SOLID_GRAIN_MOST and a ballpoint given Tilt lightens, which the rule refuses for that alone. Were the
+// rule to take either (brush_ink_solid answering yes for them), the page would draw otherwise and the fingerprint
+// would be another, so no picture kept under today's would be shown as current.
+fn solid_fingerprint_follows_the_rule_for_grain_and_tilt() {
+    let p = page_solid_fingerprint_page();
+    let grainy = p.strokes.iter().position(|s| !stroke_is_erase(s) && s.params.grain > SOLID_GRAIN_MOST);
+    let shaded = p.strokes.iter().position(|s| !stroke_is_erase(s) && s.params.tilt_opacity > 0.0);
+    check!(grainy.is_some() && shaded.is_some() && grainy != shaded);
+    let (Some(grainy), Some(shaded)) = (grainy, shaded) else { return };
+    for (i, s) in p.strokes.iter().enumerate() {
+        if stroke_is_erase(s) {
+            continue;
+        }
+        // (the grain and the tilt shading are each the one thing the rule refuses its stroke for)
+        check!(stroke_may_be_solid(s) == (i != grainy && i != shaded));
+        let mut plain = s.clone();
+        plain.params.grain = plain.params.grain.min(SOLID_GRAIN_MOST);
+        plain.params.tilt_opacity = 0.0;
+        check!(stroke_may_be_solid(&plain));
+    }
+    check!(p.strokes[shaded].pts.iter().any(|q| q.tilt_x != 0.0));
+    let solid = page_render_fingerprint_for(InkEdges::Solid);
+    let now = second_page_drawn(|_, _, rule| rule);
+    check!(now.px == render(&p, InkEdges::Solid).px);
+    check!(solid != 0 && page_render_fingerprint_solid_with(&now) == solid);
+    // the rule taking both, then each alone
+    for taken in [vec![grainy, shaded], vec![grainy], vec![shaded]] {
+        let other = second_page_drawn(|i, _, rule| rule || taken.contains(&i));
+        check!(other.px != now.px);
+        check!(page_render_fingerprint_solid_with(&other) != solid);
+    }
+    // Smooth's is not this page's business
+    check!(page_render_fingerprint_for(InkEdges::Smooth) == page_render_fingerprint());
+}
+
+// Solid's fingerprint covers how white ink and the eraser draw at Solid (a solid stroke's black restored whole or
+// not at all): were erase strokes drawn as with Smooth, its second page would draw otherwise and the fingerprint
+// would be another.
+fn solid_fingerprint_follows_how_erasing_draws() {
+    let p = page_solid_fingerprint_page();
+    check!(p.strokes.iter().filter(|s| stroke_is_erase(s)).count() == 2);
+    let solid = page_render_fingerprint_for(InkEdges::Solid);
+    let now = second_page_drawn(|_, _, rule| rule);
+    check!(solid != 0 && page_render_fingerprint_solid_with(&now) == solid);
+    let other = second_page_drawn(|_, s, rule| rule && !stroke_is_erase(s));
+    check!(other.px != now.px);
+    check!(page_render_fingerprint_solid_with(&other) != solid);
+}
+
 // A page of every kind of stroke on ruled paper: random strokes of every tool, ink and erase strokes among them.
 fn random_page(w: i32, h: i32, seed: u32, n: usize) -> Box<Page> {
     let mut g = seed;
@@ -502,6 +573,8 @@ fn test_ink_edges() {
     check!(font_init() == 0); // (the papers of the fingerprint draw text)
     paper_set_panel_ppi(0.0, DPI);
     run!(smooth_fingerprint_whatever_the_setting); // (first: the fingerprint is taken once per process)
+    run!(solid_fingerprint_follows_the_rule_for_grain_and_tilt);
+    run!(solid_fingerprint_follows_how_erasing_draws);
     run!(the_rule_takes_the_solid_pens);
     run!(solid_is_the_threshold_of_smooth);
     run!(solid_widths_are_the_ones_judged);
