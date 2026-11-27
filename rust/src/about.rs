@@ -8,7 +8,7 @@
 //! in Settings' rows, and the selected version's notes in the reader at the right. It opens on this
 //! version's notes (GRIMOIRE_VERSION), or the newest when this version has none (current). A tap on
 //! a version selects its notes; the notes are set closer first, then smaller (fit_in), to fit the
-//! reader whole, with the signature at their end (2.2.0). There is no Read all layer: every version
+//! reader whole, with the signature at their end (2.3.0). There is no Read all layer: every version
 //! is already in the sidebar, and the X or Esc closes the browser.
 //!
 //! The notes, a file for each version (2.1.0): build.rs lists docs/whatsnew/*.md, each named for its

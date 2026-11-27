@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "packages": [
+    {"id":"test.kit.inputw","name":"Input widget","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/widgets/test.kit.inputw/module.bin","sha":"645fd60ac7ee475c06962534b387e69dcbd5e051129befc56339c83895b3bd44","installed_at":1,"source_url":""},
+    {"id":"test.kit.quietw","name":"Quiet widget","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/widgets/test.kit.quietw/module.bin","sha":"1560dc2a57abdeae2426221350a140b852a3a03c2717aa13662abab9e9ba6f4e","installed_at":1,"source_url":""},
+    {"id":"test.kit.tapw","name":"Tap widget","version":"1.0.0","author":"Grimoire tests","description":"A module of the package kit's tests.","icon":"","path":"packages/widgets/test.kit.tapw/module.bin","sha":"a6a56d7bad3e956d86e7752c631b939287f7805a07ef627a95611aad0babb055","installed_at":1,"source_url":""}
+  ]
+}

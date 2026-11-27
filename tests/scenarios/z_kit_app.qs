@@ -26,13 +26,13 @@ expect library.app.text is Package kit|An app drawn with Grimoire's own elements
 shot 01-app-gothic
 # (the row at Settings' place: the same dark pixels as Settings' own row below)
 expect display.dark.656.716.1154.118 is 18346
-# A tap on hit region 2 (the button) by its name: the touch's two phases and the pass after each.
+# A tap on hit region 2 (the button) by its name: the touch's two phases, and one drawing pass after them.
 tap library app.hit.2
 wait 300
-expect library.app.status is 000005
+expect library.app.status is 000004
 tap library app.hit.10
 wait 300
-expect library.app.status is 000009
+expect library.app.status is 000007
 swipe 2 930 2200 0 -1000
 wait 300
 expect library.app.open is 0
@@ -68,7 +68,7 @@ expect display.dark.656.716.1154.118 is 12393
 shot 04-app-classic
 tap library app.hit.7
 wait 300
-expect library.app.status is 000005
+expect library.app.status is 000004
 swipe 2 930 2200 0 -1000
 wait 300
 expect library.app.open is 0

@@ -11,6 +11,8 @@
 # all; erasing made larger over ink outside the selection is scoped to its floor and leaves that ink as it was.
 # display.dark counts what the panel shows dark in a place; editor.halo the selected strokes the page shows some of.
 # (the clock corner held still: its minute's refresh would land among the counted ones)
+# (Since 2.3.0 the paper's rules are darker than mid-gray, issue #314, so display.dark counts them: a place with no
+# ink counts its rules' pixels, two rows of each rule across it, and "not N" there says ink shows beside them.)
 clock 1700000000
 wait 300
 tap library add
@@ -74,10 +76,10 @@ waitfor display.stale.300.600.1000.800 is 0
 expect editor.strokes is 13
 expect editor.erase_strokes is 8
 expect editor.live_matches_render is 1
-expect display.dark.360.850.540.100 is 0
-expect display.dark.660.1092.40.16 is 0
+expect display.dark.360.850.540.100 is 1080
+expect display.dark.660.1092.40.16 is 80
 expect display.dark.666.1242.24.16 is 0
-expect display.dark.1140.960.20.120 not 0
+expect display.dark.1140.960.20.120 not 80
 # the lasso round the words and the two lines: the erased word is selected (nothing of it shows) with no halo
 tap panel tool-picker
 wait 100
@@ -112,13 +114,14 @@ expect editor.sel_box is 360 645 678 683
 expect editor.live_matches_render is 1
 expect editor.halo is 3
 expect editor.layered is 0
-expect display.dark.360.870.594.111 is 0
+# (from 4 px inside the selection's left edge, where its frame is drawn: the rules' pixels alone)
+expect display.dark.364.870.590.111 is 2360
 expect display.dark.690.1137.44.17 is 0
 expect display.dark.697.1302.26.17 is 0
 tap panel select.done
 wait 300
 waitfor display.stale.300.600.1200.1000 is 0
-expect display.dark.360.870.594.111 is 0
+expect display.dark.364.870.590.111 is 2360
 expect display.dark.690.1137.44.17 is 0
 expect display.dark.697.1302.26.17 is 0
 # undo puts the page back exactly
@@ -128,7 +131,7 @@ expect editor.strokes is 13
 expect editor.page_sig_same is 1
 expect editor.live_matches_render is 1
 waitfor display.stale.300.600.1200.1000 is 0
-expect display.dark.360.850.540.100 is 0
+expect display.dark.360.850.540.100 is 1080
 # 1.5 times as large: the white ink's gap stays clear too; the erasing now reaches the line down the right, which
 # the lasso left out: its floor is scoped (a layer), and that line shows as it did
 tap panel tool-picker
@@ -159,10 +162,11 @@ expect editor.sel_box is 360 645 924 932
 expect editor.live_matches_render is 1
 expect editor.halo is 3
 expect editor.layered is 1
-expect display.dark.360.953.780.150 is 0
+# (from 4 px inside the selection's left edge, where its frame is drawn: the rules' pixels alone)
+expect display.dark.364.953.776.150 is 3104
 expect display.dark.810.1316.60.24 is 0
-expect display.dark.819.1541.36.24 is 0
-expect display.dark.1140.960.20.120 not 0
+expect display.dark.819.1541.36.24 is 72
+expect display.dark.1140.960.20.120 not 80
 shot 01-larger
 # made smaller again (to 1.2 times the first size): a group whose erasing is scoped resized, the same
 pen down 1284 1576
@@ -180,13 +184,14 @@ expect editor.select is selected
 expect editor.sel_box is 360 645 745 751
 expect editor.live_matches_render is 1
 expect editor.halo is 3
-expect display.dark.360.891.648.125 is 0
-expect display.dark.1140.960.20.120 not 0
+# (from 4 px inside the selection's left edge, where its frame is drawn: the rules' pixels alone)
+expect display.dark.364.891.644.125 is 2576
+expect display.dark.1140.960.20.120 not 80
 tap panel select.done
 wait 300
 waitfor display.stale.300.600.1500.1300 is 0
-expect display.dark.360.891.648.125 is 0
-expect display.dark.1140.960.20.120 not 0
+expect display.dark.364.891.644.125 is 2576
+expect display.dark.1140.960.20.120 not 80
 # two undos: back exactly as it was
 pentap panel undo
 wait 400
@@ -229,7 +234,7 @@ wait 300
 waitfor display.stale.300.600.1000.800 is 0
 expect display.dark.479.866.18.12 not 0
 expect display.dark.543.866.18.12 not 0
-expect display.dark.360.748.270.50 is 0
+expect display.dark.360.748.270.50 is 540
 expect display.dark.510.868.20.9 is 0
 expect display.dark.513.944.12.8 is 0
 # black ink scales too: the marker line is half as thick (5 rows of the panel, 10 before the resize), so the rows
@@ -252,11 +257,11 @@ expect editor.page_sig_same is 1
 expect editor.live_matches_render is 1
 waitfor display.stale.300.600.1000.800 is 0
 expect display.dark.479.866.18.12 not 0
-expect display.dark.360.748.270.50 is 0
+expect display.dark.360.748.270.50 is 540
 pentap panel undo
 wait 400
 expect editor.strokes is 13
 expect editor.live_matches_render is 1
 waitfor display.stale.300.600.1000.800 is 0
-expect display.dark.360.850.540.100 is 0
+expect display.dark.360.850.540.100 is 1080
 quit

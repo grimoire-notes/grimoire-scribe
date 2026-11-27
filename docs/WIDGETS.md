@@ -266,7 +266,8 @@ settings:
 
 The package above is ordinary widget code in its own repository, not part of Grimoire. An open
 frame reads its settings again after the Settings page saves them; a package decides what a change
-means. A new frame reads the saved values on its first draw.
+means, and one that exports the kit's `kit_event` is told of each (a SETTINGS event,
+[KIT.md](KIT.md#events)). A new frame reads the saved values on its first draw.
 
 ## The WASM ABI
 
@@ -275,7 +276,9 @@ scale_milli)` and `widget_tap(hit_id)`, and may import these functions from the 
 `grimoire`, and the package kit's from `grimoire_kit` ([KIT.md](KIT.md)): the theme's standard sizes, text by
 role, and Grimoire's own elements at the theme's sizes, which an app draws with too. A kit element given an id is a
 hit region, and a tap on it calls `widget_tap` with that id. The kit's calls are drawn with the module's own, in
-the order it calls them, and count toward the limits below.
+the order it calls them, and count toward the limits below. A module may also export the kit's
+`kit_event(kind, id, a, b, c) -> i32`, to be told of taps, long presses and drags in its body and of a change of
+its settings ([KIT.md](KIT.md#events)).
 
 ```text
 rect(x, y, w, h, style)
@@ -308,15 +311,22 @@ body, is a tap on no region.
 | `button` | a button with its own label; it is also a hit region with `id` |
 | `hit` | a hit region with `id`, without drawing anything |
 | `status` | the text the editor's `editor.widget.N.status` probe reads, for tests and debugging |
-| `request_redraw` | asks for `widget_draw` again after `after_ms` (100 to 86,400,000; a value outside is taken as the nearer end); a clock calls it once per draw, and a package that never calls it is only drawn when something else repaints. When the time has come the frame is drawn again and its rectangle is refreshed once. A minimized frame draws no body, so its request waits until the frame is restored, and a request waits while a finger or the pen is down or a menu or sheet is open. A redraw also waits while the pen is writing or near the screen, and comes once when the pen has left |
+| `request_redraw` | asks for `widget_draw` again after `after_ms` (100 to 86,400,000; a value outside is taken as the nearer end); a clock calls it once per draw, and a package that never calls it is only drawn when something else repaints. One request stands at a time, the soonest asked for, whichever call asked (a draw, a tap, an event): a later call does not put an earlier one off. When the time has come the frame is drawn again and its rectangle is refreshed once, and a pass drawn then for another reason answers it. A minimized frame draws no body, so its request waits until the frame is restored, and a request waits while a finger or the pen is down or a menu or sheet is open. A redraw also waits while the pen is writing or near the screen, and comes once when the pen has left |
 | `setting` | copies one saved setting's value into `out_ptr` and returns its byte length, or `0`; `out_cap` caps the copy |
 | `state_get` | copies the saved state into `ptr` and returns its byte length, or `0`; `cap` caps the copy. `state_get` and `state_set` need `storage:widget-local` |
 | `state_set` | replaces the saved state with the bytes at `ptr`; the first 64 KiB are kept |
 | `now` | Unix time in seconds, when a widget needs a clock |
 
 `widget_tap` is called with the `id` of the hit region under the tap, or `-1` for a tap elsewhere
-in the body. It should update the package's state; the next `widget_draw` shows the result (what
-a tap itself draws is not shown: a pass holds the commands of its own `widget_draw` only). A
+in the body: at the lift of a contact that stayed within 5 mm of where it came down, held or not. It
+should update the package's state; the next `widget_draw` shows the result (what a tap itself draws
+is not shown: a pass holds the commands of its own `widget_draw` only). That pass is drawn once
+after the tap, and only the part of the body it changed is refreshed (nothing, when the picture is the
+same). A module that exports the kit's `kit_event` is told of a tap by a TAP event instead of
+`widget_tap`, and of long presses and drags too, whose passes are drawn at most every 120 ms while
+the contact is down, refreshed fast, and what they refreshed gets one full-depth refresh after the
+lift ([KIT.md](KIT.md#events)). A widget gets no keys: they stay the notebook's
+shortcuts. A
 module may call `state_set` during a tap or a draw; the host writes the state file after the call,
 at `packages/widgets/<id>/state/runtime.bin`. For a timer or a sticky note, that is the whole
 persistence model.
@@ -330,8 +340,8 @@ filesystem, network or process access.
 
 ### Limits
 
-The host calls a module's `widget_draw` (a drawing pass) and its `widget_tap`. Each call is held to
-the limits below, and the counts start again with every call:
+The host calls a module's `widget_draw` (a drawing pass), its `widget_tap` and its `kit_event`. Each
+call is held to the limits below, and the counts start again with every call:
 
 | limit | |
 |---|---|

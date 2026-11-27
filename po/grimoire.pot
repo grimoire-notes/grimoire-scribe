@@ -6,9 +6,9 @@
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: Grimoire 2.1.0\n"
+"Project-Id-Version: Grimoire 2.2.0\n"
 "Report-Msgid-Bugs-To: https://github.com/ganten1998/grimoire-scribe/issues\n"
-"POT-Creation-Date: 2026-11-25 16:25-0600\n"
+"POT-Creation-Date: 2026-11-26 15:53-0600\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -957,14 +957,14 @@ msgstr ""
 msgid "Automatic"
 msgstr ""
 
+#: rust/src/app.rs rust/src/library.rs
+msgid "Stable"
+msgstr ""
+
 #. TRANSLATORS: Settings > Updates, the branch the switch is on: Preview gets betas and releases,
 #. Stable only releases.
 #: rust/src/app.rs rust/src/library.rs
 msgid "Preview"
-msgstr ""
-
-#: rust/src/app.rs rust/src/library.rs
-msgid "Stable"
 msgstr ""
 
 #. TRANSLATORS: selected update channel, %s is its name; toast, 1700 px at 44 px bold.
@@ -3619,10 +3619,11 @@ msgid "Checking..."
 msgstr ""
 
 #. TRANSLATORS: Settings > Updates, the system update's version change (%s is the version
-#. installed, %s the one the update branch offers).
+#. installed, %s the one the update branch offers). No arrow: Atkinson Hyperlegible Next and
+#. Noto Sans have none, and every character of a text must be in every face (test_i18n).
 #: rust/src/library.rs
 #, c-format
-msgid "Version %s → %s"
+msgid "Version %s to %s"
 msgstr ""
 
 #. TRANSLATORS: Settings > Updates, when the system update branch has nothing newer (%s is
