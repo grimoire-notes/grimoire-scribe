@@ -3685,7 +3685,7 @@ everything in CHANGELOG's 2.3.0-beta.1 section: the home redesign, Apps and the 
 input (#267, #272, #307), darker papers (#314), nebuff's Polish and Japanese (#315, #316) and the update-channel
 toast (#312). Where the two lines of work met, the merge's own tests hold it (#302): Ink edges at Solid in a view
 that draws the paper's lines at its own scale (editor.rs's unit tests of the ruled view, the Links bar and the
-Kindle's copy of its frames; `z_ink_edges_12_ruled_view`, `_13_rulings`) and on a page at 100% a little smaller
+Kindle's copy of its frames; `z_ink_edges_16_ruled_view`, `_17_rulings`) and on a page at 100% a little smaller
 than the screen (`_14_near_page`), a solid word beside a widget's timed redraw (`_15_widget_unasked`), and the
 Status bar and Pen rows without the sleep service (`z_services_3_sleep`). Automated: the full gate on the
 release commit with the pinned toolchain. Crate ages: wasmi, wasmi_collections, wasmi_core and wasmi_ir 2.0.3
