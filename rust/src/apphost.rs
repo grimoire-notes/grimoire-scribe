@@ -2334,16 +2334,20 @@ mod tests {
                 }
             }
             // The kit's elements that draw an icon as large as they are, far larger than the body: each is the
-            // element with no icon, pixel for pixel, and no bitmap is asked for its icon.
+            // element with no icon, pixel for pixel, and no bitmap is asked for its icon. (A theme whose button
+            // keeps its sign small whatever the button, as Cassette's, draws it: one small glyph's bitmap.)
             for (import, with_icon, without) in [
                 ("fab", vec![-49_000, -49_000, 100_000, 100_000, 0, 4], None),
                 ("button", vec![-49_000, -49_000, 100_000, 100_000, 0, 0, 0, 4, 0], Some(vec![-49_000, -49_000, 100_000, 100_000, 0, 0, 0, 0, 0])),
                 ("text_field", vec![-200, -49_000, 2400, 100_000, 0, 4, 0, 0, 0, 0], Some(vec![-200, -49_000, 2400, 100_000, 0, 0, 0, 0, 0, 0])),
             ] {
                 let (c, asked) = pass(import, &with_icon, b"gear", true);
-                assert_eq!(asked, 0, "{theme:?}: {import} {with_icon:?}");
-                if let Some(without) = without {
-                    assert!(c.px == pass(import, &without, b"gear", true).0.px, "{theme:?}: {import} {with_icon:?} is the element with no icon");
+                let same = without.is_none_or(|without| c.px == pass(import, &without, b"gear", true).0.px);
+                if import == "button" && !same {
+                    assert!(asked <= 1, "{theme:?}: {import} {with_icon:?}: a small sign, {asked} asked");
+                } else {
+                    assert_eq!(asked, 0, "{theme:?}: {import} {with_icon:?}");
+                    assert!(same, "{theme:?}: {import} {with_icon:?} is the element with no icon");
                 }
             }
             // Sizes a screen has: the same picture with the host's own sizes and with them aside.

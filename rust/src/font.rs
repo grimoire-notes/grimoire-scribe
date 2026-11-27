@@ -1936,19 +1936,24 @@ pub fn font_with_icon_side_max<R>(side: i32, f: impl FnOnce() -> R) -> R {
     r
 }
 
+/// Where an icon in r is drawn: no larger than the caller's largest, in the middle of r
+/// (font_with_icon_side_max). A theme that draws its icons its own way keeps to it too.
+pub fn font_icon_rect(r: Rect) -> Rect {
+    let side = with(|st| st.icon_side_max);
+    if r.w > side || r.h > side {
+        let (w, h) = (r.w.min(side), r.h.min(side));
+        Rect { x: r.x + (r.w - w) / 2, y: r.y + (r.h - h) / 2, w, h }
+    } else {
+        r
+    }
+}
+
 /// Draws one glyph (e.g. a Nerd Font icon code point) scaled so its ink box fits r, centered.
 pub fn font_draw_icon(c: &mut Canvas, f: FontFace, cp: u32, r: Rect, gray: u8) {
     if !with(|st| st.ready) || rect_is_empty(r) {
         return;
     }
-    // (no larger than the caller's largest, in the middle of r: font_with_icon_side_max)
-    let side = with(|st| st.icon_side_max);
-    let r = if r.w > side || r.h > side {
-        let (w, h) = (r.w.min(side), r.h.min(side));
-        Rect { x: r.x + (r.w - w) / 2, y: r.y + (r.h - h) / 2, w, h }
-    } else {
-        r
-    };
+    let r = font_icon_rect(r);
     // Icons are Terminess Nerd Font glyphs in every theme.
     let ttf = if f == FontFace::Bold || f == FontFace::FixedBold { TTF_TERM_BOLD } else { TTF_TERM };
     with(|st| {

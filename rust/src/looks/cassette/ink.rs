@@ -92,10 +92,12 @@ pub fn cs_dot_pattern(c: &mut Canvas, r: Rect, rows: &[&str], cells: i32, gray: 
 /// cell of a grid over it becomes a dot (well covered), a half dot (partly) or nothing. The dots keep
 /// one pitch whatever the icon's size, as on a display's dot matrix.
 pub fn cs_dot_icon(c: &mut Canvas, r: Rect, gray: u8, draw: impl FnOnce(&mut Canvas, Rect)) {
-    if r.w < 4 || r.h < 4 {
+    let side = r.w.min(r.h);
+    // (none past the font's greatest glyph, font.rs's GLYPH_SIDE_MAX, as the font draws none: an app's
+    // icon may ask any size)
+    if side < 4 || side > 4096 {
         return;
     }
-    let side = r.w.min(r.h);
     let n = clampi(side / ui_px(6.0).max(1), 11, 16);
     let pitch = side as f32 / n as f32;
     let mut m = Canvas::default();

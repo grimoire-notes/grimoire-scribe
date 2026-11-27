@@ -97,6 +97,7 @@ impl Look for Cassette {
         cs_cross(c, x1 - arm, y, arm, ui_px(2.0), if gray == 0 { CS_INK } else { gray });
     }
     fn icon(&self, c: &mut Canvas, k: IconKind, cp: u32, r: Rect, gray: u8) {
+        let r = crate::font::font_icon_rect(r);
         let inset = r.w.min(r.h) / 10;
         if let Some(rows) = sign_rows(k) {
             cs_dot_pattern(c, rect_inflate(r, -inset), rows, 9, gray);
@@ -382,10 +383,16 @@ impl Look for Cassette {
         canvas_fill(c, f, 255);
         canvas_hline(c, f.x, f.x + f.w, f.y + f.h - ui_px(2.0), ui_px(2.0).max(1), CS_INK);
     }
-    // plain keys: the letters on paper, a key held (or Shift, or Done) a gray cap
+    // plain keys: the letters on paper, Done a gray cap; a key held (or Shift) a black cap, so caps on's
+    // white bar under the Shift label shows (keyboard.rs's caps_bar)
     fn key_cap(&self, c: &mut Canvas, r: Rect, st: ButtonStyle) -> u8 {
-        canvas_fill(c, r, if matches!(st, ButtonStyle::Selected | ButtonStyle::Primary) { CS_SEL } else { 255 });
-        CS_INK
+        let cap = match st {
+            ButtonStyle::Selected => 0,
+            ButtonStyle::Primary => CS_SEL,
+            _ => 255,
+        };
+        canvas_fill(c, r, cap);
+        if cap == 0 { 255 } else { CS_INK }
     }
     // a ring of dots: the selection and the open page as a plotter marks them
     fn map_ring(&self, c: &mut Canvas, x: f32, y: f32, r: f32, t: f32) -> bool {
