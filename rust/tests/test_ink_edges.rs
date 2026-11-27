@@ -94,9 +94,10 @@ fn backgrounds(w: i32, h: i32) -> Vec<(&'static str, Canvas)> {
     out
 }
 
-// Every solid pen, at pressures from light to full and three ways of holding the pen, over every background: the Solid
-// drawing is, pixel for pixel, 0 where the Smooth drawing over the same pixels is SOLID_STEP or more darker than the
-// background, and the background everywhere else (nothing lighter, nothing but 0 changed).
+// Every solid pen, at pressures from light to full and three ways of holding the pen, over every background, as a
+// long stroke and as a dot of one or two samples (an i's): the Solid drawing is, pixel for pixel, 0 where the Smooth
+// drawing over the same pixels is 16 (of 255, the rule's SOLID_STEP) or more darker than the background, and the
+// background everywhere else (nothing lighter, nothing but 0 changed). Every dot has a black pixel.
 fn solid_is_the_threshold_of_smooth() {
     let (w, h) = (260, 200);
     let mut crossed = 0i64;
@@ -104,28 +105,43 @@ fn solid_is_the_threshold_of_smooth() {
         for (ti, &t) in SOLID_PENS.iter().enumerate() {
             for (pi, &(p0, p1)) in [(0.1, 0.1), (0.3, 0.3), (0.6, 0.6), (1.0, 1.0), (0.05, 0.95)].iter().enumerate() {
                 for &(tx, ty) in &[(0.0, 0.0), (40.0, 46.0), (-35.0, 20.0)] {
-                    let s = wave(t, &params(t), 100 + ti as u32 * 10 + pi as u32, w, h, h as f32 * 0.5, p0, p1, tx, ty);
-                    let mut smooth = bg.clone();
-                    draw(&mut smooth, &s, InkEdges::Smooth, None);
-                    let mut solid = bg.clone();
-                    draw(&mut solid, &s, InkEdges::Solid, None);
-                    let mut wrong = 0;
-                    for i in 0..(w * h) as usize {
-                        let pre = bg.px[i] as i32;
-                        let want = if pre - smooth.px[i] as i32 >= SOLID_STEP { 0 } else { pre };
-                        wrong += (solid.px[i] as i32 != want) as i32;
-                        crossed += (want == 0 && pre != 0) as i64;
-                        check!(solid.px[i] == 0 || solid.px[i] == bg.px[i]);
+                    let long = wave(t, &params(t), 100 + ti as u32 * 10 + pi as u32, w, h, h as f32 * 0.5, p0, p1, tx, ty);
+                    let mut dots = Vec::new();
+                    for n in 1..=2 {
+                        let mut d = stroke_new(t, &params(t), 200 + ti as u32 * 10 + pi as u32);
+                        for k in 0..n {
+                            let q = PenSample { x: 73.4 + k as f32 * 1.5, y: 97.6, pressure: p1, tilt_x: tx, tilt_y: ty, t_ms: k as u32 * 7 };
+                            stroke_append(&mut d, &q, DPI);
+                        }
+                        dots.push(d);
                     }
-                    check!(wrong == 0);
-                    if wrong != 0 {
-                        eprintln!("  {} over {name}, pressure {p0}..{p1}, tilt {tx} {ty}: {wrong} pixels", tool_name(t));
+                    for (si, s) in std::iter::once(&long).chain(dots.iter()).enumerate() {
+                        let mut smooth = bg.clone();
+                        draw(&mut smooth, s, InkEdges::Smooth, None);
+                        let mut solid = bg.clone();
+                        draw(&mut solid, s, InkEdges::Solid, None);
+                        let mut wrong = 0;
+                        for i in 0..(w * h) as usize {
+                            let pre = bg.px[i] as i32;
+                            let want = if pre - smooth.px[i] as i32 >= 16 { 0 } else { pre };
+                            wrong += (solid.px[i] as i32 != want) as i32;
+                            crossed += (want == 0 && pre != 0) as i64;
+                            check!(solid.px[i] == 0 || solid.px[i] == bg.px[i]);
+                        }
+                        check!(wrong == 0);
+                        if wrong != 0 {
+                            eprintln!("  {} over {name}, pressure {p0}..{p1}, tilt {tx} {ty}, stroke {si}: {wrong} pixels", tool_name(t));
+                        }
+                        if si > 0 && name == "white" {
+                            check!(solid.px.contains(&0));
+                        }
                     }
                 }
             }
         }
     }
     check!(crossed > 100_000);
+    check!(SOLID_STEP == 16);
 }
 
 // The ballpoint at pressure 0.6 on white, a horizontal stroke: Smooth's column across it is the one the port's
@@ -246,7 +262,7 @@ fn the_other_tools_draw_as_smooth() {
         }
         let mut wrong = 0;
         for i in 0..(w * h) as usize {
-            let want = if bg.px[i] != 0 { smooth.px[i] } else if smooth.px[i] as i32 >= SOLID_STEP { paper.px[i] } else { 0 };
+            let want = if bg.px[i] != 0 { smooth.px[i] } else if smooth.px[i] >= 16 { paper.px[i] } else { 0 };
             wrong += (solid.px[i] != want) as i32;
             erased += (bg.px[i] == 0 && solid.px[i] != 0) as i32;
         }
@@ -408,41 +424,48 @@ fn solid_draws_the_same_every_way() {
     // Compaction's pieces: a long ballpoint that goes right and comes back left beside itself (its pieces about 16 mm
     // each), drawn over the left part of the page, which the middle pieces never reach: the pieces that do share the
     // stroke's shadow, and a pixel two of them darken a little each is drawn as the whole stroke draws it.
+    // (a few pens, pressures and gaps between the two ways, back along the very line among them: without the shared
+    // shadow these differ by 1 to 240 pixels)
     let (w, h) = (700, 160);
-    let mut p = page_new(w, h, PAPER_BLANK);
-    let mut s = stroke_new(TOOL_BALLPOINT, &params(TOOL_BALLPOINT), 9);
-    let mut k = 0;
-    let mut add = |s: &mut Stroke, x: f32, y: f32| {
-        stroke_append(s, &PenSample { x, y, pressure: 0.35, t_ms: k * 6, ..Default::default() }, DPI);
-        k += 1;
-    };
-    for i in 0..120 {
-        add(&mut s, 30.0 + i as f32 * 5.0, 60.0);
-    }
-    for i in 0..120 {
-        add(&mut s, 625.0 - i as f32 * 5.0, 63.0);
-    }
-    page_add(&mut p, s);
-    for e in [InkEdges::Smooth, InkEdges::Solid] {
-        let all = render(&p, e);
-        let left = Rect { x: 0, y: 0, w: 150, h };
-        let mut c = canvas(w, h);
-        ink_edges_as(e, || page_render_in_pieces(&mut c, &p, left, DPI));
-        let mut wrong = 0;
-        for y in 0..h {
-            for x in 0..left.w {
-                let i = (y * w + x) as usize;
-                wrong += (c.px[i] != all.px[i]) as i32;
+    let mut shared_wrong = 0;
+    for (t, pressure, gap) in [(TOOL_BALLPOINT, 0.35f32, 3.0f32), (TOOL_BALLPOINT, 0.5, 0.0), (TOOL_BALLPOINT, 0.5, 5.0), (TOOL_MARKER, 0.9, 0.0)] {
+        let mut p = page_new(w, h, PAPER_BLANK);
+        let mut s = stroke_new(t, &params(t), 9);
+        let mut k = 0;
+        let mut add = |s: &mut Stroke, x: f32, y: f32| {
+            stroke_append(s, &PenSample { x, y, pressure, t_ms: k * 6, ..Default::default() }, DPI);
+            k += 1;
+        };
+        for i in 0..120 {
+            add(&mut s, 30.0 + i as f32 * 5.0, 60.0);
+        }
+        for i in 0..120 {
+            add(&mut s, 625.0 - i as f32 * 5.0, 60.0 + gap);
+        }
+        page_add(&mut p, s);
+        for e in [InkEdges::Smooth, InkEdges::Solid] {
+            let all = render(&p, e);
+            let left = Rect { x: 0, y: 0, w: 150, h };
+            let mut c = canvas(w, h);
+            ink_edges_as(e, || page_render_in_pieces(&mut c, &p, left, DPI));
+            let mut wrong = 0;
+            for y in 0..h {
+                for x in 0..left.w {
+                    let i = (y * w + x) as usize;
+                    wrong += (c.px[i] != all.px[i]) as i32;
+                }
             }
+            check!(wrong == 0);
+            shared_wrong += wrong;
+            if wrong != 0 {
+                eprintln!("  pieces of a {} stroke drawn {:?} at pressure {pressure}, {gap} px apart: {wrong} pixels differ", tool_name(t), e);
+            }
+            let mut c = canvas(w, h);
+            ink_edges_as(e, || page_render_in_pieces(&mut c, &p, Rect { x: 0, y: 0, w, h }, DPI));
+            check!(c.px == all.px);
         }
-        check!(wrong == 0);
-        if wrong != 0 {
-            eprintln!("  pieces of the stroke drawn {:?}: {wrong} pixels differ", e);
-        }
-        let mut c = canvas(w, h);
-        ink_edges_as(e, || page_render_in_pieces(&mut c, &p, Rect { x: 0, y: 0, w, h }, DPI));
-        check!(c.px == all.px);
     }
+    check!(shared_wrong == 0);
 }
 
 // PDF and PNG exports draw with Smooth whatever the setting (export.rs render_page_links): the same bytes with the
