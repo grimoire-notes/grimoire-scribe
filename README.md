@@ -39,6 +39,11 @@ Free software under the GPL-3.0. Not affiliated with or endorsed by Amazon.
 The pages above were drawn on a Kindle Scribe in Grimoire; the last picture is Live view, the
 Kindle's screen in a computer's browser as you write.
 
+> **Pre-release 2.3.0-beta.1.** The first beta of 2.3: Grimoire is in daily use on a Kindle Scribe, and
+> every build passes several hundred automated checks, but it is a beta: it autosaves every stroke and
+> keeps damaged files instead of overwriting them, and you should still copy your notebooks off now and
+> then (Share makes that one click).
+
 ## Why Grimoire
 
 - **It is yours, on your Kindle.** Notebooks are open files in a `grimoire` folder, not a service.

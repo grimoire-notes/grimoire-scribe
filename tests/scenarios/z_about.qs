@@ -38,9 +38,9 @@ wait 100
 expect library.sheet is about
 expect library.about.view is browser
 expect library.about.full is 1
-expect library.about.entries is 6
-expect library.about.rows is 6
-expect library.about.note is 2.2.0
+expect library.about.entries is 7
+expect library.about.rows is 7
+expect library.about.note is 2.3.0-beta.1
 expect library.about.marked is 1
 expect library.about.pages is 1
 expect library.about.page is 1
@@ -53,8 +53,8 @@ shot 01-browser
 rotate 1
 wait 200
 expect library.sheet is about
-expect library.about.rows is 6
-expect library.about.note is 2.2.0
+expect library.about.rows is 7
+expect library.about.note is 2.3.0-beta.1
 expect library.about.pages is 1
 expect library.about.signature is 1
 shot 02-browser-sideways
@@ -64,7 +64,7 @@ wait 200
 tap library about.row.2.0.0
 wait 100
 expect library.about.note is 2.0.0
-expect library.about.marked is 5
+expect library.about.marked is 6
 expect library.about.pages is 1
 expect library.about.page is 1
 expect library.about.body_px is 43

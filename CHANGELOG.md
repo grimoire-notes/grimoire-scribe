@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.3.0 (unreleased)
+## 2.3.0-beta.1 (2026-11-26)
 
 - **A new home** (#225, nebuff). The Library opens as a home screen: the status bar at the top, then the
   Library's title with its Settings and Search buttons, a row of apps (Files, Share, Settings, Package Store and
@@ -68,7 +68,7 @@
   the one picked.
 - Housekeeping: package-check's size guard for the Kindle binary is now 14 MB (was 13 MB; the zip's stays 7 MB):
   Apps, the Package Store and the package kit brought the binary past 13 MB (#253).
-- **Folder icons and pictures** (#230). A folder's menu (its `...`) has Icon & picture...: pick one of 48 icons for
+- **Folder icons and pictures** (#230, nebuff). A folder's menu (its `...`) has Icon & picture...: pick one of 48 icons for
   the folder's card, in two pages of ordinary uses (school, work, documents, photos, music, recipes, travel, pets
   and more), or give it a picture from `grimoire/photos` (From a file... copies one in from anywhere on the Kindle).
   Picking one clears the other: the card shows the picture in place of the icon, and the plain folder while the
@@ -79,7 +79,7 @@
   letters, digits, punctuation and Space type into it as its keys do (the US layout, with Shift), Backspace
   deletes, Enter is Done and Esc is Cancel. With no keyboard open its keys do what they did. On the Kindle, as
   for every key, Settings > Shortcuts > Enable shortcuts must be on.
-- **Kindle notebooks** (#196). Copy a notebook's folder from the Kindle's `.notebooks/` into `grimoire/import/`
+- **Kindle notebooks** (#196, nebuff). Copy a notebook's folder from the Kindle's `.notebooks/` into `grimoire/import/`
   and Grimoire imports its ink: one page per page, strokes scaled to the Scribe's page, pressure kept, and
   Amazon's brushes mapped to Grimoire's. It takes the Scribe's title where it has one, the folder's name
   otherwise, and leaves out the blank `note_template_collection` templates. Text and other non-ink page content
@@ -106,6 +106,13 @@
   Isometric 136 and Hexagon 119. Seyes rule, Blank and the music papers are unchanged. After the update a page kept
   drawn to open quickly is drawn once more, so it shows the new lines, and so are a notebook's previews in the
   Pages view as the view opens and its card in the Library as the notebook is next opened and left.
+- **Polish and Japanese** (#315, nebuff). The texts of the new home, Apps, the Package Store and the rest of 2.2's
+  and 2.3's screens are translated. In this beta 39 of 1,261 texts are still in English in each language: the
+  Package Store's license steps, the package kit's messages, Manage apps... and Settings > Updates' version line.
+- Settings > Updates says "Version 2.2.0 to 2.3.0" where it had an arrow, which Classic's fonts do not have; and
+  the home's Sort select shows its value alone where the caption and value do not fit even small, as in Japanese
+  (#316).
+- Fixes: the update-channel shortcut's message names the channel it sets; it named the other one (#312).
 
 ## 2.2.0 (2026-11-26)
 
