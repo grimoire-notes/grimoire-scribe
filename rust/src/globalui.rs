@@ -86,8 +86,9 @@ pub const GUI_GRAY_DISABLED: u8 = 170;
 pub const GUI_GRAY_RULE: u8 = 140;
 
 /// The top status bar's scale at size small, medium and large. Medium is the bar as it has always
-/// been; the Status bar settings page's size scales all of it, not just its clock.
-const STATUS_SCALE: [f32; 3] = [0.82, 1.0, 1.18];
+/// been; the Status bar settings page's size scales all of it, not just its clock. At 300 dpi the
+/// bar is 72, 78 and 92 px tall (small was 0.82, 64 px, before #319).
+const STATUS_SCALE: [f32; 3] = [0.92, 1.0, 1.18];
 
 struct StatusUnder {
     w: i32,
@@ -919,6 +920,21 @@ mod tests {
         assert_eq!(actions[0].0.y + actions[0].0.h / 2, head.title.y + head.title.h / 2);
         canvas_free(&mut c);
         gui_status_style(1, false);
+    }
+
+    // The small bar is 0.92 of the medium one (#319): 72 px at 300 dpi, where 0.82 made it 64. Medium and large
+    // are as they were, 78 and 92.
+    #[test]
+    fn the_small_status_bar_is_72_px_at_300_dpi() {
+        ui_init(300.0);
+        let heights: Vec<i32> = (0..STATUS_SIZES)
+            .map(|size| {
+                gui_status_style(size, false);
+                gui_status_h()
+            })
+            .collect();
+        gui_status_style(1, false);
+        assert_eq!(heights, [72, 78, 92]);
     }
 
     // The standard sizes the screens lay their elements out at (and the package kit gives a package): Settings' rows
