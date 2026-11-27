@@ -223,8 +223,9 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   64 px copied from the canvas as the stroke first reaches them), by the deposit's very arithmetic, and a pixel
   of the canvas becomes 0 once that is 16 (`SOLID_STEP`) or more below what the pixel was before the stroke;
   every other pixel keeps its value, so nothing is lightened and a pencil line or a highlight beside the stroke
-  stays as it was. Drawn live sample by sample or replayed, whole, in tiles, from a paste's first stroke or in
-  compaction's pieces (which share the stroke's shadow), the pixels are the same. The setting is read where a
+  stays as it was. Erase strokes at Solid restore such black whole or not at all (Erase strokes, below). Drawn
+  live sample by sample or replayed, whole, in tiles, from a paste's first stroke or in compaction's pieces
+  (which share the stroke's shadow), the pixels are the same. The setting is read where a
   brush begins (`brush_begin`, page.rs `stroke_brush_begin`, a thread-local `ink_edges()` that app_init and the
   row set), so every picture on the screen follows it: the live frames, the settled page, a page drawn whole,
   undo, the lasso, the Pages view, previews, cards and Live view. Exports draw inside
@@ -257,7 +258,11 @@ draws them. White ink and the precise eraser make them.
   each pixel (`canvas_restore_px`), never past it; a pixel a dab covers fully (coverage 0.999 or
   more) lands exactly on the paper. An erase stroke replays in stroke order like any other, so it
   takes away ink drawn before it, keeps the paper's lines (rules, staves, grid, dots) and leaves
-  later ink alone.
+  later ink alone. With Ink edges at Solid (2.3, #320; Brush model) a solid stroke's black (0 where the paper
+  is not) is restored whole or not at all, the mirror of the solid deposit: the restore Smooth would make goes
+  into the stroke's shadow, and the pixel takes its paper exactly once that is 16 (`SOLID_STEP`) or more above
+  0, else stays 0. So white ink or the precise eraser over solid ink leaves black or the paper, never a half
+  restored gray rim; every other pixel is restored as with Smooth.
 - The paper comes with the brush: `brush_set_erase` takes the paper under the canvas (NULL is
   white, right only for a canvas of ink alone). `stroke_brush_begin` starts a stroke's brush for
   drawing live and for a replay alike, so live drawing still equals re-rendering, as long as the
@@ -309,12 +314,15 @@ draws them. White ink and the precise eraser make them.
   the UI thread: on the device a heavily erased page can take tens of seconds, past the watchdog's
   15 s. Its read-only contract suits a forked child, as bgjob.c runs exports. On a page with a stroke
   Ink edges at Solid draws otherwise (page.rs `stroke_may_be_solid`) it checks under both settings,
-  each with its own reference: a stroke goes only when that changes neither drawing (an eraser's soft
-  rim brings a Smooth gray back to the paper in fewer dabs than a solid black pixel), so the page reads
-  the same after under either setting. Such a page takes up to twice the time and two more canvases.
+  each with its own reference: a stroke goes only when that changes neither drawing (highlights bring a
+  faint Smooth gray to the highlighter's own gray, as they bring the paper, and leave a solid black under
+  them as it is), so the page reads the same after under either setting, whichever setting is in force
+  when it runs (a page compacted under Smooth can keep a stroke only Solid shows). Such a page takes up to
+  twice the time and twice the canvases (the page and its ink layer, per setting).
 - Memory: a render whose region erase strokes reach allocates a copy of the paper there, up to the
   region's size (4.6 MB for a whole 1860x2480 page, in an export's child too); `page_droppable`
-  needs two page-size canvases (one on white paper) and the pieces of the strokes it draws.
+  needs two page-size canvases (one on white paper), four on a page with a stroke Ink edges at Solid draws
+  otherwise (one pair per setting), and the pieces of the strokes it draws.
 - tests/test_erase.c holds `k_look`, CRCs of erase-stroke renders recorded from the 1.1 engine
   (`GRIMOIRE_GOLDEN_PRINT=1 build/test/test_erase` prints a fresh table). FORMAT.md freezes how an
   erase stroke draws from 1.1 on: re-record it only for a change meant to alter that look before

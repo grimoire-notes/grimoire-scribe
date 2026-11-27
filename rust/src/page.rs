@@ -71,9 +71,10 @@ pub fn stroke_brush_begin(b: &mut BrushState, s: &Stroke, dpi: f32, paper: Optio
         b.tip = stroke_tip(s);
     }
     if erase {
-        brush_set_erase(b, paper, x0, y0, stride);
+        brush_set_erase(b, paper, x0, y0, stride); // (Solid or not by the setting: brush_set_erase)
+    } else {
+        b.solid = stroke_solid(s, b.tip);
     }
-    b.solid = stroke_solid(s, b.tip);
 }
 
 /// Whether stroke s, drawn with tip variant `tip`, is drawn Solid now: Ink edges at Solid (ink_edges) and a
@@ -660,8 +661,8 @@ pub fn page_render_fingerprint() -> u64 {
 }
 
 /// The fingerprint of the renderer with Ink edges at e (2.3, #320): Smooth's is page_render_fingerprint; Solid's is
-/// that one with the ink page drawn Solid folded into it (taken once per process), so a change to how either ink
-/// draws, or to any paper, changes it too. Pictures drawn for the screen (Pages previews, Library cards, kept
+/// that one with the ink page drawn Solid folded into it, and a page of white ink and the eraser over solid ink
+/// (taken once per process), so a change to how either ink draws, or to any paper, changes it too. Pictures drawn for the screen (Pages previews, Library cards, kept
 /// drawings) are stamped with the one of the setting they were drawn under (page_render_fingerprint_screen), and
 /// none is shown under the other. 0 when there is no memory for a page.
 pub fn page_render_fingerprint_for(e: InkEdges) -> u64 {
@@ -670,13 +671,46 @@ pub fn page_render_fingerprint_for(e: InkEdges) -> u64 {
         InkEdges::Smooth => page_render_fingerprint(),
         InkEdges::Solid => *SOLID.get_or_init(|| {
             let fp = page_render_fingerprint();
-            match ink_edges_as(InkEdges::Solid, ink_fingerprint_page) {
-                Some(c) if fp != 0 => fnv_words(fp ^ 0x5011_d000_0000_0320, &c.px[..(c.w * c.h) as usize]),
+            match (ink_edges_as(InkEdges::Solid, ink_fingerprint_page), ink_edges_as(InkEdges::Solid, solid_erase_page)) {
+                (Some(c), Some(e)) if fp != 0 => {
+                    fnv_words(fnv_words(fp ^ 0x5011_d000_0000_0320, &c.px[..(c.w * c.h) as usize]), &e.px[..(e.w * e.h) as usize])
+                }
                 _ => 0,
             }
         }),
     }
 }
+// Solid's fingerprint's second page, drawn with the setting in force: a ballpoint line, white ink of the ballpoint along
+// it a pixel off, and the precise eraser across both (None when there is no memory for it).
+fn solid_erase_page() -> Option<Canvas> {
+    let mut p = page_new(120, 48, PAPER_NARROW);
+    let line = |t: ToolKind, seed: u32, y: f32, prm: &ToolParams| {
+        let mut s = stroke_new(t, prm, seed);
+        for k in 0..16 {
+            let f = k as f32 / 15.0;
+            stroke_append(&mut s, &PenSample { x: 10.0 + 100.0 * f, y, pressure: 0.3 + 0.6 * f, t_ms: k * 8, ..Default::default() }, 300.0);
+        }
+        s
+    };
+    let mut ink = ToolParams::default();
+    tool_params_default(TOOL_BALLPOINT, &mut ink);
+    let mut eraser = ToolParams::default();
+    tool_params_default(TOOL_ERASER, &mut eraser);
+    page_add(&mut p, line(TOOL_BALLPOINT, 0x5EED_0320, 24.0, &ink));
+    page_add(&mut p, line(TOOL_ERASER, erase_seed(TOOL_BALLPOINT, 0x0320), 25.0, &ink));
+    let mut across = stroke_new(TOOL_ERASER, &eraser, erase_seed(TOOL_ERASER, 0x0321));
+    for k in 0..12 {
+        stroke_append(&mut across, &PenSample { x: 60.0, y: 4.0 + 4.0 * k as f32, pressure: 0.5, t_ms: k * 8, ..Default::default() }, 300.0);
+    }
+    page_add(&mut p, across);
+    let mut c = Canvas::default();
+    if canvas_init(&mut c, p.w, p.h) != 0 {
+        return None;
+    }
+    work_pump_off(|| page_render(&mut c, &p, Rect { x: 0, y: 0, w: p.w, h: p.h }, 300.0));
+    Some(c)
+}
+
 /// The fingerprint of the renderer as the screen draws now: with the Ink edges setting in force (ink_edges).
 pub fn page_render_fingerprint_screen() -> u64 {
     page_render_fingerprint_for(ink_edges())

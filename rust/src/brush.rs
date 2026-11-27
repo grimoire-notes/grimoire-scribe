@@ -549,8 +549,8 @@ pub struct BrushState {
     /// after the dab) are pushed here (the exact-area lasso cuts a stroke at its own dabs, lasso.rs
     /// stroke_dabs). None = nothing kept (every draw).
     pub dab_log: Option<Vec<(PenSample, f32, f32, f32)>>,
-    /// Ink edges at Solid and a solid pen's stroke (brush_ink_solid): set by brush_begin and stroke_brush_begin,
-    /// never on an erase brush.
+    /// Ink edges at Solid and a solid pen's stroke (brush_ink_solid): set by brush_begin and stroke_brush_begin;
+    /// on an erase brush (brush_set_erase), Ink edges at Solid: a solid stroke's black is restored whole (put_px).
     pub solid: bool,
     /// a solid stroke's Smooth values over the pixels it touched (made as it first draws)
     pub shadow: Option<Box<SolidShadow>>,
@@ -762,7 +762,9 @@ pub fn brush_begin(b: &mut BrushState, t: ToolKind, p: &ToolParams, seed: u32, d
 /// right for a canvas of ink alone, wrong over paper with lines (it would wipe them).
 pub fn brush_set_erase(b: &mut BrushState, paper: Option<std::rc::Rc<Vec<u8>>>, x0: i32, y0: i32, stride: i32) {
     b.erase = true;
-    b.solid = false; // (erasing restores the paper exactly: never hard edged)
+    // (with Ink edges at Solid, a solid stroke's black comes back to its paper whole or not at all: put_px; any
+    // other pixel is restored as with Smooth)
+    b.solid = ink_edges() == InkEdges::Solid;
     b.restored = false;
     b.paper = paper;
     b.paper_x0 = x0;
@@ -832,9 +834,36 @@ struct DabTarget<'a> {
 // A solid stroke's pixel (SOLID, with its shadow): the Smooth deposit goes into the shadow, by
 // canvas_deposit_px_in's very arithmetic, and the pixel becomes 0 once that is SOLID_STEP or more below what the
 // pixel was before the stroke (the canvas holds it until then); 0 stays 0.
+// An erase stroke at Solid (ERASE and SOLID) over a solid stroke's black (0 where the paper is not): the mirror of
+// it. The restore Smooth would make goes into the shadow, by canvas_restore_px_in's arithmetic, and the pixel takes
+// its paper whole once that is SOLID_STEP or more above 0; until then it stays 0. So white ink or the precise
+// eraser over solid ink leaves black or the paper, never a half restored gray rim. Every other pixel is restored as
+// with Smooth.
 #[inline(always)]
 fn put_px<const ERASE: bool, const SOLID: bool>(t: &mut DabTarget, c: &mut Canvas, x: i32, y: i32, ad: f32, a: f32, paper: u8, sh: Option<&mut SolidShadow>) {
-    if SOLID {
+    if SOLID && ERASE {
+        let at = (y * c.stride + x) as usize;
+        if c.px[at] == 0 && paper != 0 {
+            let Some(sh) = sh else { return };
+            let sm = sh.px(c, x, y);
+            if *sm < paper {
+                if a >= 0.999 {
+                    *sm = paper;
+                } else {
+                    let v = (fmla((paper - *sm) as f32, ad, *sm as f32) + 0.5) as i32;
+                    if v > *sm as i32 {
+                        *sm = if v < paper as i32 { v as u8 } else { paper };
+                    }
+                }
+            }
+            if *sm as i32 >= SOLID_STEP {
+                c.px[at] = paper;
+                t.restored = true;
+            }
+            return;
+        }
+    }
+    if SOLID && !ERASE {
         let at = (y * c.stride + x) as usize;
         let was = c.px[at];
         let Some(sh) = sh else { return };
@@ -1209,7 +1238,9 @@ fn stamp(b: &mut BrushState, c: &mut Canvas, s: &PenSample) -> (Rect, f32) {
         }
         return out;
     }
-    if b.erase {
+    if b.erase && b.solid {
+        stamp_as::<true, false, true>(b, c, s)
+    } else if b.erase {
         stamp_as::<true, false, false>(b, c, s)
     } else if b.solid {
         stamp_as::<false, false, true>(b, c, s)

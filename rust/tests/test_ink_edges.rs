@@ -175,9 +175,10 @@ fn the_rule_takes_the_solid_pens() {
 }
 
 // With Solid, every stroke the rule leaves out draws exactly as with Smooth, over ink, pencil and gray: the pencils,
-// charcoal, the highlighter (both tips), white ink of every texture, the precise eraser, a ballpoint in a colour of a
-// palette and a ballpoint turned down to a light gray. (Erasing restores the paper, solid ink included, never hard
-// edged.)
+// charcoal, the highlighter (both tips), a ballpoint in a colour of a palette and a ballpoint turned down to a light
+// gray. White ink of every texture and the precise eraser too, but over a solid stroke's black: there a pixel takes
+// its paper whole where the Smooth restore lightens it by SOLID_STEP or more, and stays 0 where it does not (never a
+// gray between), the mirror of the solid deposit.
 fn the_other_tools_draw_as_smooth() {
     let (w, h) = (260, 200);
     let mut bg = backgrounds(w, h).remove(1).1; // the pencil line
@@ -207,20 +208,79 @@ fn the_other_tools_draw_as_smooth() {
     light.opacity_min = 0.5;
     light.opacity_max = 0.5;
     strokes.push(wave(TOOL_BALLPOINT, &light, 51, w, h, h as f32 * 0.5, 0.6, 0.6, 0.0, 0.0));
+    let mut paper = paper;
+    for (i, v) in paper.px.iter_mut().enumerate() {
+        if (i as i32 / w) % 23 == 7 {
+            *v = 200; // (a ruled paper's line: an erased solid pixel takes the line's gray back)
+        }
+    }
+    let mut erased = 0;
     for s in &strokes {
         check!(!stroke_may_be_solid(s));
         let mut smooth = bg.clone();
         draw(&mut smooth, s, InkEdges::Smooth, Some(&paper));
         let mut solid = bg.clone();
         draw(&mut solid, s, InkEdges::Solid, Some(&paper));
-        check!(smooth.px == solid.px);
         check!(smooth.px != bg.px);
+        if !stroke_is_erase(s) {
+            check!(smooth.px == solid.px);
+            continue;
+        }
+        let mut wrong = 0;
+        for i in 0..(w * h) as usize {
+            let want = if bg.px[i] != 0 { smooth.px[i] } else if smooth.px[i] as i32 >= SOLID_STEP { paper.px[i] } else { 0 };
+            wrong += (solid.px[i] != want) as i32;
+            erased += (bg.px[i] == 0 && solid.px[i] != 0) as i32;
+        }
+        check!(wrong == 0);
+        if wrong != 0 {
+            eprintln!("  erase stroke of texture {} at Solid: {wrong} pixels", s.seed >> 24);
+        }
     }
+    check!(erased > 10_000);
     // a highlighter or a pencil over a solid word changes none of its pixels (0 stays 0)
     for s in &strokes[..8] {
         let mut over = bg.clone();
         draw(&mut over, s, InkEdges::Solid, None);
         check!((0..(w * h) as usize).all(|i| bg.px[i] != 0 || over.px[i] == 0));
+    }
+}
+
+// White ink traced along a solid stroke with its own pen and settings, as one corrects a word: with Solid it takes
+// the stroke away and leaves no rim (the solid black under its soft edge comes back to the paper whole), where a gray
+// one half restored was left before; with Smooth it leaves what it always left. The precise eraser at its default size
+// leaves nothing either way.
+fn erasing_a_solid_stroke_leaves_no_rim() {
+    let (w, h) = (260, 120);
+    for t in SOLID_PENS {
+        let line = |seed: u32, tool: ToolKind, prm: &ToolParams| {
+            let mut s = stroke_new(tool, prm, seed);
+            stroke_mark_tip(&mut s);
+            for k in 0..=50 {
+                let f = k as f32 / 50.0;
+                stroke_append(&mut s, &PenSample { x: 30.0 + 200.0 * f, y: 60.3, pressure: 0.6, t_ms: k * 8, ..Default::default() }, DPI);
+            }
+            s
+        };
+        let ink = line(0x77, t, &params(t));
+        let white = line(erase_seed(t, 0x78), TOOL_ERASER, &params(t));
+        let eraser = line(erase_seed(TOOL_ERASER, 0x79), TOOL_ERASER, &params(TOOL_ERASER));
+        for e in [InkEdges::Smooth, InkEdges::Solid] {
+            for (what, s) in [("white ink", &white), ("the precise eraser", &eraser)] {
+                let mut c = canvas(w, h);
+                draw(&mut c, &ink, e, None);
+                check!(c.px.iter().any(|&v| v < 64));
+                draw(&mut c, s, e, None);
+                let darkest = *c.px.iter().min().unwrap();
+                let left = c.px.iter().filter(|&&v| v < 200).count();
+                // (Smooth's own trace: a faint one, no darker than 190 after white ink)
+                let ok = if e == InkEdges::Solid || what == "the precise eraser" { left == 0 } else { darkest >= 180 };
+                check!(ok);
+                if !ok {
+                    eprintln!("  {} erased by {what} at {:?}: darkest {darkest}, {left} pixels below 200", tool_name(t), e);
+                }
+            }
+        }
     }
 }
 
@@ -405,6 +465,7 @@ fn test_ink_edges() {
     run!(solid_is_the_threshold_of_smooth);
     run!(solid_widths_are_the_ones_judged);
     run!(the_other_tools_draw_as_smooth);
+    run!(erasing_a_solid_stroke_leaves_no_rim);
     run!(solid_draws_the_same_every_way);
     run!(exports_draw_smooth);
     done();

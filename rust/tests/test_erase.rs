@@ -1116,9 +1116,10 @@ fn compaction_is_the_rule() {
     check!(marked > 20); // the pages gave it plenty to mark
 }
 
-// Ink edges (2.3, #320): ink that erasing restores exactly with Smooth but not with Solid is kept. A thin calligraphy
-// line under three soft white strokes of other textures: each of its pixels drawn Smooth is brought back to the paper
-// by the white strokes' dabs, but where Solid drew it black, as many dabs leave a gray. Left out, the page would
+// Ink edges (2.3, #320): ink that Smooth buries and Solid shows is kept. A faint thin fineliner line under three
+// highlights: drawn Smooth its grays are all lighter than the highlighter's ink, and the highlights bring each of them
+// to the highlighter's own gray, as they bring the paper beside it; drawn Solid its black is below that ink, which
+// leaves it alone, so it shows through. A precise eraser across them makes it a candidate. Left out, the page would
 // read otherwise with Solid, so compaction keeps it; the slow rule with Smooth alone would not.
 fn compaction_keeps_what_solid_shows() {
     let sized = |t: ToolKind, mm: f32, op: Option<f32>| {
@@ -1129,27 +1130,28 @@ fn compaction_keeps_what_solid_shows() {
         if let Some(op) = op {
             p.opacity_min = op;
             p.opacity_max = op;
-            p.grain = 0.0;
         }
         p
     };
     let mut p = page_new(80, 50, PAPER_BLANK);
-    let mut s = stroke_new(TOOL_CALLIGRAPHY, &sized(TOOL_CALLIGRAPHY, 0.1 + 29.0 / 100.0, None), 5);
+    let mut s = stroke_new(TOOL_FINELINER, &sized(TOOL_FINELINER, 0.11, None), 5);
     for k in 0..12 {
-        stroke_append(&mut s, &PenSample { x: 15.0 + k as f32 * 4.0, y: 25.0, pressure: 0.3 + 50.0 / 100.0, t_ms: k * 6, ..Default::default() }, DPI);
+        stroke_append(&mut s, &PenSample { x: 15.0 + k as f32 * 4.0, y: 25.0, pressure: 0.09, t_ms: k * 6, ..Default::default() }, DPI);
     }
     page_add(&mut p, s);
-    for (tex, mm, op, dy) in [
-        (TOOL_FINELINER, 0.1 + 107.0 / 100.0, 0.5 + 10.0 / 100.0, -1.5f32),
-        (TOOL_CALLIGRAPHY, 0.1 + 102.0 / 100.0, 0.5 + 49.0 / 100.0, -0.5),
-        (TOOL_FOUNTAIN, 0.1 + 130.0 / 100.0, 0.5 + 15.0 / 100.0, -1.0),
-    ] {
-        let mut e = stroke_new(TOOL_ERASER, &sized(tex, mm, Some(op)), erase_seed(tex, 77));
+    for i in 0..3 {
+        let mut hl = stroke_new(TOOL_HIGHLIGHTER, &sized(TOOL_HIGHLIGHTER, 1.4, Some(0.73)), 30 + i);
+        hl.ext[2] = TIP_FIRST;
         for k in 0..16 {
-            stroke_append(&mut e, &PenSample { x: 8.0 + k as f32 * 4.0, y: 25.0 + dy, pressure: 1.0, t_ms: k * 6, ..Default::default() }, DPI);
+            stroke_append(&mut hl, &PenSample { x: 8.0 + k as f32 * 4.0, y: 25.0, pressure: 1.0, t_ms: k * 6, ..Default::default() }, DPI);
         }
-        page_add(&mut p, e);
+        page_add(&mut p, hl);
     }
+    let mut e = stroke_new(TOOL_ERASER, &sized(TOOL_ERASER, 1.0, None), erase_seed(TOOL_ERASER, 77));
+    for k in 0..12 {
+        stroke_append(&mut e, &PenSample { x: 40.0, y: 4.0 + k as f32 * 4.0, pressure: 1.0, t_ms: k * 6, ..Default::default() }, DPI);
+    }
+    page_add(&mut p, e);
     let n = p.strokes.len();
     let (mut fast, mut slow, mut smooth_only) = (vec![false; n], vec![false; n], vec![false; n]);
     let nf = page_droppable(&p, DPI, &mut fast);
