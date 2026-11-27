@@ -508,8 +508,9 @@ fn a_viewer_sends_the_pen_after_the_tiles_and_only_its_newest_place() {
     check!(frames >= 2 && frames <= (last_read.wrapping_sub(t0) / LIVE_PEN_MS) as i32 + 2);
     // 60 places in less time than 60 frames take: fewer frames than places. (Where every sleep ran as long as a
     // frame's time, a runner at background priority, each place can have a frame of its own: the bound above is
-    // then all there is to hold.)
-    check!(frames < 60 || moved >= 59 * LIVE_PEN_MS);
+    // then all there is to hold. A frame of its own for each needs the last place at least 58 frames' time after
+    // the first frame, which comes no sooner than the first place.)
+    check!(frames < 60 || moved >= 58 * LIVE_PEN_MS);
     check!(pen[0] == 69 && pen[1] == 150);
     // A pen that stays where it is is not told again; gone, it is told once.
     live_pen(LIVE_PEN_HOVER, 69.0, 150.0);
