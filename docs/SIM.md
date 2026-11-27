@@ -197,7 +197,7 @@ controls are `packages.close` (the X, which closes Settings), `packages.back` (t
 `packages.license-yes`, `packages.license-view`, `packages.license-prev`, `packages.license-next` and
 `packages.qr`; a settings row is `packages.setting.KEY` (or `packages.setting.N`); the repository
 address is typed on the regular keyboard (its Done installs, as Done answers every other keyboard).
-The Package Store is the home app row's fourth built-in app, `library app.store`. Its controls are
+The Package Store is the home app row's second built-in app, `library app.store`. Its controls are
 `store.close`, `store.back`, `store.refresh`, `store.filter.N` (0 all, 1 apps, 2 widgets, 3 installed),
 `store.package.ID`, `store.prev`, `store.next`, `store.shot.prev`, `store.shot.next`,
 `store.install`, `store.trust`, `store.accept`, `store.qr` and `store.retry`, the package page's

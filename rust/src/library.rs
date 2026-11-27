@@ -636,45 +636,45 @@ fn card_label_h() -> i32 {
 struct HomeApp {
     icon: AppIcon,
     label: String,
-    /// 0 Files, 1 Share, 2 Settings, 3 Package Store, or H_APP_PKG_BASE + an index into
-    /// app_package_list().
+    /// 0 Files, 1 Share, 3 Package Store, or H_APP_PKG_BASE + an index into app_package_list(). (2 was
+    /// Settings, which the header's gear and Quick settings open: it has no launcher.)
     arg: i32,
 }
 
-/// The installed apps, most recently used first: the four built-ins and every installed app
-/// package, interleaved by settings.ini recent_apps. Packages the index no longer has are dropped;
-/// installed packages the line has not seen follow in name order. Exit is in Settings' sidebar and
-/// What's new/About are utility links on the All apps page.
+/// The home app row's and the Apps page's launchers, in order (#319): Files, Package Store and Share
+/// first, always, whatever was used last; then the installed app packages, most recently used first
+/// by settings.ini recent_apps' `pkg:` tokens, then the installed packages not used yet, in name
+/// order. recent_apps' built-in tokens are still written (store.rs settings_app_used) but order
+/// nothing; packages the index no longer has are dropped. Settings is the header's gear, Exit is in
+/// Settings' sidebar, and What's new and About are the Apps page's foot buttons.
 fn home_apps(s: &Settings) -> Vec<HomeApp> {
-    let installed = crate::apppkg::app_package_list();
-    let core = [
+    home_apps_of(s, &crate::apppkg::app_package_list())
+}
+
+/// `home_apps` over the installed packages given (app_package_list(): in name order, and the index a
+/// package launcher's arg names).
+fn home_apps_of(s: &Settings, installed: &[crate::widgetpkg::WidgetInstall]) -> Vec<HomeApp> {
+    let mut out = vec![
         HomeApp { icon: AppIcon::glyph(IconKind::Browser), label: tr("Files").to_string(), arg: 0 },
-        HomeApp { icon: AppIcon::glyph(IconKind::Share), label: tr("Share").to_string(), arg: 1 },
-        HomeApp { icon: AppIcon::glyph(IconKind::Gear), label: tr("Settings").to_string(), arg: 2 },
         HomeApp { icon: AppIcon::glyph(IconKind::Package), label: tr("Package Store").to_string(), arg: 3 },
+        HomeApp { icon: AppIcon::glyph(IconKind::Share), label: tr("Share").to_string(), arg: 1 },
     ];
-    let mut out: Vec<HomeApp> = Vec::new();
     let mut seen_pkg: Vec<usize> = Vec::new();
-    for item in settings_recent_apps(s) {
-        match item {
-            RecentApp::Core(id) => out.push(core[id as usize].clone()),
-            RecentApp::Package(id) => {
-                if let Some(i) = installed.iter().position(|p| p.id == id) {
-                    if !seen_pkg.contains(&i) {
-                        seen_pkg.push(i);
-                        let it = &installed[i];
-                        let icon = AppIcon::for_install(it);
-                        out.push(HomeApp { icon, label: it.name.clone(), arg: H_APP_PKG_BASE + i as i32 });
-                    }
-                }
+    for id in settings_package_order(s) {
+        if let Some(i) = installed.iter().position(|p| p.id == id) {
+            if !seen_pkg.contains(&i) {
+                seen_pkg.push(i);
             }
         }
     }
-    for (i, it) in installed.iter().enumerate() {
+    for i in 0..installed.len() {
         if !seen_pkg.contains(&i) {
-            let icon = AppIcon::for_install(it);
-            out.push(HomeApp { icon, label: it.name.clone(), arg: H_APP_PKG_BASE + i as i32 });
+            seen_pkg.push(i);
         }
+    }
+    for i in seen_pkg {
+        let it = &installed[i];
+        out.push(HomeApp { icon: AppIcon::for_install(it), label: it.name.clone(), arg: H_APP_PKG_BASE + i as i32 });
     }
     out
 }
@@ -1971,8 +1971,8 @@ fn draw_base(a: &mut App) {
     }
 
     // The app row: small launchers with the icon in a rectangle and its name below, as a phone
-    // lays them out, most recently used first. Show All is a plain text link at the row's right
-    // margin, opening the Apps page.
+    // lays them out: Files, Package Store and Share, then the apps, most recently used first
+    // (home_apps). Show All is a plain text link at the row's right margin, opening the Apps page.
     let ay = top_h() + gap;
     let (ts, tw) = (apps_h(), app_tile_w());
     let show = tr("Show All");
@@ -6648,8 +6648,9 @@ pub(crate) fn library_app_used(a: &mut App, app: i32) {
     }
 }
 
-/// What the home's app tiles do: Files, Share, Settings and Package Store are the four installed
-/// apps. What's new and About are the All apps page's links at the foot, not app tiles.
+/// What the home's app tiles do: Files, Share and Package Store are the three built-in apps, the
+/// rest installed app packages. What's new and About are the All apps page's links at the foot, not
+/// app tiles.
 fn home_app(a: &mut App, app: i32) {
     if app >= H_APP_PKG_BASE {
         let i = (app - H_APP_PKG_BASE) as usize;
@@ -6669,10 +6670,6 @@ fn home_app(a: &mut App, app: i32) {
         1 => {
             lib(a).modal = Modal::None;
             share_open(a);
-        }
-        2 => {
-            lib(a).modal = Modal::None;
-            act(a, &Hit { id: H_SETTINGS, ..Default::default() });
         }
         3 => {
             // The Package Store is a Library sheet of its own: it opens without the Settings stack.
@@ -6700,9 +6697,10 @@ fn home_app(a: &mut App, app: i32) {
     }
 }
 
-/// The home's All apps page (2.3, issue #209): every built-in and installed app, most recently
-/// used first, over as many pages as it takes, then What's new and About as the two foot buttons.
-/// Exit is in Settings' sidebar.
+/// The home's All apps page (2.3, issue #209): every launcher of the home's row, in its order
+/// (home_apps: Files, Package Store and Share, then the apps, most recently used first), over as
+/// many pages as it takes, then What's new and About as the two foot buttons. Exit is in Settings'
+/// sidebar.
 fn draw_apps(a: &mut App) {
     let (aw, ah) = (a.w, a.h);
     let apps = home_apps(&a.settings);
@@ -11491,7 +11489,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
                         name.push_str(&it.id);
                     }
                 } else {
-                    name.push_str(["files", "share", "settings", "store", "", "", "whats-new", "about"].get(hit.arg as usize).copied().unwrap_or(""));
+                    name.push_str(["files", "share", "", "store", "", "", "whats-new", "about"].get(hit.arg as usize).copied().unwrap_or(""));
                 }
             }
             if matches!(hit.id, H_GESTURE_GROUP | H_BUTTON_GROUP) {
@@ -11844,6 +11842,79 @@ mod tests {
         let mut out = String::new();
         assert_eq!(library_probe(a, key, &mut out, 512), 0, "{key}");
         out
+    }
+
+    // The home row's order (#319): Files, Package Store and Share first, in that order, however the built-ins were
+    // used; then the installed apps, most recently used first by recent_apps' pkg: tokens, then the ones not used
+    // yet in name order (app_package_list's). Settings is never a launcher.
+    #[test]
+    fn the_home_row_pins_files_the_store_and_share_then_the_apps_by_use() {
+        i18n_set("en");
+        let pkg = |id: &str, name: &str| crate::widgetpkg::WidgetInstall { id: id.into(), name: name.into(), ..Default::default() };
+        // (in name order, as app_package_list gives them)
+        let installed = [
+            pkg("com.example.alpha", "Alpha"),
+            pkg("com.example.beta", "Beta"),
+            pkg("com.example.delta", "Delta"),
+            pkg("com.example.gamma", "Gamma"),
+        ];
+        let p = |i: i32| H_APP_PKG_BASE + i;
+        let order = |recent: &str| {
+            let mut s = Settings::default();
+            settings_default(&mut s);
+            s.recent_apps.set(recent);
+            home_apps_of(&s, &installed).iter().map(|h| h.arg).collect::<Vec<i32>>()
+        };
+        assert_eq!(order("files,share,settings,store"), [0, 3, 1, p(0), p(1), p(2), p(3)], "nothing used: the apps by name");
+        for recent in ["settings,store,share,files", "share,files,store,settings", "store,settings,files,share"] {
+            assert_eq!(order(recent), [0, 3, 1, p(0), p(1), p(2), p(3)], "{recent}: the three stay first, in order");
+        }
+        assert_eq!(
+            order("pkg:com.example.gamma,settings,pkg:com.example.gone,share,pkg:com.example.beta,store,files"),
+            [0, 3, 1, p(3), p(1), p(0), p(2)],
+            "the apps used, last used first (one no longer installed left out), then the rest by name"
+        );
+        let mut s = Settings::default();
+        settings_default(&mut s);
+        let apps = home_apps_of(&s, &[]);
+        assert_eq!(apps.iter().map(|h| h.label.as_str()).collect::<Vec<_>>(), ["Files", "Package Store", "Share"]);
+        assert!(!apps.iter().any(|h| h.arg == 2), "no Settings launcher");
+    }
+
+    // The row as the home draws it and the Apps page as Show All draws it follow home_apps (#319): the pinned three,
+    // left to right, and no Settings tile, whatever recent_apps says.
+    #[test]
+    fn the_home_row_and_the_apps_page_draw_the_pinned_three_and_no_settings() {
+        let root = std::env::temp_dir().join(format!("grimoire-home-row-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        let mut a = pen_record_app();
+        a.scr = ScreenId::Library;
+        settings_default(&mut a.settings);
+        a.settings.recent_apps.set("settings,store,share,files");
+        lib(&mut a).modal = Modal::None;
+        reload(&mut a);
+        let launchers = |a: &mut App| lib(a).hits.h.iter().filter(|h| h.id == H_APP).map(|h| (h.arg, h.r)).collect::<Vec<_>>();
+        for (w, h) in [(1860, 2480), (2480, 1860)] {
+            a.w = w;
+            a.h = h;
+            canvas_free(&mut a.screen);
+            assert_eq!(canvas_init(&mut a.screen, w, h), 0);
+            lib(&mut a).modal = Modal::None;
+            redraw(&mut a, RefreshMode::Ui);
+            let row = launchers(&mut a);
+            assert_eq!(row.iter().map(|l| l.0).collect::<Vec<_>>(), [0, 3, 1], "{w}x{h}: Files, Package Store, Share");
+            assert!(row.windows(2).all(|p| p[0].1.x < p[1].1.x && p[0].1.y == p[1].1.y), "{w}x{h}: in a row, left to right");
+            act(&mut a, &Hit { id: H_APPS, ..Default::default() });
+            assert_eq!(lib(&mut a).modal, Modal::Apps);
+            let page = launchers(&mut a);
+            assert_eq!(page.iter().map(|l| l.0).collect::<Vec<_>>(), [0, 3, 1, 6, 7], "{w}x{h}: the three, then What's new and About");
+            assert_eq!(page[..3].iter().map(|l| l.1.x).collect::<Vec<_>>(), row.iter().map(|l| l.1.x).collect::<Vec<_>>());
+            close_modal(&mut a);
+        }
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // The home is drawn with its bar's minute recorded, so a tick in that minute draws nothing again.

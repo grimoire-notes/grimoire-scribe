@@ -187,10 +187,11 @@ pub struct Settings {
     pub whatsnew_due: bool,
     /// One-time hints already shown, a bitmask (settings.ini hints; bit numbers: docs/FORMAT.md).
     pub hints: i32,
-    /// The home app row's order, most recently used first (settings.ini `recent_apps`): Files,
-    /// Share, Settings, and installed app packages as `pkg:<id>`, comma separated. A core app missing
-    /// from the line follows in the default order; an app package the package index no longer has is
-    /// ignored when the row is built.
+    /// The apps in the order they were used, most recently used first (settings.ini `recent_apps`):
+    /// Files, Share, Settings, Package Store, and installed app packages as `pkg:<id>`, comma
+    /// separated. A core app missing from the line follows in the default order. The home app row
+    /// takes only the packages' order from it, after Files, Package Store and Share (library.rs
+    /// home_apps, #319); an app package the package index no longer has is ignored there.
     pub recent_apps: FixedStr<512>,
     /// The eye: dotted boxes over the page where a finger tap follows a link (settings.ini link_areas).
     pub link_areas: bool,

@@ -2,15 +2,16 @@
 
 ## 2.3.0-beta.1 (2026-11-26)
 
-- **A new home** (#225, nebuff). The Library opens as a home screen: the status bar at the top, then the
-  Library's title with its Settings and Search buttons, a row of apps (Files, Share, Settings, Package Store and
-  any app installed, most recently used first) with Show All at its end, the All, Notebooks and Folders chips
-  beside Sort (Name (A-Z), Name (Z-A), Newest first, Oldest first), both kept across restarts, and the cards. The
-  + button at the bottom right makes a New notebook or a New folder, or opens Share (Import over Wi-Fi). Search
-  opens the keyboard and shows, as you type, the notebooks and folders in every folder whose names hold what is
-  typed. The top bar of New, Folder, Share, Settings and Exit is gone: Exit is at the foot of Settings' left
-  column.
-- **The Apps page and What's new** (#225, nebuff). Show All opens Apps: every app, most recently used first,
+- **A new home** (#225, nebuff; #319). The Library opens as a home screen: the status bar at the top, then the
+  Library's title with the Settings and Search buttons at the top right, a row of apps (Files, the Package Store
+  and Share first, always in that order, then any app installed, most recently used first) with Show All at its
+  end, the All, Notebooks and Folders chips beside Sort (Name (A-Z), Name (Z-A), Newest first, Oldest first), both
+  kept across restarts, and the cards. Settings is not in the row: the button at the top right and Quick settings
+  open it. The + button at the bottom right makes a New notebook or a New folder, or opens Share (Import over
+  Wi-Fi). Search opens the keyboard and shows, as you type, the notebooks and folders in every folder whose names
+  hold what is typed. The top bar of New, Folder, Share, Settings and Exit is gone: Exit is at the foot of
+  Settings' left column.
+- **The Apps page and What's new** (#225, nebuff; #319). Show All opens Apps: every app in the row's order,
   with What's new, About (Settings > System > About: device and storage) and Manage apps... at its foot. What's
   new is a screen of its own, no longer a card under the bat: every version down the left, newest first, and the
   notes of the one tapped at the right, set to fit. It still opens by itself once after each update, on this
