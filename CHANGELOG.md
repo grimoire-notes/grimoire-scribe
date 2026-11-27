@@ -27,8 +27,9 @@
   notebook it lies over the page's top margin with the page showing through; a tap on it hides it, and a tap on
   the top strip brings it back. There its minute's refresh waits while the pen is writing or near the screen,
   and comes once the pen has left (#242). Settings > Sleep & Clock > Status bar (was Clock settings) has Hide
-  status bar inside Notebooks, Display time as 12 hour and its size: small (92% of medium, #319), medium (the
-  default) or large; the corner rows are gone.
+  status bar inside Notebooks, Display time as 12 hour and its size: small (92% of medium, #319; the default,
+  #329), medium or large; the corner rows are gone. After the update from 2.2 or earlier a bar at medium (the
+  size those versions start with) becomes small; small and large stay as they were.
 - **Apps** (#225, nebuff; #238, #259). Full-screen programs packaged for Grimoire, installed from the Package
   Store. One opens from the home's app row or Apps, and two fingers swiped up from the bottom of the screen to
   the middle bring the home back in every app. Manage apps... at the foot of Apps has each app's settings page,
@@ -121,7 +122,8 @@
   Isometric 136 and Hexagon 119. Seyes rule, Blank and the music papers are unchanged. After the update a page kept
   drawn to open quickly is drawn once more, so it shows the new lines, and so are a notebook's previews in the
   Pages view as the view opens and its card in the Library as the notebook is next opened and left.
-- **Ink edges** (#320). Settings > Pen > Ink edges: Smooth (as before, the default) or Solid. With Solid the
+- **Ink edges** (#320, #329). Settings > Pen > Ink edges: Solid (the default) or Smooth (soft gray edges, as 2.2
+  and earlier drew). After the update from 2.2 the pens draw in Solid until Smooth is chosen. With Solid the
   ballpoint, fineliner, fountain pen, marker and calligraphy pen draw their strokes in pure black with hard edges:
   every pixel a stroke darkens by 16 levels or more (of 255, against what was there before it) becomes black, and
   the rest is left as it was. The page shows while you write what it shows after, so on a black-and-white screen the
