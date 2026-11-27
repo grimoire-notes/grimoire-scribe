@@ -76,7 +76,8 @@
   and more), or give it a picture from `grimoire/photos` (From a file... copies one in from anywhere on the Kindle).
   Picking one clears the other: the card shows the picture in place of the icon, and the plain folder while the
   picture's preview is made or if it goes. Kept in `grimoire/folder-looks.ini`, which older versions leave as it
-  is; renaming or moving a folder carries its look with it.
+  is; renaming or moving a folder carries its look with it. The icons are drawn filled, as Grimoire's other icons
+  are, the plain folder too (#331).
 - **Typing on a paired keyboard** (#266). While one of Grimoire's keyboards is open (a notebook's or a folder's
   name, a rename, Find, a page number, a Wi-Fi password, a search, the Package Store's), a paired keyboard's
   letters, digits, punctuation and Space type into it as its keys do (the US layout, with Shift), Backspace
