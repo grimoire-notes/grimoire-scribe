@@ -63,10 +63,6 @@ pub enum BgKind {
     /// exit. Ends 0 or 1, or 4 when the sandbox refused its worker a step (the session is then broken here too, and
     /// the pictures still queued are dropped).
     PackagePictures = 12,
-    /// id: none, path: none; every notebook's Library card that is not of its page as the child draws it now, with
-    /// the Ink edges setting it was forked with, drawn again (editor.rs bg_redraw_cards; queued as the setting
-    /// changes, 2.3, #320). Ends 0.
-    Cards = 13,
 }
 
 /// Queues a job (a queued duplicate, same kind, id and path, is merged). notify: report the result
@@ -437,8 +433,8 @@ struct Job {
 }
 
 // (by the kind's number)
-const K_KIND_NAMES: [&str; 14] =
-    ["export", "compaction", "template", "import", "map layout", "page previews", "library map layout", "PDF import", "font check", "file previews", "file copy", "page template", "package pictures", "cards"];
+const K_KIND_NAMES: [&str; 13] =
+    ["export", "compaction", "template", "import", "map layout", "page previews", "library map layout", "PDF import", "font check", "file previews", "file copy", "page template", "package pictures"];
 
 /// bgjob.c's g_q, g_n, g_pid, g_running_notify and g_running.
 struct State {
@@ -554,7 +550,6 @@ fn run_job(j: &Job) -> i32 {
         BgKind::PageTemplate => crate::bgwork_template::bg_page_template(j.id.as_str(), j.dir.as_str(), j.dpi),
         BgKind::FilePreviews => crate::bgwork_previews::bg_file_preview(j.dir.as_str()),
         BgKind::PackagePictures => crate::pkgpics::bg_package_picture(j.dir.as_str()),
-        BgKind::Cards => crate::editor::bg_redraw_cards(j.dpi),
     }
 }
 
@@ -640,8 +635,6 @@ fn rank(j: &Job) -> i32 {
         // A package's picture (2.3, issue #236): an icon or a Store picture of the screen in front, with Files'
         // previews and by their rule (first queued, first run).
         BgKind::PackagePictures => 4,
-        // the Library's cards after Ink edges changed (2.3, #320): what the Library shows, with Files' previews
-        BgKind::Cards => 4,
         // (an idle warm-up of the Pages view's previews: after anything asked for, with compaction)
         BgKind::PagePreviews => 5,
         _ => 5,
@@ -654,7 +647,6 @@ fn job_of(j: &Job) -> &str {
     match (j.id.is_empty(), j.kind) {
         (false, _) => j.id.as_str(),
         (true, BgKind::FilePreviews | BgKind::PackagePictures) => "a file",
-        (true, BgKind::Cards) => "the Library",
         (true, _) if template_pdf(j) => "a file",
         (true, _) => "a folder",
     }

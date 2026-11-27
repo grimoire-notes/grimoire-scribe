@@ -1858,22 +1858,6 @@ pub fn store_list(out: &mut Vec<NotebookInfo>) -> i32 {
     0
 }
 
-/// The ids of the Library's notebooks (their folders' names), in no order: nothing else read, nothing written, as a
-/// background job that visits each notebook wants (editor.rs bg_redraw_cards).
-pub fn store_notebook_ids() -> Vec<String> {
-    let dir = cformat!("%s/notebooks", &g_root());
-    let Ok(rd) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
-    rd.filter_map(|e| e.ok())
-        .filter_map(|e| {
-            let name = e.file_name();
-            let b = name.as_bytes();
-            (b.first() != Some(&b'.') && id_ok(b)).then(|| String::from_utf8_lossy(b).into_owned())
-        })
-        .collect()
-}
-
 /// Footer totals, reading one notebook at a time without retaining every page list or writing
 /// legacy size metadata. Unreadable notebooks are omitted just as they are in the Library.
 pub fn store_page_totals()->Option<(usize,usize)> {

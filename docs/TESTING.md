@@ -3714,8 +3714,8 @@ exports Smooth), `test_fbpack.rs` (a solid word's live frames through the RAM sh
 scaled view, `display.rs`'s unit tests (the scan in strips of 64 rows: every row read once, the pump called after each
 full strip and before an empty answer, the answer one pass gives in every rotation, no answer for a row that would
 leave the record; the log's counts), and the scenarios
-`z_ink_edges_1_row` to `_11_dense_switch` (zoomed in and sideways, the Library's
-cards after a change, a change over a dense page). The Kindle's own answer
+`z_ink_edges_1_row` to `_11_dense_switch` (zoomed in and sideways, a card that follows a change when its
+notebook is next opened and left, a change over a dense page). The Kindle's own answer
 (display_fbink.rs `display_settle_area`: its row mapping, inversion, pen mode left when it answers empty) runs only
 on a device: it was read against the driver's rules and compiled, never run.
 
@@ -3724,8 +3724,8 @@ on the screen at the pause after writing; a pencil word still settles in grays; 
 after writing stops; a word written, the notebook left and opened again looks the same; a highlight over a solid word
 leaves it as black as it was; zoomed in, and sideways with the page fitted, a ballpoint word also goes on in black and
 nothing changes at the pause; white ink traced along a solid word takes it away with no dark rim left; after a switch
-the Library's cards change to the new look within moments; the USB mirror's PDF of such a page has soft edges; and
-with Smooth everything is as in 2.2.0.
+a notebook's card in the Library keeps its look until the notebook is opened and left, then shows the new one; the
+USB mirror's PDF of such a page has soft edges; and with Smooth everything is as in 2.2.0.
 
 The driver, in twelve checks. Checks 2 to 6 and 9 must pass before Solid is offered, and check 6 failing holds the
 setting back. Start Grimoire fresh for checks 2 and 3 (the pen mode lines are logged only in a session's first 400

@@ -240,12 +240,13 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   fingerprint is Smooth's whatever the setting (`page_ink_fingerprint` draws in the Smooth scope); Solid's is
   `page_render_fingerprint_for(InkEdges::Solid)`, and the stamps of the screen's pictures (store.rs
   `preview_stamp`, `render_tag`) name the one of the setting they were drawn under, so a kept drawing, a
-  preview or a card of the other setting is drawn again once. The Library's cards are drawn again right after a
-  change, in the background (bgjob.rs `BgKind::Cards`, editor.rs `bg_redraw_cards`: each card whose source,
-  thumb.src, is not its page as the job's process draws it, with the setting it was forked with), so a notebook
-  not opened again keeps no card of the other setting; one with no card yet is left so. A change made over an
-  open notebook drops its undo patches and the pages kept in memory and draws its page again at once (editor.rs
-  `editor_ink_edges_changed`).
+  preview or a card of the other setting is drawn again once, each when it is next used: a kept drawing as its
+  page opens, a preview as the Pages view shows it, and a notebook's card when the notebook is next opened and
+  left (editor.rs `refresh_library_thumb`: the card's source, thumb.src, is no longer its page's as the stamp
+  names it now), as the cards follow a paper drawn otherwise. Nothing runs per notebook when the setting
+  changes, at a start or as the Library opens, so until then the Library shows a notebook's card as it was drawn
+  under the other setting. A change made over an open notebook drops its undo patches and the pages kept in
+  memory and draws its page again at once (editor.rs `editor_ink_edges_changed`).
 - The eraser removes whole strokes it touches, or with `eraser_mode` 1 (Precise) draws erase
   strokes (below); one pen-down..up is ONE undo step. The eraser end of the pen
   (BTN_TOOL_RUBBER) and holding the side button (BTN_STYLUS) erase regardless of the selected

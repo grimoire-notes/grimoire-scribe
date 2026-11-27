@@ -9001,8 +9001,8 @@ fn act(a: &mut App, h: &Hit) {
             redraw(a, RefreshMode::Ui);
         }
         // Ink edges (settings.ini ink_edges, 2.3): every brush begun from now on follows it, the open notebook's page
-        // is drawn again with it, the pictures kept under the other one are not shown (their stamps name it), and the
-        // Library's cards are drawn again with it in the background (a job forked after the setting is set).
+        // is drawn again with it, and the pictures kept under the other one are not shown (their stamps name it).
+        // Nothing is done per notebook here: a notebook's card is drawn again when it is next opened and left.
         H_SET_INK => open_modal(a, Modal::InkEdges),
         H_INK_PICK => {
             let pick = clampi(h.arg, 0, 1);
@@ -9012,7 +9012,6 @@ fn act(a: &mut App, h: &Hit) {
                 ink_edges_set(InkEdges::from_index(pick));
                 let _ = page_render_fingerprint_screen();
                 crate::editor::editor_ink_edges_changed(a);
-                bg_queue(BgKind::Cards, None, None, a.dpi, false);
             }
             lib(a).modal = Modal::Settings;
             redraw(a, RefreshMode::Ui);
