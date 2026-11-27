@@ -3,8 +3,10 @@
 # scale with every line as at 100%, the ink written on the other screen over it.
 # root: y_rulings_1_sideways
 # env: GRIMOIRE_SIM_SIZE=1920x2560
+# The status bar's clock is held still, since editor.screen_composed composes the bar with the page.
 # rust-only
-wait 300
+clock 1700000000
+wait 3600
 expect size is 1920x2560
 tap library card.1
 wait 500
