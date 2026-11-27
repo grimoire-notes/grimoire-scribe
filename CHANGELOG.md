@@ -113,13 +113,13 @@
   ballpoint, fineliner, fountain pen, marker and calligraphy pen draw their strokes in pure black with hard edges:
   every pixel a stroke darkens by 16 levels or more (of 255, against what was there before it) becomes black, and
   the rest is left as it was. The page shows while you write what it shows after, so on a black-and-white screen the
-  pause after writing sends no second redraw, zoomed in and sideways too. White ink and the precise eraser take a
-  solid stroke's black back to the paper whole where they reach it, leaving no gray rim. The pencils, charcoal, the
-  highlighter and a pen turned down to a light gray or given grain or Tilt lightens in Pen feel draw as before, and
-  PDF and PNG exports, Share and the USB mirror always draw with Smooth. Pages kept drawn to open quickly and the
-  Pages view's previews are drawn again once after a change, as each is next shown, and a notebook's card in the
-  Library when the notebook is next opened and left. In Polish and Japanese its texts are in English until they are
-  translated.
+  pause after writing sends no second redraw, zoomed in and sideways too. With Solid, white ink or the precise eraser
+  takes a solid pen's stroke away whole wherever it covers it at all, however light the pass, with no half-erased
+  gray left. The pencils, charcoal, the highlighter and a pen turned down to a light gray or given grain or Tilt
+  lightens in Pen feel draw as before, and PDF and PNG exports, Share and the USB mirror always draw with Smooth.
+  Pages kept drawn to open quickly and the Pages view's previews are drawn again once after a change, as each is
+  next shown. A notebook's card in the Library follows the change when the notebook is next opened and left. In
+  Polish and Japanese its texts are in English until they are translated.
 - **Polish and Japanese** (#315, nebuff). The texts of the new home, Apps, the Package Store and the rest of 2.2's
   and 2.3's screens are translated. In this beta 45 of 1,267 texts are still in English in each language: the
   Package Store's license steps, the package kit's messages, Manage apps... and Settings > Updates' version line.
