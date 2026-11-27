@@ -102,7 +102,9 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   page, each line fell at its own fraction of a pixel: at 0.75 (the whole page sideways) Seyes's inner
   lines came out in four shapes, the heaviest a third darker than the lightest on the 16 grays. The
   Links bar's preview of another page on the open page's paper is drawn the same way
-  (`peek_rules`). The 100% view, zooms of 100% and more, a pinch's fast frames, the dots, isometric,
+  (`peek_rules`). With Ink edges at Solid (2.3, #320) a solid stroke shows in these views as in every
+  scaled one, black or not at all, over the lines as drawn here (the settle with Ink edges at Solid,
+  below). The 100% view, zooms of 100% and more, a pinch's fast frames, the dots, isometric,
   hex and image papers (round marks, slanted lines and pictures, at fractions of a pixel on the page
   itself) are sampled from the page as before, and nothing drawn at page size (pages, exports,
   previews, kept drawings) changes.
@@ -138,10 +140,16 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   another level (value >> 4) than the screen holds now (`display_settle_area`), lighter pixels as well as darker
   ones (a shape snapped, an undo, the lasso and erasing take ink away), padded by 3 px (`SETTLE_MARGIN`), and
   refreshes only that in grays, or nothing at all: a solid word on any paper settles with no refresh. That holds
-  in a view that is not 1:1 too (zoomed, or a page fitted sideways), which compose scales bilinearly: with Solid, a
-  screen pixel whose page pixels include a solid stroke's black (0 where the page's paper is not) is black where
-  that ink has half its weight or more, else the blend with the ink's pixels taken as their paper (editor.rs
-  `blit_solid_edges`), so a solid stroke changes screen pixels only to black there as well. Only the
+  in a view that is not 1:1 too (zoomed, or a page fitted sideways), which compose scales: with Solid, a screen
+  pixel whose page pixels include a solid stroke's black (0 where the page's paper is not) is black where that ink
+  has half its weight or more, else what the same view shows with the stroke absent (editor.rs `solid_px`, one
+  rule and one pass, `solid_edges`, for both ways a view is drawn). The sampled view takes the blend with the
+  ink's pixels taken as their paper (`blit_solid_edges`). A view that draws a paper of rulings at the screen's
+  scale (issue #308, above) takes what is left of the taps over the paper it drew, which is that paper itself
+  where nothing else is written, so each line stays whole and even up to the stroke and under its edge
+  (`blit_canvas_ruled`: the answers are worked out over the drawn paper, before the ink is sampled over it, and
+  put over the result; a byte kept for each pixel that reads such ink). So a solid stroke changes screen pixels
+  only to black there as well, and the frames drawn while writing are the frame the settle composes. Only the
   settle's rect is judged; anything else due goes out as it would. The display's contract (display.rs): a platform
   answers the whole rect unless it knows what it last gave the panel at every pixel of it, so one that keeps no
   record (the default), or whose last frames may not all have reached the panel as written (a refresh refused or
