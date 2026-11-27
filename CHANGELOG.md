@@ -113,7 +113,8 @@
   ballpoint, fineliner, fountain pen, marker and calligraphy pen draw their strokes in pure black with hard edges:
   every pixel a stroke darkens by 16 levels or more (of 255, against what was there before it) becomes black, and
   the rest is left as it was. The page shows while you write what it shows after, so on a black-and-white screen the
-  pause after writing sends no second redraw, zoomed in and sideways too. With Solid, white ink or the precise eraser
+  pause after writing sends no second redraw, zoomed in and sideways too, except a small one where a stroke crosses
+  gray ink (pencil, charcoal, a highlight) in such a view. With Solid, white ink or the precise eraser
   takes a solid pen's stroke away whole wherever it covers it at all, however light the pass, with no half-erased
   gray left. The pencils, charcoal, the highlighter and a pen turned down to a light gray or given grain or Tilt
   lightens in Pen feel draw as before, and PDF and PNG exports, Share and the USB mirror always draw with Smooth.
