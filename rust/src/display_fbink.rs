@@ -1111,7 +1111,8 @@ fn send_refresh(s: &mut State, r: Rect, mode: RefreshMode, wfm: i32, flashing: b
             s.g_count[3],
             s.g_fail
         );
-        // (and what the settles with Ink edges at Solid answered, when one did since the last line: never with Smooth)
+        // (and what the settles with Ink edges at Solid answered, when one did since the last line. With Smooth no count
+        // rises: at most one line follows a switch from Solid, for the counts that rose before it.)
         if let Some(line) = settle_counts_line(&mut s.g_settles) {
             qlog!("%s", &line);
         }
@@ -1487,7 +1488,7 @@ pub fn display_close() {
 pub fn display_last_fast_waiting() -> bool { with(|s| s.last_fast_wait) }
 
 /// What display_settle_area's scan reads of the state, taken before its first strip and compared again at every
-/// strip and at its end: each is a hold of the state of its own, with the pens read between them (work_pump). The
+/// strip and at its end: each is a hold of the state of its own, with the pump called between them (work_pump). The
 /// pump moves input into its queue and reaches nothing of the display, which copy_rect relies on as well. Were any
 /// of this to differ all the same (a refresh sent, which alone writes the shadow and counts in g_presents; the
 /// screen turned, flipped or inverted; the frame no longer known; the panel closed), the rows scanned before would
@@ -1528,9 +1529,11 @@ fn settle_stamp(s: &State) -> SettleStamp {
 ///
 /// The rect is everything written since the last pause, most of the screen after a long burst, so the scan pumps
 /// input as a full-screen copy does (copy_rect): strips of 64 rows, each under one state borrow that is released
-/// for the pump, and the pens read once more before pen_leave, whose wait reads none (display.rs settle_area_strips
-/// walks the strips; never a pump inside a borrow). The answer is the one pass's: r whole if the state the scan
-/// reads changed between two strips (SettleStamp), which the pump cannot do.
+/// for the pump, and the pump called once more before pen_leave, whose wait reads no pens (display.rs
+/// settle_area_strips walks the strips; never a pump inside a borrow). The pump reads the pens unless they were read
+/// under 8 ms before (input_evdev.rs input_pump), so they were read at most about 8 ms before that wait begins.
+/// The answer is the one pass's: r whole if the state the scan reads changed between two strips (SettleStamp), which
+/// the pump cannot do.
 ///
 /// Each answer is counted (g_settles: quiet, part, or whole with its reason), for the line send_refresh writes
 /// beside its refresh counts; only a reason's first whole answer of the session writes a line here (settle_whole).

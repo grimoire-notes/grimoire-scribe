@@ -306,18 +306,19 @@ pub fn settle_area_pad(found: Rect, r: Rect) -> Rect {
     rect_intersect(rect_inflate(found, SETTLE_MARGIN), r)
 }
 
-/// The rows a display_settle_area that scans its record under a hold of its state takes between two reads of the
-/// pens: a full-screen copy's strip (display_fbink.rs copy_rect).
+/// The rows a display_settle_area that scans its record under a hold of its state takes between two calls of the
+/// pump: a full-screen copy's strip (display_fbink.rs copy_rect).
 pub const SETTLE_STRIP_ROWS: i32 = 64;
 
 /// display_settle_area's scan of c (clipped already) in strips of SETTLE_STRIP_ROWS rows, top to bottom, every row
 /// in exactly one strip. `strip(y0, y1)` scans rows y0..y1 and answers the box of the pixels it found there
 /// (RECT_EMPTY for none), or None when it cannot answer for them: the walk ends there with None, and the caller
-/// answers its whole rect. `pump()` (util.rs work_pump: the pens are read) runs after every strip of
-/// SETTLE_STRIP_ROWS rows, as after a full-screen copy's, and once more after a last, shorter strip (or after none)
-/// when no pixel was found: an empty answer is followed by leaving pen mode, which may wait, and a wait reads no
-/// pens. It never runs inside `strip`, so a strip may hold its platform's state. Some(the box of all that was found,
-/// padded by SETTLE_MARGIN and clipped to c): what one pass over c gives.
+/// answers its whole rect. `pump()` (util.rs work_pump, which reads the pens unless they were read under 8 ms
+/// before: input_evdev.rs input_pump) is called after every strip of SETTLE_STRIP_ROWS rows, as after a full-screen
+/// copy's, and once more after a last, shorter strip (or after none) when no pixel was found: an empty answer is
+/// followed by leaving pen mode, which may wait, and a wait reads no pens, so a call always comes between the last
+/// row and that wait. It never runs inside `strip`, so a strip may hold its platform's state. Some(the box of all
+/// that was found, padded by SETTLE_MARGIN and clipped to c): what one pass over c gives.
 pub fn settle_area_strips(c: Rect, mut strip: impl FnMut(i32, i32) -> Option<Rect>, mut pump: impl FnMut()) -> Option<Rect> {
     let mut found = RECT_EMPTY;
     let mut pumped = false;
@@ -398,7 +399,7 @@ pub static K_SETTLE_WHOLE: [&str; SETTLE_WHOLE_KINDS] =
 
 /// What a display_settle_area that keeps a record has answered since the app started, for its log: plain counts,
 /// bumped as it answers and written out later, with the platform's refresh counts (settle_counts_line), so the
-/// settle itself writes no line for them. All stay 0 with Ink edges at Smooth, whose settle never asks.
+/// settle itself writes no line for them. None rises with Ink edges at Smooth, whose settle never asks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SettleCounts {
     /// every level matched: nothing sent, pen mode left
@@ -538,7 +539,7 @@ mod tests {
     enum Step {
         /// rows y0..y1 scanned
         Strip(i32, i32),
-        /// the pens read
+        /// the pump called (on a device it reads the pens unless they were read under 8 ms before)
         Pump,
     }
     use Step::{Pump, Strip};
@@ -565,16 +566,16 @@ mod tests {
     }
 
     #[test]
-    fn the_scan_reads_the_pens_after_each_full_strip_and_before_an_empty_answer() {
-        // nothing found: the pens are read after each strip of 64 rows, and once more when the last was shorter
-        // (or there was none), so that they are read between the last row and the wait that may follow
+    fn the_scan_pumps_after_each_full_strip_and_before_an_empty_answer() {
+        // nothing found: the pump is called after each strip of 64 rows, and once more when the last was shorter
+        // (or there was none), so that a call comes between the last row and the wait that may follow
         assert_eq!(walk(0, None).0, [Pump]);
         assert_eq!(walk(1, None).0, [Strip(40, 41), Pump]);
         assert_eq!(walk(63, None).0, [Strip(40, 103), Pump]);
         assert_eq!(walk(64, None).0, [Strip(40, 104), Pump]);
         assert_eq!(walk(65, None).0, [Strip(40, 104), Pump, Strip(104, 105), Pump]);
         assert_eq!(walk(128, None).0, [Strip(40, 104), Pump, Strip(104, 168), Pump]);
-        // something found: a refresh follows, not a wait, and the pens are read as a full-screen copy reads them
+        // something found: a refresh follows, not a wait, and the pump is called as a full-screen copy calls it
         assert_eq!(walk(1, Some(40)).0, [Strip(40, 41)]);
         assert_eq!(walk(63, Some(102)).0, [Strip(40, 103)]);
         assert_eq!(walk(64, Some(40)).0, [Strip(40, 104), Pump]);
@@ -601,7 +602,7 @@ mod tests {
                                 seen[(y - TOP) as usize] += 1;
                             }
                             next = y1;
-                            // a full strip is followed by a read of the pens, at once
+                            // a full strip is followed by a call of the pump, at once
                             if y1 - y0 == SETTLE_STRIP_ROWS {
                                 assert_eq!(steps.get(i + 1), Some(&Pump), "h {h}: after {s:?}");
                             }
@@ -643,7 +644,7 @@ mod tests {
             || steps.borrow_mut().push(Pump),
         );
         assert_eq!(d, None);
-        // no strip after it, and no read of the pens on its account
+        // no strip after it, and no call of the pump on its account
         assert_eq!(steps.into_inner(), [Strip(0, 64), Pump, Strip(64, 128), Pump, Strip(128, 192)]);
     }
 
@@ -720,8 +721,23 @@ mod tests {
                             let ((fx0, fy0), (fx1, fy1)) = (to_fb(c.x, y), to_fb(c.x + 1, y));
                             ((fy0 * PW + fx0) as isize, ((fy1 - fy0) * PW + (fx1 - fx0)) as isize)
                         };
-                        let got = settle_area_strips(c, |y0, y1| settle_strip_by_bytes(&screen, c, y0, y1, &shown, invert, row_at), || read += 1);
+                        // (how often each row of the screen is asked for: the strips' row scans read a row once)
+                        let rows = std::cell::RefCell::new(vec![0u32; lh as usize]);
+                        let got = settle_area_strips(
+                            c,
+                            |y0, y1| {
+                                settle_strip_by_bytes(&screen, c, y0, y1, &shown, invert, |y| {
+                                    rows.borrow_mut()[y as usize] += 1;
+                                    row_at(y)
+                                })
+                            },
+                            || read += 1,
+                        );
                         assert_eq!(got, Some(want), "rot {rot} flip {flip} invert {invert} round {round} rect {c:?}");
+                        for (y, &n) in rows.borrow().iter().enumerate() {
+                            let inside = c.y <= y as i32 && (y as i32) < c.y + c.h;
+                            assert_eq!(n, inside as u32, "rot {rot} flip {flip} invert {invert} round {round} rect {c:?}: row {y} read {n} times");
+                        }
                         let one = settle_strip_by_bytes(&screen, c, c.y, c.y + c.h, &shown, invert, row_at);
                         assert_eq!(one.map(|f| settle_area_pad(f, c)), Some(want), "rot {rot} flip {flip} invert {invert} round {round} rect {c:?}");
                         answers += 1;
@@ -731,7 +747,7 @@ mod tests {
                 }
             }
         }
-        // (the pictures gave both answers, over rects of more than one strip too, with the pens read)
+        // (the pictures gave both answers, over rects of more than one strip too, with the pump called)
         assert!(empties > 100 && answers - empties > 100 && tall > 100 && read > 100, "{empties} of {answers} empty, {tall} tall, {read} reads");
     }
 
@@ -796,6 +812,12 @@ mod tests {
         assert_eq!(settle_strip_by_bytes(&screen, c, 0, 30, &shown, false, |y| ((y * 40 - 1) as isize, 1)), None);
         assert_eq!(settle_strip_by_bytes(&screen, c, 0, 30, &shown, false, |y| ((y * 40 + 38) as isize, -1)), None);
         assert_eq!(settle_strip_by_bytes(&screen, c, 0, 30, &shown, false, |y| ((y * 40 + 39) as isize, -1)), Some(RECT_EMPTY));
+        // the edge: a row whose farthest byte would be the first one past the record (byte 1200 of 1200) has no
+        // answer, walked forward or backward, and the rows before it have theirs
+        assert_eq!(settle_strip_by_bytes(&screen, c, 0, 30, &shown, false, |y| ((y * 40 + 1) as isize, 1)), None);
+        assert_eq!(settle_strip_by_bytes(&screen, c, 0, 29, &shown, false, |y| ((y * 40 + 1) as isize, 1)), Some(RECT_EMPTY));
+        assert_eq!(settle_strip_by_bytes(&screen, c, 0, 30, &shown, false, |y| ((y * 40 + 40) as isize, -1)), None);
+        assert_eq!(settle_strip_by_bytes(&screen, c, 0, 29, &shown, false, |y| ((y * 40 + 40) as isize, -1)), Some(RECT_EMPTY));
         // and the scan in strips answers none then
         assert_eq!(settle_area_strips(c, |y0, y1| settle_strip_by_bytes(&screen, c, y0, y1, &shown[..40 * 29], false, plain), || {}), None);
     }
