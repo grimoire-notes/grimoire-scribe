@@ -295,7 +295,10 @@ fn nothing_is_sent_while_the_pairing_card_is_up() {
     check!(read_batch(sv[1], &mut seen, w, h, &mut hellos) == 1);
     if seen[105 * w as usize + 105] != 0 {
         // The viewer, looking at every tile again, read this one while live_push was still copying it: it is
-        // marked after the copy, so it comes again whole, in a batch of its own (live.rs live_push).
+        // marked after the copy, so it comes again whole, in a batch of its own (live.rs live_push). The tile it
+        // sent holds part of the change (it differed from what was sent before, and the change is all that
+        // differs), so no other tile was sent in its place.
+        check!((100..110).any(|y| (100..110).any(|x| seen[y * w as usize + x] == 0)));
         check!(read_batch(sv[1], &mut seen, w, h, &mut hellos) == 1);
     }
     check!(seen[0] == 200 && seen[105 * w as usize + 105] == 0 && hellos == 1);
