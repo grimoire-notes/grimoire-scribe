@@ -1025,6 +1025,25 @@ fn ink_edges_key() {
     unlink(&path);
 }
 
+// The defaults of #329: a fresh start (no settings.ini) has Ink edges at Solid and the status bar small, in notebooks
+// too, and its first save says so: no ink_edges line, status_size=0.
+fn fresh_settings_are_solid_and_small() {
+    let path = format!("{}/settings.ini", store_root());
+    unlink(&path);
+    let mut s = Settings::default();
+    settings_default(&mut s);
+    check!(s.ink_edges == 1 && s.status_size == 0 && s.status_on && s.status_in_notebooks);
+    let mut t = Settings::default();
+    check!(settings_load(&mut t) != 0 && !exists(&path));
+    check!(t.ink_edges == 1 && t.status_size == 0 && t.status_on && t.status_in_notebooks);
+    check!(t.version == SETTINGS_VERSION && SETTINGS_VERSION == 5);
+    check!(settings_save(&t) == 0 && has_pins_line(&path, "status_size=0") && has_pins_line(&path, "settings_version=5"));
+    check!(read_file(&path).is_some_and(|f| find(&f, "ink_edges").is_none()));
+    let mut u = Settings::default();
+    check!(settings_load(&mut u) == 0 && u.ink_edges == 1 && u.status_size == 0);
+    unlink(&path);
+}
+
 // A save writes ink_edges=smooth for Smooth and no line for Solid, the default, whatever the file said before.
 fn ink_edges_saved_only_at_smooth() {
     let path = format!("{}/settings.ini", store_root());
@@ -1579,6 +1598,7 @@ fn test_store() {
     run!(home_key);
     run!(pdf_gamma_key);
     run!(ink_edges_key);
+    run!(fresh_settings_are_solid_and_small);
     run!(ink_edges_saved_only_at_smooth);
     run!(settings_from_2_2_are_solid_and_small);
     run!(whatsnew_due_after_every_update);
