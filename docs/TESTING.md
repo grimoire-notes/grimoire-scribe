@@ -3711,8 +3711,9 @@ is the threshold of Smooth over every background, the other tools unchanged, eve
 exports Smooth), `test_fbpack.rs` (a solid word's live frames through the RAM shadow leave nothing to settle,
 `fbpack_level_span` in every rotation), `test_render_keep.rs`, `test_erase.rs` (compaction under both settings),
 `test_store.rs`, `test_tplsheet.rs` (a page made into a template's picture is Smooth), the editor's unit test of the
-scaled view, `display.rs`'s unit tests (the scan in strips of 64 rows: every row once, the pens read after each full
-strip and before an empty answer, the answer one pass gives in every rotation; the log's counts), and the scenarios
+scaled view, `display.rs`'s unit tests (the scan in strips of 64 rows: every row read once, the pump called after each
+full strip and before an empty answer, the answer one pass gives in every rotation, no answer for a row that would
+leave the record; the log's counts), and the scenarios
 `z_ink_edges_1_row` to `_11_dense_switch` (zoomed in and sideways, the Library's
 cards after a change, a change over a dense page). The Kindle's own answer
 (display_fbink.rs `display_settle_area`: its row mapping, inversion, pen mode left when it answers empty) runs only
@@ -3732,7 +3733,7 @@ refreshes, live frames included). Keep a root shell over SSH. Before each check 
 `dmesg -c > /dev/null`, and after it run:
 
     dmesg | grep -i -E "hwtcon|lut collision|WARNING"
-    grep -E "display: (pen mode|settle|refresh .* failed|refreshes so far|a clean still)|screen guard|main: .* took|input: " /mnt/us/grimoire/grimoire.log | tail -n 80
+    grep -E "display: (pen mode|settle|driver|refresh .* failed|refreshes so far|a clean still)|screen guard|main: .* took|input: " /mnt/us/grimoire/grimoire.log | tail -n 80
 
 A failure in dmesg is any of these lines: `wait marker[N] update timeout` (a wait sat out 5 s),
 `wait marker[N] submit timeout`, a WARNING with `BUG Here Find a pixel lut collision` (a pen update met a standard
@@ -3746,12 +3747,14 @@ whole rect, as 2.2 does, for the reason in the brackets (no frame known, a refre
 the panel, row out of range, state changed during the scan). The line is written with `display: refreshes so far`,
 at the first refresh 30 s or more after the last such line, and only when a count rose: after a check wait half a
 minute and tap a tool, then read it. The first whole answer of each reason in a session also writes
-`display: settle answered all of it: <reason>`, at once. With Smooth neither line is written. This line is what to
-read for checks 2, 4, 8 and 10.
+`display: settle answered all of it: <reason>`, at once. With Smooth no count rises (after a switch from Solid one
+`settles so far` line may still follow, with the counts that rose before it). This line is what to read for checks
+2, 4, 8 and 10.
 
 1. **Smooth is 2.2.** Ink edges at Smooth: a ballpoint word and a pencil word, a pause after each. Dotted rims
-   while writing, grays at the pause; `ui` in `refreshes so far` rises by one for each pause, and no `settles` line
-   is written. Failure: anything different from 2.2.0.
+   while writing, grays at the pause; `ui` in `refreshes so far` rises by one for each pause, and the `settles`
+   counts do not rise (no such line at all in a session that never had Solid on). Failure: anything different from
+   2.2.0.
 2. **Solid, blank paper, upright.** Ink edges at Solid: five ballpoint words, the pen lifted well away after each.
    Black ink at once, nothing changing at the pause. In the log `quiet` rises by five and `part` and `whole` do not,
    and `display: pen mode off -> 0` follows the first pauses. Failure: a flicker at the pause; `whole` rising (its
@@ -3786,9 +3789,12 @@ read for checks 2, 4, 8 and 10.
    longer, or that line.
 10. **A full page, sideways.** With Solid and the Scribe sideways, fill a good half of the page without pausing,
     lift the pen away and bring it straight back down to write. The new stroke is whole from its start. In the log
-    that pause counts as `quiet` (or `part`), with no `main: app_tick took N ms` over about 100 ms, no
-    `input: pen events dropped by the kernel` or `input: pressure/tilt events dropped by the kernel` line, and no
-    `state changed during the scan`. Failure: a missing start or a straight join, or one of those lines.
+    that pause counts as `quiet` (or `part`), with no `input: pen events dropped by the kernel` or
+    `input: pressure/tilt events dropped by the kernel` line and no `state changed during the scan`. A
+    `main: app_tick took N ms` line at that pause is expected and is no failure by itself (send it with the rest):
+    that tick holds the settle's compose, its scan (which calls the pump every 64 rows) and, on a quiet answer, the
+    wait for the pen's last frame to end, longer on a cold panel. Failure: a missing start or a straight join, an
+    `input: ... dropped by the kernel` line, or `state changed during the scan`.
 11. **A long session.** With Solid, five minutes of ballpoint writing on one page. Expected, and new: no full
     flash comes from writing. Look for anything building up on the page. Then erase a few words: the clean flash
     still comes once a quarter of the screen was erased. With Smart shapes on, snap a few circles: is a faint

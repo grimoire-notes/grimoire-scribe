@@ -179,15 +179,18 @@ nothing. The settle asks the display which part of its rect the panel shows at a
 than the page holds (`display_settle_area`, which on the Kindle compares the page with the bytes
 last written to the framebuffer). When there is none it waits for the pen's last update, as the
 grayscale refresh would have, and leaves pen mode with no refresh after it; the next stroke
-enters pen mode again at its first frame. The scan reads the pens every 64 rows, as the screen
-copy does, and once more before that wait (Reader stalls, below). grimoire.log counts what
+enters pen mode again at its first frame. The scan calls the pump every 64 rows, as the screen
+copy does, and once more before that wait (Reader stalls, below: the pump reads the pens unless
+they were read under 8 ms before, so they were read at most about 8 ms before the wait begins;
+the wait itself reads none, like the grayscale refresh's). grimoire.log counts what
 these settles answered: `display: settles so far: quiet N, part N, whole N (...)`, written with
 the refresh counts' line (`display: refreshes so far: ...`, at the first refresh 30 s or more
 after the last such line) when a count rose: quiet sent nothing, part sent the box of what
 differed, whole sent the whole rect as 2.2 does, with the reasons that occurred in brackets (no
 frame known, a refresh failed, colour panel, no record of the panel, row out of range, state
 changed during the scan). The first whole answer of each reason in a session also writes
-`display: settle answered all of it: <reason>`. With Smooth neither line is written.
+`display: settle answered all of it: <reason>`. With Smooth no count rises (after a switch from
+Solid one `settles so far` line may still follow, for the counts that rose before it).
 
 ## Reader stalls
 
