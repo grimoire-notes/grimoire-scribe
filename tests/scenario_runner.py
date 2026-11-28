@@ -547,10 +547,11 @@ def l10n(args, hooks):
         print('l10n: skipped the check that po/*.mo match po/*.po (msgfmt is not installed)')
     b = args.build
     langs = args.langs.split()
-    # The styles, and the settings.ini lines each runs with: Gothic and Classic (in Terminess, its default
-    # font), then Classic in each other font of Settings > Font (2.1, the Rust build's), in English and
-    # Spanish (Japanese takes its letters from DotGothic16 in every font).
-    inis = {'gothic': ['theme=gothic'], 'classic': ['theme=classic']}
+    # The styles, and the settings.ini lines each runs with: every theme (rust/src/looks/, a file each, named
+    # by its id; Classic in Terminess, its default font), then Classic in each other font of Settings > Font
+    # (2.1, the Rust build's), in English and Spanish (Japanese takes its letters from DotGothic16 in every font).
+    looks = sorted(p[:-3] for p in listdir('rust/src/looks') if p.endswith('.rs') and p != 'mod.rs')
+    inis = {t: [f'theme={t}'] for t in looks}
     for font in CLASSIC_FONTS:
         inis[f'classic-{font}'] = ['theme=classic', f'font={font}']
 
@@ -632,19 +633,21 @@ def l10n(args, hooks):
         # in each Classic style (the sheet is Classic's): files_card=1 for the Files card, each job held back.
         h = header('tests/l10n/fonts-add.qs')
         for lang in langs:
-            for style in [st for st in styles_for(lang) if st != 'gothic']:
+            for style in [st for st in styles_for(lang) if st == 'classic' or st.startswith('classic-')]:
                 n = f'fonts-add-{lang}-{style}'
                 t = task(n, 'tests/l10n/fonts-add.qs', f'{b}/scen/l10n/{n}',
                          [('GRIMOIRE_LANG', lang), ('GRIMOIRE_CHECK_FIT', '1'), ('GRIMOIRE_IMPORT_STABLE', 'fast'),
                           ('GRIMOIRE_BG_DELAY_MS', '800')], inis[style] + ['files_card=1'], 5.0)
                 t.copies, t.storage = h['copies'], True
-        # (and in Gothic, which has no Font sheet, the same font's card in Files)
+        # (and in the other themes, which draw in faces of their own and have no Font sheet, the same font's card
+        # in Files)
         h = header('tests/l10n/fonts-card.qs')
         for lang in langs:
-            n = f'fonts-card-{lang}-gothic'
-            t = task(n, 'tests/l10n/fonts-card.qs', f'{b}/scen/l10n/{n}',
-                     [('GRIMOIRE_LANG', lang), ('GRIMOIRE_CHECK_FIT', '1')], inis['gothic'] + ['files_card=1'], 3.0)
-            t.copies, t.storage = h['copies'], True
+            for style in [st for st in looks if st != 'classic']:
+                n = f'fonts-card-{lang}-{style}'
+                t = task(n, 'tests/l10n/fonts-card.qs', f'{b}/scen/l10n/{n}',
+                         [('GRIMOIRE_LANG', lang), ('GRIMOIRE_CHECK_FIT', '1')], inis[style] + ['files_card=1'], 3.0)
+                t.copies, t.storage = h['copies'], True
         # The file picker (2.1.0-beta.2) over a fixture storage root, in every language and style.
         fcopies = header('tests/l10n/files.qs')['copies']
         for lang in langs:

@@ -1696,7 +1696,7 @@ fn install_imports(linker: &mut Linker<HostState>) -> Result<(), String> {
     }).map_err(e)?;
     linker.func_wrap(ABI, "theme", |mut caller: Caller<'_, HostState>| -> Result<i32, wasmi::Error> {
         called(&mut caller)?;
-        Ok(matches!(ui_theme(), UiTheme::Classic) as i32)
+        Ok(ui_theme().index())
     }).map_err(e)?;
     linker.func_wrap(ABI, "status_bar_height", |mut caller: Caller<'_, HostState>| -> Result<i32, wasmi::Error> {
         called(&mut caller)?;
@@ -2310,7 +2310,7 @@ mod tests {
         };
         let inked = |c: &Canvas| c.px[(body.y * c.stride) as usize..].iter().filter(|p| **p != 255).count();
         let most = i32::MAX;
-        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+        for theme in UiTheme::all() {
             ui_set_theme(theme);
             // An icon by itself, and a letter at a place: drawn by the host at its own greatest sizes, and not
             // at all once those are aside.
@@ -2334,16 +2334,20 @@ mod tests {
                 }
             }
             // The kit's elements that draw an icon as large as they are, far larger than the body: each is the
-            // element with no icon, pixel for pixel, and no bitmap is asked for its icon.
+            // element with no icon, pixel for pixel, and no bitmap is asked for its icon. (A theme whose button
+            // keeps its sign small whatever the button, as Cassette's, draws it: one small glyph's bitmap.)
             for (import, with_icon, without) in [
                 ("fab", vec![-49_000, -49_000, 100_000, 100_000, 0, 4], None),
                 ("button", vec![-49_000, -49_000, 100_000, 100_000, 0, 0, 0, 4, 0], Some(vec![-49_000, -49_000, 100_000, 100_000, 0, 0, 0, 0, 0])),
                 ("text_field", vec![-200, -49_000, 2400, 100_000, 0, 4, 0, 0, 0, 0], Some(vec![-200, -49_000, 2400, 100_000, 0, 0, 0, 0, 0, 0])),
             ] {
                 let (c, asked) = pass(import, &with_icon, b"gear", true);
-                assert_eq!(asked, 0, "{theme:?}: {import} {with_icon:?}");
-                if let Some(without) = without {
-                    assert!(c.px == pass(import, &without, b"gear", true).0.px, "{theme:?}: {import} {with_icon:?} is the element with no icon");
+                let same = without.is_none_or(|without| c.px == pass(import, &without, b"gear", true).0.px);
+                if import == "button" && !same {
+                    assert!(asked <= 1, "{theme:?}: {import} {with_icon:?}: a small sign, {asked} asked");
+                } else {
+                    assert_eq!(asked, 0, "{theme:?}: {import} {with_icon:?}");
+                    assert!(same, "{theme:?}: {import} {with_icon:?} is the element with no icon");
                 }
             }
             // Sizes a screen has: the same picture with the host's own sizes and with them aside.

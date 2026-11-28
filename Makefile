@@ -74,6 +74,10 @@ FONTS := TerminessNerdFontMono-Regular.ttf TerminessNerdFontMono-Bold.ttf Jacqua
 # them; the C tree's build/gen/fonts.c keeps FONTS alone). Made by make fonts-subset.
 FONTS_CLASSIC := AtkinsonHyperlegibleNext-Regular.ttf AtkinsonHyperlegibleNext-Bold.ttf \
          NotoSans-Regular.ttf NotoSans-Bold.ttf Literata-Regular.ttf Literata-Bold.ttf
+# The themes' own faces (rust/src/looks/: Cassette's), embedded by rust/src/assets.rs as the
+# Classic fonts are. Made by make fonts-subset.
+FONTS_THEMES := JetBrainsMono-Regular.ttf JetBrainsMono-Bold.ttf SpaceMono-Regular.ttf SpaceMono-Bold.ttf \
+         ArchivoBlack-Regular.ttf
 $(BUILD)/gen/fonts.c: $(addprefix assets/,$(FONTS))
 	@mkdir -p $(BUILD)/gen
 	( cd assets && for f in $(FONTS); do xxd -i $$f; done ) > $@.tmp && mv $@.tmp $@
@@ -263,7 +267,7 @@ XGETTEXT_JS_FLAGS := --from-code=UTF-8 --language=JavaScript --add-comments=TRAN
 MSGFMT_FLAGS := --check --no-hash --endianness=little
 l10n:
 	@mkdir -p $(BUILD)/l10n
-	xgettext $(XGETTEXT_FLAGS) -o $(BUILD)/l10n/app.pot $(sort $(wildcard rust/src/*.rs rust/src/editor/*.rs))
+	xgettext $(XGETTEXT_FLAGS) -o $(BUILD)/l10n/app.pot $(sort $(wildcard rust/src/*.rs rust/src/editor/*.rs rust/src/looks/*.rs))
 	xgettext $(XGETTEXT_JS_FLAGS) -o $(BUILD)/l10n/studio.pot web/studio.js
 	awk '/^msgid / { if (n++) print "msgctxt \"studio\"" } { print }' $(BUILD)/l10n/studio.pot > $(BUILD)/l10n/studio-ctx.pot
 	msgcat --use-first -o po/grimoire.pot $(BUILD)/l10n/app.pot $(BUILD)/l10n/studio-ctx.pot
@@ -273,7 +277,7 @@ l10n:
 # The languages, checked (part of make check). Each committed po/<lang>.mo must be what msgfmt
 # makes of po/<lang>.po now: a .po changed without make l10n fails (where gettext is not
 # installed this part is skipped, and says so). Then tests/scenarios/y_all_screens.qs, which visits
-# every screen and sheet, runs in every language, Gothic and Classic, with GRIMOIRE_CHECK_FIT=1:
+# every screen and sheet, runs in every language and theme (rust/src/looks/), with GRIMOIRE_CHECK_FIT=1:
 # a run that cuts any text short to fit lists each ("fit[es]: ...") and exits with status 3. Its
 # shots, build/shots/l10n/<lang>-<style>/, show translators every screen in context. Then, in each
 # language, tests/l10n/long_root.qs opens Settings from a data root whose path is longer than the
@@ -329,8 +333,9 @@ $(BUILD)/host/mkicon: FORCE
 # fonts-subset FONTS_PYTHON=<venv>/bin/python. Then the Classic fonts (2.1): tools/fonts_classic.py
 # downloads Atkinson Hyperlegible Next, Noto Sans and Literata from Google Fonts' repository at pinned
 # commits into the same cache, checks them by SHA-256, and writes each family's Regular and Bold, static
-# and subset, with its OFL text (FONTS_CLASSIC below). FONTS_SUBSET_FLAGS=--verify writes nothing and
-# checks that the committed fonts are what the recipes make.
+# and subset, with its OFL text (FONTS_CLASSIC below). Then the themes' faces: tools/fonts_themes.py
+# downloads Cassette's fonts at pinned commits and subsets them as the Classic fonts are (FONTS_THEMES above). FONTS_SUBSET_FLAGS=--verify
+# writes nothing and checks that the committed fonts are what the recipes make.
 FONTS_PYTHON ?= python3
 FONTS_CACHE ?= $(HOME)/.cache/grimoire-fonts
 FONTS_SUBSET_FLAGS ?=
@@ -338,6 +343,7 @@ FONTS_SUBSET_FLAGS ?=
 fonts-subset:
 	$(FONTS_PYTHON) -I tools/fonts_subset.py --cache "$(FONTS_CACHE)" --keep assets/terminess-keep.txt --out assets $(FONTS_SUBSET_FLAGS)
 	$(FONTS_PYTHON) -I tools/fonts_classic.py --cache "$(FONTS_CACHE)" --out assets $(FONTS_SUBSET_FLAGS)
+	$(FONTS_PYTHON) -I tools/fonts_themes.py --cache "$(FONTS_CACHE)" --out assets $(FONTS_SUBSET_FLAGS)
 
 # The logo for the README and releases, black and white on transparent (committed, like the icon).
 # Pixel blocks of 8: shown at half size they land on whole pixels on ordinary and Retina screens.

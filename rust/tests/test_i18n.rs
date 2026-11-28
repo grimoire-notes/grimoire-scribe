@@ -10,11 +10,16 @@ use grimoire::prelude::*;
 use std::cell::RefCell;
 use testlib::*;
 
-const THEMES: [UiTheme; 2] = [UiTheme::Gothic, UiTheme::Classic];
-/// The styles text must fit in: Gothic, and Classic in each font of Settings > Font (2.1; FONT_FAMILIES,
-/// Terminess first). The fit checks below run in each.
-const STYLES: [(UiTheme, usize); 5] =
-    [(UiTheme::Gothic, 0), (UiTheme::Classic, 0), (UiTheme::Classic, 1), (UiTheme::Classic, 2), (UiTheme::Classic, 3)];
+/// The styles text must fit in: every theme, and a theme without faces of its own (Classic) in each font
+/// of Settings > Font (2.1; FONT_FAMILIES, Terminess first). The fit checks below run in each.
+fn styles() -> Vec<(UiTheme, usize)> {
+    UiTheme::all()
+        .flat_map(|t| {
+            let fams = if t.look().faces().is_some() { 1 } else { FONT_FAMILIES.len() };
+            (0..fams).map(move |f| (t, f))
+        })
+        .collect()
+}
 
 // ---- printf formats ----
 
@@ -782,7 +787,7 @@ fn rare_notices_fit() {
     for l in 0..i18n_language_count() {
         i18n_set(i18n_language_code(l).unwrap());
         let nt = rare_notices(&mut toasts);
-        for (th, fam) in STYLES {
+        for (th, fam) in styles() {
             ui_set_theme(th);
             font_set_family(fam);
             for s in toasts.iter().take(nt) {
@@ -845,14 +850,14 @@ fn rare_notices_fit() {
 fn the_links_bar_strings_fit() {
     for l in 0..i18n_language_count() {
         i18n_set(i18n_language_code(l).unwrap());
-        for (th, fam) in STYLES {
+        for (th, fam) in styles() {
             ui_set_theme(th);
             font_set_family(fam);
             let ts = ui_text_size();
             let small = ui_small_size();
             let at = |what: &str, w: i32, room: i32| {
                 if w > room {
-                    eprintln!("  {} {:?}: {} is {} px, room {}", i18n_current(), th as i32, what, w, room);
+                    eprintln!("  {} {:?}: {} is {} px, room {}", i18n_current(), th.id(), what, w, room);
                 }
                 w <= room
             };
@@ -962,7 +967,7 @@ fn gestures_and_record_card_strings_fit() {
     ];
     for language in ["en", "es"] {
         i18n_set(language);
-        for (theme, fam) in STYLES {
+        for (theme, fam) in styles() {
             ui_set_theme(theme);
             font_set_family(fam);
             for source in ["Pair", "Gestures", "Updates"] {
@@ -1046,7 +1051,7 @@ fn pen_gesture_labels_body_and_long_rows_fit() {
     font_set_overflow_hook(Some(hook));
     for language in ["en", "es"] {
         i18n_set(language);
-        for (theme, fam) in STYLES {
+        for (theme, fam) in styles() {
             ui_set_theme(theme);
             font_set_family(fam);
             for name in names {
@@ -1136,7 +1141,7 @@ fn copies_cut_between_characters() {
 fn raw_labels_fit() {
     for l in 0..i18n_language_count() {
         i18n_set(i18n_language_code(l).unwrap());
-        for (th, fam) in STYLES {
+        for (th, fam) in styles() {
             ui_set_theme(th);
             font_set_family(fam);
             let ss = ui_small_size();
@@ -1383,7 +1388,7 @@ fn button_labels_clear_the_carved_line() {
     font_set_overflow_hook(Some(hook));
     let word = "Compartir"; // 150 px under an icon in Gothic, 140 in Classic
     let whole = Rect { x: 0, y: 0, w: 400, h: 150 };
-    for th in THEMES {
+    for th in [UiTheme::Gothic, UiTheme::Classic] {
         ui_set_theme(th);
         for primary in [false, true] {
             let st = if primary { ButtonStyle::Primary } else { ButtonStyle::Plain };
@@ -1466,7 +1471,7 @@ fn button_grid_sizes() {
     let small = "Bass staff";
     let longer = "Tablatura, 4 l\u{ed}neas";
     let far = "A name far too long for one line";
-    for th in THEMES {
+    for th in [UiTheme::Gothic, UiTheme::Classic] {
         ui_set_theme(th);
         let ts = ui_text_size();
         let ss = ui_small_size();
@@ -1502,7 +1507,7 @@ fn button_grid_sizes() {
 // from Gothic's pointed ends (each 50 px deep) as the widest English does from them, 43 px;
 // Classic's round ends leave it room closer in.
 fn chips() {
-    for th in THEMES {
+    for th in UiTheme::all() {
         ui_set_theme(th);
         i18n_set("en");
         for pct in 50..=400 {

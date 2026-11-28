@@ -2553,7 +2553,7 @@ fn kind_word(p: &StorePackage) -> &'static str {
 }
 
 fn draw_tag(c: &mut Canvas, r: Rect, text: &str, selected: bool) {
-    let rad = if ui_theme() == UiTheme::Gothic { ui_px(10.0) } else { r.h / 2 };
+    let rad = look().corner(Corner::Tag(r.h));
     ui_frame(c, r, rad, if selected { 0 } else { 255 }, true, 0);
     ui_frame(c, r, rad, if selected { 0 } else { 150 }, false, ui_px(2.0));
     font_draw_centered(c, FontFace::Fixed, ui_small_size() * 0.82, r, text, if selected { 255 } else { 80 });

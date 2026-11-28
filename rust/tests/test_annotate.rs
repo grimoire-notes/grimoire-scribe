@@ -1034,7 +1034,7 @@ fn notices_fit() {
             tr("Couldn't add page from KOReader. Is the storage full?"),
             log.as_str(),
         ];
-        for th in [UiTheme::Gothic, UiTheme::Classic] {
+        for th in UiTheme::all() {
             ui_set_theme(th);
             for note in notes {
                 let lines = font_wrap_lines(FontFace::Bold, ui_text_size(), note, ui_toast_room(screen), None);

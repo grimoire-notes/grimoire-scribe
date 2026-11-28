@@ -1004,7 +1004,7 @@ fn back_screen(a: &mut App) -> ScreenId {
 }
 
 fn start(a: &mut App) {
-    let gothic = ui_theme() == UiTheme::Gothic;
+    let gothic = look().share_pages_gothic();
     let (port, dpi) = (a.settings.http_port, a.dpi);
     let started = if s(a).live {
         httpd_acquire(HTTPD_LIVE, port, dpi, gothic) == 0

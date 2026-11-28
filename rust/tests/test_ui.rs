@@ -291,7 +291,7 @@ fn toasts_fit_the_live_view_layer() {
     let was = ui_theme();
     let long = "A toast too long for two lines is cut to two, and the second line adds less than a one-line box, \
         so even this one, which goes on and on past where two lines end, is no taller than the bound.";
-    for theme in [UiTheme::Classic, UiTheme::Gothic] {
+    for theme in UiTheme::all() {
         ui_set_theme(theme);
         for screen in [(1860, 2480), (2480, 1860), (1986, 2648), (2648, 1986)] {
             let s = Rect { x: 0, y: 0, w: screen.0, h: screen.1 };

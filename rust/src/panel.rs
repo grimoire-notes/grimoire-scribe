@@ -63,9 +63,10 @@ pub fn panel_chip_w() -> i32 {
 pub fn panel_chip_px(f: PanelFit) -> f32 {
     ui_small_size() * if f.scale < 1.0 { f.scale } else { 1.0 }
 }
-/// What panel_chip_whole found an answer for: the page count, Gothic, Classic's font (font_look, 0 in Gothic),
+/// What panel_chip_whole found an answer for: the page count, the theme, Classic's font (font_look, 0 in a theme
+/// with faces of its own),
 /// the chip's text size (its bits) and the chip's width.
-type ChipKey = (i32, bool, usize, u32, i32);
+type ChipKey = (i32, UiTheme, usize, u32, i32);
 thread_local! {
     /// panel_chip_whole's last answer, with what it was found for
     static CHIP_WHOLE: std::cell::Cell<Option<(ChipKey, bool)>> = const { std::cell::Cell::new(None) };
@@ -80,8 +81,7 @@ thread_local! {
 /// fonts, as no count of 1000 or more fits in any of them.
 pub fn panel_chip_whole(npages: i32, f: PanelFit) -> bool {
     let (px, w) = (panel_chip_px(f), panel_chip_w());
-    let gothic = font_gothic();
-    let key = (npages, gothic, if gothic { 0 } else { font_look() }, px.to_bits(), w);
+    let key = (npages, ui_theme(), if font_theme_faces() { 0 } else { font_look() }, px.to_bits(), w);
     if let Some((k, whole)) = CHIP_WHOLE.get() {
         if k == key {
             return whole;

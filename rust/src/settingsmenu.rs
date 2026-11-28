@@ -213,11 +213,6 @@ pub static DARKER_NAMES: [&str; 3] = [
     nc_("darker lines", "Strong"),
 ];
 
-/// The style row's two labels: the current theme in parentheses, as Rotation names its two
-/// orientations.
-pub const STYLE_GOTHIC: &str = n_("Style (Gothic)");
-pub const STYLE_CLASSIC: &str = n_("Style (Classic)");
-
 /// The Display row's label where there is a front light to name, and where there is none (the sheet's own
 /// title then: no brightness or warmth).
 pub const DISPLAY_WITH_LIGHT: &str = n_("Display: brightness, warmth");
@@ -285,6 +280,7 @@ pub static CATEGORIES: &[Category] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::looks::UiTheme;
 
     fn ids(i: usize) -> Vec<SettingId> {
         CATEGORIES[i].items.iter().map(|it| it.id).collect()
@@ -361,8 +357,8 @@ mod tests {
         assert_eq!(text(4, 1), "Pair");
         assert_eq!(text(4, 2), "Gestures");
 
-        assert_eq!(STYLE_GOTHIC, "Style (Gothic)");
-        assert_eq!(STYLE_CLASSIC, "Style (Classic)");
+        assert_eq!(UiTheme::Gothic.look().style_label(), "Style (Gothic)");
+        assert_eq!(UiTheme::Classic.look().style_label(), "Style (Classic)");
         assert!(matches!(CATEGORIES[1].items[1].label, Label::Style));
         assert!(matches!(CATEGORIES[1].items[2].check, Check::DarkMode));
         assert!(matches!(CATEGORIES[1].items[3].label, Label::Font));

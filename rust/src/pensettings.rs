@@ -367,7 +367,13 @@ fn draw_pad_frame(a: &mut App) {
     }
 }
 
+/// The whole page, framed by the theme (Look::screen_overlay).
 fn draw_all(a: &mut App) {
+    draw_page(a);
+    crate::library::screen_overlay(a, 0);
+}
+
+fn draw_page(a: &mut App) {
     let (aw, ah) = (a.w, a.h);
     hits_clear(&mut st(a).hits);
     let mut title = String::new();
@@ -417,7 +423,7 @@ fn draw_all(a: &mut App) {
             let r = segs[i];
             // With this many tools the tabs are icons only; the title names the selected one.
             let on = s.tab == t;
-            ui_icon(c, ui_tool_icon(t.0), rect_inflate(r, -ui_px(14.0)), if on { 255 } else { 0 });
+            ui_icon(c, ui_tool_icon(t.0), rect_inflate(r, -ui_px(14.0)), ui_on_fg(on));
             hits_add(&mut s.hits, r, H_TAB, t.0);
         }
         // Graph + pad.
@@ -517,7 +523,7 @@ fn draw_all(a: &mut App) {
             c_("eraser", MODES[i as usize]),
             2,
             true,
-            if on { 255 } else { 0 },
+            ui_on_fg(on),
         );
         hits_add(&mut s.hits, r, H_ERASER_MODE, i);
     }

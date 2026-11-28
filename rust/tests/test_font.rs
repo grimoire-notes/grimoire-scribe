@@ -838,7 +838,7 @@ fn inverted_exclamation_is_not_an_i() {
         (FontFace::Fixed, 44.0),
         (FontFace::FixedBold, 44.0),
     ];
-    for theme in [UiTheme::Gothic, UiTheme::Classic] {
+    for theme in UiTheme::all() {
         ui_set_theme(theme);
         for z in 0..K.len() {
             let (f, px) = K[z];
@@ -869,13 +869,13 @@ fn inverted_exclamation_is_not_an_i() {
                     }
                 }
                 ok &= lowered && low >= base && low < base + font_descent(f, px);
-            } else {
-                ok &= low < base; // as the font has it: standing on the baseline
-            }
+            } else if theme == UiTheme::Classic || theme == UiTheme::Gothic {
+                ok &= low < base; // as Terminess and the families have it: standing on the baseline
+            } // (another theme's own face draws it as that face has it: below the baseline, it may)
             if !ok {
                 eprintln!(
                     "  {} face {} at {:.1} px: {}, lowest ink {} (baseline {})",
-                    if theme == UiTheme::Gothic { "gothic" } else { "classic" },
+                    theme.id(),
                     f as i32,
                     px,
                     if same { "drawn as an i" } else { "not an i" },

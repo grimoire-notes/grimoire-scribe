@@ -158,10 +158,10 @@ done
 check "the icons' notice names Material Design Icons and the Apache License" sh -c \
     'grep -qF "Pictogrammers Free License" "$1" && grep -qF "Apache License, Version 2.0" "$1"' sh assets/MaterialDesignIcons-LICENSE.txt
 check "the Apache-2.0 text is the license's" grep -qF "TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION" assets/MaterialDesignIcons-Apache-2.0.txt
-# Each font the binary embeds (FONTS and FONTS_CLASSIC in the Makefile) needs its OFL text: a
+# Each font the binary embeds (FONTS, FONTS_CLASSIC and FONTS_THEMES in the Makefile) needs its OFL text: a
 # licenses/<family>-OFL-1.1.txt whose family begins the font's file name (Terminess-OFL-1.1.txt
 # covers TerminessNerdFontMono-Regular.ttf, NotoSans-OFL-1.1.txt NotoSans-Bold.ttf).
-FONTS=$(awk '/^FONTS(_CLASSIC)?[ \t]*:=/ { on = 1; sub(/^FONTS(_CLASSIC)?[ \t]*:=/, "") }
+FONTS=$(awk '/^FONTS(_CLASSIC|_THEMES)?[ \t]*:=/ { on = 1; sub(/^FONTS(_CLASSIC|_THEMES)?[ \t]*:=/, "") }
     on { l = $0; sub(/\\$/, "", l); print l; if ($0 !~ /\\$/) on = 0 }' Makefile)
 nfonts=0
 for font in $FONTS; do
@@ -174,8 +174,8 @@ for font in $FONTS; do
     done
     check "payload has the OFL text for $font" is "$found" yes
 done
-check "the Makefile's FONTS and FONTS_CLASSIC name the embedded fonts ($nfonts)" [ "$nfonts" -ge 11 ]
-# The Classic fonts the binary embeds are the ones rust/src/assets.rs includes, and no other.
+check "the Makefile's FONTS, FONTS_CLASSIC and FONTS_THEMES name the embedded fonts ($nfonts)" [ "$nfonts" -ge 16 ]
+# The Classic and theme fonts the binary embeds are the ones rust/src/assets.rs includes, and no other.
 for font in $FONTS; do
     check "rust/src/assets.rs embeds $font" grep -qF "assets/$font\")" rust/src/assets.rs
 done

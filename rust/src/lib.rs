@@ -122,6 +122,7 @@ pub mod httpd;
 pub mod inkmode; // header only
 pub mod keyboard;
 pub mod library;
+pub mod looks; // the themes: how the app is drawn (Rust only)
 pub mod linkbar; // the Links bar: the page's links as numbered rows (Rust only, the Index's phase 1)
 pub mod linkcard; // the long-press card: what a held link (or bar row) can do (Rust only, the Index's phase 2)
 pub mod popout; // one popout: a card anchored beside what was held, its place (2.1, DESIGN.md "One popout")
@@ -219,6 +220,7 @@ pub mod prelude {
     pub use crate::clipboard::*;
     pub use crate::linkoutline::*;
     pub use crate::light::*;
+    pub use crate::looks::*;
     pub use crate::linkbar::*;
     pub use crate::linkcard::*;
     pub use crate::popout::*;

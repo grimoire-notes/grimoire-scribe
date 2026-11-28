@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Grimoire 2.1.0-beta.1\n"
 "Report-Msgid-Bugs-To: https://github.com/ganten1998/grimoire-scribe/issues\n"
-"POT-Creation-Date: 2026-11-26 15:53-0600\n"
+"POT-Creation-Date: 2026-11-27 17:57+0100\n"
 "PO-Revision-Date: 2026-11-10 00:00+0000\n"
 "Last-Translator: nebuff\n"
 "Language-Team: Japanese\n"
@@ -237,7 +237,7 @@ msgstr "ページに合わせる"
 msgid "Tool picker"
 msgstr "ツールピッカー"
 
-#: rust/src/actions.rs rust/src/library.rs
+#: rust/src/actions.rs rust/src/library.rs rust/src/looks/cassette.rs
 msgid "Paper"
 msgstr "紙"
 
@@ -840,6 +840,19 @@ msgstr ""
 msgid "Couldn't save shortcuts.ini"
 msgstr "shortcuts.iniを保存できませんでした"
 
+#. TRANSLATORS: also a toast, when a light or warmth action bound by hand is used on a
+#. device without a front light; 1700 px at 44 px.
+#. TRANSLATORS: in the Display page where the sliders would be (1420 px at 44 px).
+#: rust/src/app.rs rust/src/dispmenu.rs
+msgid "Front light controls are not available here."
+msgstr "フロントライトのコントロールはここでは利用できません。"
+
+#. TRANSLATORS: also a toast, when Warmth down or up (a key or gesture) is used on a front
+#. light without warmth; 1700 px at 44 px.
+#: rust/src/app.rs rust/src/dispmenu.rs
+msgid "This Kindle has no warmth control."
+msgstr "このKindleには暖かさコントロールがありません。"
+
 #. TRANSLATORS: light action before its cached level is known; toast, 1700 px at 44 px.
 #: rust/src/app.rs
 msgid "Light not ready."
@@ -1135,7 +1148,8 @@ msgstr "PDFまたは画像をインポート"
 #. TRANSLATORS: (also) the last tile of the Templates and Photos sheets, under its picture (a tile of about 250
 #. px, on two lines if need be): it opens the file picker to copy a picture from anywhere on the Kindle into
 #. grimoire/templates or grimoire/photos.
-#: rust/src/browser.rs rust/src/library.rs rust/src/tplsheet.rs
+#: rust/src/browser.rs rust/src/library.rs rust/src/looks/cassette.rs
+#: rust/src/tplsheet.rs
 msgid "From a file..."
 msgstr "ファイルから..."
 
@@ -1349,7 +1363,8 @@ msgstr "ホーム: %s"
 #. the main one), or at 34 px, or two lines of that.
 #: rust/src/browser.rs rust/src/calibrate.rs rust/src/editor.rs
 #: rust/src/keyboard.rs rust/src/library.rs rust/src/linkbar.rs
-#: rust/src/musicbuild.rs rust/src/pagesview.rs rust/src/share.rs
+#: rust/src/looks/cassette.rs rust/src/musicbuild.rs rust/src/pagesview.rs
+#: rust/src/share.rs
 msgid "Cancel"
 msgstr "キャンセル"
 
@@ -1433,8 +1448,8 @@ msgstr[0] "%d枚の画像をノートとしてインポート"
 
 #. TRANSLATORS: a held page's sheet in the Pages view, a row (about 950 px at 34 px): give the page
 #. a name (its naming keyboard, titled Page name).
-#: rust/src/browser.rs rust/src/library.rs rust/src/mapview.rs
-#: rust/src/pagesview.rs
+#: rust/src/browser.rs rust/src/library.rs rust/src/looks/cassette.rs
+#: rust/src/mapview.rs rust/src/pagesview.rs
 msgid "Rename"
 msgstr "名前を変更"
 
@@ -1499,7 +1514,8 @@ msgstr "ここに使えるものはありません。"
 #. TRANSLATORS: between the Library's page buttons (1320 px at 44 px).
 #. TRANSLATORS: between the home's page buttons, as before (1320 px at 44 px).
 #. TRANSLATORS: (also) between the Templates sheet's page buttons, in bold: 440 px at 44 px.
-#: rust/src/browser.rs rust/src/library.rs rust/src/tplsheet.rs
+#: rust/src/browser.rs rust/src/library.rs rust/src/looks/cassette.rs
+#: rust/src/tplsheet.rs
 #, c-format
 msgid "Page %d of %d"
 msgstr "%d/%dのページ"
@@ -1757,22 +1773,20 @@ msgstr "スリープ設定"
 msgid "Status bar"
 msgstr "ステータスバー"
 
-#. TRANSLATORS: in the Display page where the sliders would be (1420 px at 44 px).
-#: rust/src/dispmenu.rs
-msgid "Front light controls are not available here."
-msgstr "フロントライトのコントロールはここでは利用できません。"
-
 #: rust/src/dispmenu.rs
 msgid "Auto brightness (follow the room's light)"
 msgstr "明るさの自動調整（部屋に合わせる）"
 
 #: rust/src/dispmenu.rs
-msgid "This Kindle has no warmth control."
-msgstr "このKindleには暖かさコントロールがありません。"
-
-#: rust/src/dispmenu.rs
 msgid "Sideways, show the whole page"
 msgstr "横向きにページ全体を表示"
+
+#. TRANSLATORS: the Sleep settings page's one row on a device whose system owns sleep (its
+#. own timer and sleep picture): on keeps the screen from sleeping while Grimoire is open
+#. (Sleep after: never), off leaves it to the device. About 1500 px at 44 px, beside its switch.
+#: rust/src/dispmenu.rs
+msgid "Keep the screen on while Grimoire is open"
+msgstr ""
 
 #: rust/src/dispmenu.rs
 msgid "Sleep screen: Kindle PIN (native unlock)"
@@ -1818,7 +1832,7 @@ msgstr "カスタム音楽..."
 
 #. TRANSLATORS: the paper sheets' button that opens the Templates sheet, of pictures copied into
 #. grimoire/templates to write on as paper (a button: 348 px at 44 px, or two lines at 34 px).
-#: rust/src/editor.rs rust/src/library.rs
+#: rust/src/editor.rs rust/src/library.rs rust/src/looks/cassette.rs
 msgid "More layouts..."
 msgstr "さらにレイアウト..."
 
@@ -3205,21 +3219,21 @@ msgstr "+をタップして作成します。"
 
 #. TRANSLATORS: the new notebook's name, then its Rename button (268 px at 29 px, under its
 #. icon, inside Gothic's carved line), then the folder it goes in, or the Library itself.
-#: rust/src/library.rs
+#: rust/src/library.rs rust/src/looks/cassette.rs
 #, c-format
 msgid "Name: %s"
 msgstr "名前: %s"
 
-#: rust/src/library.rs
+#: rust/src/library.rs rust/src/looks/cassette.rs
 #, c-format
 msgid "In: %s"
 msgstr "で: %s"
 
-#: rust/src/library.rs
+#: rust/src/library.rs rust/src/looks/cassette.rs
 msgid "Library (top level)"
 msgstr "ライブラリ（最上位）"
 
-#: rust/src/library.rs
+#: rust/src/library.rs rust/src/looks/cassette.rs
 msgid "Create"
 msgstr "作成"
 
@@ -4420,6 +4434,12 @@ msgstr "ペンボタン"
 msgid "Eraser"
 msgstr "消しゴム"
 
+#. TRANSLATORS: the title of the list of the app's styles (Settings > Display > Style): Gothic,
+#. Classic and any other.
+#: rust/src/library.rs
+msgid "Style"
+msgstr ""
+
 #. TRANSLATORS: the title of the list of how dark the gray pages of a PDF imported from now on are drawn
 #. (Settings > System): Off, Medium, Strong.
 #: rust/src/library.rs
@@ -4762,6 +4782,35 @@ msgstr "リンクを削除"
 #: rust/src/linkcard.rs
 msgid "To change one, hold it on the page."
 msgstr "変更するには、ページ上でそれを押し続けます。"
+
+#: rust/src/looks/cassette.rs
+msgid "Style (Cassette)"
+msgstr "スタイル（カセット）"
+
+#. TRANSLATORS: a style in Settings > Display > Style: monospace type, corner brackets, dot-matrix
+#. icons (cassette futurism).
+#: rust/src/looks/cassette.rs
+msgid "Cassette"
+msgstr "カセット"
+
+#: rust/src/looks/classic.rs
+msgid "Style (Classic)"
+msgstr "スタイル（クラシック）"
+
+#. TRANSLATORS: a style in Settings > Display > Style: Terminess (or the font Settings > Font picks),
+#. rounded corners.
+#: rust/src/looks/classic.rs
+msgid "Classic"
+msgstr ""
+
+#: rust/src/looks/gothic.rs
+msgid "Style (Gothic)"
+msgstr "スタイル（ゴシック）"
+
+#. TRANSLATORS: a style in Settings > Display > Style: book and blackletter type, pointed arches.
+#: rust/src/looks/gothic.rs
+msgid "Gothic"
+msgstr ""
 
 #. TRANSLATORS: the Graph's view button says which view it shows, "View: All" or "View: Adjacent" (with
 #. "View: %s"): every page, or the pages adjacent to one (linked to it, and theirs). Also the selected page's
@@ -5868,14 +5917,6 @@ msgstr "中"
 msgctxt "darker lines"
 msgid "Strong"
 msgstr "強"
-
-#: rust/src/settingsmenu.rs
-msgid "Style (Gothic)"
-msgstr "スタイル（ゴシック）"
-
-#: rust/src/settingsmenu.rs
-msgid "Style (Classic)"
-msgstr "スタイル（クラシック）"
 
 #: rust/src/settingsmenu.rs
 msgid "Display: brightness, warmth"

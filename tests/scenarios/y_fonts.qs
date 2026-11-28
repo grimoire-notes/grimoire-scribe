@@ -124,11 +124,17 @@ tap library settings.cat.1
 wait 50
 tap library theme
 wait 100
+expect library.sheet is style
+tap library theme.gothic
+wait 100
 expect settings.theme is gothic
 expect library.ui_has.font is 0
 expect settings.font is atkinson
 shot 09-settings-gothic
 tap library theme
+wait 100
+expect library.sheet is style
+tap library theme.classic
 wait 100
 expect settings.theme is classic
 expect library.ui_has.font is 1

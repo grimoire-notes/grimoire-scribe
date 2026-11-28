@@ -8,7 +8,7 @@ fn the_widest_import_texts_fit_two_lines_in_every_language_and_style() {
     ui_init(300.0);
     assert_eq!(font_init(), 0);
     let screen = Rect { x: 0, y: 0, w: 1860, h: 2480 };
-    for style in [UiTheme::Gothic, UiTheme::Classic] {
+    for style in UiTheme::all() {
         ui_set_theme(style);
         for i in 0..i18n_language_count() {
             let code = i18n_language_code(i).unwrap();

@@ -21,6 +21,13 @@ pub static FONT_NOTO_SANS_REGULAR: &[u8] = include_bytes!("../../assets/NotoSans
 pub static FONT_NOTO_SANS_BOLD: &[u8] = include_bytes!("../../assets/NotoSans-Bold.ttf");
 pub static FONT_LITERATA_REGULAR: &[u8] = include_bytes!("../../assets/Literata-Regular.ttf");
 pub static FONT_LITERATA_BOLD: &[u8] = include_bytes!("../../assets/Literata-Bold.ttf");
+// The Cassette theme's faces (Rust only): JetBrains Mono for text, Space Mono for caps, Archivo Black
+// for titles, each under the SIL Open Font License 1.1 (its text beside it in assets/).
+pub static FONT_JETBRAINS_REGULAR: &[u8] = include_bytes!("../../assets/JetBrainsMono-Regular.ttf");
+pub static FONT_JETBRAINS_BOLD: &[u8] = include_bytes!("../../assets/JetBrainsMono-Bold.ttf");
+pub static FONT_SPACEMONO_REGULAR: &[u8] = include_bytes!("../../assets/SpaceMono-Regular.ttf");
+pub static FONT_SPACEMONO_BOLD: &[u8] = include_bytes!("../../assets/SpaceMono-Bold.ttf");
+pub static FONT_ARCHIVO_BLACK: &[u8] = include_bytes!("../../assets/ArchivoBlack-Regular.ttf");
 
 /// The licenses of the fonts the share pages use, the texts the release ships in app/licenses, one
 /// after another: httpd.rs serves them as /font/licenses.txt beside the fonts (Rust only).

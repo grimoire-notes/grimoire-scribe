@@ -1420,11 +1420,8 @@ pub fn keyboard_draw(kb: &mut Keyboard, c: &mut Canvas, screen: Rect) -> Rect {
     G_DRAWS.with(|g| g.set(g.get().wrapping_add(1)));
     let area = modal_rect_page(screen, kb.dock_y, kb.page);
     kb.area = area;
-    ui_frame(c, area, ui_px(24.0), 255, true, 0);
-    ui_frame(c, area, ui_px(24.0), 0, false, ui_px(6.0));
     let f = field_rect(area, kb.page);
-    ui_frame(c, f, ui_px(12.0), 255, true, 0);
-    ui_frame(c, f, ui_px(12.0), 0, false, ui_px(3.0));
+    look().keyboard_bed(c, area, f);
     let ts = ui_text_size();
     let title = kb.title.as_str();
     let (tr, face, size) = text_line(kb);
@@ -1498,9 +1495,7 @@ pub fn keyboard_draw(kb: &mut Keyboard, c: &mut Canvas, screen: Rect) -> Rect {
         } else {
             ButtonStyle::Plain
         };
-        ui_frame(c, key.r, ui_px(12.0), if st == ButtonStyle::Selected { 0 } else { 255 }, true, 0);
-        ui_frame(c, key.r, ui_px(12.0), 0, false, if st == ButtonStyle::Primary { ui_px(6.0) } else { ui_px(3.0) });
-        let fg = if st == ButtonStyle::Selected { 255 } else { 0 };
+        let fg = look().key_cap(c, key.r, st);
         let icon = line_icon(key.code);
         if icon != IconKind::None {
             ui_icon(c, icon, rect_inflate(key.r, -ui_px(16.0)), fg);
@@ -2627,7 +2622,7 @@ mod tests {
     #[test]
     fn caps_on_draws_a_bar_under_the_shift_label() {
         assert_eq!(font_init(), 0);
-        for th in [UiTheme::Gothic, UiTheme::Classic] {
+        for th in UiTheme::all() {
             ui_set_theme(th);
             for screen in [Rect { x: 0, y: 0, w: 1860, h: 2480 }, Rect { x: 0, y: 0, w: 2480, h: 1860 }] {
                 let shot = |shift: KbShift, pressed: bool| {
@@ -2990,7 +2985,7 @@ mod tests {
     #[test]
     fn a_tap_on_the_text_puts_the_caret_there_and_a_drag_selects() {
         assert_eq!(font_init(), 0);
-        for th in [UiTheme::Gothic, UiTheme::Classic] {
+        for th in UiTheme::all() {
             ui_set_theme(th);
             let screen = Rect { x: 0, y: 0, w: 1860, h: 2480 };
             let mut kb = opened(b"abcdef");
@@ -3310,7 +3305,7 @@ mod tests {
         assert_eq!(font_init(), 0);
         for lang in ["en", "es", "ja"] {
             i18n_set(lang);
-            for th in [UiTheme::Gothic, UiTheme::Classic] {
+            for th in UiTheme::all() {
                 ui_set_theme(th);
                 for screen in [Rect { x: 0, y: 0, w: 1860, h: 2480 }, Rect { x: 0, y: 0, w: 2480, h: 1860 }] {
                     let mut kb = opened(b"");

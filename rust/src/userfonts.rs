@@ -1636,7 +1636,7 @@ pub fn userfonts_apply(a: &mut App) -> bool {
 
 fn apply(a: &mut App) -> Applied {
     let rel = a.settings.font_file.as_str().to_string();
-    if rel.is_empty() || a.settings.theme != UiTheme::Classic as i32 {
+    if rel.is_empty() || UiTheme::from_i32(a.settings.theme).look().faces().is_some() {
         if font_own() {
             font_set_own(None);
         }
