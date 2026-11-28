@@ -311,3 +311,29 @@ pub fn fbpack_pen_region(r: Rect, width: i32, height: i32) -> Rect {
     let y = clampi(r.y - (h - r.h) / 2, 0, height - h);
     Rect { x, y, w, h }
 }
+
+/// fbpack_pen_region, kept clear of `keep` (#337): the panel's rows the app keeps out of every fast refresh (a
+/// notebook's bar drawn over the page), in the same coordinates, a strip along one edge of the panel (full height at
+/// its left or right, or full width at its top or bottom). The grown region is moved off the strip along the axis
+/// across it, keeping its size and r inside it, and staying inside the panel: its pixels are unchanged, and so is the
+/// rule it is grown for (6400 pixels at least). An r that meets the strip itself, or a strip on no edge, is grown as
+/// fbpack_pen_region grows it.
+pub fn fbpack_pen_region_clear(r: Rect, width: i32, height: i32, keep: Rect) -> Rect {
+    let q = fbpack_pen_region(r, width, height);
+    let keep = rect_intersect(keep, Rect { x: 0, y: 0, w: width, h: height });
+    if rect_is_empty(keep) || rect_is_empty(q) || !rect_overlaps(q, keep) || rect_overlaps(r, keep) {
+        return q;
+    }
+    let mut q = q;
+    if keep.h == height && keep.x == 0 {
+        q.x = q.x.max(keep.x + keep.w);
+    } else if keep.h == height && keep.x + keep.w == width {
+        q.x = q.x.min(keep.x - q.w);
+    } else if keep.w == width && keep.y == 0 {
+        q.y = q.y.max(keep.y + keep.h);
+    } else if keep.w == width && keep.y + keep.h == height {
+        q.y = q.y.min(keep.y - q.h);
+    }
+    let q = rect_intersect(q, Rect { x: 0, y: 0, w: width, h: height });
+    if rect_contains_rect(q, r) { q } else { fbpack_pen_region(r, width, height) }
+}

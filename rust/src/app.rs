@@ -2762,9 +2762,11 @@ fn app_flush_in(a: &mut App) {
 // bar, never anything drawn into its rows since the bar was (a selection's outline, a press let go: the bar as it was
 // last drawn is put back over them, editor_bar_over), and a fast refresh (black and white only, which would dither its gray)
 // stops at its band: the panel keeps the bar from the last grays refresh, which the screen holds too. The
-// display then never has the band in a fast frame (display_fbink.rs, the RAM shadow and the settle's record agree).
+// display then never has the band in a fast frame (display_fbink.rs, the RAM shadow and the settle's record agree),
+// and the padded pen mode's refresh region keeps clear of its rows (display_keep_top).
 fn band_keep(a: &mut App) {
     let band = crate::status::status_band_rows(a);
+    display_keep_top(band);
     if band <= 0 {
         return;
     }

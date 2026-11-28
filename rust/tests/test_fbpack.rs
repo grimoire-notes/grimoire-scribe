@@ -306,6 +306,58 @@ fn pen_refreshes_keep_coordinate_processing_at_every_edge() {
     check!(rect_is_empty(fbpack_pen_region(Rect { x: 0, y: 0, w: 1, h: 1 }, 0, 0)));
 }
 
+// A notebook's bar is drawn over the page (#337) and the app keeps its rows out of every fast refresh. The padded pen
+// mode grows a small frame's refresh region to 6400 pixels (fbpack_pen_region); a frame just under the bar would grow
+// into its rows. fbpack_pen_region_clear keeps the grown region off them, in each place the bar's rows take on the
+// panel (a strip along one edge, as the rotations put it), with the same size, the frame inside it and the region
+// inside the panel; a frame that meets the strip, or no strip, grows as before.
+fn pen_regions_grow_clear_of_the_bars_rows() {
+    let (w, h) = (1860, 2480);
+    let strips = [
+        Rect { x: 0, y: 0, w: 72, h },
+        Rect { x: w - 72, y: 0, w: 72, h },
+        Rect { x: 0, y: 0, w, h: 92 },
+        Rect { x: 0, y: h - 92, w, h: 92 },
+    ];
+    let mut moved = 0;
+    for keep in strips {
+        for rw in [1, 9, 33, 70, 129] {
+            for rh in [1, 9, 33, 70, 129] {
+                for along in [0, 400, 1200] {
+                    // frames touching the strip's inner edge and a little farther off, along it
+                    for off in [0, 1, 20, 60, 200] {
+                        let r = if keep.h == h {
+                            let x = if keep.x == 0 { keep.w + off } else { keep.x - off - rw };
+                            Rect { x, y: along.min(h - rh), w: rw, h: rh }
+                        } else {
+                            let y = if keep.y == 0 { keep.h + off } else { keep.y - off - rh };
+                            Rect { x: along.min(w - rw), y, w: rw, h: rh }
+                        };
+                        let grown = fbpack_pen_region(r, w, h);
+                        let q = fbpack_pen_region_clear(r, w, h, keep);
+                        check!(!rect_overlaps(q, keep));
+                        check!(rect_contains_rect(q, r));
+                        check!(rect_contains_rect(Rect { x: 0, y: 0, w, h }, q));
+                        check!(q.w == grown.w && q.h == grown.h);
+                        if !rect_overlaps(grown, keep) {
+                            check!(q == grown);
+                        } else {
+                            moved += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    check!(moved > 100);
+    // a frame in the strip, or no strip: as fbpack_pen_region grows it
+    let r = Rect { x: 10, y: 500, w: 9, h: 9 };
+    check!(fbpack_pen_region_clear(r, w, h, strips[0]) == fbpack_pen_region(r, w, h));
+    let r = Rect { x: 80, y: 500, w: 9, h: 9 };
+    check!(fbpack_pen_region_clear(r, w, h, RECT_EMPTY) == fbpack_pen_region(r, w, h));
+    check!(rect_overlaps(fbpack_pen_region(r, w, h), strips[0]));
+}
+
 fn frame_cached(memory: &mut [u8], previous: &mut [u8], shown: &mut [u8], src: &[u8], bpp: i32, rotation: i32, flip: bool, invert: bool, fast: bool, known: bool) {
     let w = if rotation & 1 != 0 { PH } else { PW };
     let h = if rotation & 1 != 0 { PW } else { PH };
@@ -513,6 +565,7 @@ fn test_fbpack() {
     run!(black_and_white_pixels_keep_the_ordered_dither);
     run!(no_cache_falls_back_and_invalidating_repaints);
     run!(pen_refreshes_keep_coordinate_processing_at_every_edge);
+    run!(pen_regions_grow_clear_of_the_bars_rows);
     run!(cached_shadow_matches_fbpack_row_without_reading_fb);
     run!(level_span_finds_what_differs_by_level);
     run!(solid_frames_leave_nothing_to_settle);

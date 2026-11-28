@@ -1194,7 +1194,10 @@ pub fn display_present(screen: &Canvas, r: Rect, mode: RefreshMode) {
         let mut r = if mode == RefreshMode::Full { Rect { x: 0, y: 0, w: s.PW, h: s.PH } } else { fb_rect(s, r) };
         let padded = s.g_pen_cfg != PenCfg::Direct;
         if mode == RefreshMode::Fast && s.g_pen_mode && padded && (s.g_st.current_rota & 1) != 0 {
-            r = fbpack_pen_region(r, s.PW, s.PH);
+            // (grown clear of the rows the app keeps out of fast refreshes, a notebook's bar: #337)
+            let top = display_kept_top().min(s.LH);
+            let keep = if top > 0 { fb_rect(s, Rect { x: 0, y: 0, w: s.LW, h: top }) } else { RECT_EMPTY };
+            r = fbpack_pen_region_clear(r, s.PW, s.PH, keep);
         }
         let ret = send_refresh(s, r, mode, wfm, flashing);
         let marker = fbink_get_last_marker();
