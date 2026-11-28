@@ -1487,6 +1487,48 @@ th, combining accents dropped), so Álgebra sorts among the A's; names that fold
 bytes. A name, folder or folders.ini line longer than 95 bytes is cut before the UTF-8 character
 that would cross the limit (`clean_line`).
 
+## The home: its header, app squares and rules (2.3, issues #319, #332)
+
+`library.rs` `draw_base`, with the kit's pieces in `globalui.rs`. Every band under the header is placed by one
+function from the band above it (`apps_top`, `title_rule_y`, `filters_top`, `section_break_cy`, `hair_rule_y`,
+`grid_top`; at the foot `fab_rect`, `foot_rule_y` and `pager_rects`), and the drawing, the hits and the
+scenarios' `library.home.*` keys (docs/SIM.md) all read them, so a tap lands where its control is drawn, upright and
+sideways, at every status bar size. The layout is the same in both themes and in a folder; the status bar's size
+moves everything under the header with it, and upright the cards stay two rows at every size.
+
+- **The header** is the one header (`gui_header`): the title (in a folder Back and the folder's name), then Search
+  and Settings at the far right. Nothing on the home opens What's new.
+- **The app row** is even squares (`gui_app_square`, `app_row_slots`, `home_row_squares`): 176 px at 300 dpi, as many
+  as fit between the margins with at least 40 px of paper between two, the same whole number of pixels between every
+  two, the row centred so its first square starts at the left margin and Show All, always the last square, ends at
+  the right one. An app's icon is drawn in a box a whole multiple of 64 px (`gui_app_icon_side`: 128 at 300 dpi), so
+  a package's 64 px icon is scaled by whole pixels. The Apps page lays its launchers out in the same columns.
+- **A long name** (`gui_app_label_fit`) is set whole where two lines can hold it: one line at the small size; else one
+  line at a smaller size down to four fifths of it where the face has sizes between (Classic's faces; Gothic's pixel
+  face has none); else two lines at the small size, broken at a space or between CJK characters. A name has the row's
+  step to fill, centred on its square; in the first and last columns only as much as stays inside the margins
+  (`launcher_label_w`), so a long name there takes the smaller size or the second line sooner. The row keeps two
+  lines' room under every square; a launcher's hit is what `gui_app_square` drew, its square and the box its name's
+  lines take (never wider than the step), so a tap on any letter lands on it and a press covers the whole name. A name
+  two lines cannot hold is broken or cut by font_draw_wrapped, which tells the fit check (make l10n-check runs every
+  language and style).
+- **The rules** (`gui_title_rule`, `gui_section_break`, `gui_hair_rule`, `gui_foot_rule`), margin to margin, each in
+  the paper between two parts: under the header the title rule (Gothic: 4 px black, 5 px of paper, 2 px black;
+  Classic: one 3 px line), as much paper over it as under it; between the app row and the sorting line the section
+  break, centred in the paper between the foot of the row's lowest name (one line or two) and the chips, which do not
+  move with it (Gothic: the divider under a Gothic sheet's title, a 2 px rule broken by a 16 px lozenge between two of
+  8, `ui_ornament`; Classic: one plain 2 px line of gray 102, a panel level darker than the light rule, no dots, which
+  a screen that pages could take for page dots); under the sorting line the light rule, 2 px of gray 136 (a panel
+  level) in both; and over the foot the title rule turned over (Classic: one 3 px line), placed from the + button so
+  40 px of paper stay between them. No mark lies in a hit's rectangle, so a press's fast refresh (black and white
+  only, `app_press_feedback`) never sends one; they change only when the whole home is drawn again.
+- **The foot**: the page arrows and "Page N of M" stand on the + button's centre line. The + button
+  (`gui_fab`) is Gothic's carved black square and, in Classic, a black rectangle with the theme's round corners
+  (`gui_radius`), the same size; an app's `fab` (docs/APPS.md) is drawn by the same function.
+- **The cards**: a card's picture (a notebook's page, a folder's picture) is held to the frame's shape, Gothic's cut
+  corners or Classic's round ones: `card_frame` paints the paper back outside the shape (`ui_frame_outside`) before
+  the outline, so nothing of a picture shows past the frame.
+
 ## What's new, the About sheet (2.0.0; every version's notes, 2.1.0)
 
 `about.rs`. The notes are a file for each version, `docs/whatsnew/VERSION.md` (2.1.0; until then the one
@@ -1495,9 +1537,10 @@ lines a paragraph, `{signature}` where the owner's signature goes. They are the 
 Through 2.2 the bat in the Library's top bar (or the name beside it) opened What's new as a card hanging from the
 bat: What's new and the version, this version's notes (each heading with its first bullet; notes without headings,
 every bullet and paragraph), the signature, Read all and Dismiss. Since 2.3 What's new is a full screen of its own
-(`about_draw`: every version down the left, the notes of the one picked at the right), and the bat stands left of
-the home's title at its top level (library.rs `draw_base`, globalui.rs `gui_header_lead`; Back and the folder's
-name in a folder): a tap on it or on the title opens What's new, as the Apps page's What's new does (#319).
+(`about_draw`: every version down the left, the notes of the one picked at the right). It opens from the Apps
+page's What's new (Show All on the home), and by itself once after an update. From #319 the bat stood left of the
+home's title and a tap on it or on the title opened What's new; since #332 the home has no bat and nothing on it
+opens What's new (the next section).
 
 - **The notes, a file a version** (2.1.0). build.rs lists `docs/whatsnew/*.md` into `NOTE_FILES`, each with
   the date of CHANGELOG.md's `## VERSION (YYYY-MM-DD)` heading (`unreleased` for `(unreleased)`, none

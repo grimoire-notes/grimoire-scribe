@@ -2,22 +2,26 @@
 
 ## 2.3.0-beta.1 (2026-11-27)
 
-- **A new home** (#225, nebuff; #319). The Library opens as a home screen: the status bar at the top, then
-  Grimoire's bat and the Library's title (a tap on either opens What's new) with the Settings and Search buttons
-  at the top right, a row of apps (Files, the Package Store and Share first, always in that order, then any app
-  installed, most recently used first) with Show All at its end, the All, Notebooks and Folders chips beside Sort
-  (Name (A-Z), Name (Z-A), Newest first, Oldest first), both kept across restarts, and the cards. Inside a folder
-  the bat's place has Back and the folder's name. Settings is not in the row: the button at the top right and
-  Quick settings open it. The + button at the bottom right makes a New notebook or a New folder, or opens Share
-  (Import over Wi-Fi). Search opens the keyboard and shows, as you type, the notebooks and folders in every folder
-  whose names hold what is typed. The top bar of New, Folder, Share, Settings and Exit is gone: Exit is at the
-  foot of Settings' left column.
-- **The Apps page and What's new** (#225, nebuff; #319). Show All opens Apps: every app in the row's order,
-  with What's new, About (Settings > System > About: device and storage) and Manage apps... at its foot. What's
-  new is a screen of its own, no longer a card under the bat: every version down the left, newest first, and the
-  notes of the one tapped at the right, set to fit. The bat on the home (or its title) opens it, as What's new on
-  Apps does, and it still opens by itself once after each update, on this version's notes; its X or Esc closes
-  it.
+- **A new home** (#225, nebuff; #319, #332). The Library opens as a home screen: the status bar at the top, then the
+  Library's title with the Search and Settings buttons at the top right (Settings at the far right), a row of apps as
+  even squares, each icon in the middle of its square and its name under it (Files, the Package Store and Share first,
+  always in that order, then any app installed, most recently used first), with Show All the row's last square, the
+  All, Notebooks and Folders chips beside Sort (Name (A-Z), Name (Z-A), Newest first, Oldest first), both kept across
+  restarts, and the cards. A name too long for one line under its square takes a smaller size or a second line, so
+  Grimoire's own names are whole in every language. The parts are ruled apart as a printed page is: a rule under the
+  title, an ornament between the apps and the chips (a plain gray line in Classic), a light gray rule under the chips
+  and a rule over the foot. Inside a folder Back and the folder's name are at the left. Settings is not in the row:
+  the button at the top right and Quick settings open it. The + button at the bottom right (a rounded rectangle in
+  Classic) makes a New notebook or a New folder, or opens Share (Import over Wi-Fi); the page arrows and "Page N of M"
+  stand level with it. A card's picture keeps to the card's corners. Search opens the keyboard and shows, as you type,
+  the notebooks and folders in every folder whose names hold what is typed. The top bar of New, Folder, Share,
+  Settings and Exit is gone: Exit is at the foot of Settings' left column.
+- **The Apps page and What's new** (#225, nebuff; #319, #332). Show All opens Apps: every app in the row's order,
+  in the row's squares, with What's new, About (Settings > System > About: device and storage) and Manage apps...
+  at its foot. What's new is a screen of its own, no longer a card under the bat: every version down the left,
+  newest first, and the notes of the one tapped at the right, set to fit. It opens from What's new on Apps, and it
+  still opens by itself once after each update, on this version's notes; its X or Esc closes it. The home has no
+  bat any more.
 - **Quick settings** (#225, nebuff). A one-finger pull down from the top of any screen, a notebook's or an app's
   too, opens Brightness and Warmth, Settings, Rotation lock (the screen stays turned as it is) and Auto
   brightness. A notebook's toolbar has no Display button any more: brightness and warmth are here, and the rest

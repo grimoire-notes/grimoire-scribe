@@ -20,7 +20,7 @@ wait 300
 expect editor.page is 1
 expect editor.loading_toasts is 1
 expect toast is
-expect display.presents is fast 50 588 402 536, ui 50 588 1093 1772, full 0 0 1860 2480
+expect display.presents is fast 50 730 402 536, ui 50 730 1093 1630, full 0 0 1860 2480
 pentap panel library
 wait 1500
 tap library notebook.previews

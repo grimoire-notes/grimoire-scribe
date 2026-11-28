@@ -1131,7 +1131,9 @@ impl AppRuntime {
                         gui_app_tile(c, at(r), &icon, &label, selected);
                         texts.push(label);
                     }
-                    DrawCmd::Fab(r, icon) => gui_fab(c, at(r), widget_icon(&icon)),
+                    DrawCmd::Fab(r, icon) => {
+                        gui_fab(c, at(r), widget_icon(&icon));
+                    }
                     DrawCmd::Card(r, style) => ui_card(c, at(r), button_style(style)),
                     DrawCmd::TextField(r, icon, text, hint) => {
                         gui_text_field(c, at(r), if icon.is_empty() { IconKind::None } else { widget_icon(&icon) }, &text, &hint);

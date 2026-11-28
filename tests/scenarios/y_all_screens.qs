@@ -1930,13 +1930,24 @@ tap library folder.A
 wait 100
 # The Apps page's foot buttons, then What's new: the full-screen browser with every version down
 # the left and the selected notes in the reader, upright and sideways; a version tapped in the
-# sidebar, and its X.
+# sidebar, and its X. The home's app row and the Apps page are seen sideways too, where a square's
+# step is narrower: a name that one line does not hold takes two (#332), and one cut short fails.
 tap library back
 wait 100
 shot 77b-library-app-row
+rotate 1
+wait 100
+shot 77c-library-app-row-sideways
+rotate 0
+wait 100
 tap library apps
 wait 100
 shot 78-apps
+rotate 1
+wait 100
+shot 78b-apps-sideways
+rotate 0
+wait 100
 tap library app.whats-new
 wait 100
 expect library.sheet is about

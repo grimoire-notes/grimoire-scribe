@@ -23,8 +23,9 @@ waitfor library.store.list.icons is 4
 wait 200
 expect library.store.view is list
 expect library.store.packages is 4
-# (the press is the Package Store's tile, the row's second, after Files: #319)
-expect display.presents is fast 314 252 240 200, ui 0 0 1860 2480, ui 0 0 1860 2480, ui 107 381 57 87, ui 701 381 57 87, ui 1295 381 57 87, ui 701 777 57 87
+# (the press is the Package Store's launcher as drawn, its square and its name, which is wider than the square: the
+# row's second, after Files: #319, #332)
+expect display.presents is fast 256 276 218 220, ui 0 0 1860 2480, ui 0 0 1860 2480, ui 107 381 57 87, ui 701 381 57 87, ui 1295 381 57 87, ui 701 777 57 87
 shot 00-four-icons
 waitbg
 expect display.presents not -1

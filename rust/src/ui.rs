@@ -159,6 +159,17 @@ pub fn ui_frame(c: &mut Canvas, r: Rect, radius: i32, gray: u8, filled: bool, t:
     }
 }
 
+/// ui_frame's shape turned inside out: `gray` over the part of r outside the shape ui_frame fills there (Gothic's
+/// cut corners, Classic's round ones). A Library card paints its paper back over its picture's corners with it, so
+/// nothing of the picture shows past its frame (#332).
+pub fn ui_frame_outside(c: &mut Canvas, r: Rect, radius: i32, gray: u8) {
+    if gothic() {
+        canvas_chamfer_rect_outside(c, r, radius + radius / 4, gray);
+    } else {
+        canvas_round_rect_outside(c, r, radius, gray);
+    }
+}
+
 /// A pointed (equilateral) arch: springers at (x0, ys) and (x1, ys), stroked with width w.
 // (3.14159265f is the C's float literal, not f32::consts::PI)
 #[allow(clippy::approx_constant, clippy::excessive_precision)]
@@ -220,8 +231,10 @@ pub fn ui_rule(c: &mut Canvas, x0: i32, x1: i32, y: i32, t: i32, gray: u8) {
     canvas_hline(c, x0, x1, y + t + ui_px(5.0), ui_px(2.0), gray);
 }
 
-/// An ornamental divider: thin rule broken by a lozenge with two small ones beside it.
-fn ornament(c: &mut Canvas, x0: i32, x1: i32, y: i32, gray: u8) {
+/// An ornamental divider centred on y: thin rule broken by a lozenge with two small ones beside it. Gothic's sheets
+/// draw it under their title, and the home between its app row and its sorting line (globalui.rs
+/// `gui_section_break`, #332).
+pub fn ui_ornament(c: &mut Canvas, x0: i32, x1: i32, y: i32, gray: u8) {
     let mid = (x0 + x1) / 2;
     let gap = ui_px(60.0);
     canvas_hline(c, x0, mid - gap, y - ui_px(1.0), ui_px(2.0), gray);
@@ -998,7 +1011,7 @@ pub fn ui_sheet(c: &mut Canvas, card: Rect, title: &str) -> Rect {
                 title,
                 0,
             );
-            ornament(c, card.x + ui_px(60.0), card.x + card.w - ui_px(60.0), card.y + th, 0,
+            ui_ornament(c, card.x + ui_px(60.0), card.x + card.w - ui_px(60.0), card.y + th, 0,
             );
             return ui_sheet_inner(card, true);
         }
