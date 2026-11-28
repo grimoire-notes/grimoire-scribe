@@ -3889,10 +3889,11 @@ tell (read grimoire.log over SSH; it names no file):
 2. **The chip and the question**: Files > Trash. Empty trash shows at the path bar's right once the rows have their
    sizes: note how long after the place opened. Tap it: "Empty the trash?" says how many entries (the `ls` count) and
    their size (close to the `du` figure: `du` counts blocks).
-3. **Empty trash**: its Empty trash. "Emptying the trash..." shows while it works and the pen stays quick; note the
-   time from the tap to the toast ("Deleted N entries, freed X."), and send grimoire.log's
-   `bg: the trash's emptying: ...` lines (one a run, each run at most 2 s). The place says "The trash is empty.";
-   `ls -a /mnt/us/grimoire/trash` shows nothing (no `.grimoire-emptying`), and `/mnt/us/grimoire/.cache/trash-emptied`
-   is gone (it stays only after a job Grimoire's exit left to finish, until the next Empty trash). The log has no `files: the storage keeps no advisory locks` line (if it has, send it).
+3. **Empty trash**: its Empty trash. "Emptying the trash..." shows while it works and the pen stays quick; note the time
+   from the tap to the toast ("Deleted N entries, freed X."), and send grimoire.log's `bg: the trash's emptying: ...`
+   lines (one a run, each run at most 2 s). The place says "The trash is empty."; `ls -a /mnt/us/grimoire/trash` shows
+   nothing (no `.grimoire-emptying`), and `/mnt/us/grimoire/.cache/trash-emptied` is gone (it stays only after a job
+   Grimoire's exit left to finish, until the next Empty trash). The log has no
+   `files: the storage keeps no advisory locks` line (if it has, send it).
 4. **The free space**: Settings > System > About right after: the free space grew by about the toast's figure (the
    storage rounds each file up to its blocks, so About may show a little more).

@@ -142,7 +142,9 @@ fn files_bytes(p: &str) -> u64 {
 
 // A link in the trash goes as a link, its target untouched: inside a notebook's folder, one to a file outside the
 // storage and one to a folder outside it; and an entry of the trash that is itself a link (to a folder outside: what
-// a swap leaves where a folder was listed). Nothing outside changes.
+// a swap leaves where a folder was listed). Nothing outside changes. The two entries that are links are given to the
+// job by name here: the Trash place lists only folders and files, so it never names a link at the trash's top (that
+// stays after Empty trash), and a name it listed can be a link by the time the job reaches it, as a swap leaves it.
 fn links_go_as_links() {
     let (root, g) = tree();
     let o = outside();

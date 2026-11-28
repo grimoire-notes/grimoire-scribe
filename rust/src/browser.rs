@@ -11,15 +11,15 @@
 //! moves it to the trash after asking as the Library asks before a notebook goes (the font Settings names is not
 //! deleted, and renamed it stays the font); the Trash place puts an entry back (Restore) and shows each entry's
 //! size and the trash's own (issue #144), and its Empty trash chip deletes every entry it lists for good, after its
-//! question, in a background job (2.3, issue #330: bgwork_empty.rs). After such a write the rows follow from the listing held: the folder
-//! shown is not read again (a font renamed has its check's results and its setting follow, and a notebook restored
-//! has the Library read: DESIGN.md says what each reads). A picture's card copies it into Grimoire's templates or
-//! photos (Use as template, Use as photo: the copy job, bgwork_copy.rs), and the Templates and Photos sheets' From
-//! a file... tile opens the picture pick (2.2, issue #146): pictures only, its card offering that sheet's copy. A
-//! font's card copies it into Grimoire's fonts the same way (Add to fonts), and the Font sheet's Add a font... opens
-//! the font pick (2.2, issue #161): fonts only, from the Kindle's own fonts folder first. A font is listed here by
-//! its name, size and date: nothing in this file opens one, and a font copied in is used only once its check has
-//! passed (userfonts.rs). Everything else is read only.
+//! question, in a background job (2.3, issue #330: bgwork_empty.rs). After such a write the rows follow from the
+//! listing held: the folder shown is not read again (a font renamed has its check's results and its setting follow, and
+//! a notebook restored has the Library read: DESIGN.md says what each reads). A picture's card copies it into
+//! Grimoire's templates or photos (Use as template, Use as photo: the copy job, bgwork_copy.rs), and the Templates and
+//! Photos sheets' From a file... tile opens the picture pick (2.2, issue #146): pictures only, its card offering that
+//! sheet's copy. A font's card copies it into Grimoire's fonts the same way (Add to fonts), and the Font sheet's Add a
+//! font... opens the font pick (2.2, issue #161): fonts only, from the Kindle's own fonts folder first. A font is
+//! listed here by its name, size and date: nothing in this file opens one, and a font copied in is used only once its
+//! check has passed (userfonts.rs). Everything else is read only.
 //!
 //! Everything it reads of the storage goes through fsview.rs: the walk (no link anywhere, one device, Grimoire's
 //! notebooks refused by identity, and in pick mode its PDFs and trash too), listings of names and kinds only in
@@ -2716,7 +2716,8 @@ impl Browser {
             // line, 44 px in bold, centred, at most about 1400 px.
             tr("The trash is empty.")
         } else {
-            // TRANSLATORS: a folder in the file picker with nothing in it a PDF import can use (one line, 44 px, centred).
+            // TRANSLATORS: a folder in the file picker with nothing in it a PDF import can use (one line, 44 px,
+            // centred).
             tr("Nothing here to use.")
         })
     }
@@ -3293,8 +3294,8 @@ impl Browser {
                         self.open_card(i);
                         self.show_card(a);
                     }
-                    // a trash entry Restore can put back: its card (a page, and a name of no known form, do nothing; nor
-                    // any entry while Empty trash is at work)
+                    // a trash entry Restore can put back: its card (a page, and a name of no known form, do nothing;
+                    // nor any entry while Empty trash is at work)
                     RowKind::Trashed if self.has_card(i) => {
                         self.open_card(i);
                         self.show_card(a);
@@ -3778,8 +3779,8 @@ impl Browser {
         }
     }
 
-    /// Empty trash at each tick (2.3, issue #330): the staying notice while its job is queued or running (between two of
-    /// its runs too), and the path bar drawn again when its chip comes (the trash's size is known now) or goes.
+    /// Empty trash at each tick (2.3, issue #330): the staying notice while its job is queued or running (between two
+    /// of its runs too), and the path bar drawn again when its chip comes (the trash's size is known now) or goes.
     fn empty_tick(&mut self, a: &mut App) {
         let working = crate::bgwork_empty::empty_pending();
         if working && !self.empty_notice {

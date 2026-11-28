@@ -23,8 +23,13 @@ deletes the entries listed inside the trash only, in slices, leaving busy ones, 
   one on another device), which the log names as such.
 - **No lock where the storage has none**: on a storage where `flock` is refused, a restore and Empty trash in two
   processes at once (the detached child Grimoire leaves at exit, and a run started after it) are not kept apart by
-  the entry's lock; the screens keep them apart within one run. Whether the Scribe's storage takes the lock on a
-  folder is part of the device check.
+  the entry's lock; the screens keep them apart within one run. There a restore of a `files-...` entry the other
+  process's job is clearing can move its folder back while the job, inside it through its descriptor, goes on removing
+  its files. Whether the Scribe's storage takes the lock on a folder is part of the device check (this Mac's does).
+- **Previews wait for Empty trash**: its slices rank before Files' previews, the packages' pictures and the Pages
+  view's previews, so a Covers screen or the Package Store opened while a big trash empties shows its pictures after
+  the last slice (an export or the mirror waits at most one slice). Ranking the slices with the previews would let
+  them take turns.
 - **Spanish, Japanese and Polish** for the seven new texts: in English there until they are translated.
 
 ## PDFs as templates (2.2, issue #172): what waits, and what is for the owner

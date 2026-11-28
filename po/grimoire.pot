@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Grimoire 2.3.0-beta.1\n"
 "Report-Msgid-Bugs-To: https://github.com/ganten1998/grimoire-scribe/issues\n"
-"POT-Creation-Date: 2026-11-27 18:18-0600\n"
+"POT-Creation-Date: 2026-11-27 18:21-0600\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1527,7 +1527,8 @@ msgstr ""
 msgid "The trash is empty."
 msgstr ""
 
-#. TRANSLATORS: a folder in the file picker with nothing in it a PDF import can use (one line, 44 px, centred).
+#. TRANSLATORS: a folder in the file picker with nothing in it a PDF import can use (one line, 44 px,
+#. centred).
 #: rust/src/browser.rs
 msgid "Nothing here to use."
 msgstr ""

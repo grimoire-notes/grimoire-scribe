@@ -1326,10 +1326,10 @@ impl Budget<'_> {
 
 /// Removes everything inside the folder open at `dfd` (`depth` folders down from the trash), never through a link: each
 /// name looked at with no link followed, a folder entered by its descriptor (O_DIRECTORY|O_NOFOLLOW, on `dev` only, at
-/// most EMPTY_DEPTH down) and removed once empty, anything else (a file, a link, a pipe) unlinked as itself. The bytes of
-/// the regular files removed go into `bytes`, but for the record of a `files-...` entry (`record`: the folder is that
-/// entry's own), which the trash's size walk leaves out too, so the toast frees what the question said. The time is
-/// looked at after each name (each run removes something).
+/// most EMPTY_DEPTH down) and removed once empty, anything else (a file, a link, a pipe) unlinked as itself. The bytes
+/// of the regular files removed go into `bytes`, but for the record of a `files-...` entry (`record`: the folder is
+/// that entry's own), which the trash's size walk leaves out too, so the toast frees what the question said. The time
+/// is looked at after each name (each run removes something).
 fn clear_dir(dfd: i32, depth: usize, dev: u64, record: bool, bytes: &mut u64, budget: &mut Budget) -> Cleared {
     let Some(names) = names_in(dfd) else { return Cleared::Left };
     let mut left = false;
@@ -1801,7 +1801,7 @@ impl FsStorage {
                 if st.kind() != FsKind::Dir {
                     return Err(FsWriteErr::Refused);
                 }
-                // its lock, held to the end (Empty trash leaves an entry a restore is at work on, and a restore one it is)
+                // its lock, held to the end (Empty trash and a restore each leave an entry the other is at work on)
                 let held = open_sub(t, &ce).map_err(|e| FsWriteErr::Walk(if e == libc::ENOENT { FsErr::NotFound } else { FsErr::Io(e) }))?;
                 if entry_lock(held.as_raw_fd()) == EntryLock::Held {
                     return Err(FsWriteErr::Io(libc::EWOULDBLOCK));
@@ -1907,17 +1907,18 @@ impl FsStorage {
 
     /// Empty trash (issue #330): deletes the trash entries named in `names` (the Trash place's rows when the user
     /// confirmed), from the name at `from` on (the run before's `next`: each name is looked at once), for at most
-    /// `budget_ms` by `clock` (each run removes something, or looks at a name), inside the trash only: the trash opened by the walk and known by
-    /// its identity, every name one of its own (`empty_name_ok`), and nothing else touched. Never the trash itself, and
-    /// never an entry not named: one that came into the trash since is left. A name no longer there (restored meanwhile,
-    /// or done by a run before) is passed over. A folder entry is opened (O_DIRECTORY|O_NOFOLLOW, on the storage's
-    /// device), its lock taken (`EntryLock`: an entry a restore or a delete is at work on is left), moved into the
-    /// staging folder `TRASH_EMPTYING` (one rename, checked to be the folder opened, else put back and left), and only
-    /// there emptied by its descriptor (`clear_dir`: no link followed, links removed as links) and removed. Any other
-    /// entry (a page's file, a link) is one unlink of the name itself. So a run cut short (the power, a killed child)
-    /// leaves a trash with fewer entries, every one listed whole; what was half removed is in the staging folder, which
-    /// no listing shows and nothing restores from, and the next run removes it first. One run at a time holds the
-    /// staging folder's lock; another finds it held and does nothing (`Busy`).
+    /// `budget_ms` by `clock` (each run removes something, or looks at a name), inside the trash only: the trash opened
+    /// by the walk and known by its identity, every name one of its own (`empty_name_ok`), and nothing else touched.
+    /// Never the trash itself, and never an entry not named: one that came into the trash since is left. A name no
+    /// longer there (restored meanwhile, or done by a run before) is passed over. A folder entry is opened
+    /// (O_DIRECTORY|O_NOFOLLOW, on the storage's device), its lock taken (`EntryLock`: an entry a restore or a delete
+    /// is at work on is left), moved into the staging folder `TRASH_EMPTYING` (one rename, checked to be the folder
+    /// opened, else put back and left), and only there emptied by its descriptor (`clear_dir`: no link followed, links
+    /// removed as links) and removed. Any other entry (a page's file, a link) is one unlink of the name itself. So a
+    /// run cut short (the power, a killed child) leaves a trash with fewer entries, every one listed whole; what was
+    /// half removed is in the staging folder, which no listing shows and nothing restores from, and the next run
+    /// removes it first. One run at a time holds the staging folder's lock; another finds it held and does nothing
+    /// (`Busy`).
     pub fn empty_trash(&self, names: &[Vec<u8>], from: usize, budget_ms: u32, clock: &mut dyn FnMut() -> u32) -> Result<Emptied, FsWriteErr> {
         let trash = self.trash_fd()?;
         let t = trash.as_raw_fd();

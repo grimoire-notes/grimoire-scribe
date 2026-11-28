@@ -2815,19 +2815,19 @@ Photos sheets' From a file... tile (issue #146, "From a file... and Use as templ
   not empty, at most 255 bytes, none of `/ \ : * ? " < > |`, no control character, no leading or trailing space,
   no trailing dot, no leading dot (a hidden name Files never lists), and a file keeps its extension in any case.
   It names the first rule broken (`NameRule`), so the screen can say which.
-- **Never a hard delete outside the trash.** Trash is one rename into a new folder
-  `trash/files-<YYYYMMDD-HHMMSS>-<4 hex>/`, beside its record `.grimoire-trash` (`from=`, `time=`), written with `O_CREAT|O_EXCL|O_NOFOLLOW` and
-  synced before the rename; a failure removes both, so nothing is left. Cut off between the record and the rename (a
-  crash), the item never left: the entry is listed with its record, and Restore removes it, as it does an empty
-  `files-` folder (`Restored::Nothing`, the one case where it puts nothing back). Restore reads the record strictly
-  (a plain file, 4 KiB at most, `O_NOFOLLOW|O_NONBLOCK`), puts the item back where it was when that folder is still
-  there, allowed and not held by an import (a name taken gets " 2", " 3"...), else says why (`FolderGone`,
-  `BadRecord`, `Refused`, `Busy`); a notebook goes back to `notebooks/<id>` from the name `store_delete` gives it or
-  from a record naming that folder, refused while the id is taken. The only removals: the record and its emptied
-  folder after a restore, and the Trash place's Empty trash ("Files: Empty trash", below). Pages in the trash are
-  listed, never restored (their place was never kept). The trash is listed by `FsListing` in its slices and read by
-  name alone (`fsview_trash_entries`, newest first by the time in each name); a row's record is read only for the
-  rows on screen (`FsStorage::trash_record`). docs/FORMAT.md, The trash, has the names and the record.
+- **Never a hard delete outside the trash.** Trash is one rename into a new folder `trash/files-<YYYYMMDD-HHMMSS>-<4
+  hex>/`, beside its record `.grimoire-trash` (`from=`, `time=`), written with `O_CREAT|O_EXCL|O_NOFOLLOW` and synced
+  before the rename; a failure removes both, so nothing is left. Cut off between the record and the rename (a crash),
+  the item never left: the entry is listed with its record, and Restore removes it, as it does an empty `files-` folder
+  (`Restored::Nothing`, the one case where it puts nothing back). Restore reads the record strictly (a plain file, 4 KiB
+  at most, `O_NOFOLLOW|O_NONBLOCK`), puts the item back where it was when that folder is still there, allowed and not
+  held by an import (a name taken gets " 2", " 3"...), else says why (`FolderGone`, `BadRecord`, `Refused`, `Busy`); a
+  notebook goes back to `notebooks/<id>` from the name `store_delete` gives it or from a record naming that folder,
+  refused while the id is taken. The only removals: the record and its emptied folder after a restore, and the Trash
+  place's Empty trash ("Files: Empty trash", below). Pages in the trash are listed, never restored (their place was
+  never kept). The trash is listed by `FsListing` in its slices and read by name alone (`fsview_trash_entries`, newest
+  first by the time in each name); a row's record is read only for the rows on screen (`FsStorage::trash_record`).
+  docs/FORMAT.md, The trash, has the names and the record.
 - **The copy job, `BgKind::CopyFile = 10`** (`bgwork_copy.rs`; 9 is the file previews', below). The request
   (`copy_request`, UI thread) refuses a source in a place a pick never takes from (a name ending in a dot or a
   space among them: the walk refuses such a part, issue #160), one no longer the plain file listed, one whose name
@@ -3135,9 +3135,9 @@ Templates and Photos sheets) offers none of it.
   (a long name cut with "..." so the question mark stays), "Delete (moves it to grimoire/trash)" and "Keep it". Keep it,
   a tap outside the sheet, Esc and Back move nothing. Only its Delete moves the item: the check again,
   `FsStorage::trash`, then "Moved to grimoire/trash" and its row gone. Restore undoes it, until the Trash place's Empty
-  trash deletes it for good ("Files: Empty trash", below). A `trash` folder removed whole over USB is made again as Files
-  opens (as every start makes it; a link at its name is left alone and refused), so Delete does not fail until the next
-  start.
+  trash deletes it for good ("Files: Empty trash", below). A `trash` folder removed whole over USB is made again as
+  Files opens (as every start makes it; a link at its name is left alone and refused), so Delete does not fail until the
+  next start.
 - **The question is seen before it is answered.** The tap that opens it changes at once what the next tap lands on, and
   the panel shows the question later (a frame takes about 270 ms to show, docs/INK-PERFORMANCE.md), so the second of two
   taps at one place on the card's Delete would answer a question nobody saw. Two things keep it from that, wherever the
@@ -3241,24 +3241,28 @@ Grimoire's removes anything there (docs/FORMAT.md, The trash). Before 2.3 the ow
   same chip (`draw_path_bar`). It shows only while the place lists an entry, once the trash's size walk is through (the
   question says it), and while no Empty trash is queued or running (`Browser::empty_offered`): an empty trash has none.
   The chip comes with no new draw of the rows: the tick draws the path bar again when it comes or goes (`empty_tick`).
-- **It asks first**, in the question's sheet the Delete question uses (`sheet_rect`, `ui_sheet`, the same wait before
-  it takes an answer, `app_ask`): "Empty the trash?", under it "12 entries (3.4 MB) will be deleted for good." (the rows
-  it lists and their bytes from the walk, `TrashSizes::sum_of`, as the question opened), then Empty trash (the act,
-  framed as the Delete question's Delete) and Cancel. Cancel, a tap outside the sheet, Esc and Back ask nothing.
+- **It asks first**, in the question's sheet the Delete question uses (`sheet_rect`, `ui_sheet`, the same wait before it
+  takes an answer, `app_ask`): "Empty the trash?", under it "12 entries (3.4 MB) will be deleted for good." (the rows it
+  lists and their bytes from the walk, `TrashSizes::sum_of`, as the question opened; each row's size is rounded up to a
+  whole KB on its own and the total once, as the root's Trash row is, so the rows can add up to more than the question
+  says), then Empty trash (the act, framed as the Delete question's Delete) and Cancel. Cancel, a tap outside the sheet,
+  Esc and Back ask nothing.
 - **The job**, `BgKind::EmptyTrash = 13` (`bgwork_empty.rs`, `FsStorage::empty_trash`). The question's Empty trash keeps
   the names of the entries the place lists (`empty_request`) and queues the job as one the user waits on; the child is a
   fork, so it has the names. It opens the trash by the walk and checks its identity (a trash that is a link, or not the
   folder `FsStorage::open` noted, is not emptied), and acts only on the names it was given, each one name, no dot-name:
-  never the trash itself, never an entry that came in since (it is not named), never anything outside. A page's file,
-  or an entry that is a link, is one `unlinkat` of the name (a link goes as a link). A folder entry is opened
-  (`O_DIRECTORY|O_NOFOLLOW`, on the storage's device), its lock taken (below), moved in one rename into
-  `trash/.grimoire-emptying/` under a number, checked to be the folder opened (anything swapped in meanwhile goes back
-  and is left), and only there emptied through its descriptor (`clear_dir`: each name looked at with no link followed, a
-  folder entered `O_DIRECTORY|O_NOFOLLOW` on the same device and at most `EMPTY_DEPTH`, 64, down, anything else unlinked
-  as itself) and removed. At the end the staging folder goes, and the trash folder is synced.
+  never the trash itself, never an entry that came in since (it is not named), never anything outside. An entry the
+  place does not list (a link or anything else not a folder or a file at the trash's top, a name that is not UTF-8, a
+  dot-name) is never named, so it stays after Empty trash. A page's file, or an entry that is a link, is one `unlinkat`
+  of the name (a link goes as a link). A folder entry is opened (`O_DIRECTORY|O_NOFOLLOW`, on the storage's device), its
+  lock taken (below), moved in one rename into `trash/.grimoire-emptying/` under a number, checked to be the folder
+  opened (anything swapped in meanwhile goes back and is left), and only there emptied through its descriptor
+  (`clear_dir`: each name looked at with no link followed, a folder entered `O_DIRECTORY|O_NOFOLLOW` on the same device
+  and at most `EMPTY_DEPTH`, 64, down, anything else unlinked as itself) and removed. At the end the staging folder
+  goes, and the trash folder is synced.
 - **Busy entries are left.** A restore, a delete writing its `files-...` folder, and the job each hold the entry's
-  folder's advisory lock (`flock`, `EntryLock`) while they work on it, and each leaves an entry whose lock another holds:
-  the job counts it as left and goes on, a restore says "Couldn't restore.". This holds across processes too (the
+  folder's advisory lock (`flock`, `EntryLock`) while they work on it, and each leaves an entry whose lock another
+  holds: the job counts it as left and goes on, a restore says "Couldn't restore.". This holds across processes too (the
   detached child Grimoire leaves at exit, a run started after it). On a storage that has no advisory locks nothing is
   held; there, as everywhere, the Trash place offers no card (no Restore) and no Empty trash while a job of its run is
   queued or running, and the staying notice "Emptying the trash..." says it works. One job at a time holds the staging
@@ -3268,24 +3272,28 @@ Grimoire's removes anything there (docs/FORMAT.md, The trash). Before 2.3 the ow
   its next runs rank with the imports' slices), as a PDF import's slice is. Each run removes something (the time is
   looked at after each name), and goes on from the first name the run before did not look at (`next` in its count), so
   each name is looked at once. Measured on the development Mac, a busy one (`rust/tests/test_empty_trash.rs`, printed;
-  four entries in five a page's file, one in seven a notebook's folder of six files, the rest a file's with its
-  record): 10 entries in under 1 ms, 1,000 in 170 to 200 ms, 5,000 in 0.85 to 1.1 s, each in one run. The Kindle runs
-  such work several times slower (docs/beta2/PIXEL-LASSO.md, 5 to 8 times; docs/beta2/GRAPH-ALL.md, 20 to 30 times as
-  the safer figure, storage costs not measured there), so 5,000 entries take some 5 to 30 s on it: up to fifteen
-  slices, with whatever else was queued run between them. A confirmed Empty trash still running or queued when
-  Grimoire ends goes on in the detached child, its slices back to back.
+  four entries in five a page's file, one in seven a notebook's folder of six files, the rest a file's with its record):
+  10 entries in under 1 ms, 1,000 in 170 to 200 ms, 5,000 in 0.85 to 1.1 s, each in one run. The Kindle runs such work
+  several times slower (docs/beta2/PIXEL-LASSO.md, 5 to 8 times; docs/beta2/GRAPH-ALL.md, 20 to 30 times as the safer
+  figure, storage costs not measured there), so 5,000 entries take some 5 to 30 s on it: up to fifteen slices, with
+  whatever else was queued run between them. An export or the mirror asked for meanwhile waits at most one slice; Files'
+  previews (a Covers screen's tiles), the packages' pictures and the Pages view's previews rank after the slices, so
+  they wait for the whole job (some 5 to 30 s for 5,000 entries on the Kindle), while the staying notice says it works.
+  A confirmed Empty trash still running or queued when Grimoire ends goes on in the detached child, its slices back to
+  back.
 - **Cut short** (the power, a killed child): what is left is a trash with fewer entries, every one listed whole and
   restorable, since a folder entry leaves the listing in one rename before anything in it is removed. At most the entry
   being removed is half gone, in the staging folder, which no listing shows (a dot-name) and nothing restores from, so
   no half notebook can be restored into the Library; the next Empty trash removes what that folder holds first. Its
   bytes count in the root's Trash size meanwhile.
-- **Its end.** Each run adds what it did to `root/.cache/trash-emptied` (entries, bytes of their files, names left,
-  the next name; a `files-...` entry's record is not counted, as the size walk leaves it out, so the toast frees what
-  the question said) under its request's tag (`job=`: the process, the time and the requests made before, given by
-  `empty_request`); a run reads only a count under its own tag, so a count another request's runs wrote (the detached
-  child of a session before, still at work) never moves this request's next name or its toast's figures. At the last
-  run's end (done or failed) `poll_jobs` reads it (`empty_finished`, which removes its own), and the toast says
-  what went and what was freed ("Deleted 12 entries, freed 3.4 MB.", 0 KB for nothing), wherever the user is; when
+- **Its end.** Each run adds what it did to `root/.cache/trash-emptied` (entries, bytes of their files, names left, the
+  next name; a `files-...` entry's record is not counted, as the size walk leaves it out, so the toast frees what the
+  question said; a file that has another link outside the trash, on a storage with links, is counted by its size as the
+  walk counts it, though its data stays) under its request's tag (`job=`: the process, the time and the requests made
+  before, given by `empty_request`); a run reads only a count under its own tag, so a count another request's runs wrote
+  (the detached child of a session before, still at work) never moves this request's next name or its toast's figures.
+  At the last run's end (done or failed) `poll_jobs` reads it (`empty_finished`, which removes its own), and the toast
+  says what went and what was freed ("Deleted 12 entries, freed 3.4 MB.", 0 KB for nothing), wherever the user is; when
   that last run failed (its exit status, `bg_last_exit`, not 0: the trash could not be opened or written, or another
   Empty trash held its staging folder) and no run deleted anything, it says "Couldn't empty the trash." instead. Files,
   when it is up, reads the trash again in its slices (`trash_emptied`: the rows, the size walk, the free space), and the
