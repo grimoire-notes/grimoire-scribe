@@ -1240,7 +1240,10 @@ fn draw_folder_art(c: &mut Canvas, name: &str, r: Rect) {
 // folder icon sheet's tiles (a box of about 193 px at 300 dpi, 8 px a unit), and 15 px on a folder's card (10 px a
 // unit or more). Outer corners are rounded by 2 units on a body and by 1 on a part 5 units across or less (a lid, a
 // tab, a spine, a band), and a point (a corner sharper than square) or an inside corner by 0.5 to 1; a cut-out and
-// the details inside it are square unless what they show is round, and a folded corner is sharp.
+// the details inside it are square unless what they show is round, and a folded corner is sharp. Where two parts
+// join, one ends inside the other, or meets it on a shared edge or where both run the same way (a stem on the side of
+// a note's head where the head's outline runs straight up): nothing runs past the part it joins, a corner at a join is
+// square where its rounding would show as a notch, and no part stops short of the one it joins.
 
 /// A closed outline in units of the 24-unit box; the icons are filled from these.
 type ArtShape = Vec<(f32, f32)>;
@@ -1524,13 +1527,16 @@ fn art_book(c: &mut Canvas, r: Rect) {
     );
 }
 fn art_library(c: &mut Canvas, r: Rect) {
-    // the tallest book in the middle, so the heights do not step down like a chart
-    let lean = sh_turn(sh_rect(14.75, 6.75, 3.5, 12.0, 1.0), 14.75, 18.75, 18.0);
-    art_fill(c, r, &[sh_rect(2.0, 18.25, 20.0, 2.5, 1.0), sh_rect(2.75, 6.25, 4.5, 12.5, 1.0), sh_rect(8.75, 2.75, 4.5, 16.0, 1.0), lean]);
+    // the tallest book in the middle, so the heights do not step down like a chart; each book's foot stands in the
+    // shelf, square, so no rounded corner shows a notch where book and shelf meet, and the first book is flush with
+    // the shelf's end (its bands are cut from past its edge, so no gray is left along it)
+    let book = |x: f32, y: f32, w: f32, h: f32| sh_round(&[(x, y, 1.0), (x + w, y, 1.0), (x + w, y + h, 0.0), (x, y + h, 0.0)]);
+    let lean = sh_turn(book(14.75, 6.75, 3.5, 12.0), 14.75, 18.75, 18.0);
+    art_fill(c, r, &[sh_rect(2.0, 18.25, 20.0, 2.5, 1.0), book(2.0, 6.25, 5.25, 13.5), book(8.75, 2.75, 4.5, 16.0), lean]);
     art_cut(
         c,
         r,
-        &[sh_rect(2.0, 8.75, 6.0, 1.5, 0.0), sh_rect(2.0, 12.25, 6.0, 1.5, 0.0), sh_rect(8.0, 5.25, 6.0, 1.5, 0.0), sh_rect(8.0, 8.75, 6.0, 1.5, 0.0)],
+        &[sh_rect(1.0, 8.75, 7.0, 1.5, 0.0), sh_rect(1.0, 12.25, 7.0, 1.5, 0.0), sh_rect(8.0, 5.25, 6.0, 1.5, 0.0), sh_rect(8.0, 8.75, 6.0, 1.5, 0.0)],
     );
 }
 fn art_documents(c: &mut Canvas, r: Rect) {
@@ -1599,9 +1605,10 @@ fn art_school(c: &mut Canvas, r: Rect) {
         c,
         r,
         &[
-            sh_round(&[(12.0, 3.5, 0.75), (22.0, 9.0, 0.75), (12.0, 14.5, 0.75), (2.0, 9.0, 0.75)]),
+            // the board and the tassel's cord in one outline: the cord hangs from the board's right corner, its outer
+            // edge running on from the corner
+            sh_round(&[(12.0, 3.5, 0.75), (22.0, 9.0, 0.75), (22.0, 19.0, 1.0), (20.0, 19.0, 1.0), (20.0, 10.1, 0.0), (12.0, 14.5, 0.75), (2.0, 9.0, 0.75)]),
             sh_round(&[(5.5, 13.0, 0.5), (12.0, 16.6, 0.5), (18.5, 13.0, 0.5), (18.5, 17.5, 1.0), (12.0, 21.0, 1.0), (5.5, 17.5, 1.0)]),
-            sh_bar(21.0, 9.0, 21.0, 18.0, 2.0),
         ],
     );
 }
@@ -1631,26 +1638,35 @@ fn art_camera(c: &mut Canvas, r: Rect) {
     art_fill(c, r, &[sh_disc(12.0, 13.75, 2.25)]);
 }
 fn art_music(c: &mut Canvas, r: Rect) {
-    art_fill(
-        c,
-        r,
-        &[
-            sh_turn(sh_oval(5.95, 18.6, 3.4, 2.5), 5.95, 18.6, -20.0),
-            sh_turn(sh_oval(17.5, 16.4, 3.4, 2.5), 17.5, 16.4, -20.0),
-            sh_strip(8.7, 18.6, 8.7, 5.95, 2.2),
-            sh_strip(20.25, 16.4, 20.25, 3.75, 2.2),
-            sh_round(&[(7.6, 5.65, 1.0), (21.35, 3.2, 1.0), (21.35, 6.75, 1.0), (7.6, 10.25, 1.0)]),
-        ],
-    );
+    // two beamed eighth notes. Each stem's right edge is the vertical tangent of its head (the oval's rightmost
+    // point) and the stem ends there, inside the head, so stem and head meet flush with no step; the beam is as thick
+    // all along, its ends are the stems' outer edges and the stems' tops are inside it, below its round corners.
+    let (rx, ry, tilt, stem) = (3.4f32, 2.5f32, -20.0f32, 2.2f32);
+    let (sin, cos) = tilt.to_radians().sin_cos();
+    // the head's rightmost point, right of its centre by reach and below it by lift (above, when lift is negative)
+    let reach = (rx * rx * cos * cos + ry * ry * sin * sin).sqrt();
+    let lift = (rx * rx - ry * ry) * sin * cos / reach;
+    let heads = [(5.95f32, 18.6f32), (18.05f32, 16.4f32)];
+    let (left, right) = (heads[0].0 + reach - stem, heads[1].0 + reach);
+    let (top, thick) = (3.2f32, 3.55f32);
+    let top_left = top - (heads[1].1 - heads[0].1) / (heads[1].0 - heads[0].0) * (right - left);
+    let mut ink = vec![sh_round(&[(left, top_left, 1.0), (right, top, 1.0), (right, top + thick, 0.0), (left, top_left + thick, 0.0)])];
+    for (&(cx, cy), (x, y)) in heads.iter().zip([(left, top_left), (right - stem, top)]) {
+        ink.push(sh_turn(sh_oval(cx, cy, rx, ry), cx, cy, tilt));
+        ink.push(sh_rect(x, y + thick * 0.5, stem, cy + lift - y - thick * 0.5, 0.0));
+    }
+    art_fill(c, r, &ink);
 }
 fn art_headphones(c: &mut Canvas, r: Rect) {
     art_fill(
         c,
         r,
         &[
+            // the band's ends run straight down into the cups from where the band ends (above that its outer edge
+            // curves in, and a straight piece would stand past it)
             sh_band(12.0, 13.0, 9.5, 7.5, 180.0, 360.0),
-            sh_rect(2.5, 12.5, 2.0, 3.0, 0.0),
-            sh_rect(19.5, 12.5, 2.0, 3.0, 0.0),
+            sh_rect(2.5, 13.0, 2.0, 2.5, 0.0),
+            sh_rect(19.5, 13.0, 2.0, 2.5, 0.0),
             sh_rect(2.5, 12.0, 5.5, 9.0, 2.0),
             sh_rect(16.0, 12.0, 5.5, 9.0, 2.0),
         ],
@@ -1788,11 +1804,12 @@ fn art_fitness(c: &mut Canvas, r: Rect) {
         c,
         r,
         &[
-            sh_rect(2.0, 8.5, 3.0, 7.0, 1.0),
+            // each small plate's inner corners square, inside the large plate, so the step between them is clean
+            sh_round(&[(2.0, 8.5, 1.0), (5.0, 8.5, 0.0), (5.0, 15.5, 0.0), (2.0, 15.5, 1.0)]),
             sh_rect(4.5, 5.5, 3.5, 13.0, 1.0),
             sh_rect(7.5, 10.75, 9.0, 2.5, 0.0),
             sh_rect(16.0, 5.5, 3.5, 13.0, 1.0),
-            sh_rect(19.0, 8.5, 3.0, 7.0, 1.0),
+            sh_round(&[(19.0, 8.5, 0.0), (22.0, 8.5, 1.0), (22.0, 15.5, 1.0), (19.0, 15.5, 0.0)]),
         ],
     );
 }
@@ -1875,9 +1892,12 @@ fn art_garden(c: &mut Canvas, r: Rect) {
         c,
         r,
         &[
-            sh_bar(12.0, 12.0, 12.0, 19.0, 2.0),
+            // the right leaf starts at the stem's left edge, and the stem's square top runs inside both leaves (its
+            // left corner in the left leaf, its top edge in the right one), so both leaves spring from the stem with
+            // no gap, no bud and no speck between them, and the right leaf's underside meets the stem's straight side
+            sh_poly(&[(11.0, 11.5), (13.0, 11.0), (13.0, 19.5), (11.0, 19.5)]),
             sh_leaf(11.5, 12.5, 3.0, 7.5, 4.5),
-            sh_leaf(12.5, 10.5, 21.0, 3.0, 5.5),
+            sh_leaf(11.0, 11.5, 21.0, 3.0, 5.5),
             sh_rect(4.0, 18.5, 16.0, 2.5, 1.25),
         ],
     );
@@ -1896,7 +1916,8 @@ fn art_pets(c: &mut Canvas, r: Rect) {
     );
 }
 fn art_baby(c: &mut Canvas, r: Rect) {
-    art_fill(c, r, &[sh_disc(12.0, 5.5, 2.5), sh_oval(12.0, 10.5, 7.5, 2.75), sh_band(12.0, 17.0, 4.5, 2.5, 0.0, 360.0)]);
+    // the nipple sits a unit deep in the shield, so the two meet in a wide neck, not a pinch
+    art_fill(c, r, &[sh_disc(12.0, 5.75, 2.75), sh_oval(12.0, 10.25, 7.5, 2.75), sh_band(12.0, 16.75, 4.5, 2.5, 0.0, 360.0)]);
 }
 fn art_tools(c: &mut Canvas, r: Rect) {
     // nearer upright than the pencil's and the key's 45 degrees, so the three do not share a diagonal
@@ -1909,9 +1930,10 @@ fn art_lock(c: &mut Canvas, r: Rect) {
         c,
         r,
         &[
+            // the shackle's legs start where its arc ends, so they run on from it without a corner past its curve
             sh_band(12.0, 8.5, 5.5, 3.5, 180.0, 360.0),
-            sh_rect(6.5, 8.0, 2.0, 2.5, 0.0),
-            sh_rect(15.5, 8.0, 2.0, 2.5, 0.0),
+            sh_rect(6.5, 8.5, 2.0, 2.0, 0.0),
+            sh_rect(15.5, 8.5, 2.0, 2.0, 0.0),
             sh_rect(4.5, 9.5, 15.0, 11.5, 2.0),
         ],
     );
@@ -1932,7 +1954,9 @@ fn art_key(c: &mut Canvas, r: Rect) {
     art_cut(c, r, &[place(sh_disc(5.0, 12.0, 1.75))]);
 }
 fn art_cloud(c: &mut Canvas, r: Rect) {
-    art_fill(c, r, &[sh_disc(8.0, 13.5, 4.0), sh_disc(13.0, 10.25, 5.25), sh_disc(18.0, 14.0, 3.75), sh_rect(2.5, 13.0, 19.5, 6.5, 3.25)]);
+    // the two side puffs are the cloud's ends, one the mirror of the other: each holds the base's round end on its
+    // side inside it and touches the base's foot, so each side is one curve with no dent where puff and base meet
+    art_fill(c, r, &[sh_disc(6.25, 15.25, 4.25), sh_disc(13.0, 10.25, 5.25), sh_disc(17.75, 15.25, 4.25), sh_rect(3.0, 13.0, 18.0, 6.5, 3.25)]);
 }
 fn art_computer(c: &mut Canvas, r: Rect) {
     art_fill(c, r, &[sh_rect(2.0, 3.0, 20.0, 14.0, 2.0), sh_rect(10.5, 16.5, 3.0, 3.5, 0.0), sh_rect(7.0, 19.5, 10.0, 2.0, 1.0)]);
@@ -1971,7 +1995,8 @@ fn art_trash(c: &mut Canvas, r: Rect) {
         c,
         r,
         &[
-            sh_rect(9.0, 2.0, 6.0, 3.0, 1.0),
+            // the handle's lower corners square, inside the lid
+            sh_round(&[(9.0, 2.0, 1.0), (15.0, 2.0, 1.0), (15.0, 5.0, 0.0), (9.0, 5.0, 0.0)]),
             sh_rect(3.0, 4.5, 18.0, 2.5, 1.0),
             sh_round(&[(4.75, 8.5, 0.0), (19.25, 8.5, 0.0), (18.0, 22.0, 2.0), (6.0, 22.0, 2.0)]),
         ],
@@ -12346,6 +12371,30 @@ mod tests {
                 assert_eq!(outside, 0, "{} draws outside its {w} by {h} rect", def.name);
                 let side = f64::from(w.min(h));
                 assert!(ink > 0.1 * side * side, "{} at {w} by {h}: too little black ({ink:.0} px)", def.name);
+            }
+        }
+    }
+
+    // The music icon's stems meet their heads flush (#338): each stem's right edge is where its head's outline runs
+    // straight up, so going down a note, its right edge runs on from the stem into the head's curve without a step
+    // (they once ran half a unit past the heads and ended in one). Drawn at 20 px a unit, the right edge of each
+    // note moves by no more than 2 px from one row to the next, from under the beam to well below the join.
+    #[test]
+    fn folder_icon_music_stems_meet_their_heads_flush() {
+        let mut c = Canvas::default();
+        assert_eq!(canvas_init(&mut c, 480, 480), 0);
+        art_music(&mut c, Rect::new(0, 0, 480, 480));
+        // (the note's columns, from x0 to x1, and its rows, from y0 to y1, in units)
+        for (name, x0, x1, y0, y1) in [("left", 0, 12, 10.5f32, 19.5f32), ("right", 12, 24, 8.0, 17.5)] {
+            let mut last: Option<i32> = None;
+            for y in (y0 * 20.0) as i32..(y1 * 20.0) as i32 {
+                let row = (y * c.stride) as usize;
+                let edge = (x0 * 20..x1 * 20).rev().find(|&x| c.px[row + x as usize] < 128);
+                let edge = edge.unwrap_or_else(|| panic!("the {name} note has no ink in row {y}"));
+                if let Some(prev) = last {
+                    assert!((edge - prev).abs() <= 2, "the {name} note's right edge steps from {prev} to {edge} px at row {y}");
+                }
+                last = Some(edge);
             }
         }
     }
