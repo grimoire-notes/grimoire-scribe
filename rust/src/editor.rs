@@ -3863,8 +3863,8 @@ fn compose(a: &mut App, r: Rect) {
 }
 
 /// Whether compose draws the notebook's page now, and so the bar over it (#337): not while Settings, the picture
-/// pick, the destination picker, the Graph or the Pages view (but its overlay) covers the screen, which draw their
-/// own bar.
+/// pick, the destination picker, the Graph or the Pages view (but its overlay) covers the screen. Each of those but
+/// the destination picker (Link to...'s notebooks, which fills the screen from its top with no bar) draws its own bar.
 pub fn editor_page_composed(a: &App) -> bool {
     !crate::library::library_settings_active(a)
         && a.ed.as_deref().is_some_and(|s| {

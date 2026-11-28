@@ -127,10 +127,15 @@ rotate 1
 wait 800
 expect status.zone is 0 0 2480 72
 expect status.visible is 1
+waitfor display.stale.0.0.2480.72 is 0
+expect display.dark.0.0.2480.72 is 1696
 shot 07-sideways-bar-over-ink
 tap 600 36
 wait 400
 expect status.visible is 0
+expect display.stale.0.0.2480.72 is 0
+expect display.dark.0.0.2480.72 not 1696
+expect display.dark.0.0.2480.72 not 0
 shot 08-sideways-dismissed
 tap 600 36
 wait 400

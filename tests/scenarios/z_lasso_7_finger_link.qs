@@ -1,5 +1,5 @@
 # rust-only
-# settings: status_on=0
+# settings: status_in_notebooks=0
 # settings: gesture_new_page=0
 # root: z_bar_0_make
 # The finger hold that arms the lasso (z_lasso_6) leaves every other finger as it was: held on a link, a

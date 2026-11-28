@@ -3,7 +3,8 @@
 # settings: status_mode=1
 # The toolbar goes wherever it is dragged, up to the screen's very edges: its top at y 0 (no 12 px
 # band above it) and its foot on the bottom edge, upright and sideways, where its buttons still take
-# their taps. A drag the pen's coming near cancels leaves it where it was last drawn.
+# their taps (at the top with the status bar hidden: while it is shown its band covers the toolbar's
+# top, #337). A drag the pen's coming near cancels leaves it where it was last drawn.
 wait 300
 tap library card.1
 wait 300

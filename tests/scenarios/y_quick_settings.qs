@@ -71,7 +71,7 @@ wait 300
 expect editor.settings.sheet is none
 expect status.visible is 1
 shot 02-status-back
-# Into a notebook. Its bar is the one shared bar, drawn transparent over the page (nothing reserved).
+# Into a notebook. Its bar is the one shared bar, drawn over the page on its gray band (nothing reserved, #337).
 tap library add
 wait 100
 tap library add.new-notebook

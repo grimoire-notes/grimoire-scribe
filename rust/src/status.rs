@@ -161,7 +161,7 @@ pub fn status_notebook_bar(a: &App) -> bool {
 
 /// The rows at the top of the screen a notebook's bar covers now: its height while it is drawn over
 /// the page, 0 while it is hidden or a screen that covers the page is in front (Settings, the Pages
-/// view, the Graph, a picker: they draw their own bar). Every fast refresh in the notebook stops at
+/// view, the Graph, a picker: they draw their own bar, or none). Every fast refresh in the notebook stops at
 /// them (status_below_band), so the bar's gray is never dithered.
 pub fn status_band_rows(a: &App) -> i32 {
     if a.scr == ScreenId::Editor && status_notebook_bar(a) && crate::editor::editor_page_composed(a) {
