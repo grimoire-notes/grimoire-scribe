@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Grimoire 2.3.0-beta.1\n"
 "Report-Msgid-Bugs-To: https://github.com/ganten1998/grimoire-scribe/issues\n"
-"POT-Creation-Date: 2026-11-27 16:39-0600\n"
+"POT-Creation-Date: 2026-11-27 18:07-0600\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1027,6 +1027,13 @@ msgstr ""
 #. is that it is nearly full.
 #: rust/src/bgwork_copy.rs
 msgid "Couldn't copy file. Is the storage full?"
+msgstr ""
+
+#. TRANSLATORS: a toast in Files' Trash (or wherever the user is) when Empty trash deleted nothing because it
+#. could not work on the trash (it could not be written, or another Empty trash was at work on it). One line
+#. of about 1500 px at 44 px.
+#: rust/src/bgwork_empty.rs
+msgid "Couldn't empty the trash."
 msgstr ""
 
 #. TRANSLATORS: (also) Empty trash's toast and its question, for a size of nothing: "0 KB".

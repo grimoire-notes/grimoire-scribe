@@ -3281,25 +3281,29 @@ Grimoire's removes anything there (docs/FORMAT.md, The trash). Before 2.3 the ow
   bytes count in the root's Trash size meanwhile.
 - **Its end.** Each run adds what it did to `root/.cache/trash-emptied` (entries, bytes of their files, names left,
   the next name). At the last run's end (done or failed) `poll_jobs` reads it (`empty_finished`), and the toast says
-  what went and what was freed ("Deleted 12 entries, freed 3.4 MB.", 0 KB for nothing), wherever the user is; Files,
+  what went and what was freed ("Deleted 12 entries, freed 3.4 MB.", 0 KB for nothing), wherever the user is; when
+  that last run failed (its exit status, `bg_last_exit`, not 0: the trash could not be opened or written, or another
+  Empty trash held its staging folder) and no run deleted anything, it says "Couldn't empty the trash." instead. Files,
   when it is up, reads the trash again in its slices (`trash_emptied`: the rows, the size walk, the free space), and the
   Trash place says "The trash is empty." when nothing is left (`none_text`). The Files card's free space is read again,
   and Settings > System > About reads the storage's figures as it is drawn.
 - **Words** (English in Spanish, Japanese and Polish until they are translated): Empty trash, Empty the trash?, %d
-  entry (%s) will be deleted for good., Emptying the trash..., Deleted %d entry, freed %s., The trash is empty.
-  Reused: Cancel, %d KB.
+  entry (%s) will be deleted for good., Emptying the trash..., Deleted %d entry, freed %s., Couldn't empty the trash.,
+  The trash is empty. Reused: Cancel, %d KB.
 - **Logs** (no names): `bg: the trash's emptying: N entries, N KB, N left, in T ms`, each run, and `files: the trash's
   emptying ended: ...` at the end.
 - **Tests**: `rust/tests/test_empty_trash.rs` (exactly the named entries go and nothing outside; links in the trash,
   to a file and to a folder outside, go as links and their targets stay; an entry a restore holds stays, and a restore
   leaves one the job holds; an entry that comes in during the job stays; a run cut short inside an entry leaves it out
   of the listing and the next run removes it first; names not the trash's own, and a trash that is a link, are
-  refused; the times), `browser.rs`'s unit tests (an empty trash offers no Empty trash; the question counts the rows,
+  refused; a job that finds the staging folder held by another, run as the app runs it, deletes nothing and says so;
+  the times), `browser.rs`'s unit tests (an empty trash offers no Empty trash; the question counts the rows,
   Cancel asks nothing, its Empty trash asks the job for the rows, and no card or chip while it is queued),
   `bgwork_empty.rs`'s (the toast), and the scenarios `files_44_empty_trash` (a notebook, a page and a file deleted, then
   emptied: the toast, the place empty, the Library as it was), `files_45_empty_trash_cancel` (Cancel and a tap outside,
   in Classic), `files_46_empty_trash_es_fit`, `files_47_empty_trash_ja_fit` and `files_48_empty_trash_pl_fit` (each
-  text checked for fit).
+  text checked for fit), `files_49_empty_trash_failed` (the staging folder held: "Couldn't empty the trash.", both
+  entries still listed and restorable) and `files_50` to `files_52` (that toast's fit in es, ja and pl).
 
 ## Files: previews and the Covers view (2.2, issue #145)
 

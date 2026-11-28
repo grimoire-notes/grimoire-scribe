@@ -4,7 +4,8 @@
 // restore is at work on (its lock held) stays, and a restore leaves one Empty trash is at work on; an entry that came
 // into the trash during the job stays; a run whose time is up stops inside an entry with that entry out of the
 // listing, and the next run removes it first; names that are not one of the trash's own, and a trash that is a link,
-// are refused. Then the times for 10, 1,000 and 5,000 entries (printed: docs/TESTING.md has the device check).
+// are refused; a job that finds the trash held by another Empty trash deletes nothing and its toast says so. Then the
+// times for 10, 1,000 and 5,000 entries (printed: docs/TESTING.md has the device check).
 #![cfg(feature = "sim")]
 mod testlib;
 use grimoire::fsview::*;
@@ -288,6 +289,50 @@ fn only_inside_the_trash() {
     std::fs::create_dir_all(&t).unwrap();
 }
 
+/// Polls the background jobs until none is queued or running (at most 20 s): true when they all ended.
+fn jobs_end() -> bool {
+    let t0 = std::time::Instant::now();
+    while bg_busy() {
+        if t0.elapsed().as_secs() > 20 {
+            return false;
+        }
+        let mut kind = -1;
+        if bg_poll_kind(Some(&mut kind)) == 0 && kind < 0 {
+            sleep_ms(2);
+        }
+    }
+    true
+}
+
+/// The staging folder's lock, held as another Empty trash at work on the trash holds it (the detached child of a
+/// session before): the folder made, then flock(LOCK_EX) through a descriptor of the test's own.
+fn hold_staging(t: &str) -> std::fs::File {
+    let staging = format!("{t}/{TRASH_EMPTYING}");
+    let _ = std::fs::create_dir(&staging);
+    let f = std::fs::File::open(&staging).unwrap();
+    // SAFETY: flock on the descriptor the File owns.
+    check!(unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0);
+    f
+}
+
+// An Empty trash that finds the trash's staging folder held by another (the detached child of a session before, at
+// work on the same trash) deletes nothing: the job, asked as the Trash place asks it and forked as the app runs it,
+// ends 1, every entry stays, and its toast says the trash was not emptied, never "Deleted 0 entries".
+fn a_job_that_finds_the_trash_held() {
+    let (root, g) = tree();
+    let t = format!("{g}/trash");
+    trashed_notebook(&t, "20261101-000000-0001-1790000000", 1, 10);
+    trashed_notebook(&t, "20261101-000000-0002-1790000100", 1, 10);
+    let named = listed(&open(&root, &g));
+    let held = hold_staging(&t);
+    check!(grimoire::bgwork_empty::empty_request(named));
+    check!(jobs_end());
+    check!(bg_last_exit() == 1);
+    check!(names(&t) == [TRASH_EMPTYING, "20261101-000000-0001-1790000000", "20261101-000000-0002-1790000100"]);
+    check!(grimoire::bgwork_empty::empty_finished(bg_last_exit() != 0) == "Couldn't empty the trash.");
+    drop(held);
+}
+
 /// A trash of `n` entries as a long use leaves it: four in five a page's file (2 KB), about one in seven a notebook's
 /// folder (four pages of 2 KB and a picture), the rest a file trashed from Grimoire's folders (its folder, its record
 /// and a 3 KB picture).
@@ -347,6 +392,7 @@ fn test_empty_trash() {
     run!(an_entry_that_comes_meanwhile_stays);
     run!(a_run_cut_short);
     run!(only_inside_the_trash);
+    run!(a_job_that_finds_the_trash_held);
     run!(the_times);
     std::env::remove_var("GRIMOIRE_STORAGE");
     let _ = std::fs::remove_dir_all(format!("{}/empty-storage", tl_tmp()));

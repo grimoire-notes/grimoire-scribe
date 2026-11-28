@@ -86,6 +86,8 @@ pub fn bg_empty_trash(path: &str) -> i32 {
             return 1;
         }
     };
+    #[cfg(feature = "sim")]
+    let _held = test_busy();
     let before = result_read();
     match st.empty_trash(&names, before.next, EMPTY_SLICE_MS, &mut real_now_ms) {
         Ok(e) => {
@@ -116,18 +118,47 @@ pub fn bg_empty_trash(path: &str) -> i32 {
     }
 }
 
+/// Tests (the headless build's scenarios, never the Kindle's): with GRIMOIRE_EMPTY_TEST_BUSY set, the run holds the
+/// staging folder's lock through a descriptor of its own, as another Empty trash at work on the trash holds it (the
+/// detached child of a session before), so `FsStorage::empty_trash` finds it held and the run ends 1 (docs/SIM.md).
+#[cfg(feature = "sim")]
+fn test_busy() -> Option<std::fs::File> {
+    std::env::var("GRIMOIRE_EMPTY_TEST_BUSY").ok().filter(|v| !v.is_empty())?;
+    let p = format!("{}/trash/{TRASH_EMPTYING}", store_root());
+    let _ = std::fs::create_dir(&p);
+    let f = std::fs::File::open(&p).ok()?;
+    // SAFETY: flock on the descriptor the File owns; the lock goes with it.
+    unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&f), libc::LOCK_EX | libc::LOCK_NB) };
+    Some(f)
+}
+
 /// What the Empty trash that just ended did, read from its result file (removed here), the names it was given
-/// forgotten: the entries it deleted and the bytes of their files ((0, 0) when no run left a count).
-pub fn empty_finished() -> (usize, u64) {
+/// forgotten: the toast that says it (`empty_said`). `failed`: its last run ended without emptying the trash (its exit
+/// status was not 0: the trash could not be opened or written, or another Empty trash held it).
+pub fn empty_finished(failed: bool) -> String {
     let r = result_read();
     let _ = std::fs::remove_file(result_path());
     NAMES.lock().unwrap_or_else(|e| e.into_inner()).clear();
-    qlog!("files: the trash's emptying ended: %d entries, %s KB, %d left", r.entries as i32, &(r.bytes >> 10).to_string(), r.skipped as i32);
-    (r.entries, r.bytes)
+    qlog!(
+        "files: the trash's emptying ended: %d entries, %s KB, %d left%s",
+        r.entries as i32,
+        &(r.bytes >> 10).to_string(),
+        r.skipped as i32,
+        if failed { " (its last run failed)" } else { "" }
+    );
+    empty_said(r.entries, r.bytes, failed)
 }
 
-/// The toast at its end: how many entries went and the space freed.
-pub fn empty_said(entries: usize, bytes: u64) -> String {
+/// The toast at its end: how many entries went and the space freed; or, when its last run failed and no run deleted
+/// anything, that the trash was not emptied (never "Deleted 0 entries" for a job that could not work). A job that
+/// deleted some entries before its last run failed says what it deleted.
+pub fn empty_said(entries: usize, bytes: u64, failed: bool) -> String {
+    if failed && entries == 0 {
+        // TRANSLATORS: a toast in Files' Trash (or wherever the user is) when Empty trash deleted nothing because it
+        // could not work on the trash (it could not be written, or another Empty trash was at work on it). One line
+        // of about 1500 px at 44 px.
+        return tr("Couldn't empty the trash.").to_string();
+    }
     // (nothing freed says 0 KB: a size label rounds every size up to at least 1 KB)
     let size = if bytes == 0 {
         // TRANSLATORS: (also) Empty trash's toast and its question, for a size of nothing: "0 KB".
@@ -146,12 +177,16 @@ mod tests {
     use super::*;
 
     // The toast says how many entries went and the space they freed, 0 KB for nothing (never the "1 KB" a size label
-    // gives every small size); and the job takes only its own path.
+    // gives every small size); a job whose last run failed with nothing deleted says the trash was not emptied, one
+    // that deleted some first says what it deleted; and the job takes only its own path.
     #[test]
     fn the_toast_and_the_path() {
-        assert_eq!(empty_said(12, 3_565_158), "Deleted 12 entries, freed 3.4 MB.");
-        assert_eq!(empty_said(1, 2048), "Deleted 1 entry, freed 2 KB.");
-        assert_eq!(empty_said(3, 0), "Deleted 3 entries, freed 0 KB.");
+        assert_eq!(empty_said(12, 3_565_158, false), "Deleted 12 entries, freed 3.4 MB.");
+        assert_eq!(empty_said(1, 2048, false), "Deleted 1 entry, freed 2 KB.");
+        assert_eq!(empty_said(3, 0, false), "Deleted 3 entries, freed 0 KB.");
+        assert_eq!(empty_said(0, 0, false), "Deleted 0 entries, freed 0 KB.");
+        assert_eq!(empty_said(0, 0, true), "Couldn't empty the trash.");
+        assert_eq!(empty_said(2, 7168, true), "Deleted 2 entries, freed 7 KB.");
         assert_eq!(bg_empty_trash("elsewhere"), 1);
     }
 }

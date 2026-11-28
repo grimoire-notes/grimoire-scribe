@@ -25,7 +25,7 @@ deletes the entries listed inside the trash only, in slices, leaving busy ones, 
   processes at once (the detached child Grimoire leaves at exit, and a run started after it) are not kept apart by
   the entry's lock; the screens keep them apart within one run. Whether the Scribe's storage takes the lock on a
   folder is part of the device check.
-- **Spanish, Japanese and Polish** for the six new texts: in English there until they are translated.
+- **Spanish, Japanese and Polish** for the seven new texts: in English there until they are translated.
 
 ## PDFs as templates (2.2, issue #172): what waits, and what is for the owner
 

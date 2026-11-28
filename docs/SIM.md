@@ -1100,6 +1100,9 @@ first look too, and `GRIMOIRE_WORK_FAIL_STEP` fails a font worker's step: no fon
 Files' previews (same builds): `GRIMOIRE_PREVIEW_MS=N` is the time one preview may take, every kind's (in place of
 3 s for a PDF's page and a font's sample, 6 s for a picture), and `GRIMOIRE_PREVIEWS_MAX=<files>,<bytes>` the
 limits its cache is pruned past; the PDF, picture and font hooks above reach a preview's worker too.
+Files' Empty trash (same builds, 2.3, issue #330): `GRIMOIRE_EMPTY_TEST_BUSY=1` has each of its runs hold the
+trash's staging folder's lock through a descriptor of its own, as another Empty trash at work on the trash holds it,
+so the run deletes nothing and ends 1 (tests/scenarios/files_49_empty_trash_failed.qs).
 `GRIMOIRE_FONT_GLYPH_US=N` is the CPU time one glyph's draw may take in the check, in microseconds (1 to
 999999999; anything else, or unset, is 5 s, which no real font reaches), and
 `GRIMOIRE_FONT_TEST_SLOW=<slow|once|bold|from>:<glyph>:<us>` is the test charge: the draw of glyph `<glyph>`
