@@ -2,20 +2,20 @@
 
 ## 2.3.0-beta.1 (2026-11-27)
 
-- **A new home** (#225, nebuff; #319, #332). The Library opens as a home screen: the status bar at the top, then
-  the Library's title with the Search and Settings buttons at the top right (Settings at the far right), a row of
-  apps as even squares, each icon in the middle of its square and its name under it (Files, the Package Store and
-  Share first, always in that order, then any app installed, most recently used first), with Show All the row's
-  last square, the All, Notebooks and Folders chips beside Sort (Name (A-Z), Name (Z-A), Newest first, Oldest
-  first), both kept across restarts, and the cards. A name too long for one line under its square takes a smaller
-  size or a second line, never cut short. The parts are ruled apart as a printed page is: a rule under the title,
-  an ornament between the apps and the chips (a plain gray line in Classic), a light gray rule under the chips and a
-  rule over the foot. Inside a folder Back and the folder's name are at the left. Settings is not in the row: the
-  button at the top right and Quick settings open it. The + button at the bottom right (a rounded rectangle in
-  Classic) makes a New notebook or a New folder, or opens Share (Import over Wi-Fi); the page arrows and "Page N of
-  M" stand level with it. A card's picture keeps to the card's corners. Search opens the keyboard and shows, as you
-  type, the notebooks and folders in every folder whose names hold what is typed. The top bar of New, Folder,
-  Share, Settings and Exit is gone: Exit is at the foot of Settings' left column.
+- **A new home** (#225, nebuff; #319, #332). The Library opens as a home screen: the status bar at the top, then the
+  Library's title with the Search and Settings buttons at the top right (Settings at the far right), a row of apps as
+  even squares, each icon in the middle of its square and its name under it (Files, the Package Store and Share first,
+  always in that order, then any app installed, most recently used first), with Show All the row's last square, the
+  All, Notebooks and Folders chips beside Sort (Name (A-Z), Name (Z-A), Newest first, Oldest first), both kept across
+  restarts, and the cards. A name too long for one line under its square takes a smaller size or a second line, so
+  Grimoire's own names are whole in every language. The parts are ruled apart as a printed page is: a rule under the
+  title, an ornament between the apps and the chips (a plain gray line in Classic), a light gray rule under the chips
+  and a rule over the foot. Inside a folder Back and the folder's name are at the left. Settings is not in the row:
+  the button at the top right and Quick settings open it. The + button at the bottom right (a rounded rectangle in
+  Classic) makes a New notebook or a New folder, or opens Share (Import over Wi-Fi); the page arrows and "Page N of M"
+  stand level with it. A card's picture keeps to the card's corners. Search opens the keyboard and shows, as you type,
+  the notebooks and folders in every folder whose names hold what is typed. The top bar of New, Folder, Share,
+  Settings and Exit is gone: Exit is at the foot of Settings' left column.
 - **The Apps page and What's new** (#225, nebuff; #319, #332). Show All opens Apps: every app in the row's order,
   in the row's squares, with What's new, About (Settings > System > About: device and storage) and Manage apps...
   at its foot. What's new is a screen of its own, no longer a card under the bat: every version down the left,

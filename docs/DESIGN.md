@@ -1503,15 +1503,15 @@ moves everything under the header with it, and upright the cards stay two rows a
   two, the row centred so its first square starts at the left margin and Show All, always the last square, ends at
   the right one. An app's icon is drawn in a box a whole multiple of 64 px (`gui_app_icon_side`: 128 at 300 dpi), so
   a package's 64 px icon is scaled by whole pixels. The Apps page lays its launchers out in the same columns.
-- **A long name** (`gui_app_label_fit`) is never cut short: one line at the small size; else one line at a smaller
-  size down to four fifths of it where the face has sizes between (Classic's faces; Gothic's pixel face has none);
-  else two lines at the small size, broken at a space or between CJK characters. A name has the row's step to fill,
-  centred on its square; in the first and last columns only as much as stays inside the margins (`launcher_label_w`),
-  so a long name there takes the smaller size or the second line sooner. The row keeps two lines' room under
-  every square; a launcher's hit is what `gui_app_square` drew, its square and the box its name's lines take (never
-  wider than the step), so a tap on any letter lands on it and a press covers the whole name. A name two lines cannot
-  hold is broken or cut by font_draw_wrapped, which tells the fit check (make l10n-check runs every language and
-  style).
+- **A long name** (`gui_app_label_fit`) is set whole where two lines can hold it: one line at the small size; else one
+  line at a smaller size down to four fifths of it where the face has sizes between (Classic's faces; Gothic's pixel
+  face has none); else two lines at the small size, broken at a space or between CJK characters. A name has the row's
+  step to fill, centred on its square; in the first and last columns only as much as stays inside the margins
+  (`launcher_label_w`), so a long name there takes the smaller size or the second line sooner. The row keeps two
+  lines' room under every square; a launcher's hit is what `gui_app_square` drew, its square and the box its name's
+  lines take (never wider than the step), so a tap on any letter lands on it and a press covers the whole name. A name
+  two lines cannot hold is broken or cut by font_draw_wrapped, which tells the fit check (make l10n-check runs every
+  language and style).
 - **The rules** (`gui_title_rule`, `gui_section_break`, `gui_hair_rule`, `gui_foot_rule`), margin to margin, each in
   the paper between two parts: under the header the title rule (Gothic: 4 px black, 5 px of paper, 2 px black;
   Classic: one 3 px line), as much paper over it as under it; between the app row and the sorting line the section
