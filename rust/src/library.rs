@@ -3,7 +3,7 @@
 
 use crate::prelude::*;
 use crate::appicon::AppIcon;
-use crate::globalui::{gui_app_h, gui_app_show_all, gui_app_square, gui_app_square_side, gui_button, gui_chip, gui_chip_h, gui_fab, gui_fab_radius, gui_foot_rule, gui_gap, gui_gothic, gui_hair_rule, gui_hair_rule_h, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_row_h, gui_row_min_h, gui_section_break, gui_section_break_half, gui_select, gui_select_h, gui_status_bar, gui_status_h, gui_title_rule, gui_title_rule_h, gui_top_button_h, GuiPopupItem};
+use crate::globalui::{gui_app_h, gui_app_show_all, gui_app_square, gui_app_square_side, gui_button, gui_chip, gui_chip_h, gui_fab, gui_foot_rule, gui_gap, gui_hair_rule, gui_hair_rule_h, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_row_h, gui_row_min_h, gui_section_break, gui_section_break_half, gui_select, gui_select_h, gui_status_bar, gui_status_h, gui_title_rule, gui_title_rule_h, gui_top_button_h, GuiFabShape, GuiPopupItem};
 use crate::settingsmenu;
 use crate::ui::{ui_row, ui_row_page, ui_row_pager, Row as UiRow};
 use crate::browser::{BrowseMode, Browser, BrowserResult, FilesPrefs, PickSpec};
@@ -603,7 +603,7 @@ pub struct LibraryState {
 /// What draw_base drew where, for the scenarios' library.home.* keys (docs/SIM.md, #332): the header's parts left
 /// to right by name (`back`, `title`, `search`, `settings`), the app row's squares left to right (Show All the last)
 /// and the lines each one's name took, each mark's name with its top row and height (`title`, `break`, `light`,
-/// `foot`), the + button, and the page arrows with the page line between them.
+/// `foot`), the + button and the corners gui_fab drew it with, and the page arrows with the page line between them.
 #[derive(Default, Clone, Debug)]
 struct HomeDrawn {
     header: Vec<(&'static str, Rect)>,
@@ -611,6 +611,7 @@ struct HomeDrawn {
     label_lines: Vec<i32>,
     marks: Vec<(&'static str, i32, i32)>,
     fab: Rect,
+    fab_shape: GuiFabShape,
     pager: [Rect; 3],
 }
 
@@ -2173,7 +2174,7 @@ fn draw_base(a: &mut App) {
         pages = 1;
     }
     let fab = fab_rect(aw, ah);
-    gui_fab(c, fab, IconKind::Plus);
+    drawn.fab_shape = gui_fab(c, fab, IconKind::Plus);
     hits_add(&mut s.hits, fab, H_ADD, 0);
     let (pr, nr, line) = pager_rects(aw, ah);
     gui_icon_button(c, pr, IconKind::Prev, if s.page > 0 { ButtonStyle::Plain } else { ButtonStyle::Disabled });
@@ -11210,8 +11211,11 @@ fn home_probe(s: &LibraryState, aw: i32, key: &str) -> Option<String> {
             centre(h.pager[2])
         ),
         "fab" => {
-            let r = gui_fab_radius();
-            let shape = if gui_gothic() { format!("cut {}", r + r / 4) } else { format!("round {r}") };
+            let shape = match h.fab_shape {
+                GuiFabShape::Cut(k) => format!("cut {k}"),
+                GuiFabShape::Round(k) => format!("round {k}"),
+                GuiFabShape::None => "none".to_string(),
+            };
             format!("{} {shape}", rect(h.fab))
         }
         _ => return None,

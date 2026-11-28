@@ -431,15 +431,33 @@ pub fn gui_fab_radius() -> i32 {
     }
 }
 
+/// The corners `gui_fab` drew: cut by so many px (Gothic's carved square) or round at so many px (Classic's rounded
+/// rectangle). The home keeps it for its library.home.fab key (docs/SIM.md).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum GuiFabShape {
+    #[default]
+    None,
+    Cut(i32),
+    Round(i32),
+}
+
 /// The floating action button: a black rounded rectangle in Classic, a carved black square in Gothic,
-/// with the icon in white. The home's + and an app's `fab` draw it.
-pub fn gui_fab(c: &mut Canvas, r: Rect, icon: IconKind) {
-    ui_frame(c, r, gui_fab_radius(), 0, true, 0);
+/// with the icon in white. The home's + and an app's `fab` draw it. Returns the corners it drew, the shape the
+/// button is filled by (ui_frame's two shapes at `gui_fab_radius`).
+pub fn gui_fab(c: &mut Canvas, r: Rect, icon: IconKind) -> GuiFabShape {
+    let radius = gui_fab_radius();
+    let shape = if gui_gothic() { GuiFabShape::Cut(radius + radius / 4) } else { GuiFabShape::Round(radius) };
+    match shape {
+        GuiFabShape::Cut(k) => canvas_chamfer_rect(c, r, k, 0, true, 0),
+        GuiFabShape::Round(k) => canvas_round_rect(c, r, k, 0, true, 0),
+        GuiFabShape::None => {}
+    }
     if gui_gothic() {
         ui_frame(c, rect_inflate(r, -ui_px(9.0)), ui_px(12.0), 255, false, ui_px(2.0));
     }
     let isz = ((r.w.min(r.h) as f32 * 0.44) as i32).max(ui_px(30.0));
     ui_icon(c, icon, Rect::new(r.x + (r.w - isz) / 2, r.y + (r.h - isz) / 2, isz, isz), 255);
+    shape
 }
 
 /// A small app launcher: the icon in a rounded rectangle, its name below it, as a phone's home
@@ -1175,7 +1193,8 @@ mod tests {
             let mut c = Canvas::default();
             assert_eq!(canvas_init(&mut c, 184, 184), 0);
             canvas_fill(&mut c, Rect::new(0, 0, 184, 184), 255);
-            gui_fab(&mut c, r, IconKind::Plus);
+            let shape = gui_fab(&mut c, r, IconKind::Plus);
+            assert_eq!(shape, if theme == UiTheme::Classic { GuiFabShape::Round(gui_radius()) } else { GuiFabShape::Cut(ui_px(22.0)) }, "{theme:?}: what it says it drew");
             let px = |x: i32, y: i32| c.px[(y * c.stride + x) as usize];
             for (cx, cy) in [(r.x, r.y), (r.x + r.w - 1, r.y), (r.x, r.y + r.h - 1), (r.x + r.w - 1, r.y + r.h - 1)] {
                 assert_eq!(px(cx, cy), 255, "{theme:?}: the corner ({cx}, {cy}) is outside");

@@ -94,6 +94,9 @@ expect library.home.marks is title 227 11, break 534 32, light 703 2, foot 2235 
 expect library.home.marks_in_hits is 0
 expect library.home.foot_axis is 2358 2358 2358 2358
 expect library.home.fab is 1666 2286 144 144 cut 22
+# (the +'s top left corner as the panel shows it: Gothic's cut corner and inner line; Classic's quarter of a
+# rounded rectangle at 24 px, which a disc would leave mostly paper)
+expect display.dark.1666.2286.24.24 is 281
 shot 01-gothic
 # A tap on the title, or where the bat stood, opens nothing.
 tap 114 153
@@ -164,6 +167,7 @@ expect library.home.squares is 51 270 176 176, 277 270 176 176, 503 270 176 176,
 expect library.home.marks is title 231 3, break 549 2, light 703 2, foot 2243 3
 expect library.home.marks_in_hits is 0
 expect library.home.fab is 1666 2286 144 144 round 24
+expect display.dark.1666.2286.24.24 is 451
 expect library.home.foot_axis is 2358 2358 2358 2358
 expect library.ui_at.266.472 is app.store
 expect library.ui_at.464.472 is app.store
@@ -175,6 +179,7 @@ expect library.home.labels is 1 1 1 1 1 1 1 1 1
 expect library.home.marks is title 231 3, break 549 2, light 703 2, foot 1623 3
 expect library.home.marks_in_hits is 0
 expect library.home.fab is 2286 1666 144 144 round 24
+expect display.dark.2286.1666.24.24 is 451
 expect library.home.foot_axis is 1738 1738 1738 1738
 shot 06-classic-sideways
 rotate 0
