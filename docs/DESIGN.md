@@ -1506,8 +1506,10 @@ moves everything under the header with it, and upright the cards stay two rows a
 - **A long name** (`gui_app_label_fit`) is never cut short: one line at the small size; else one line at a smaller
   size down to four fifths of it where the face has sizes between (Classic's faces; Gothic's pixel face has none);
   else two lines at the small size, broken at a space or between CJK characters. The row keeps two lines' room under
-  every square, and a launcher's hit is its square and that room. A name two lines cannot hold is broken or cut by
-  font_draw_wrapped, which tells the fit check (make l10n-check runs every language and style).
+  every square; a launcher's hit is what `gui_app_square` drew, its square and the box its name's lines take (never
+  wider than the step), so a tap on any letter lands on it and a press covers the whole name. A name two lines cannot
+  hold is broken or cut by font_draw_wrapped, which tells the fit check (make l10n-check runs every language and
+  style).
 - **The rules** (`gui_title_rule`, `gui_section_break`, `gui_hair_rule`, `gui_foot_rule`), margin to margin, each in
   the paper between two parts: under the header the title rule (Gothic: 4 px black, 5 px of paper, 2 px black;
   Classic: one 3 px line), as much paper over it as under it; between the app row and the sorting line the section

@@ -83,7 +83,13 @@ expect library.ui_at.591.358 is app.share
 expect library.ui_at.817.358 is app.com.example.calculator
 expect library.ui_at.1495.358 is app.com.example.wordsearch
 expect library.ui_at.1721.358 is apps
-expect library.ui_at.1721.500 is apps
+# (a launcher's hit is its square and its name as drawn: Package Store's name, wider than its square, is in it to
+# its first and last letters, the paper beside it is in none, and under a name of one line the paper is no control)
+expect library.ui_at.258.472 is app.store
+expect library.ui_at.472.472 is app.store
+expect library.ui_at.253.472 is
+expect library.ui_at.1721.472 is apps
+expect library.ui_at.1721.500 is
 expect library.home.marks is title 227 11, break 534 32, light 703 2, foot 2235 11
 expect library.home.marks_in_hits is 0
 expect library.home.foot_axis is 2358 2358 2358 2358
@@ -159,6 +165,9 @@ expect library.home.marks is title 231 3, break 549 2, light 703 2, foot 2243 3
 expect library.home.marks_in_hits is 0
 expect library.home.fab is 1666 2286 144 144 round 24
 expect library.home.foot_axis is 2358 2358 2358 2358
+expect library.ui_at.266.472 is app.store
+expect library.ui_at.464.472 is app.store
+expect library.ui_at.258.472 is
 shot 02-classic
 rotate 1
 wait 300

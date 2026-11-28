@@ -17,7 +17,7 @@ expect library.apps.icons is 0
 expect display.presents not -1
 touch down 1700 350
 wait 200
-expect display.presents is fast 1633 276 176 256
+expect display.presents is fast 1633 276 176 220
 waitfor library.apps.icons is 1
 wait 300
 expect display.presents is
@@ -25,7 +25,7 @@ shot 00-home-held
 touch move 900 1500
 touch up 900 1500
 wait 300
-expect display.presents is ui 765 276 1044 256
+expect display.presents is ui 765 276 1044 220
 shot 01-home-lifted
 waitbg
 tap library app.store

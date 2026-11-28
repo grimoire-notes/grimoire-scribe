@@ -505,7 +505,8 @@ pub fn gui_app_label_h() -> i32 {
     2 * gui_app_label_line_h()
 }
 
-/// A launcher's whole height: its square, the paper under it and its name's two lines. Its hit is that tall.
+/// A launcher's whole room: its square, the paper under it and its name's two lines. The row and the Apps page are
+/// laid out by it; a launcher's hit is what `gui_app_square` drew, never taller.
 pub fn gui_app_h() -> i32 {
     gui_app_square_side() + gui_app_label_gap() + gui_app_label_h()
 }
@@ -530,33 +531,45 @@ pub fn gui_app_label_fit(label: &str, w: i32) -> (f32, i32) {
 }
 
 /// An app's name under its square `sq`, centred in `label_w` (the row's step, so a long name may reach into the
-/// paper beside its square, never into the next name), set as `gui_app_label_fit` says.
-fn gui_app_label(c: &mut Canvas, sq: Rect, label_w: i32, label: &str) {
+/// paper beside its square, never into the next name), set as `gui_app_label_fit` says. Returns the box its lines
+/// take, as wide as the widest of them (never wider than `label_w`), and how many lines it took.
+fn gui_app_label(c: &mut Canvas, sq: Rect, label_w: i32, label: &str) -> (Rect, i32) {
     let lw = label_w.max(sq.w);
     let (px, lines) = gui_app_label_fit(label, lw);
     let lh = gui_app_label_line_h();
     let r = Rect::new(sq.x + (sq.w - lw) / 2, sq.y + sq.h + gui_app_label_gap(), lw, lines * lh);
-    if lines == 1 {
+    let tw = if lines == 1 {
         font_draw_centered(c, FontFace::Bold, px, r, label, 0);
+        font_measure(FontFace::Bold, px, label)
     } else {
         font_draw_wrapped(c, FontFace::Bold, px, r, label, 2, lh, true, 0);
+        let mut widest = 0;
+        font_wrap_lines(FontFace::Bold, px, label, lw, Some(&mut widest));
+        widest
     }
+    .min(lw);
+    // (each line is centred in r as the font centres it, so the widest starts here)
+    (Rect::new(r.x + (lw - tw) / 2, r.y, tw, r.h), lines)
 }
 
 /// An app launcher as an even square: the theme's surface `sq`, the icon in the middle of it
-/// (`gui_app_icon_side`), and the name under it (`gui_app_label`).
-pub fn gui_app_square(c: &mut Canvas, sq: Rect, label_w: i32, icon: &AppIcon, label: &str, selected: bool) {
+/// (`gui_app_icon_side`), and the name under it (`gui_app_label`). Returns the launcher as drawn, its square and the
+/// box its name's lines take together, which is its hit (so a tap anywhere on the name lands on it, and a press's
+/// inverted look covers the whole name and nothing past it), and the lines its name took.
+pub fn gui_app_square(c: &mut Canvas, sq: Rect, label_w: i32, icon: &AppIcon, label: &str, selected: bool) -> (Rect, i32) {
     gui_surface(c, sq, selected, ui_px(3.0));
     let fg: u8 = if selected { 255 } else { 0 };
     let isz = gui_app_icon_side().min(sq.w.min(sq.h));
     icon.draw(c, Rect::new(sq.x + (sq.w - isz) / 2, sq.y + (sq.h - isz) / 2, isz, isz), fg);
-    gui_app_label(c, sq, label_w, label);
+    let (name, lines) = gui_app_label(c, sq, label_w, label);
+    (rect_union(sq, name), lines)
 }
 
 /// The home row's Show All as its last square: three rows of three of the theme's bullet where an app's icon is (a
-/// lozenge in Gothic, as What's new's lists have it, a dot in Classic), and its name under it as an app's.
-pub fn gui_app_show_all(c: &mut Canvas, sq: Rect, label_w: i32, label: &str) {
-    gui_app_square(c, sq, label_w, &AppIcon::glyph(IconKind::None), label, false);
+/// lozenge in Gothic, as What's new's lists have it, a dot in Classic), and its name under it as an app's. Returns
+/// what `gui_app_square` returns.
+pub fn gui_app_show_all(c: &mut Canvas, sq: Rect, label_w: i32, label: &str) -> (Rect, i32) {
+    let drawn = gui_app_square(c, sq, label_w, &AppIcon::glyph(IconKind::None), label, false);
     let pitch = ui_px(38.0) as f32;
     let (cx, cy) = (sq.x as f32 + sq.w as f32 / 2.0, sq.y as f32 + sq.h as f32 / 2.0);
     for row in -1..=1 {
@@ -569,6 +582,7 @@ pub fn gui_app_show_all(c: &mut Canvas, sq: Rect, label_w: i32, label: &str) {
             }
         }
     }
+    drawn
 }
 
 // ---- a page's rules (#332): the marks that part the home, themed once, as a printed page is ruled. A screen draws

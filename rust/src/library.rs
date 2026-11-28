@@ -3,7 +3,7 @@
 
 use crate::prelude::*;
 use crate::appicon::AppIcon;
-use crate::globalui::{gui_app_h, gui_app_label_fit, gui_app_show_all, gui_app_square, gui_app_square_side, gui_button, gui_chip, gui_chip_h, gui_fab, gui_fab_radius, gui_foot_rule, gui_gap, gui_gothic, gui_hair_rule, gui_hair_rule_h, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_row_h, gui_row_min_h, gui_section_break, gui_section_break_half, gui_select, gui_select_h, gui_status_bar, gui_status_h, gui_title_rule, gui_title_rule_h, gui_top_button_h, GuiPopupItem};
+use crate::globalui::{gui_app_h, gui_app_show_all, gui_app_square, gui_app_square_side, gui_button, gui_chip, gui_chip_h, gui_fab, gui_fab_radius, gui_foot_rule, gui_gap, gui_gothic, gui_hair_rule, gui_hair_rule_h, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_row_h, gui_row_min_h, gui_section_break, gui_section_break_half, gui_select, gui_select_h, gui_status_bar, gui_status_h, gui_title_rule, gui_title_rule_h, gui_top_button_h, GuiPopupItem};
 use crate::settingsmenu;
 use crate::ui::{ui_row, ui_row_page, ui_row_pager, Row as UiRow};
 use crate::browser::{BrowseMode, Browser, BrowserResult, FilesPrefs, PickSpec};
@@ -2100,21 +2100,22 @@ fn draw_base(a: &mut App) {
     // The app row (#332): even squares, every one the same size with the same paper between every two
     // (app_row_slots), the icon in the middle of each and its name under it: Files, Package Store and Share, then
     // the apps, most recently used first (home_apps). Show All is the row's last square, at the right margin,
-    // opening the Apps page; the row shows as many apps as fit before it. Each hit is its square and its name's
-    // two lines.
+    // opening the Apps page; the row shows as many apps as fit before it. Each hit is the launcher as drawn, its
+    // square and the box its name's lines take (gui_app_square), so a tap on any letter of the name lands on it and
+    // a press covers the whole name.
     let step = app_row_slots(aw).1;
     let mut squares = home_row_squares(aw, apps.len());
     let all = squares.pop().unwrap_or_default();
     for (app, &sq) in apps.iter().zip(squares.iter()) {
-        gui_app_square(c, sq, step, &app.icon, &app.label, false);
-        hits_add(&mut s.hits, Rect::new(sq.x, sq.y, sq.w, apps_h()), H_APP, app.arg);
+        let (hit, lines) = gui_app_square(c, sq, step, &app.icon, &app.label, false);
+        hits_add(&mut s.hits, hit, H_APP, app.arg);
         drawn.squares.push(sq);
-        drawn.label_lines.push(gui_app_label_fit(&app.label, step.max(sq.w)).1);
+        drawn.label_lines.push(lines);
     }
-    gui_app_show_all(c, all, step, tr("Show All"));
-    hits_add(&mut s.hits, Rect::new(all.x, all.y, all.w, apps_h()), H_APPS, 0);
+    let (hit, lines) = gui_app_show_all(c, all, step, tr("Show All"));
+    hits_add(&mut s.hits, hit, H_APPS, 0);
     drawn.squares.push(all);
-    drawn.label_lines.push(gui_app_label_fit(tr("Show All"), step.max(all.w)).1);
+    drawn.label_lines.push(lines);
 
     // The filter chips and the Sort select: the global elements' chip and select.
     let sort_r = sort_rect(aw);
@@ -6854,8 +6855,8 @@ fn draw_apps(a: &mut App) {
     let step = app_row_slots(aw).1;
     for (i, app) in apps.iter().skip(first).take(per).enumerate() {
         let sq = apps_page_square(aw, ah, i as i32);
-        gui_app_square(c, sq, step, &app.icon, &app.label, false);
-        hits_add(&mut s.hits, Rect::new(sq.x, sq.y, sq.w, apps_h()), H_APP, app.arg);
+        let (hit, _) = gui_app_square(c, sq, step, &app.icon, &app.label, false);
+        hits_add(&mut s.hits, hit, H_APP, app.arg);
     }
     let bw = ui_px(380.0);
     let whats = Rect::new(m, by, bw, bh);
@@ -12282,6 +12283,92 @@ mod tests {
         }
         library_free(&mut a);
         canvas_free(&mut a.screen);
+    }
+
+    // A launcher's hit is the launcher as drawn (#332): its square and the box its name's lines take, on the home's
+    // row and on the Apps page, upright and sideways, in both themes, at every status bar size, in English (Package
+    // Store's name is wider than its square) and in Polish (Show All's takes two lines in Gothic). Every pixel drawn
+    // in a launcher's column, from its square's top to the foot of its name's room, lies in its hit, so a tap on any
+    // letter lands on it and a press covers the whole name; the hit holds the square, is never wider than the step,
+    // and ends with the name's last line, and no two hits overlap.
+    #[test]
+    fn a_launchers_hit_holds_its_square_and_its_whole_name() {
+        let root = std::env::temp_dir().join(format!("grimoire-home-names-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        let mut a = pen_record_app();
+        a.scr = ScreenId::Library;
+        settings_default(&mut a.settings);
+        lib(&mut a).modal = Modal::None;
+        reload(&mut a);
+        let launchers = |a: &mut App, foot: i32| {
+            lib(a).hits.h.iter().filter(|h| (h.id == H_APP || h.id == H_APPS) && h.r.y < foot).map(|h| h.r).collect::<Vec<Rect>>()
+        };
+        let mut wide = 0;
+        for lang in ["en", "pl"] {
+            i18n_set(lang);
+            for size in 0..crate::status::STATUS_SIZES {
+                crate::globalui::gui_status_style(size, false);
+                for theme in [UiTheme::Gothic, UiTheme::Classic] {
+                    ui_set_theme(theme);
+                    for (w, h) in [(1860, 2480), (2480, 1860)] {
+                        a.w = w;
+                        a.h = h;
+                        canvas_free(&mut a.screen);
+                        assert_eq!(canvas_init(&mut a.screen, w, h), 0);
+                        let step = app_row_slots(w).1;
+                        for page in [false, true] {
+                            lib(&mut a).modal = Modal::None;
+                            if page {
+                                act(&mut a, &Hit { id: H_APPS, ..Default::default() });
+                                assert_eq!(lib(&mut a).modal, Modal::Apps);
+                            } else {
+                                redraw(&mut a, RefreshMode::Ui);
+                            }
+                            let at = format!("{lang} size {size} {theme:?} {w}x{h} {}", if page { "Apps" } else { "home" });
+                            let hits = launchers(&mut a, if page { apps_page_foot(h).1 } else { grid_top() });
+                            let squares: Vec<Rect> = if page {
+                                (0..hits.len() as i32).map(|i| apps_page_square(w, h, i)).collect()
+                            } else {
+                                lib(&mut a).home.squares.clone()
+                            };
+                            assert_eq!(hits.len(), squares.len(), "{at}");
+                            assert!(hits.len() >= 3, "{at}");
+                            for (i, (&hit, &sq)) in hits.iter().zip(squares.iter()).enumerate() {
+                                assert_eq!(rect_union(hit, sq), hit, "{at} {i}: the hit holds the square");
+                                assert!(hit.w <= step && hit.y == sq.y && hit.h <= apps_h(), "{at} {i}: {hit:?}");
+                                assert!(hit.h == sq.h + crate::globalui::gui_app_label_gap() + crate::globalui::gui_app_label_line_h() || hit.h == apps_h(), "{at} {i}: one line or two: {hit:?}");
+                                // (the launcher's column: its step centred on the square, from its top to its room's foot)
+                                let col = Rect::new(sq.x + (sq.w - step) / 2, sq.y, step, apps_h());
+                                let mut outside = Vec::new();
+                                for y in col.y..col.y + col.h {
+                                    for x in col.x.max(0)..(col.x + col.w).min(w) {
+                                        if a.screen.px[(y * a.screen.stride + x) as usize] < 255 && !rect_contains(hit, x, y) {
+                                            outside.push((x, y));
+                                        }
+                                    }
+                                }
+                                assert!(outside.is_empty(), "{at} {i}: drawn outside its hit {hit:?}: {:?}", &outside[..outside.len().min(4)]);
+                                if hit.w > sq.w {
+                                    wide += 1;
+                                }
+                            }
+                            assert!(hits.windows(2).all(|p| p[0].x + p[0].w <= p[1].x || p[0].y != p[1].y), "{at}: no two overlap: {hits:?}");
+                            if page {
+                                close_modal(&mut a);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(wide > 0, "a name wider than its square was among them");
+        i18n_set("en");
+        crate::globalui::gui_status_style(1, false);
+        ui_set_theme(UiTheme::Gothic);
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // The home's bands at every status bar size, upright and sideways, in both themes (#332): the title rule has as
