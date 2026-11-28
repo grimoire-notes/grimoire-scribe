@@ -1,4 +1,5 @@
 # settings: status_mode=1
+# settings: status_size=1
 # rust-only
 # env: GRIMOIRE_PACKAGE_STORE_URL=https://store.test/index.json PATH=tests/store-curl:/usr/bin:/bin GRIMOIRE_BG_DELAY_MS=400
 # generate: tests/store_many_packages.py 4 package-store-served

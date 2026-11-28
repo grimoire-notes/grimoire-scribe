@@ -5,6 +5,7 @@
 # z_kit_input_widget.qs with app time started 6,296 ms before 2^32 ms (49.7 days awake): the clock wraps to 0 during
 # the drag of 20 moves, with the same passes and refreshes (issue #272). From the next line on this file is
 # z_kit_input_widget.qs from its fifth line on (rust/tests/test_kit_input.rs checks it).
+# settings: status_size=1
 # The package kit's input in a widget's frame (issue #272), with the packages of tests/fixtures/kitinput (written by
 # rust/tests/kitfix: `make kit-fixtures`). Each widget counts in its status line what z_kit_input_app.qs's apps do,
 # with widget_tap's calls for n, and fills a black square about the place of its last touch (200, 200 at first),

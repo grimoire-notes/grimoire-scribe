@@ -3,7 +3,7 @@
 # family at least once (docs/SIM.md lists them). make c-check skips it (SCEN_SKIP_RUST_ONLY).
 wait 200
 expect running is 1
-expect status.zone is 0 0 1860 78
+expect status.zone is 0 0 1860 72
 expect status.shown is 0
 expect gestures.index-map is touch.2.down
 expect gestures.next-page is touch.2.left

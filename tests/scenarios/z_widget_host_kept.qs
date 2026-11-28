@@ -1,4 +1,5 @@
 # settings: status_mode=1
+# settings: status_size=1
 # rust-only
 # root: z_widget_host
 # Grimoire started again on z_widget_host's data: the frame it left open, of the package whose id is 128 bytes

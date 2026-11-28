@@ -1,3 +1,4 @@
+# settings: status_size=1
 # env: GRIMOIRE_SIM_CLOCK=script
 # rust-only
 # generate: tests/page_management_fixture.py
