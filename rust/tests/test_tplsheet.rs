@@ -118,11 +118,13 @@ fn paper_grid_layouts() {
     let mut r = paper_sheet_rect(&a, &mut g);
     check!(g.cols == 6 && g.rows == 3 && g.tw == 249 && g.th == 332);
     check!(r.y >= 0 && r.y + r.h <= a.h && r.x >= 0 && r.x + r.w <= a.w);
+    // Sideways the sheet starts under the status bar's band (#337; the medium bar here), its tiles fitted to the room
+    // left (274 x 365 before).
     a.w = 2480;
     a.h = 1860;
     r = paper_sheet_rect(&a, &mut g);
-    check!(g.cols == 6 && g.rows == 3 && g.tw == 274 && g.th == 365);
-    check!(r.y >= 0 && r.y + r.h <= a.h);
+    check!(g.cols == 6 && g.rows == 3 && g.tw == 259 && g.th == 345);
+    check!(r.y >= grimoire::globalui::gui_status_h() && r.y + r.h <= a.h);
     // New notebook's tiles in the room draw_new gives them (Gothic and Classic): six columns, three
     // rows, either way up.
     struct Nb {
