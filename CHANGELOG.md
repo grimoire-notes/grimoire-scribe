@@ -9,7 +9,7 @@
   last square, the All, Notebooks and Folders chips beside Sort (Name (A-Z), Name (Z-A), Newest first, Oldest
   first), both kept across restarts, and the cards. A name too long for one line under its square takes a smaller
   size or a second line, never cut short. The parts are ruled apart as a printed page is: a rule under the title,
-  an ornament between the apps and the chips (a plain line in Classic), a light gray rule under the chips and a
+  an ornament between the apps and the chips (a plain gray line in Classic), a light gray rule under the chips and a
   rule over the foot. Inside a folder Back and the folder's name are at the left. Settings is not in the row: the
   button at the top right and Quick settings open it. The + button at the bottom right (a rounded rectangle in
   Classic) makes a New notebook or a New folder, or opens Share (Import over Wi-Fi); the page arrows and "Page N of

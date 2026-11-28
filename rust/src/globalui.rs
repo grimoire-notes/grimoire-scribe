@@ -573,11 +573,15 @@ pub fn gui_app_show_all(c: &mut Canvas, sq: Rect, label_w: i32, label: &str) {
 
 // ---- a page's rules (#332): the marks that part the home, themed once, as a printed page is ruled. A screen draws
 // a mark in the paper between two of its parts, never inside a control, so a press's fast refresh (black and white
-// only) never carries one. Every mark is at least 2 px, black or gray 136, one of the panel's sixteen levels. ----
+// only) never carries one. Every mark is at least 2 px, black or a gray that is one of the panel's sixteen levels. ----
 
 /// The gray of the light rule: one of the panel's sixteen levels (8 x 17), so it shows on the panel as it does in a
 /// shot.
 pub const GUI_GRAY_HAIR: u8 = 136;
+
+/// The gray of Classic's section break: a panel level (6 x 17), darker than the light rule and lighter than the
+/// black title and foot rules, so the page's main split ranks between them.
+pub const GUI_GRAY_SPLIT: u8 = 102;
 
 /// The height of `gui_title_rule` and of `gui_foot_rule`: Gothic's thick (4 px), 5 px of paper and thin (2 px);
 /// Classic's one 3 px line.
@@ -621,13 +625,13 @@ pub fn gui_section_break_half() -> i32 {
 }
 
 /// The section break centred on `cy`, a page's main division: in Gothic the divider under a Gothic sheet's title
-/// (a 2 px black rule broken by a 16 px lozenge between two of 8, ui_ornament); in Classic one plain 2 px black
-/// line, with no dots, which a screen that pages could take for its page dots.
+/// (a 2 px black rule broken by a 16 px lozenge between two of 8, ui_ornament); in Classic one plain 2 px line of
+/// gray 102 (`GUI_GRAY_SPLIT`), with no dots, which a screen that pages could take for its page dots.
 pub fn gui_section_break(c: &mut Canvas, x0: i32, x1: i32, cy: i32) {
     if gui_gothic() {
         ui_ornament(c, x0, x1, cy, 0);
     } else {
-        canvas_hline(c, x0, x1, cy - ui_px(1.0), ui_px(2.0), 0);
+        canvas_hline(c, x0, x1, cy - ui_px(1.0), ui_px(2.0), GUI_GRAY_SPLIT);
     }
 }
 
@@ -1175,6 +1179,39 @@ mod tests {
             }
             canvas_free(&mut c);
         }
+        ui_set_theme(UiTheme::Gothic);
+    }
+
+    // The page's rules rank as the owner chose them (#332): in Classic the title and foot rules are black, the section
+    // break a plain line of gray 102 with no dots, and the light rule gray 136 in both themes; every gray is one of
+    // the panel's sixteen levels.
+    #[test]
+    fn classics_section_break_is_gray_between_the_black_rules_and_the_light_rule() {
+        ui_init(300.0);
+        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+            ui_set_theme(theme);
+            let mut c = Canvas::default();
+            assert_eq!(canvas_init(&mut c, 400, 200), 0);
+            canvas_fill(&mut c, Rect::new(0, 0, 400, 200), 255);
+            gui_title_rule(&mut c, 10, 390, 10);
+            gui_section_break(&mut c, 10, 390, 80);
+            gui_hair_rule(&mut c, 10, 390, 120);
+            gui_foot_rule(&mut c, 10, 390, 160);
+            let px = |x: i32, y: i32| c.px[(y * c.stride + x) as usize];
+            assert_eq!((px(20, 10), px(20, 160 + gui_title_rule_h() - 1)), (0, 0), "{theme:?}: the title and foot rules");
+            assert_eq!((px(20, 120), px(20, 121), px(20, 122)), (GUI_GRAY_HAIR, GUI_GRAY_HAIR, 255), "{theme:?}: the light rule");
+            if theme == UiTheme::Classic {
+                // one plain line, the same gray along its whole length, its two rows centred on 80
+                for x in [10, 100, 199, 200, 201, 300, 389] {
+                    assert_eq!((px(x, 78), px(x, 79), px(x, 80), px(x, 81)), (255, GUI_GRAY_SPLIT, GUI_GRAY_SPLIT, 255), "Classic: the split at x {x}");
+                }
+                assert_eq!(px(390, 79), 255);
+            } else {
+                assert_eq!(px(20, 80), 0, "Gothic: the ornament's rule is black");
+            }
+            canvas_free(&mut c);
+        }
+        assert!(GUI_GRAY_SPLIT < GUI_GRAY_HAIR && GUI_GRAY_SPLIT % 17 == 0 && GUI_GRAY_HAIR % 17 == 0);
         ui_set_theme(UiTheme::Gothic);
     }
 

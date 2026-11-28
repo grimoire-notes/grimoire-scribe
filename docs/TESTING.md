@@ -3730,8 +3730,8 @@ shows:
 1. **The rules.** On the home in Gothic: under "Library" a black rule, thick over thin, from margin to margin, with
    as much paper over it as under it; between the apps and the chips the lozenge divider; under the chips a light
    gray rule that reads as one even gray line (not dotted, not lost); over the page arrows and the + the title rule
-   turned over, with clear paper between it and the +. In Classic the same places with single black lines and a
-   plain line, no dots, at the main split.
+   turned over, with clear paper between it and the +. In Classic the same places with single black lines and, at
+   the main split, a plain gray line with no dots, darker than the light rule under the chips.
 2. **Presses leave the rules alone.** Press and hold an app's square, a chip, Sort and a card, then let go: the
    pressed part turns black and back, and no rule beside it flickers, turns grainy or keeps a ghost.
 3. **The squares.** The app row's squares are all one size with the same paper between every two, the first at the

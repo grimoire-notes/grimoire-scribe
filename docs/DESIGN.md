@@ -1512,8 +1512,9 @@ moves everything under the header with it, and upright the cards stay two rows a
   the paper between two parts: under the header the title rule (Gothic: 4 px black, 5 px of paper, 2 px black;
   Classic: one 3 px line), as much paper over it as under it; between the app row and the sorting line the section
   break (Gothic: the divider under a Gothic sheet's title, a 2 px rule broken by a 16 px lozenge between two of 8,
-  `ui_ornament`; Classic: one plain 2 px black line, no dots, which a screen that pages could take for page dots);
-  under the sorting line the light rule, 2 px of gray 136 (a panel level) in both; and over the foot the title rule
+  `ui_ornament`; Classic: one plain 2 px line of gray 102, a panel level darker than the light rule, no dots, which a
+  screen that pages could take for page dots); under the sorting line the light rule, 2 px of gray 136 (a panel level)
+  in both; and over the foot the title rule
   turned over (Classic: one 3 px line), placed from the + button so 40 px of paper stay between them. No mark lies in
   a hit's rectangle, so a press's fast refresh (black and white only, `app_press_feedback`) never sends one; they
   change only when the whole home is drawn again.
