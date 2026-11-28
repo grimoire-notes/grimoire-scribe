@@ -366,8 +366,13 @@ pub fn quick_event(a: &mut App, ev: &InEvent) -> bool {
     }
     if ev.type_ == InType::TouchDown && ev.y < top_strip() as f32 {
         // A notebook control that reaches into the top strip (its floating panel, a link) keeps its
-        // contact; the bar itself has no controls, so a pull anywhere else in it is the system's.
-        if a.scr == ScreenId::Editor && crate::editor::editor_control_at(a, ev.x, ev.y) {
+        // contact while the bar is hidden; the bar itself has no controls, so a pull anywhere else in
+        // it is the system's. While the bar is drawn over the page it covers such a control (#337), and
+        // a contact there is the bar's: a tap hides it, and the control under it shows.
+        if a.scr == ScreenId::Editor
+            && crate::status::status_band_rows(a) == 0
+            && crate::editor::editor_control_at(a, ev.x, ev.y)
+        {
             return false;
         }
         let q = &mut a.quick;

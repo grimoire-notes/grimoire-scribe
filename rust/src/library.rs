@@ -3,7 +3,7 @@
 
 use crate::prelude::*;
 use crate::appicon::AppIcon;
-use crate::globalui::{gui_app_h, gui_app_show_all, gui_app_square, gui_app_square_side, gui_button, gui_chip, gui_chip_h, gui_fab, gui_foot_rule, gui_gap, gui_hair_rule, gui_hair_rule_h, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_row_h, gui_row_min_h, gui_section_break, gui_section_break_half, gui_select, gui_select_h, gui_status_bar, gui_status_h, gui_title_rule, gui_title_rule_h, gui_top_button_h, GuiFabShape, GuiPopupItem};
+use crate::globalui::{gui_app_h, gui_app_show_all, gui_app_square, gui_app_square_side, gui_button, gui_chip, gui_chip_h, gui_fab, gui_foot_rule, gui_gap, gui_hair_rule, gui_hair_rule_h, gui_head_h, gui_header, gui_icon_button, gui_inner_rules_edge, gui_margin, gui_popup, gui_radius, gui_row_h, gui_row_min_h, gui_section_break, gui_section_break_half, gui_select, gui_select_h, gui_status_bar, gui_status_h, gui_title_rule, gui_title_rule_h, gui_top_button_h, GuiFabShape, GuiPopupItem};
 use crate::settingsmenu;
 use crate::ui::{ui_row, ui_row_page, ui_row_pager, Row as UiRow};
 use crate::browser::{BrowseMode, Browser, BrowserResult, FilesPrefs, PickSpec};
@@ -2416,10 +2416,14 @@ fn draw_base(a: &mut App) {
 
     // The home is ruled as a printed page is (#332): the title rule under the header, the section break between the
     // app row and the sorting line, the light rule between the sorting line and the cards, and the foot rule over the
-    // pager and the + button, each from margin to margin in the paper between two parts (the bands above draw_base).
-    let (rx0, rx1) = (m, aw - m);
+    // pager and the + button, each in the paper between two parts (the bands above draw_base). The title and foot
+    // rules run from the screen's left edge to its right (#337), closing the page across its whole width; the two
+    // inner marks run from margin to margin, or edge to edge too (gui_inner_rules_edge), the section break's
+    // lozenge centred either way.
+    let (ex0, ex1) = (0, aw);
+    let (rx0, rx1) = if gui_inner_rules_edge() { (0, aw) } else { (m, aw - m) };
     // (the section break is drawn after the row, centred under its lowest name: section_break_cy)
-    gui_title_rule(c, rx0, rx1, title_rule_y());
+    gui_title_rule(c, ex0, ex1, title_rule_y());
     drawn.marks.push(("title", title_rule_y(), gui_title_rule_h()));
 
     // The app row (#332): even squares, every one the same size with the same paper between every two
@@ -2450,7 +2454,7 @@ fn draw_base(a: &mut App) {
     drawn.marks.push(("break", cy - half, 2 * half));
     gui_hair_rule(c, rx0, rx1, hair_rule_y());
     drawn.marks.push(("light", hair_rule_y(), gui_hair_rule_h()));
-    gui_foot_rule(c, rx0, rx1, foot_rule_y(aw, ah));
+    gui_foot_rule(c, ex0, ex1, foot_rule_y(aw, ah));
     drawn.marks.push(("foot", foot_rule_y(aw, ah), gui_title_rule_h()));
 
     // The filter chips and the Sort select: the global elements' chip and select.

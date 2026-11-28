@@ -90,6 +90,37 @@ pub const GUI_GRAY_RULE: u8 = 140;
 /// bar is 72, 78 and 92 px tall (small was 0.82, 64 px, before #319).
 const STATUS_SCALE: [f32; 3] = [0.92, 1.0, 1.18];
 
+/// The gray of the status bar's band (#337): one of the panel's sixteen levels, so a grays refresh shows it
+/// flat, as the shot does.
+pub fn gui_status_band_gray() -> u8 {
+    render_switch().0
+}
+
+/// The gray of a status bar icon whose radio is off (Wi-Fi or Bluetooth): a panel level that reads on the band
+/// and still tells it from the black of one that is on.
+pub const GUI_GRAY_STATUS_OFF: u8 = 102;
+
+/// Whether the home's two inner marks (the section break and the light rule) run edge to edge as the title and
+/// foot rules do (#337), or from margin to margin.
+pub fn gui_inner_rules_edge() -> bool {
+    render_switch().1
+}
+
+// RENDER SWITCH (#337, stage 1 only, removed before the build): GRIMOIRE_RENDER_BAND=204 draws the band in 204
+// (221 otherwise), GRIMOIRE_RENDER_RULES=edge draws the inner rules edge to edge (margin to margin otherwise).
+fn render_switch() -> (u8, bool) {
+    static SWITCH: std::sync::OnceLock<(u8, bool)> = std::sync::OnceLock::new();
+    *SWITCH.get_or_init(|| {
+        let gray = match std::env::var("GRIMOIRE_RENDER_BAND").as_deref() {
+            Ok("204") => 204,
+            Ok("238") => 238,
+            _ => 221,
+        };
+        let edge = std::env::var("GRIMOIRE_RENDER_RULES").as_deref() == Ok("edge");
+        (gray, edge)
+    })
+}
+
 struct StatusUnder {
     w: i32,
     h: i32,
@@ -933,15 +964,16 @@ fn battery_cached() -> Option<Battery> {
 }
 
 /// The status bar's battery: the pixel-art kind of shape (a body with its terminal and a fill by
-/// percent), drawn here rather than taken from the icon font, which need not carry a battery.
-pub fn gui_battery(c: &mut Canvas, r: Rect, percent: i32) {
+/// percent), drawn here rather than taken from the icon font, which need not carry a battery. The body
+/// is filled with `paper`, the gray of what it stands on (the bar's band).
+pub fn gui_battery(c: &mut Canvas, r: Rect, percent: i32, paper: u8) {
     // The art keeps its proportions at every status bar size (34 px tall is the medium bar's).
     let k = r.h.max(1) / 34;
     let rad = (if gui_gothic() { 5 * k } else { 10 * k }).max(1);
     let tw = (8 * k).max(2);
     let gap = (5 * k).max(1);
     let body = Rect::new(r.x, r.y, r.w - tw - gap, r.h);
-    ui_frame(c, body, rad, 255, true, 0);
+    ui_frame(c, body, rad, paper, true, 0);
     ui_frame(c, body, rad, 0, false, (3 * k).max(1));
     let term = Rect::new(body.x + body.w + (2 * k).max(1), r.y + r.h * 30 / 100, tw, r.h * 40 / 100);
     ui_frame(c, term, tw / 2, 0, true, 0);
@@ -954,21 +986,22 @@ pub fn gui_battery(c: &mut Canvas, r: Rect, percent: i32) {
 }
 
 /// The app's status bar: the time and date at the left, then (when the device has them) Wi-Fi,
-/// Bluetooth and the battery percent at the right. Every screen draws it above its header; a tap in
-/// it is a tap on no control (the caller adds no hit). `now` is the platform's clock (light.rs
-/// sys_wall_clock), as the minute checks that draw it again read it (library_tick,
-/// library_app_minute): the simulator's script holds that clock still (docs/SIM.md, `clock`), and a
-/// bar that read the machine's own would refresh in the middle of a scenario that counts refreshes.
+/// Bluetooth and the battery percent at the right, on a band of gray the bar's full width and height
+/// (#337: `gui_status_band_gray`, every item drawn in black, or in `GUI_GRAY_STATUS_OFF` for a radio
+/// that is off). Every screen draws it above its header; a tap in it is a tap on no control (the
+/// caller adds no hit). `now` is the platform's clock (light.rs sys_wall_clock), as the minute checks
+/// that draw it again read it (library_tick, library_app_minute): the simulator's script holds that
+/// clock still (docs/SIM.md, `clock`), and a bar that read the machine's own would refresh in the
+/// middle of a scenario that counts refreshes.
 pub fn gui_status_bar(c: &mut Canvas, aw: i32, now: i64) {
     gui_status_bar_in(c, aw, now, true, true);
 }
 
-/// The notebook's key status bar: the same time, connections and battery with no white background, so
-/// what is drawn under it (the page) still shows through.
-pub fn gui_status_bar_transparent(c: &mut Canvas, aw: i32, now: i64) {
-    if gui_status_visible() {
-        gui_status_bar_in(c, aw, now, true, false);
-    }
+/// The notebook's status bar (#337): the same band, drawn over the page and anything else there. The
+/// page goes on beneath it (ink written there stays in the page), and a tap on the bar hides it for as
+/// long as the notebook is open (status.rs), which shows that part of the page.
+pub fn gui_status_bar_over_page(c: &mut Canvas, aw: i32, now: i64) {
+    gui_status_bar_in(c, aw, now, true, true);
 }
 
 /// The same bar with only the connection icons at the right: kept for the retired corner's callers.
@@ -1030,9 +1063,10 @@ fn gui_status_bar_in(c: &mut Canvas, aw: i32, now: i64, clock: bool, fill: bool)
     let u = |v: f32| ui_px(v * scale);
     let h = gui_status_h();
     let m = gui_margin();
+    let band = gui_status_band_gray();
     status_under_save(c, aw, h);
     if fill {
-        canvas_fill(c, Rect::new(0, 0, aw, h), 255);
+        canvas_fill(c, Rect::new(0, 0, aw, h), band);
     }
     if clock {
         let mut time = String::new();
@@ -1043,23 +1077,28 @@ fn gui_status_bar_in(c: &mut Canvas, aw: i32, now: i64, clock: bool, fill: bool)
         let mut date = String::new();
         format_date_short(now, &mut date, 64);
         let date_x = m + time_w + u(18.0);
+        // (black on the band, as the time is: the face tells the date from the time)
         font_draw_left(
             c,
             FontFace::Regular,
             u(32.0) as f32,
             Rect::new(date_x, 0, (aw / 2 - date_x).max(0), h),
             &date,
-            90,
+            0,
         );
     }
     let isz = u(48.0);
     let mut x = aw - m;
+    // RENDER SWITCH (#337, stage 1 only): GRIMOIRE_RENDER_ITEMS=1 draws the right end as a Kindle has it (the
+    // simulator has no battery, Wi-Fi or Bluetooth): the battery at 87 %, Wi-Fi on, Bluetooth off.
+    let fake = std::env::var("GRIMOIRE_RENDER_ITEMS").as_deref() == Ok("1");
+    let battery = if fake { Some(Battery { percent: 87, charging: false }) } else { battery_cached() };
     if clock {
-        if let Some(b) = battery_cached() {
+        if let Some(b) = battery {
             let bw = u(56.0);
             let bh = u(34.0);
             x -= bw + u(8.0);
-            gui_battery(c, Rect::new(x, (h - bh) / 2, bw, bh), b.percent);
+            gui_battery(c, Rect::new(x, (h - bh) / 2, bw, bh), b.percent, if fill { band } else { 255 });
             x -= u(10.0);
             let mut pct = String::new();
             csnprintf!(&mut pct, 16, "%d%%", clampi(b.percent, 0, 100));
@@ -1070,15 +1109,15 @@ fn gui_status_bar_in(c: &mut Canvas, aw: i32, now: i64, clock: bool, fill: bool)
             x -= u(28.0);
         }
     }
-    if bt_present() {
+    if fake || bt_present() {
         x -= isz;
-        let fg = if bt_state() == BtState::Stopped { 170 } else { 0 };
+        let fg = if fake || bt_state() == BtState::Stopped { GUI_GRAY_STATUS_OFF } else { 0 };
         ui_icon(c, IconKind::Bluetooth, Rect::new(x, (h - isz) / 2, isz, isz), fg);
         x -= u(22.0);
     }
-    if wifi_available() {
+    if fake || wifi_available() {
         x -= isz;
-        let fg = if wifi_status().is_some_and(|s| s.enabled) { 0 } else { 170 };
+        let fg = if fake || wifi_status().is_some_and(|s| s.enabled) { 0 } else { GUI_GRAY_STATUS_OFF };
         ui_icon(c, IconKind::Wifi, Rect::new(x, (h - isz) / 2, isz, isz), fg);
     }
 }

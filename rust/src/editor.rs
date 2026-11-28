@@ -3853,11 +3853,12 @@ fn compose(a: &mut App, r: Rect) {
     draw_menus(a, r);
     sel_draw(a, r);
     let strip = Rect::new(0, 0, a.w, gui_status_h());
-    if a.settings.status_on && a.settings.status_in_notebooks && rect_overlaps(r, strip) {
-        // The page continues beneath the bar. It is drawn without a background, so the ink under it
-        // still shows; a tap hides it, and another on the top strip brings it back (status.rs).
-        // A draw of part of the strip repeats the time the whole strip was drawn with (status_bar_time).
-        crate::globalui::gui_status_bar_transparent(&mut a.screen, a.w, status_bar_time(rect_contains_rect(r, strip)));
+    if crate::status::status_notebook_bar(a) && rect_overlaps(r, strip) {
+        // The bar is drawn over everything here, on its band (#337): the page continues beneath it, and
+        // ink written there goes into the page, shown once a tap hides the bar (status.rs); another tap
+        // on the top strip brings it back. A draw of part of the strip repeats the time the whole strip
+        // was drawn with (status_bar_time).
+        crate::globalui::gui_status_bar_over_page(&mut a.screen, a.w, status_bar_time(rect_contains_rect(r, strip)));
     }
 }
 
@@ -4081,12 +4082,33 @@ pub fn editor_live_under_panel(a: &mut App, r: Rect, push: Rect) {
 
 // A page-space change: recompose what it covers on screen and refresh it.
 fn show(a: &mut App, page_rect: Rect, m: RefreshMode) {
-    let r = page_to_screen(a, page_rect);
+    let mut r = page_to_screen(a, page_rect);
+    if m == RefreshMode::Fast {
+        // A pen's live frames (ink, an erase, a shape's preview) keep below the bar while it is drawn over the
+        // page (#337): the ink goes into the page there, the screen and the panel keep the bar, and no fast
+        // refresh (black and white only) ever dithers its band. The settle's grays refresh of the stroke's rect
+        // finds the bar as the panel shows it.
+        r = below_status_band(a, r);
+    }
     if rect_is_empty(r) {
         return;
     }
     compose(a, r);
     app_invalidate(a, r, m);
+}
+
+/// The part of screen rect r below the rows a notebook's bar covers now (status.rs status_band_rows): r itself
+/// while the bar is hidden; empty when r lies within the bar.
+fn below_status_band(a: &App, r: Rect) -> Rect {
+    let top = crate::status::status_band_rows(a);
+    if top <= 0 || r.y >= top {
+        return r;
+    }
+    let bottom = r.y + r.h;
+    if bottom <= top {
+        return RECT_EMPTY;
+    }
+    Rect { x: r.x, y: top, w: r.w, h: bottom - top }
 }
 
 pub(crate) fn compose_all(a: &mut App, m: RefreshMode) {
@@ -4987,6 +5009,7 @@ pub fn editor_open_notebook(a: &mut App, id: &str) {
         return;
     }
     s.open = true;
+    crate::status::status_bar_back(); // (a bar a tap hid in the notebook before shows again, #337)
     nav_load(s.nb.id.as_str(), &mut s.nav);
     s.dl = doclinks_load(s.nb.id.as_str());
     doclinks_prune(&mut s.dl, &s.nb); // (a tab to a page deleted since the last write is not a tab)

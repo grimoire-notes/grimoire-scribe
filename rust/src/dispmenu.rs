@@ -333,7 +333,7 @@ pub fn dispmenu_draw(m: &mut DispMenu, a: &mut App) -> Rect {
             rows.push(DRowKind::Check {
                 id: D_NOTEBOOKS,
                 label: tr("Hide status bar inside Notebooks").to_string(),
-                on: !(a.settings.status_on && a.settings.status_in_notebooks),
+                on: !a.settings.status_in_notebooks,
             });
             rows.push(DRowKind::Check {
                 id: D_TIME12,
@@ -510,13 +510,14 @@ pub fn dispmenu_pointer(m: &mut DispMenu, a: &mut App, phase: i32, x: f32, y: f3
             return DmResult::Changed;
         }
         D_NOTEBOOKS => {
-            // The row asks to hide: turning it off brings the notebook's bar back, whatever hid it
-            // before (the row or a tap).
-            if a.settings.status_on && a.settings.status_in_notebooks {
+            // The row asks to hide, and lasts (#337: a tap's hiding lasts while its notebook is open):
+            // turning it off brings the notebook's bar back, whatever hid it before (the row or a tap).
+            if a.settings.status_in_notebooks {
                 a.settings.status_in_notebooks = false;
             } else {
                 a.settings.status_on = true;
                 a.settings.status_in_notebooks = true;
+                crate::status::status_bar_back();
                 crate::globalui::gui_status_shown(true);
             }
             settings_save(&a.settings);
