@@ -1,4 +1,5 @@
 # root: b_library
+# settings: status_size=1
 # copy: tests/fixtures/apppkg .
 # env: TZ=UTC
 # rust-only
@@ -7,14 +8,20 @@
 # Settings at the far right. What's new opens from the Apps page's foot button, on this version's notes. In a
 # folder Back and the folder's name are there. Under the header the row is Files, Package Store and Share, then the
 # installed app, and Show All in the row's last square. Gothic, upright and sideways (z_home_header_classic.qs: the
-# same in Classic). The status bar's clock is held still, so the shots are the same on every run.
+# same in Classic, at the small status bar; this one at the medium bar, z_home_ruled at the small and the large). The
+# status bar's clock is held still, so the shots are the same on every run.
 clock 1700000000
 wait 3600
 expect screen is library
 expect library.sheet is none
 waitfor library.apps.icons is 1
+expect settings.status_size is 1
+# (the medium bar: everything under the header 6 px lower than at the small one, the foot where it was)
+expect library.home.squares is 51 276 176 176, 277 276 176 176, 503 276 176 176, 729 276 176 176, 1633 276 176 176
+expect library.home.marks is title 233 11, break 540 32, light 709 2, foot 2235 11
+expect library.home.marks_in_hits is 0
 expect library.home.header is title search settings
-expect library.ui_has.about is 0
+expect library.ui_has.app.whats-new is 0
 expect library.ui_at.114.153 is
 expect library.ui_at.400.153 is
 expect library.ui_at.114.240 is
@@ -48,7 +55,7 @@ expect library.sheet is none
 rotate 1
 wait 200
 expect library.home.header is title search settings
-expect library.ui_has.about is 0
+expect library.ui_has.app.whats-new is 0
 expect library.ui_at.114.153 is
 expect library.ui_at.400.153 is
 expect library.ui_at.2274.153 is search
@@ -74,18 +81,18 @@ tap library folder.School
 wait 200
 expect library.home.header is back title search settings
 expect library.ui_at.98.153 is back
-expect library.ui_has.about is 0
+expect library.ui_has.app.whats-new is 0
 shot 03-folder
 rotate 1
 wait 200
 expect library.home.header is back title search settings
 expect library.ui_at.98.153 is back
-expect library.ui_has.about is 0
+expect library.ui_has.app.whats-new is 0
 shot 04-folder-sideways
 rotate 0
 wait 200
 tap library back
 wait 200
 expect library.home.header is title search settings
-expect library.ui_has.about is 0
+expect library.ui_has.app.whats-new is 0
 quit

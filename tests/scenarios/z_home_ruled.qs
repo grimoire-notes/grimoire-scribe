@@ -69,7 +69,7 @@ expect library.folder is
 # nothing that opens What's new; the row's squares, one step apart, Show All the last at the right margin; the four
 # marks top to bottom, none crossing a hit; the arrows and their line on the + button's centre line.
 expect library.home.header is title search settings
-expect library.ui_has.about is 0
+expect library.ui_has.app.whats-new is 0
 expect library.ui_at.1654.147 is search
 expect library.ui_at.1762.147 is settings
 expect library.ui_at.114.153 is
@@ -130,7 +130,7 @@ tap library folder.School
 wait 300
 expect library.home.header is back title search settings
 expect library.ui_at.98.153 is back
-expect library.ui_has.about is 0
+expect library.ui_has.app.whats-new is 0
 expect library.home.marks is title 227 11, break 534 32, light 703 2, foot 2235 11
 expect library.home.marks_in_hits is 0
 expect library.home.foot_axis is 2358 2358 2358 2358

@@ -13,7 +13,7 @@ expect screen is library
 expect library.sheet is none
 waitfor library.apps.icons is 1
 expect library.home.header is title search settings
-expect library.ui_has.about is 0
+expect library.ui_has.app.whats-new is 0
 expect library.ui_at.114.153 is
 expect library.ui_at.400.153 is
 expect library.ui_at.114.240 is
@@ -47,7 +47,7 @@ expect library.sheet is none
 rotate 1
 wait 200
 expect library.home.header is title search settings
-expect library.ui_has.about is 0
+expect library.ui_has.app.whats-new is 0
 expect library.ui_at.114.153 is
 expect library.ui_at.400.153 is
 expect library.ui_at.2274.153 is search
@@ -73,18 +73,18 @@ tap library folder.School
 wait 200
 expect library.home.header is back title search settings
 expect library.ui_at.98.153 is back
-expect library.ui_has.about is 0
+expect library.ui_has.app.whats-new is 0
 shot 03-folder
 rotate 1
 wait 200
 expect library.home.header is back title search settings
 expect library.ui_at.98.153 is back
-expect library.ui_has.about is 0
+expect library.ui_has.app.whats-new is 0
 shot 04-folder-sideways
 rotate 0
 wait 200
 tap library back
 wait 200
 expect library.home.header is title search settings
-expect library.ui_has.about is 0
+expect library.ui_has.app.whats-new is 0
 quit
