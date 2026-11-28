@@ -160,14 +160,32 @@ pub fn status_notebook_bar(a: &App) -> bool {
 }
 
 /// The rows at the top of the screen a notebook's bar covers now: its height while it is drawn over
-/// the page, 0 while it is hidden or another screen is in front. A pen's live frames keep below them
-/// (editor.rs show), so the bar is never in a fast refresh and its gray is never dithered.
+/// the page, 0 while it is hidden or a screen that covers the page is in front (Settings, the Pages
+/// view, the Graph, a picker: they draw their own bar). Every fast refresh in the notebook stops at
+/// them (status_below_band), so the bar's gray is never dithered.
 pub fn status_band_rows(a: &App) -> i32 {
-    if a.scr == ScreenId::Editor && status_notebook_bar(a) && !crate::library::library_settings_active(a) {
+    if a.scr == ScreenId::Editor && status_notebook_bar(a) && crate::editor::editor_page_composed(a) {
         crate::globalui::gui_status_h()
     } else {
         0
     }
+}
+
+/// The part of screen rect r below the rows a notebook's bar covers now (status_band_rows): r itself
+/// while the bar is hidden or another screen is in front, empty when r lies within the bar. A fast
+/// refresh (black and white only) in a notebook keeps to it: the pen's live frames (editor.rs show),
+/// the lasso (lasso_clip), a press look (app.rs app_press_feedback, the selection bar's bar_press_show)
+/// and every other one at the flush (app.rs app_flush), so the band is never in one.
+pub fn status_below_band(a: &App, r: Rect) -> Rect {
+    let top = status_band_rows(a);
+    if top <= 0 || rect_is_empty(r) || r.y >= top {
+        return r;
+    }
+    let bottom = r.y + r.h;
+    if bottom <= top {
+        return RECT_EMPTY;
+    }
+    Rect { x: r.x, y: top, w: r.w, h: bottom - top }
 }
 
 /// Whether the shared bar is drawn on the screen in front. Only a notebook can hide it: a tap on it

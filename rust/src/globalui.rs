@@ -112,6 +112,9 @@ thread_local! {
     /// The screen as it was under the bar when it was last drawn (Live view's tiles show this while
     /// the bar itself is its own layer: LIVE_LAYER_STATUS).
     static STATUS_UNDER: RefCell<StatusUnder> = const { RefCell::new(StatusUnder { w: 0, h: 0, px: Vec::new() }) };
+    /// The bar as it was last drawn on its band (#337): a notebook's flush puts it back where anything drew into
+    /// its rows since (gui_status_drawn_put).
+    static STATUS_DRAWN: RefCell<StatusUnder> = const { RefCell::new(StatusUnder { w: 0, h: 0, px: Vec::new() }) };
 }
 
 /// Applies the Status bar settings to every top status bar (Settings > Sleep & Clock > Status bar).
@@ -986,6 +989,13 @@ pub fn gui_status_under_put(c: &mut Canvas, r: Rect) -> bool {
     strip_put(&STATUS_UNDER, c, r)
 }
 
+/// Puts the bar as it was last drawn on its band into c at r, the part of the strip r covers (#337: a notebook's
+/// flush, where something drew into the bar's rows since: app.rs band_keep). False when no bar of that size was
+/// drawn: the caller draws it again.
+pub fn gui_status_drawn_put(c: &mut Canvas, r: Rect) -> bool {
+    strip_put(&STATUS_DRAWN, c, r)
+}
+
 /// Keeps the top w x h of c in `cell`.
 fn strip_save(cell: &'static std::thread::LocalKey<RefCell<StatusUnder>>, c: &Canvas, w: i32, h: i32) {
     if w <= 0 || h <= 0 || c.stride < w {
@@ -1110,6 +1120,9 @@ fn gui_status_bar_items(c: &mut Canvas, aw: i32, now: i64, clock: bool, fill: bo
     if let Some(on) = items.wifi {
         x -= isz;
         ui_icon(c, IconKind::Wifi, Rect::new(x, (h - isz) / 2, isz, isz), if on { 0 } else { GUI_GRAY_STATUS_OFF });
+    }
+    if fill && clock {
+        strip_save(&STATUS_DRAWN, c, aw, h);
     }
 }
 

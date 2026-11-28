@@ -1033,6 +1033,8 @@ fn button_pointer(a: &mut App, ph: i32, ev: &InEvent) {
 /// draw reads `pressed`) and its rect sent as a Fast refresh, so a tap answers as a panel button's does
 /// even when what it does changes nothing on the screen (Copy: issue #50).
 fn bar_press_show(a: &mut App, r: Rect) {
+    // (below a notebook's bar drawn over the page: the band is never in a fast refresh, #337)
+    let r = crate::status::status_below_band(a, r);
     if rect_is_empty(r) {
         return;
     }
