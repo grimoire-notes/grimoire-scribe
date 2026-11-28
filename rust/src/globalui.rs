@@ -137,6 +137,12 @@ pub fn gui_status_h() -> i32 {
     ui_px(78.0 * status_scale())
 }
 
+/// The highest a sheet's card starts (library.rs sheet_rect, the editor's Paper sheet): a gap under the status
+/// bar's band, which is drawn over everything on its rows (#337), so the band never covers a card's top or title.
+pub fn gui_sheet_top() -> i32 {
+    gui_status_h() + ui_px(20.0)
+}
+
 /// The header under the status bar: its title and its round action buttons.
 pub fn gui_head_h() -> i32 {
     ui_px(150.0)

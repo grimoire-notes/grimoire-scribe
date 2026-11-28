@@ -3,7 +3,7 @@
 
 use crate::prelude::*;
 use crate::appicon::AppIcon;
-use crate::globalui::{gui_app_h, gui_app_show_all, gui_app_square, gui_app_square_side, gui_button, gui_chip, gui_chip_h, gui_fab, gui_foot_rule, gui_gap, gui_hair_rule, gui_hair_rule_h, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_row_h, gui_row_min_h, gui_section_break, gui_section_break_half, gui_select, gui_select_h, gui_status_bar, gui_status_h, gui_title_rule, gui_title_rule_h, gui_top_button_h, GuiFabShape, GuiPopupItem};
+use crate::globalui::{gui_app_h, gui_app_show_all, gui_app_square, gui_app_square_side, gui_button, gui_chip, gui_chip_h, gui_fab, gui_foot_rule, gui_gap, gui_hair_rule, gui_hair_rule_h, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_row_h, gui_row_min_h, gui_section_break, gui_section_break_half, gui_select, gui_select_h, gui_sheet_top, gui_status_bar, gui_status_h, gui_title_rule, gui_title_rule_h, gui_top_button_h, GuiFabShape, GuiPopupItem};
 use crate::settingsmenu;
 use crate::ui::{ui_row, ui_row_page, ui_row_pager, Row as UiRow};
 use crate::browser::{BrowseMode, Browser, BrowserResult, FilesPrefs, PickSpec};
@@ -2554,14 +2554,22 @@ fn draw_base(a: &mut App) {
 /// Where a sheet `h` px tall goes on a screen (Files' Delete question is drawn in the same place: browser.rs).
 pub(crate) fn sheet_rect(aw: i32, ah: i32, mut h: i32) -> Rect {
     let m = ui_px(70.0);
-    if h > ah - 2 * ui_px(40.0) {
-        h = ah - 2 * ui_px(40.0); // landscape: keep it on screen
+    // (its top under the status bar's band, which is drawn over everything on its rows: #337)
+    let top = gui_sheet_top();
+    if h > sheet_room(ah) {
+        h = sheet_room(ah); // landscape: keep it on screen
     }
     let mut w = aw - 2 * m;
     if w > ui_px(1800.0) {
         w = ui_px(1800.0);
     }
-    Rect::new((aw - w) / 2, (ah - h) / 3, w, h)
+    Rect::new((aw - w) / 2, ((ah - h) / 3).max(top), w, h)
+}
+
+/// The tallest card sheet_rect gives on a screen ah tall: from under the status bar's band (gui_sheet_top) to a
+/// margin above the bottom edge.
+pub(crate) fn sheet_room(ah: i32) -> i32 {
+    ah - gui_sheet_top() - ui_px(40.0)
 }
 
 /// New notebook's card, and the place its paper tiles start (draw_new's): the Templates sheet over it takes the
@@ -4644,7 +4652,7 @@ fn draw_menu(a: &mut App, title: &str, rows: &[MenuRow]) -> Vec<Rect> {
     let mut gap = ui_px(20.0);
     // A list longer than the screen has room for gets shorter rows, never below a 10 mm touch target,
     // then narrower gaps between them (sideways the Buttons sheet's Tools: 12 rows).
-    let room = a.h - 2 * ui_px(40.0) - ui_px(120.0) - ui_px(72.0);
+    let room = sheet_room(a.h) - ui_px(120.0) - ui_px(72.0);
     if n * (rh + gap) > room {
         rh = clampi(room / n - gap, ui_px(118.0), rh);
     }
@@ -12899,6 +12907,49 @@ mod tests {
         i18n_set("en");
         crate::globalui::gui_status_style(1, false);
         ui_set_theme(UiTheme::Gothic);
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // A sheet's card starts under the status bar's band (#337: the band is drawn over everything on its rows, so a
+    // card that rose into them broke the band and lost its top): the home's sheets, New notebook (the tallest) among
+    // them, upright and sideways at every status bar size, whole on the screen; New notebook drawn on the home leaves
+    // the band whole.
+    #[test]
+    fn the_homes_sheets_start_under_the_status_bars_band() {
+        let root = std::env::temp_dir().join(format!("grimoire-sheets-band-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        let mut a = pen_record_app();
+        a.scr = ScreenId::Library;
+        settings_default(&mut a.settings);
+        lib(&mut a).modal = Modal::None;
+        reload(&mut a);
+        for size in 0..crate::status::STATUS_SIZES {
+            crate::globalui::gui_status_style(size, false);
+            let band = gui_status_h();
+            for (w, h) in [(1860, 2480), (2480, 1860), (1986, 2648), (2648, 1986)] {
+                let at = format!("size {size} {w}x{h}");
+                for want in [ui_px(620.0), ui_px(1500.0), ui_px(2300.0), 5000] {
+                    let r = sheet_rect(w, h, want);
+                    assert!(r.y >= band + ui_px(20.0) && r.y + r.h <= h - ui_px(40.0), "{at}: {want} high at {r:?}");
+                }
+                a.w = w;
+                a.h = h;
+                // New notebook on the home: every column of the band's last row is the band's gray or one of the
+                // bar's items, never the card's white
+                canvas_free(&mut a.screen);
+                assert_eq!(canvas_init(&mut a.screen, w, h), 0);
+                lib(&mut a).modal = Modal::New;
+                redraw(&mut a, RefreshMode::Ui);
+                let px = |x: i32, y: i32| a.screen.px[(y * a.screen.stride + x) as usize];
+                let light = (0..w).filter(|&x| px(x, band - 1) > crate::globalui::GUI_GRAY_STATUS_BAND).count();
+                assert_eq!(light, 0, "{at}: New notebook's card in the band's rows");
+                lib(&mut a).modal = Modal::None;
+            }
+        }
+        crate::globalui::gui_status_style(1, false);
         library_free(&mut a);
         canvas_free(&mut a.screen);
         let _ = std::fs::remove_dir_all(&root);
