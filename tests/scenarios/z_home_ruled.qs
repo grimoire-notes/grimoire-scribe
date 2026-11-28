@@ -105,6 +105,60 @@ expect library.sheet is none
 tap 400 153
 wait 200
 expect library.sheet is none
+# A press sends its control's own rect by a fast refresh (black and white), which never holds a mark, since no mark
+# is in a hit; its lift away from the control sends one grays refresh of the same rect, and nothing is left dithered:
+# Package Store's launcher (its square and its name), Show All, a chip, Sort, a card and the + button.
+expect display.presents not -1
+expect display.stale.0.0.1860.2480 is 0
+touch down 365 358
+wait 200
+expect display.presents is fast 256 270 218 220
+touch move 900 1500
+touch up 900 1500
+wait 300
+expect display.presents is ui 256 270 218 220
+expect display.stale.0.0.1860.2480 is 0
+touch down 1721 358
+wait 200
+expect display.presents is fast 1633 270 176 220
+touch move 900 1500
+touch up 900 1500
+wait 300
+expect display.presents is ui 1633 270 176 220
+expect display.stale.0.0.1860.2480 is 0
+touch down 300 640
+wait 200
+expect display.presents is fast 191 596 310 88
+touch move 900 1500
+touch up 900 1500
+wait 300
+expect display.presents is ui 191 596 310 88
+expect display.stale.0.0.1860.2480 is 0
+touch down 1600 640
+wait 200
+expect display.presents is fast 1410 596 400 88
+touch move 900 1500
+touch up 900 1500
+wait 300
+expect display.presents is ui 1410 596 400 88
+expect display.stale.0.0.1860.2480 is 0
+touch down 250 1000
+wait 200
+expect display.presents is fast 50 724 402 536
+touch move 900 2400
+touch up 900 2400
+wait 300
+expect display.presents is ui 50 724 402 536
+expect display.stale.0.0.1860.2480 is 0
+touch down 1738 2358
+wait 200
+expect display.presents is fast 1666 2286 144 144
+touch move 900 1500
+touch up 900 1500
+wait 300
+expect display.presents is ui 1666 2286 144 144
+expect display.stale.0.0.1860.2480 is 0
+expect library.sheet is none
 # The arrows turn the page where they are drawn.
 tap library next
 wait 300
