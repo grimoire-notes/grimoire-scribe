@@ -94,8 +94,10 @@ expect display.presents is ui 0 0 1860 78
 expect display.dark.45.0.400.60 is 1644
 wait 2000
 expect display.presents is
-# a stroke beside the time while a minute waits (down the left of it and along under it, no ink on it): its
-# frame and its settle reach the time, and the time they show is still the strip's, whole
+# a stroke beside the time while a minute waits (down the left of it and along under it, no ink on it, all in the
+# bar's rows): its settle reaches the time, and the time it shows is still the strip's, whole. Its live frame sends
+# nothing: since #337 the bar is drawn over the page on its band, and no fast refresh reaches the band's rows (it
+# was `fast 25 3 222 74`)
 pen hover 900 900
 clock 1700000360
 wait 300
@@ -106,7 +108,7 @@ pen move 30 70 0.6
 pen move 130 70 0.6
 pen move 240 70 0.6
 wait 100
-expect display.presents is fast 25 3 222 74
+expect display.presents is
 pen up 240 70
 wait 2000
 expect display.presents is ui 13 0 246 89

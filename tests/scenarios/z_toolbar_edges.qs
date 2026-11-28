@@ -20,6 +20,12 @@ expect editor.modal is display
 tap panel display.done
 wait 300
 expect editor.modal is none
+# The status bar is drawn over the page (#337), so it covers the toolbar's top at y 0, and a contact there is the
+# bar's: a tap hides the bar while the notebook is open, and the grip under it takes the drag.
+tap 1737 40
+wait 300
+expect status.visible is 0
+expect editor.panel_rect is 1704 0 128 1734
 # The foot on the bottom edge (2480 less the panel's 1734).
 drag touch 1737 40 1737 2470 5
 wait 300

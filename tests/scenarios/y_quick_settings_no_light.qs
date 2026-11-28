@@ -61,10 +61,11 @@ expect editor.strokes is 0
 expect status.visible is 1
 expect light.intensity is 12
 shot 01-notebook-after-pull
-# A tap in the top strip still hides the notebook's bar, and another brings it back.
+# A tap in the top strip still hides the notebook's bar, and another brings it back. (Since #337 the hiding lasts
+# while the notebook is open and is not saved: status_on stays 1.)
 tap 930 40
 wait 300
-expect settings.status_on is 0
+expect settings.status_on is 1
 expect status.visible is 0
 expect quick is 0
 tap 930 40
