@@ -39,7 +39,7 @@ const FIXED_H: i32 = 120 + 72 + 70 + 20 + 70 + 20 + 190;
 const ROWS: i32 = MUSIC_MAX_PARTS as i32 + ADD_ROWS + 1;
 
 fn row_h(a: &App) -> i32 {
-    clampi((a.h - ui_px(80.0) - ui_px(FIXED_H as f32)) / ROWS, ui_px(80.0), ui_px(115.0))
+    clampi((crate::library::sheet_room(a.h) - ui_px(FIXED_H as f32)) / ROWS, ui_px(80.0), ui_px(115.0))
 }
 
 fn card_rect(a: &App) -> Rect {
@@ -48,7 +48,8 @@ fn card_rect(a: &App) -> Rect {
         w = ui_px(1740.0);
     }
     let h = ui_px(FIXED_H as f32) + ROWS * row_h(a);
-    Rect { x: (a.w - w) / 2, y: (a.h - h) / 3, w, h }
+    // (its top under the status bar's band, which is drawn over everything on its rows: #337)
+    Rect { x: (a.w - w) / 2, y: ((a.h - h) / 3).max(crate::globalui::gui_sheet_top()), w, h }
 }
 
 #[repr(i32)]

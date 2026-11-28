@@ -12950,6 +12950,17 @@ mod tests {
                 let px = |x: i32, y: i32| a.screen.px[(y * a.screen.stride + x) as usize];
                 let light = (0..w).filter(|&x| px(x, band - 1) > crate::globalui::GUI_GRAY_STATUS_BAND).count();
                 assert_eq!(light, 0, "{at}: New notebook's card in the band's rows");
+                // and its Custom music sheet over it, which has a place of its own (musicbuild.rs)
+                let mut mb = std::mem::take(&mut lib(&mut a).mb);
+                crate::musicbuild::musicbuild_open(&mut mb, &mut a, PAPER_BLANK);
+                lib(&mut a).mb = mb;
+                lib(&mut a).modal = Modal::Music;
+                redraw(&mut a, RefreshMode::Ui);
+                let px = |x: i32, y: i32| a.screen.px[(y * a.screen.stride + x) as usize];
+                let light = (0..w).filter(|&x| px(x, band - 1) > crate::globalui::GUI_GRAY_STATUS_BAND).count();
+                assert_eq!(light, 0, "{at}: Custom music's sheet in the band's rows");
+                let mb = &lib(&mut a).mb;
+                assert!(mb.rect.y >= band + ui_px(20.0) && mb.rect.y + mb.rect.h <= h, "{at}: Custom music at {:?}", mb.rect);
                 lib(&mut a).modal = Modal::None;
             }
         }
