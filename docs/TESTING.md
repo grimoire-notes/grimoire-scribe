@@ -3738,12 +3738,12 @@ and the scenarios `z_home_ruled` (a populated home in Gothic and Classic, uprigh
 Apps page, at the small and the large status bar), `z_home_header` and `z_home_header_classic`. What only the panel
 shows:
 
-1. **The rules.** On the home in Gothic: under "Library" a black rule, thick over thin, from margin to margin, with as
-   much paper over it as under it; between the apps and the chips the lozenge divider, as much paper over it (to the
+1. **The rules.** On the home in Gothic: under "Library" a black rule, thick over thin, from the screen's left edge to
+   its right (#337), with as much paper over it as under it; between the apps and the chips the lozenge divider, as much paper over it (to the
    names) as under it (to the chips); under the chips a light gray rule that reads as one even gray line (not dotted,
-   not lost); over the page arrows and the + the title rule turned over, with clear paper between it and the +. In
-   Classic the same places with single black lines and, at the main split, a plain gray line with no dots, darker than
-   the light rule under the chips.
+   not lost); over the page arrows and the + the title rule turned over, edge to edge too, with clear paper between it
+   and the +. In Classic the same places with single black lines and, at the main split, a plain gray line with no
+   dots, darker than the light rule under the chips. The divider and the light rule end at the margins.
 2. **Presses leave the rules alone.** Press and hold an app's square, a chip, Sort and a card, then let go: the
    pressed part turns black and back, and no rule beside it flickers, turns grainy or keeps a ghost.
 3. **The squares.** The app row's squares are all one size with the same paper between every two, the first at the
@@ -3764,6 +3764,52 @@ shows:
    update What's new still opens by itself once.
 8. **Every status bar size.** Settings > Sleep & Clock > Status bar, small, medium and large: upright the cards are
    two rows at each, nothing overlaps a rule, and sideways one row.
+
+## 2.3, the status bar's band and the home's rules edge to edge (issue #337): device checks
+
+Not run on a Scribe. The Mac's tests hold the drawing, the refreshes and the taps: globalui.rs's unit tests (the band
+of gray 187 the bar's full width and height at every size, both themes, upright and sideways, the time and date black
+and an off radio in gray 102 on it), library.rs's (the title and foot rules from x 0 to the screen's width and drawn
+to both ends, the two inner marks from margin to margin), editor.rs's (ink written under the bar goes into the page
+while every live frame starts at the band's lower edge; every other fast refresh in a notebook stops there too: one
+that reached into the bar's rows, a whole screen of them, a press under the bar, the toolbar dragged to the top, the
+lasso; a tap hides the bar until the notebook is opened again, each tap one grays refresh of the strip alone; a saved
+`status_on=0` does not hide it), test_fbpack.rs (the padded pen mode's grown region kept off the bar's rows wherever
+the rotation puts them, its size kept), and the scenarios `y_status_band_over_page` (writing under the bar, dismissed,
+back, a lasso through the bar's rows, reopened, sideways, Settings and Files) and `z_home_ruled` (the marks' ends, the
+panel dark at both ends of the outer rules). The Kindle's own part, the padded region's move in display_fbink.rs,
+was compiled, never run. What only the panel shows:
+
+1. **The band on the panel.** On the home, Settings and Files, in Gothic and Classic: the bar on one flat gray from
+   edge to edge, even (no dots, no stripes, no lighter or darker patches), the time, the date, the percent and the
+   battery black on it and easy to read at arm's length; Wi-Fi black while on and gray while off; Bluetooth gray
+   while it is off, still plain to see. Sideways the band runs across the whole width. In a notebook turned sideways
+   the band is a shade darker than the gray beside the page, and the two read apart. With Invert colors on, the band
+   turns dark and the items light, and they read.
+2. **The rules.** The home's rule under "Library" and the rule over the page arrows reach both edges of the screen,
+   upright and sideways, in Gothic and Classic; the divider between the apps and the chips and the light rule under
+   the chips end at the margins.
+3. **On by default.** After the update, open a notebook: the bar is there, even where an earlier version hid it with a
+   tap. Settings > Sleep & Clock > Status bar > Hide status bar inside Notebooks on: no bar in any notebook, also after
+   a restart; off again: the bar is back.
+4. **Writing under the bar.** In a notebook write across the bar and just under it, then pause, with Ink edges at
+   Solid and again at Smooth. While writing nothing appears on the band and it does not flicker or turn grainy; the
+   ink under the band appears at once; at the pause the band stays flat. Tap the bar: it goes without a flash of the
+   whole screen and the ink written under it is there; tap the top strip: the bar comes back over it, again without a
+   flash. Close the notebook and open it again: the bar is shown; a tap shows the ink still there. Failure: dots or
+   ink on the band, a band left grainy until a page turn, a whole-screen flash at the tap, ink missing after the
+   reopen.
+5. **The minute.** Watch the time change on the band (home and notebook): only the digits change, the band stays flat,
+   nothing else on the screen flashes. In a notebook it changes only once the pen has left, as before.
+6. **The Kindle's live frames under the bar.** Keep a root shell over SSH. With the default pen mode, write quick
+   small marks and zigzags right under the band's lower edge, at its left end, middle and right end, upright and
+   turned both ways: the band stays flat. Then `echo padded > /mnt/us/grimoire/pen-mode`, start Grimoire fresh and do
+   the same: the band stays flat, with no stripe or patch appearing in it while writing or at the pause. After each,
+   `dmesg | grep -i -E "hwtcon|lut collision|WARNING"` shows nothing new (the failure lines of the Ink edges checks
+   below). Remove `/mnt/us/grimoire/pen-mode` after.
+7. **Things under the bar.** Drag the toolbar to the top: the band covers its top, a tap on the bar hides the bar and
+   the toolbar's top shows, a tap on the strip brings the bar back over it; while dragging, the band does not turn
+   grainy. Lasso some ink near the top, drawing the lasso up through the bar: its line stops at the band's edge.
 
 ## 2.3, Ink edges (issue #320): device checks
 
