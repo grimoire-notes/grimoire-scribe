@@ -120,6 +120,10 @@ files byte for byte what it makes.
 to Grimoire under the project's GPL-3.0 license. The app fits a private in-memory copy to the
 eraser pad. It does not read or modify a notebook to provide this sample.
 
-`JetBrainsMono-Regular.ttf` and `-Bold.ttf` (JetBrains Mono's static release, github.com/JetBrains/JetBrainsMono),
-`SpaceMono-Regular.ttf`, `SpaceMono-Bold.ttf` and `ArchivoBlack-Regular.ttf` (from github.com/google/fonts) are
-the Cassette theme's faces, unmodified, each under the SIL Open Font License 1.1 (the `*-OFL-1.1.txt` beside them).
+The themes' faces are subset as the Classic fonts are, by `make fonts-subset` (tools/fonts_themes.py, which
+downloads each at a pinned commit and checks it by SHA-256): Basic Latin, Latin-1, Latin Extended-A, General
+Punctuation and the few symbols tools/fonts_classic.py names, kerning kept, hinting and substitutions gone; what a
+face lacks, Terminess draws. Each is under the SIL Open Font License 1.1, its text beside it (`*-OFL-1.1.txt`).
+
+- Cassette: `JetBrainsMono-Regular.ttf` and `-Bold.ttf` (JetBrains Mono's static fonts, github.com/JetBrains/JetBrainsMono),
+  `SpaceMono-Regular.ttf`, `SpaceMono-Bold.ttf` and `ArchivoBlack-Regular.ttf` (github.com/google/fonts).

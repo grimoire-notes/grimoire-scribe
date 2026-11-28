@@ -74,6 +74,10 @@ FONTS := TerminessNerdFontMono-Regular.ttf TerminessNerdFontMono-Bold.ttf Jacqua
 # them; the C tree's build/gen/fonts.c keeps FONTS alone). Made by make fonts-subset.
 FONTS_CLASSIC := AtkinsonHyperlegibleNext-Regular.ttf AtkinsonHyperlegibleNext-Bold.ttf \
          NotoSans-Regular.ttf NotoSans-Bold.ttf Literata-Regular.ttf Literata-Bold.ttf
+# The themes' own faces (rust/src/looks/: Cassette's), embedded by rust/src/assets.rs as the
+# Classic fonts are. Made by make fonts-subset.
+FONTS_THEMES := JetBrainsMono-Regular.ttf JetBrainsMono-Bold.ttf SpaceMono-Regular.ttf SpaceMono-Bold.ttf \
+         ArchivoBlack-Regular.ttf
 $(BUILD)/gen/fonts.c: $(addprefix assets/,$(FONTS))
 	@mkdir -p $(BUILD)/gen
 	( cd assets && for f in $(FONTS); do xxd -i $$f; done ) > $@.tmp && mv $@.tmp $@
@@ -329,8 +333,9 @@ $(BUILD)/host/mkicon: FORCE
 # fonts-subset FONTS_PYTHON=<venv>/bin/python. Then the Classic fonts (2.1): tools/fonts_classic.py
 # downloads Atkinson Hyperlegible Next, Noto Sans and Literata from Google Fonts' repository at pinned
 # commits into the same cache, checks them by SHA-256, and writes each family's Regular and Bold, static
-# and subset, with its OFL text (FONTS_CLASSIC below). FONTS_SUBSET_FLAGS=--verify writes nothing and
-# checks that the committed fonts are what the recipes make.
+# and subset, with its OFL text (FONTS_CLASSIC below). Then the themes' faces: tools/fonts_themes.py
+# downloads Cassette's fonts at pinned commits and subsets them as the Classic fonts are (FONTS_THEMES above). FONTS_SUBSET_FLAGS=--verify
+# writes nothing and checks that the committed fonts are what the recipes make.
 FONTS_PYTHON ?= python3
 FONTS_CACHE ?= $(HOME)/.cache/grimoire-fonts
 FONTS_SUBSET_FLAGS ?=
@@ -338,6 +343,7 @@ FONTS_SUBSET_FLAGS ?=
 fonts-subset:
 	$(FONTS_PYTHON) -I tools/fonts_subset.py --cache "$(FONTS_CACHE)" --keep assets/terminess-keep.txt --out assets $(FONTS_SUBSET_FLAGS)
 	$(FONTS_PYTHON) -I tools/fonts_classic.py --cache "$(FONTS_CACHE)" --out assets $(FONTS_SUBSET_FLAGS)
+	$(FONTS_PYTHON) -I tools/fonts_themes.py --cache "$(FONTS_CACHE)" --out assets $(FONTS_SUBSET_FLAGS)
 
 # The logo for the README and releases, black and white on transparent (committed, like the icon).
 # Pixel blocks of 8: shown at half size they land on whole pixels on ordinary and Retina screens.
