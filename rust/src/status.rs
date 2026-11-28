@@ -126,13 +126,15 @@ pub fn status_bar_back() {
     DISMISSED.with(|d| d.set(false));
 }
 
-/// Turns the shared status bar on or off inside a notebook. A shown bar hides until the notebook
+/// Turns the shared status bar on or off inside a notebook's page. A shown bar hides until the notebook
 /// closes (#337: the next notebook opened, or this one opened again, shows it); a hidden one comes
 /// back, whether a tap hid it or the Status bar page's "Hide status bar inside Notebooks" row did (that
-/// row is turned off then, and saved). Taps elsewhere leave it alone: only a notebook can toggle the
-/// bar.
+/// row is turned off then, and saved). Only the bar's strip is drawn again and refreshed, in grays, with no
+/// flash (editor.rs editor_bar_toggled). Taps elsewhere leave it alone: only a notebook's page, with
+/// nothing that covers the screen in front of it (Settings, the Pages view, the Graph, a picker), can
+/// toggle the bar.
 pub fn status_toggle(a: &mut App) {
-    if a.scr != ScreenId::Editor {
+    if a.scr != ScreenId::Editor || !crate::editor::editor_page_composed(a) {
         return;
     }
     a.settings.status_mode = 1;
@@ -146,7 +148,7 @@ pub fn status_toggle(a: &mut App) {
             settings_save(&a.settings);
         }
     }
-    app_redraw(a);
+    crate::editor::editor_bar_toggled(a);
     qlog!("status: the shared bar is %s", if status_bar_visible(a) { "shown" } else { "hidden" });
 }
 

@@ -3862,6 +3862,36 @@ fn compose(a: &mut App, r: Rect) {
     }
 }
 
+/// Whether compose draws the notebook's page now, and so the bar over it (#337): not while Settings, the picture
+/// pick, the destination picker, the Graph or the Pages view (but its overlay) covers the screen, which draw their
+/// own bar.
+pub fn editor_page_composed(a: &App) -> bool {
+    !crate::library::library_settings_active(a)
+        && a.ed.as_deref().is_some_and(|s| {
+            s.open && !s.files.open && !s.destination.open && !s.map.open && !(s.pv.open && !s.pv.overlay)
+        })
+}
+
+/// A tap hid the notebook's bar or brought it back (status.rs status_toggle, #337): the bar's strip is composed
+/// again and refreshed alone, in grays, with no flash: the page's ink under it shows, or the band covers it again.
+/// Link to..., docked under the bar when it is at the top, follows it: its old place and its new one go in the
+/// same refresh. Whatever else is under the strip (the toolbar, a card) stays where it is, covered by the band
+/// while the bar is shown.
+pub fn editor_bar_toggled(a: &mut App) {
+    let strip = Rect::new(0, 0, a.w, gui_status_h());
+    let lt = |a: &App| ed_ref(a).lt.open.then(|| ed_ref(a).lt.rect).unwrap_or(RECT_EMPTY);
+    let before = lt(a);
+    compose(a, strip);
+    let after = lt(a);
+    let mut r = strip;
+    if before != after {
+        let moved = rect_union(before, after);
+        compose(a, moved);
+        r = rect_union(r, moved);
+    }
+    app_invalidate(a, r, RefreshMode::Ui);
+}
+
 /// Every menu, sheet and bar that is up, over the page and the panel, in the order they stack: Paper, Templates,
 /// Display, Custom music, the tool picker, Find with its keyboard, and the Links bar over everything; each where
 /// it meets r. The panel is under all of them, and only ever over the notebook page.
@@ -15922,6 +15952,87 @@ mod tests {
         assert!(!std::path::Path::new(&stamp).exists());
         assert!(preview_is_the_canvas(s));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // The status bar's strip and what the simulated panel was sent, for the bar's tests (#337).
+    #[cfg(feature = "sim")]
+    fn bar_presents() -> String {
+        crate::sim_sdl::display_probe_read("display.presents").unwrap_or_default()
+    }
+    #[cfg(feature = "sim")]
+    fn screen_px(a: &App, x: i32, y: i32) -> u8 {
+        a.screen.px[(y * a.screen.stride + x) as usize]
+    }
+
+    // A tap on a notebook's bar hides it while that notebook is open (#337, the owner: "user dismisses to access that
+    // part of the screen"), and a tap brings it back; each refreshes the bar's strip alone, in grays (no flash of the
+    // whole screen). The next notebook opened, or this one opened again, shows it; a status_on=0 an earlier version
+    // saved does not hide it; Settings > Sleep & Clock > Status bar's "Hide status bar inside Notebooks" does, for
+    // good, and a tap that brings the bar back then turns that row off. Over the Pages view a tap changes nothing.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn a_tap_on_the_bar_hides_it_while_its_notebook_is_open_and_refreshes_its_strip_alone() {
+        let root = std::env::temp_dir().join(format!("grimoire-bar-dismiss-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        let mut nb = NotebookInfo::default();
+        assert_eq!(store_create("Under the bar", "", PAPER_BLANK, &mut nb), 0);
+        let (mut w, mut h) = (0, 0);
+        crate::sim_sdl::display_set_orientation(0, &mut w, &mut h);
+        let mut a = app(1860, 2480, 1860, 2480);
+        settings_default(&mut a.settings);
+        assert!(a.settings.status_on && a.settings.status_in_notebooks, "on by default");
+        a.scr = ScreenId::Editor;
+        nav_init(&mut ed(&mut a).nav);
+        editor_open_notebook(&mut a, nb.id.as_str());
+        assert!(ed_ref(&a).open);
+        compose_all(&mut a, RefreshMode::Full);
+        app_flush(&mut a);
+        let _ = bar_presents();
+        let visible = |a: &App| crate::status::status_bar_visible(a);
+        let band = gui_status_h();
+        let strip = Rect::new(0, 0, 1860, band);
+        assert!(visible(&a) && crate::status::status_band_rows(&a) == band);
+        // a tap hides it: its strip alone, in grays, the page there shown; nothing saved
+        crate::status::status_toggle(&mut a);
+        assert!(!visible(&a) && crate::status::status_band_rows(&a) == 0);
+        assert_eq!((a.dirty, a.dirty_mode), (strip, RefreshMode::Ui));
+        app_flush(&mut a);
+        assert_eq!(bar_presents(), format!("ui 0 0 1860 {band}"));
+        assert_ne!(screen_px(&a, 930, 10), crate::globalui::GUI_GRAY_STATUS_BAND);
+        assert!(a.settings.status_on && a.settings.status_in_notebooks);
+        // another brings it back, the same way
+        crate::status::status_toggle(&mut a);
+        assert!(visible(&a));
+        assert_eq!((a.dirty, a.dirty_mode), (strip, RefreshMode::Ui));
+        app_flush(&mut a);
+        assert_eq!(bar_presents(), format!("ui 0 0 1860 {band}"));
+        assert_eq!(screen_px(&a, 930, 2), crate::globalui::GUI_GRAY_STATUS_BAND);
+        // hidden, then the notebook opened again: shown
+        crate::status::status_toggle(&mut a);
+        assert!(!visible(&a));
+        editor_open_notebook(&mut a, nb.id.as_str());
+        assert!(visible(&a));
+        // a status_on=0 an earlier version saved does not hide it
+        a.settings.status_on = false;
+        assert!(visible(&a));
+        // the row hides it for good, through a reopen
+        a.settings.status_on = true;
+        a.settings.status_in_notebooks = false;
+        assert!(!visible(&a));
+        editor_open_notebook(&mut a, nb.id.as_str());
+        assert!(!visible(&a) && crate::status::status_band_rows(&a) == 0);
+        // and a tap brings it back then, turning the row off
+        crate::status::status_toggle(&mut a);
+        assert!(visible(&a) && a.settings.status_in_notebooks);
+        // over the Pages view a tap changes nothing
+        ed(&mut a).pv.open = true;
+        app_flush(&mut a);
+        crate::status::status_toggle(&mut a);
+        ed(&mut a).pv.open = false;
+        assert!(visible(&a));
+        ed(&mut a).info_dirty = false;
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn fshape_event(a: &mut App, type_: InType, x: f32, y: f32, t_ms: u32) {
