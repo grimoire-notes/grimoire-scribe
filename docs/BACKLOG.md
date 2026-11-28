@@ -4,6 +4,34 @@ Work that was decided, deferred or found but not done yet. Keep this current: wh
 move it to "Done" with the version; when something is deferred, add it here with who decided and
 why. Newest decisions first within each section.
 
+## Files' Empty trash (2.3, issue #330): what waits
+
+Built: the Trash place's Empty trash chip, its question (how many entries and how much space), the background job that
+deletes the entries listed inside the trash only, in slices, leaving busy ones, its toast and the trash read again
+(docs/DESIGN.md, "Files: Empty trash"). Waiting:
+
+- **Not run on a Scribe** (TESTING.md, "2.3, Empty trash (issue #330): device check"): the time a trash of a few
+  hundred entries takes, its toast, and the free space in About after it. The Mac's times are in DESIGN.md; the
+  Kindle's storage costs are not measured.
+- **The chip waits for the trash's size**: it shows once the size walk is through (a slice a tick), since the
+  question says the space. A trash of thousands of entries can take seconds on the Kindle before the chip shows.
+- **Past 5,000 entries** Empty trash deletes the 5,000 the place lists (the newest); the place then lists the next,
+  and Empty trash is offered again.
+- **What a run cut short leaves** in `trash/.grimoire-emptying/` (at most the entry it was removing) is removed by the
+  next Empty trash, which is offered only while the place lists an entry: a trash with no entry left keeps it
+  (counted in the root's Trash size) until then. So does anything in it no run can remove (a folder deeper than 64,
+  one on another device), which the log names as such.
+- **No lock where the storage has none**: on a storage where `flock` is refused, a restore and Empty trash in two
+  processes at once (the detached child Grimoire leaves at exit, and a run started after it) are not kept apart by
+  the entry's lock; the screens keep them apart within one run. There a restore of a `files-...` entry the other
+  process's job is clearing can move its folder back while the job, inside it through its descriptor, goes on removing
+  its files. Whether the Scribe's storage takes the lock on a folder is part of the device check (this Mac's does).
+- **Previews wait for Empty trash**: its slices rank before Files' previews, the packages' pictures and the Pages
+  view's previews, so a Covers screen or the Package Store opened while a big trash empties shows its pictures after
+  the last slice (an export or the mirror waits at most one slice). Ranking the slices with the previews would let
+  them take turns.
+- **Spanish, Japanese and Polish** for the seven new texts: in English there until they are translated.
+
 ## PDFs as templates (2.2, issue #172): what waits, and what is for the owner
 
 Built: a PDF in `grimoire/templates` gives a template a page, drawn once by the sandboxed PDF worker; Use as template
@@ -73,8 +101,9 @@ Restore for files, folders and notebooks, the font in use (docs/DESIGN.md, "File
 Waiting:
 
 - **Not in 2.2** (the owner's decision): Move (Import to Templates or Photos by kind, between them, to Import)
-  and New folder in Import. **Never**: Empty (the trash is cleaned over USB). **Not built**: Restore for a page
-  (its place in its notebook was never kept; an optional extra in the plan).
+  and New folder in Import. **Not built**: Restore for a page (its place in its notebook was never kept; an
+  optional extra in the plan), and a Delete of one trash entry (Empty trash, 2.3, deletes them all: its section,
+  at the top).
 - **A held item's row is not greyed**: its card still offers Rename and Delete, and each says "Importing now." when
   tapped (the busy check is one per tap, not one per row drawn).
 - **The Delete question's wait is a fixed time**: an answer counts 450 ms after the question's frame was sent to the
@@ -233,7 +262,7 @@ call the copy since issue #146 (each its own section, above).
 - **Not built** (the plan's later parts, or not in this lane): Move (Import to Templates or Photos by kind,
   between them, to Import) and New folder in Import (the owner decides whether they are 2.2's); Restore for a
   page (its place in its notebook was never kept); `store_delete` writing the record form for a notebook (2.2
-  reads that form and writes the old name, `<id>-<time>`). Empty trash never comes (the owner cleans it over USB).
+  reads that form and writes the old name, `<id>-<time>`).
 - **What counts as busy**: what an import works on, and since issue #144 a template or photo picked for a page
   until the job that copies its picture into the notebook has ended (`bg_job_pictures`). Not the source of a copy
   into Grimoire's folders (`BgKind::CopyFile`: Use as template, Use as photo and the From a file... tiles since

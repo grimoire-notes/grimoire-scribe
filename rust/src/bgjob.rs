@@ -63,6 +63,11 @@ pub enum BgKind {
     /// exit. Ends 0 or 1, or 4 when the sandbox refused its worker a step (the session is then broken here too, and
     /// the pictures still queued are dropped).
     PackagePictures = 12,
+    /// id: none, path: "trash"; Files' Empty trash (2.3, issue #330): the trash entries the Trash place listed when the
+    /// user confirmed, deleted inside the trash (bgwork_empty.rs, fsview.rs `FsStorage::empty_trash`), a slice of at
+    /// most a few seconds a run. It ends 0, 3 while names are left (queued again, behind whatever ranks higher, as a
+    /// PDF import's slice is), or 1 (the trash could not be opened as Grimoire's, or another Empty trash holds it).
+    EmptyTrash = 13,
 }
 
 /// Queues a job (a queued duplicate, same kind, id and path, is merged). notify: report the result
@@ -273,8 +278,9 @@ pub fn bg_poll_job(done_kind:Option<&mut i32>,mut done_id:Option<&mut FixedStr<S
             let code = if r == pid && libc::WIFEXITED(st) { libc::WEXITSTATUS(st) } else { -1 };
             let (kind, notify, id, job) = with(|s| if extra { (s.extra.kind, s.extra.notify, s.extra.id, s.extra) } else { (s.running.kind, s.running_notify, s.running.id, s.running) });
             let is_pdf = kind == BgKind::PdfImport;
-            // (a template PDF's slice that left pages for the next, 2.2: queued again as an import's slice is)
-            let tpl_more = template_pdf(&job) && code == crate::bgwork_tplpdf::CODE_MORE;
+            // (a template PDF's slice that left pages for the next, 2.2, and Empty trash's slice that left names, 2.3:
+            // queued again as an import's slice is)
+            let tpl_more = (template_pdf(&job) && code == crate::bgwork_tplpdf::CODE_MORE) || (kind == BgKind::EmptyTrash && code == crate::bgwork_empty::CODE_MORE);
             // (a template PDF's worker refused a sandbox step, 2.2: the child's session is broken, and now this one's,
             // as an import's progress record and a font check's 4 tell it here, so no look queues the job again)
             if template_pdf(&job) && code == crate::bgwork_tplpdf::CODE_SANDBOX {
@@ -368,8 +374,8 @@ pub fn bg_detach_rest() {
     }
     let (mut jobs, running) = with(|s| (s.q.clone(), s.pid));
     // A PDF import slice that is running goes on in the detached child too: its next slice is not queued
-    // yet, and Grimoire is no longer there to queue it.
-    let running_pdf = with(|s| (s.pid > 0 && s.running.kind == BgKind::PdfImport).then_some(s.running));
+    // yet, and Grimoire is no longer there to queue it. So does an Empty trash (2.3): the user confirmed it.
+    let running_pdf = with(|s| (s.pid > 0 && matches!(s.running.kind, BgKind::PdfImport | BgKind::EmptyTrash)).then_some(s.running));
     if let Some(j) = running_pdf {
         if !jobs.iter().any(|q| q.kind == j.kind && q.id.as_bytes() == j.id.as_bytes()) {
             jobs.insert(0, j);
@@ -401,7 +407,11 @@ pub fn bg_detach_rest() {
             while j.kind == BgKind::PdfImport && slices < 4 * crate::pdfimport::PDF_MAX_PAGES && run_job_guarded(j) == 3 {
                 slices += 1;
             }
-            if j.kind != BgKind::PdfImport {
+            // (Empty trash's slices too, until no name is left: each removes at least one thing; the bound is a guard)
+            while j.kind == BgKind::EmptyTrash && slices < 100_000 && run_job_guarded(j) == crate::bgwork_empty::CODE_MORE {
+                slices += 1;
+            }
+            if !matches!(j.kind, BgKind::PdfImport | BgKind::EmptyTrash) {
                 run_job_guarded(j);
             }
         }
@@ -433,8 +443,22 @@ struct Job {
 }
 
 // (by the kind's number)
-const K_KIND_NAMES: [&str; 13] =
-    ["export", "compaction", "template", "import", "map layout", "page previews", "library map layout", "PDF import", "font check", "file previews", "file copy", "page template", "package pictures"];
+const K_KIND_NAMES: [&str; 14] = [
+    "export",
+    "compaction",
+    "template",
+    "import",
+    "map layout",
+    "page previews",
+    "library map layout",
+    "PDF import",
+    "font check",
+    "file previews",
+    "file copy",
+    "page template",
+    "package pictures",
+    "empty trash",
+];
 
 /// bgjob.c's g_q, g_n, g_pid, g_running_notify and g_running.
 struct State {
@@ -550,6 +574,7 @@ fn run_job(j: &Job) -> i32 {
         BgKind::PageTemplate => crate::bgwork_template::bg_page_template(j.id.as_str(), j.dir.as_str(), j.dpi),
         BgKind::FilePreviews => crate::bgwork_previews::bg_file_preview(j.dir.as_str()),
         BgKind::PackagePictures => crate::pkgpics::bg_package_picture(j.dir.as_str()),
+        BgKind::EmptyTrash => crate::bgwork_empty::bg_empty_trash(j.dir.as_str()),
     }
 }
 
@@ -627,6 +652,9 @@ fn rank(j: &Job) -> i32 {
         BgKind::ImportFolder | BgKind::PdfImport => 3,
         // (a font check after the first font of a look: one font a job, behind an export and a PDF's slice)
         BgKind::FontCheck => 3,
+        // (Empty trash's next slice, 2.3: its first is one the user waits on; the next go behind an export and the
+        // mirror, with the imports' slices, so a big trash never holds the one child ahead of them)
+        BgKind::EmptyTrash => 3,
         // Files' previews (2.2): the files of a Covers screen, whatever a folder holds. Behind every job above,
         // an import's next slice too (queued again as each ends), so a screen of slow files never holds the one
         // child ahead of an export, the mirror, an import or a font check; ahead of compaction and the idle
@@ -836,11 +864,12 @@ fn start_job(j: Job, extra: bool) -> bool {
         // 4, 5 and 6, some files wait, no worker can be had, more fonts are left, and what it finds cannot be kept;
         // a copy's 2, 3 and 4, the file is bigger than its folder takes, is no longer the one listed, and has too
         // long a path; a template PDF's 3 and 4, more pages are left, and the sandbox refused its worker a step; a
-        // package picture's 4, the same.)
+        // package picture's 4, the same; Empty trash's 3, names are left.)
         let says_more = (j.kind == BgKind::PdfImport && (rc == 2 || rc == 3))
             || (j.kind == BgKind::FontCheck && (rc == 3 || rc == 4 || rc == 5 || rc == 6))
             || (j.kind == BgKind::CopyFile && (rc == 2 || rc == 3 || rc == 4))
             || (template_pdf(&j) && (rc == crate::bgwork_tplpdf::CODE_MORE || rc == crate::bgwork_tplpdf::CODE_SANDBOX))
+            || (j.kind == BgKind::EmptyTrash && rc == crate::bgwork_empty::CODE_MORE)
             || (j.kind == BgKind::PackagePictures && rc == crate::pkgpics::CODE_SANDBOX);
         unsafe { libc::_exit(if rc == 0 { 0 } else if says_more { rc } else { 1 }) };
     }

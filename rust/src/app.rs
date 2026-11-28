@@ -1462,10 +1462,12 @@ pub enum NoticeKey {
     Book,
     /// a PDF import (2.1.0-beta.2)
     Import,
+    /// Files' Empty trash at work (2.3, issue #330), while Files is up
+    Trash,
 }
 
 impl NoticeKey {
-    const ALL: [NoticeKey; 5] = [NoticeKey::FontCheck, NoticeKey::Loading, NoticeKey::Previews, NoticeKey::Book, NoticeKey::Import];
+    const ALL: [NoticeKey; 6] = [NoticeKey::FontCheck, NoticeKey::Loading, NoticeKey::Previews, NoticeKey::Book, NoticeKey::Import, NoticeKey::Trash];
 
     /// its name for the runner's notice.key
     pub fn name(self) -> &'static str {
@@ -1475,6 +1477,7 @@ impl NoticeKey {
             NoticeKey::Previews => "previews",
             NoticeKey::Book => "book",
             NoticeKey::Import => "import",
+            NoticeKey::Trash => "trash",
         }
     }
 }
@@ -1486,7 +1489,7 @@ pub const NOTICE_EVERY_MS: u32 = 2000;
 /// panel shows of it. Drawn like a toast: overlaid for its presents, never stored in App.screen.
 #[derive(Default)]
 pub struct Notice {
-    asked: [(FixedStr<256>, ScreenId); 5],
+    asked: [(FixedStr<256>, ScreenId); 6],
     /// the key and text on the panel, and where (empty: nothing of it is on the panel)
     shown: Option<NoticeKey>,
     shown_text: FixedStr<256>,
@@ -1523,7 +1526,7 @@ fn notice_pick(a: &App) -> Option<NoticeKey> {
         let (text, asker) = &a.notice.asked[k as usize];
         !text.is_empty()
             && match k {
-                NoticeKey::FontCheck | NoticeKey::Loading | NoticeKey::Previews => a.scr == *asker,
+                NoticeKey::FontCheck | NoticeKey::Loading | NoticeKey::Previews | NoticeKey::Trash => a.scr == *asker,
                 NoticeKey::Book => true,
                 NoticeKey::Import => a.scr == ScreenId::Library && !crate::library::library_import_place_up(a),
             }
@@ -2353,6 +2356,12 @@ fn poll_jobs(a: &mut App) -> i32 {
     }
     if done == BgKind::PackagePictures as i32 {
         // (a package's picture: the screens that asked look at their jobs at each tick; never the PDF's toast)
+        return 0;
+    }
+    if done == BgKind::EmptyTrash as i32 {
+        // Files' Empty trash ended (2.3, issue #330; its last run, done or failed): what it deleted and freed is said
+        // wherever the user is, and Files, when it is up, reads the trash again. Never the PDF's toast.
+        crate::library::library_trash_emptied(a);
         return 0;
     }
     if done == BgKind::FontCheck as i32 {

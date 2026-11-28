@@ -5,7 +5,8 @@
 //! 2.2 (issue #117) it also writes, inside Grimoire's folders for the user's files only: a rename that never
 //! replaces an entry, the trash with its record, restore, and the name rules (the copy job is
 //! bgwork_copy.rs). Files' cards call rename and trash, and its Trash place restore and the trash's sizes
-//! (browser.rs, issue #144).
+//! (browser.rs, issue #144). Since 2.3 (issue #330) the Trash place's Empty trash deletes the entries it listed,
+//! inside the trash only, in a background job (`FsStorage::empty_trash`, bgwork_empty.rs).
 //!
 //! - One root: /mnt/us on the Kindle (when Grimoire's own folder is inside it); elsewhere GRIMOIRE_STORAGE,
 //!   a hook compiled out of the Kindle build. Never "/". Off the Kindle four more hooks say what that storage
@@ -21,11 +22,11 @@
 //! - Zones: lists hide by a deny-list (dot-entries, *.sdr, a name ending in a dot or a space, the system's
 //!   folders, Grimoire's own); writes go by an allow-list (what is inside Grimoire's import, templates, photos
 //!   and fonts), so safety never depends on the deny-list being complete.
-//! - Never a hard delete, never an overwrite: delete is a rename into the trash, and every rename is
-//!   renameat2(RENAME_NOREPLACE), or where the storage refuses that call (and on the Mac) renameat over a
+//! - Never a hard delete outside the trash, never an overwrite: delete is a rename into the trash, and every
+//!   rename is renameat2(RENAME_NOREPLACE), or where the storage refuses that call (and on the Mac) renameat over a
 //!   reservation of the new name made first (an O_EXCL create, or mkdirat), so nothing another writer puts
 //!   there is replaced. Each write checks the item is still the one listed (FsStat::same) and that no import
-//!   holds it.
+//!   holds it. What is removed for good is removed inside the trash, by Empty trash, never through a link.
 //! - Time-sliced: a listing reads names and d_type only (at most 5,000), and stats only the rows asked for,
 //!   each in slices of at most 20 ms a tick with the folder kept open between ticks.
 //! - Privacy: the log has counts, zones and timings, never a name.
@@ -735,6 +736,12 @@ impl FsListing {
 
 /// The record beside a trashed file or folder: `trash/files-<YYYYMMDD-HHMMSS>-<4 hex>/.grimoire-trash`.
 pub const TRASH_RECORD: &str = ".grimoire-trash";
+/// The folder inside the trash where Empty trash (issue #330) moves an entry before it deletes it: a dot-name, so no
+/// listing shows it and nothing is ever restored from it (`FsStorage::empty_trash`).
+pub const TRASH_EMPTYING: &str = ".grimoire-emptying";
+/// How deep Empty trash goes inside an entry (a notebook's folder holds two levels; a folder trashed from Grimoire's
+/// folders as many as the user made). What is deeper stays in `TRASH_EMPTYING`, and the log says so.
+pub const EMPTY_DEPTH: usize = 64;
 /// A record longer than this is not read (it holds one path under 600 bytes and a time).
 pub const TRASH_RECORD_MAX: usize = 4096;
 /// A name is at most this many bytes (browser.md 8.8).
@@ -1222,6 +1229,175 @@ fn unlink_at(dirfd: i32, name: &CString, flags: i32) {
     unsafe { libc::unlinkat(dirfd, name.as_ptr(), flags) };
 }
 
+/// unlinkat that says whether the entry went: a file or a link (`flags` 0: the link itself, never what it points at),
+/// or an empty folder (AT_REMOVEDIR).
+fn unlinked(dirfd: i32, name: &CString, flags: i32) -> bool {
+    // SAFETY: unlinkat on our descriptor and a NUL-terminated name.
+    unsafe { libc::unlinkat(dirfd, name.as_ptr(), flags) == 0 }
+}
+
+/// A trash entry's lock (issue #330): flock(LOCK_EX|LOCK_NB) on the entry's folder, open at `fd`. A restore, a delete
+/// writing its `files-` folder, and Empty trash each take it before they work on the entry and hold it to the end, so
+/// none of them acts on an entry another is at work on, in this process or in another (the detached child Grimoire
+/// leaves at exit, a run started after it). The lock goes with the descriptor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EntryLock {
+    Taken,
+    /// another descriptor holds it: the entry is busy
+    Held,
+    /// the storage has no advisory locks (flock refused for another reason): nothing is held, and the work goes on as
+    /// before (the screens offer no Restore while an Empty trash of their run is queued or running)
+    None,
+}
+
+fn entry_lock(fd: i32) -> EntryLock {
+    // SAFETY: flock only takes the open descriptor.
+    if unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+        return EntryLock::Taken;
+    }
+    match errno() {
+        e if e == libc::EWOULDBLOCK || e == libc::EINTR => EntryLock::Held,
+        e => {
+            static NOTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if !NOTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                qlog!("files: the storage keeps no advisory locks on the trash's entries (%s)", &strerror(e));
+            }
+            EntryLock::None
+        }
+    }
+}
+
+/// The names in the folder open at `dfd` (but `.` and `..`), read whole before anything in it is removed (a folder
+/// read while its entries go may skip some). None when it cannot be read.
+fn names_in(dfd: i32) -> Option<Vec<Vec<u8>>> {
+    // SAFETY: dup of our descriptor; fdopendir takes the duplicate and closedir closes it; rewinddir starts from the
+    // first entry (a duplicate shares the offset of a folder read before); each name is copied before the next readdir.
+    unsafe {
+        let d2 = libc::dup(dfd);
+        if d2 < 0 {
+            return None;
+        }
+        let dir = libc::fdopendir(d2);
+        if dir.is_null() {
+            libc::close(d2);
+            return None;
+        }
+        libc::rewinddir(dir);
+        let mut names = Vec::new();
+        let ok = loop {
+            crate::util::set_errno(0);
+            let e = libc::readdir(dir);
+            if e.is_null() {
+                break errno() == 0;
+            }
+            let n = std::ffi::CStr::from_ptr((*e).d_name.as_ptr()).to_bytes();
+            if n != b"." && n != b".." {
+                names.push(n.to_vec());
+            }
+        };
+        libc::closedir(dir);
+        ok.then_some(names)
+    }
+}
+
+/// How a clearing of a folder ended (`clear_dir`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Cleared {
+    /// all of it went: the folder is empty
+    Done,
+    /// something could not go (another device, too deep, a removal refused): it stays
+    Left,
+    /// the run's time was up: what is left goes in the next run
+    OutOfTime,
+}
+
+/// The time a run of Empty trash may take, by `clock` from `t0`.
+struct Budget<'a> {
+    clock: &'a mut dyn FnMut() -> u32,
+    t0: u32,
+    ms: u32,
+}
+
+impl Budget<'_> {
+    fn up(&mut self) -> bool {
+        (self.clock)().wrapping_sub(self.t0) >= self.ms
+    }
+}
+
+/// Removes everything inside the folder open at `dfd` (`depth` folders down from the trash), never through a link: each
+/// name looked at with no link followed, a folder entered by its descriptor (O_DIRECTORY|O_NOFOLLOW, on `dev` only, at
+/// most EMPTY_DEPTH down) and removed once empty, anything else (a file, a link, a pipe) unlinked as itself. The bytes
+/// of the regular files removed go into `bytes`, but for the record of a `files-...` entry (`record`: the folder is
+/// that entry's own), which the trash's size walk leaves out too, so the toast frees what the question said. The time
+/// is looked at after each name (each run removes something).
+fn clear_dir(dfd: i32, depth: usize, dev: u64, record: bool, bytes: &mut u64, budget: &mut Budget) -> Cleared {
+    let Some(names) = names_in(dfd) else { return Cleared::Left };
+    let mut left = false;
+    for (i, n) in names.into_iter().enumerate() {
+        if i > 0 && budget.up() {
+            return Cleared::OutOfTime;
+        }
+        let counted = !(record && n == TRASH_RECORD.as_bytes());
+        let Ok(c) = CString::new(n) else {
+            left = true;
+            continue;
+        };
+        match stat_at(dfd, &c) {
+            Err(FsErr::NotFound) => {}
+            Err(_) => left = true,
+            Ok(st) if st.kind() == FsKind::Dir => {
+                if st.dev != dev || depth >= EMPTY_DEPTH {
+                    left = true;
+                    continue;
+                }
+                match open_sub(dfd, &c) {
+                    Ok(sub) if fstat_fd(sub.as_raw_fd()).is_ok_and(|s| s.dev == dev) => match clear_dir(sub.as_raw_fd(), depth + 1, dev, false, bytes, budget) {
+                        Cleared::Done => left |= !unlinked(dfd, &c, libc::AT_REMOVEDIR),
+                        Cleared::Left => left = true,
+                        Cleared::OutOfTime => return Cleared::OutOfTime,
+                    },
+                    Ok(_) => left = true,
+                    Err(libc::ENOENT) => {}
+                    // (a link or a file at the name since its stat: it goes as what it is now, never followed)
+                    Err(_) => left |= !unlinked(dfd, &c, 0),
+                }
+            }
+            Ok(st) => {
+                if unlinked(dfd, &c, 0) {
+                    if st.kind() == FsKind::File && counted {
+                        *bytes += st.size;
+                    }
+                } else {
+                    left = true;
+                }
+            }
+        }
+    }
+    if left {
+        Cleared::Left
+    } else {
+        Cleared::Done
+    }
+}
+
+/// What one run of Empty trash did (`FsStorage::empty_trash`): the entries it took out of the trash, the bytes of the
+/// regular files it removed, the names it left (busy, changed under it, not one of the trash's own, or not all of it
+/// could go), the first name it did not look at (the next run's `from`), and whether its time was up with work left.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Emptied {
+    pub entries: usize,
+    pub bytes: u64,
+    pub skipped: usize,
+    pub next: usize,
+    pub more: bool,
+}
+
+/// Whether `n` may be a name Empty trash acts on: one name (no `/`, not empty, not `.` or `..`, no NUL) that is not a
+/// dot-name (no listing shows one: not the staging folder, nor anything hidden).
+fn empty_name_ok(n: &[u8]) -> bool {
+    !n.is_empty() && n[0] != b'.' && !n.contains(&b'/') && !n.contains(&0)
+}
+
 /// Writes a trashed item's record into the new folder open at `wfd`: created there (O_CREAT|O_EXCL|O_NOFOLLOW, the
 /// descriptor form of create_fresh_nofollow: the folder is new, so nothing stands at the name), written whole and
 /// synced, or removed again.
@@ -1567,6 +1743,11 @@ impl FsStorage {
             }
         };
         let wfd = wrapper.as_raw_fd();
+        // (its lock, held while the record and the item go in: Empty trash leaves an entry a delete is writing)
+        if entry_lock(wfd) == EntryLock::Held {
+            undo(None);
+            return Err(FsWriteErr::Io(libc::EWOULDBLOCK));
+        }
         if let Err(e) = write_record(wfd, p, wall_time()) {
             undo(None);
             return Err(log_failed("the trash's record", FsWriteErr::Io(e)));
@@ -1602,8 +1783,10 @@ impl FsStorage {
     /// name taken there gets " 2", " 3" and so on (before a file's extension). A notebook goes back to `notebooks/<id>`, from the name
     /// store_delete gives it (`<id>-<time>`) or from a record whose `from=` is that folder; refused when the id is
     /// taken. A page is not restored here (its place in its notebook was never kept). Its folder in the trash goes
-    /// once empty: the record, then the folder, the only removal in these writes. A `files-...` entry that holds
-    /// nothing but its record, or nothing (a trash cut off before its item moved), is removed: `Restored::Nothing`.
+    /// once empty: the record, then the folder, the only removal in these writes but Empty trash's. A `files-...` entry
+    /// that holds nothing but its record, or nothing (a trash cut off before its item moved), is removed:
+    /// `Restored::Nothing`. The entry's lock is held throughout (`EntryLock`): one Empty trash is at work on is not
+    /// restored (Io(EWOULDBLOCK)).
     pub fn restore(&self, entry: &[u8]) -> Result<Restored, FsWriteErr> {
         if entry.is_empty() || entry.contains(&b'/') || entry == b"." || entry == b".." {
             return Err(FsWriteErr::Refused);
@@ -1618,12 +1801,20 @@ impl FsStorage {
                 if st.kind() != FsKind::Dir {
                     return Err(FsWriteErr::Refused);
                 }
+                // its lock, held to the end (Empty trash and a restore each leave an entry the other is at work on)
+                let held = open_sub(t, &ce).map_err(|e| FsWriteErr::Walk(if e == libc::ENOENT { FsErr::NotFound } else { FsErr::Io(e) }))?;
+                if entry_lock(held.as_raw_fd()) == EntryLock::Held {
+                    return Err(FsWriteErr::Io(libc::EWOULDBLOCK));
+                }
                 self.restore_notebook(t, &ce, &e.id)?;
                 Ok(Restored::Notebook(e.id))
             }
             TrashKind::File => {
                 let w = open_sub(t, &ce).map_err(|_| FsWriteErr::BadRecord)?;
                 let wfd = w.as_raw_fd();
+                if entry_lock(wfd) == EntryLock::Held {
+                    return Err(FsWriteErr::Io(libc::EWOULDBLOCK));
+                }
                 if holds_only_record(wfd) {
                     // A trash cut off before its item moved (a crash after the folder or the record): the item never
                     // left, so there is nothing to put back. The record, then the emptied folder, go.
@@ -1713,13 +1904,172 @@ impl FsStorage {
         qlog!("files: notebook %s came back from the trash", id);
         Ok(())
     }
+
+    /// Empty trash (issue #330): deletes the trash entries named in `names` (the Trash place's rows when the user
+    /// confirmed), from the name at `from` on (the run before's `next`: each name is looked at once), for at most
+    /// `budget_ms` by `clock` (each run removes something, or looks at a name), inside the trash only: the trash opened
+    /// by the walk and known by its identity, every name one of its own (`empty_name_ok`), and nothing else touched.
+    /// Never the trash itself, and never an entry not named: one that came into the trash since is left. A name no
+    /// longer there (restored meanwhile, or done by a run before) is passed over. A folder entry is opened
+    /// (O_DIRECTORY|O_NOFOLLOW, on the storage's device), its lock taken (`EntryLock`: an entry a restore or a delete
+    /// is at work on is left), moved into the staging folder `TRASH_EMPTYING` (one rename, checked to be the folder
+    /// opened, else put back and left), and only there emptied by its descriptor (`clear_dir`: no link followed, links
+    /// removed as links) and removed. Any other entry (a page's file, a link) is one unlink of the name itself. So a
+    /// run cut short (the power, a killed child) leaves a trash with fewer entries, every one listed whole; what was
+    /// half removed is in the staging folder, which no listing shows and nothing restores from, and the next run
+    /// removes it first. One run at a time holds the staging folder's lock; another finds it held and does nothing
+    /// (`Busy`).
+    pub fn empty_trash(&self, names: &[Vec<u8>], from: usize, budget_ms: u32, clock: &mut dyn FnMut() -> u32) -> Result<Emptied, FsWriteErr> {
+        let trash = self.trash_fd()?;
+        let t = trash.as_raw_fd();
+        let t0 = clock();
+        let mut budget = Budget { clock, t0, ms: budget_ms };
+        let cs = cname(TRASH_EMPTYING.as_bytes())?;
+        // the staging folder: the one a run before left, or made now (a file or a link at its name goes, as itself)
+        let staging = match open_sub(t, &cs) {
+            Ok(fd) => fd,
+            Err(e) => {
+                if e != libc::ENOENT {
+                    unlink_at(t, &cs, 0);
+                }
+                // SAFETY: mkdirat on our descriptor and a NUL-terminated name.
+                if unsafe { libc::mkdirat(t, cs.as_ptr(), 0o700) } != 0 && errno() != libc::EEXIST {
+                    return Err(log_failed("the trash's emptying", FsWriteErr::Io(errno())));
+                }
+                open_sub(t, &cs).map_err(|e| log_failed("the trash's emptying", FsWriteErr::Io(e)))?
+            }
+        };
+        let s = staging.as_raw_fd();
+        if fstat_fd(s).map_err(FsWriteErr::Walk)?.dev != self.dev {
+            return Err(FsWriteErr::Refused);
+        }
+        if entry_lock(s) == EntryLock::Held {
+            return Err(FsWriteErr::Busy);
+        }
+        let mut done = Emptied { next: from.min(names.len()), ..Emptied::default() };
+        // what a run before left in it (cut short, or out of time inside an entry) goes first
+        if clear_dir(s, 1, self.dev, false, &mut done.bytes, &mut budget) == Cleared::OutOfTime {
+            done.more = true;
+            sync_dir(s);
+            return Ok(done);
+        }
+        let mut staged = 0u32;
+        while done.next < names.len() {
+            if done.next > from && budget.up() {
+                done.more = true;
+                break;
+            }
+            let name = &names[done.next];
+            done.next += 1;
+            if !empty_name_ok(name) {
+                done.skipped += 1;
+                continue;
+            }
+            let c = cname(name)?;
+            if self.empty_entry(t, s, &c, &mut staged, &mut done, &mut budget) == Cleared::OutOfTime {
+                done.more = true;
+                break;
+            }
+        }
+        sync_dir(s);
+        if !done.more {
+            // (it holds nothing now, unless something in it could not go: then it stays, and the next run tries again)
+            unlink_at(t, &cs, libc::AT_REMOVEDIR);
+        }
+        sync_dir(t);
+        Ok(done)
+    }
+
+    /// One named entry of the trash open at `t`, for `empty_trash` (the staging folder open at `s`, its next free
+    /// name from `next`): Done when it is gone or was not there, Left when it stays, OutOfTime when the run's time
+    /// was up inside it (it is in the staging folder then, out of every listing).
+    fn empty_entry(&self, t: i32, s: i32, c: &CString, next: &mut u32, done: &mut Emptied, budget: &mut Budget) -> Cleared {
+        let st = match stat_at(t, c) {
+            Ok(st) => st,
+            Err(FsErr::NotFound) => return Cleared::Done,
+            Err(_) => {
+                done.skipped += 1;
+                return Cleared::Left;
+            }
+        };
+        if st.kind() != FsKind::Dir {
+            // a page's file, a link (the link itself), anything else: one unlink of the name
+            if unlinked(t, c, 0) {
+                done.entries += 1;
+                if st.kind() == FsKind::File {
+                    done.bytes += st.size;
+                }
+                return Cleared::Done;
+            }
+            done.skipped += 1;
+            return Cleared::Left;
+        }
+        let fd = match open_sub(t, c) {
+            Ok(fd) => fd,
+            Err(libc::ENOENT) => return Cleared::Done,
+            // (a link or a file at the name since its stat: it goes as what it is now, never followed)
+            Err(_) if unlinked(t, c, 0) => {
+                done.entries += 1;
+                return Cleared::Done;
+            }
+            Err(_) => {
+                done.skipped += 1;
+                return Cleared::Left;
+            }
+        };
+        let f = fd.as_raw_fd();
+        let id = match fstat_fd(f) {
+            Ok(now) if now.dev == self.dev => (now.dev, now.ino),
+            _ => {
+                done.skipped += 1;
+                return Cleared::Left;
+            }
+        };
+        // busy: a restore, or a delete writing it, is at work on it
+        if entry_lock(f) == EntryLock::Held {
+            done.skipped += 1;
+            return Cleared::Left;
+        }
+        // into the staging folder, under a name of its own there
+        let to = loop {
+            let Ok(to) = cname(next.to_string().as_bytes()) else { return Cleared::Left };
+            *next += 1;
+            match rename_noreplace(t, c, s, &to) {
+                Ok(()) => break to,
+                Err(libc::EEXIST) => continue,
+                Err(libc::ENOENT) => return Cleared::Done,
+                Err(e) => {
+                    log_failed("an entry of the trash", FsWriteErr::Io(e));
+                    done.skipped += 1;
+                    return Cleared::Left;
+                }
+            }
+        };
+        // what was moved must be the folder opened and locked: anything else (swapped in meanwhile) goes back
+        if !stat_at(s, &to).is_ok_and(|m| (m.dev, m.ino) == id) {
+            if rename_noreplace(s, &to, t, c).is_err() {
+                qlog!("files: an entry swapped in the trash while it was emptied stays in its emptying folder");
+            }
+            done.skipped += 1;
+            return Cleared::Left;
+        }
+        done.entries += 1;
+        match clear_dir(f, 1, self.dev, c.as_bytes().starts_with(TRASH_FILES), &mut done.bytes, budget) {
+            Cleared::Done if unlinked(s, &to, libc::AT_REMOVEDIR) => Cleared::Done,
+            Cleared::OutOfTime => Cleared::OutOfTime,
+            _ => {
+                qlog!("files: part of an entry of the trash could not be removed: it stays in the trash's emptying folder");
+                Cleared::Left
+            }
+        }
+    }
 }
 
 /// How deep a size walk goes inside a trash entry (a notebook's folder holds two levels).
 const SIZE_DEPTH: usize = 16;
 
-/// The bytes the trash holds, entry by entry (there is no Empty, so the user sees its size and cleans it over
-/// USB): the regular files at any depth in each entry, by their size (a `files-...` entry's record left out: its size
+/// The bytes the trash holds, entry by entry (what the Trash place's rows say, and its Empty trash question): the
+/// regular files at any depth in each entry, by their size (a `files-...` entry's record left out: its size
 /// is its item's), read a slice at a time with the folders being read kept open between ticks. Nothing is opened but
 /// folders (O_DIRECTORY|O_NOFOLLOW, from the one above), no link is followed or counted, and no folder on another
 /// device, or deeper than 16, is entered.
@@ -1826,6 +2176,16 @@ impl TrashSizes {
         let i = self.entries.iter().position(|e| e.0 == name)?;
         let reading = !self.done && self.open.len() > 1 && i + 1 == self.entries.len();
         (!reading).then_some(self.entries[i].1)
+    }
+
+    /// The bytes of the entries named in `names` together, once the trash is read to its end (None before): what Empty
+    /// trash's question says of the rows (issue #330). One look through the entries, however many are named.
+    pub fn sum_of<'a>(&self, names: impl Iterator<Item = &'a [u8]>) -> Option<u64> {
+        if !self.done {
+            return None;
+        }
+        let of: std::collections::HashMap<&[u8], u64> = self.entries.iter().map(|e| (e.0.as_slice(), e.1)).collect();
+        Some(names.filter_map(|n| of.get(n)).sum())
     }
 }
 

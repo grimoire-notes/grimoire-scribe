@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Grimoire 2.3.0-beta.1\n"
 "Report-Msgid-Bugs-To: https://github.com/ganten1998/grimoire-scribe/issues\n"
-"POT-Creation-Date: 2026-11-27 07:51-0600\n"
+"POT-Creation-Date: 2026-11-27 18:21-0600\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1029,6 +1029,23 @@ msgstr ""
 msgid "Couldn't copy file. Is the storage full?"
 msgstr ""
 
+#. TRANSLATORS: a toast in Files' Trash (or wherever the user is) when Empty trash deleted nothing because it
+#. could not work on the trash (it could not be written, or another Empty trash was at work on it). One line
+#. of about 1500 px at 44 px.
+#: rust/src/bgwork_empty.rs
+msgid "Couldn't empty the trash."
+msgstr ""
+
+#. TRANSLATORS: a toast in Files' Trash (or wherever the user is) once Empty trash has ended: %d is how many
+#. entries of the trash were deleted for good, %s the space that freed ("Deleted 12 entries, freed 3.4 MB."). One
+#. line of about 1500 px at 44 px.
+#: rust/src/bgwork_empty.rs
+#, c-format
+msgid "Deleted %d entry, freed %s."
+msgid_plural "Deleted %d entries, freed %s."
+msgstr[0] ""
+msgstr[1] ""
+
 #: rust/src/bgwork_template.rs
 msgid "Templates for Grimoire"
 msgstr ""
@@ -1202,6 +1219,7 @@ msgid "Couldn't restore."
 msgstr ""
 
 #. TRANSLATORS: a file's size in kilobytes, in the file picker's rows and cards (small text).
+#. TRANSLATORS: (also) Empty trash's question and its toast, for a size of nothing: "0 KB".
 #: rust/src/browser.rs
 #, c-format
 msgid "%d KB"
@@ -1339,6 +1357,12 @@ msgstr ""
 msgid "Go to"
 msgstr ""
 
+#. TRANSLATORS: the title of the question Files' Trash asks before Empty trash deletes its entries for good
+#. (the sheet's title, at most about 1400 px at 56 px in bold).
+#: rust/src/browser.rs
+msgid "Empty the trash?"
+msgstr ""
+
 #. TRANSLATORS: in Files too, the answers to the question before a file or folder of Grimoire's own folders
 #. is deleted: into the trash folder on the Kindle's storage (%s), from where Files' Trash can put it back,
 #. or keep it (1470 px at 44 px in bold).
@@ -1461,6 +1485,23 @@ msgstr ""
 msgid "Restored to %s."
 msgstr ""
 
+#. TRANSLATORS: Files' Trash: the chip on its path bar (one or two words of at most about 400 px at 34 px in
+#. bold), and the first answer of the question it opens (1470 px at 44 px in bold): every entry the Trash
+#. lists is deleted for good, it cannot be restored.
+#: rust/src/browser.rs
+msgid "Empty trash"
+msgstr ""
+
+#. TRANSLATORS: Files' Trash: the line under the title of the question Empty trash asks (on two lines at most
+#. of about 1400 px at 44 px): %d is how many entries it lists, %s their size ("12 entries (3.4 MB) will be
+#. deleted for good."); they cannot be restored after.
+#: rust/src/browser.rs
+#, c-format
+msgid "%d entry (%s) will be deleted for good."
+msgid_plural "%d entries (%s) will be deleted for good."
+msgstr[0] ""
+msgstr[1] ""
+
 #. TRANSLATORS: the file picker's top line when the Kindle has under 200 MB free (one line, about 800 px at 44 px).
 #: rust/src/browser.rs
 msgid "Kindle storage nearly full."
@@ -1472,17 +1513,24 @@ msgstr ""
 msgid "Showing the first %d."
 msgstr ""
 
-#. TRANSLATORS: a folder in the file picker with nothing in it a PDF import can use (one line, 44 px, centred).
-#: rust/src/browser.rs
-msgid "Nothing here to use."
-msgstr ""
-
 #. TRANSLATORS: between the Library's page buttons (1320 px at 44 px).
 #. TRANSLATORS: between the home's page buttons, as before (1320 px at 44 px).
 #. TRANSLATORS: (also) between the Templates sheet's page buttons, in bold: 440 px at 44 px.
 #: rust/src/browser.rs rust/src/library.rs rust/src/tplsheet.rs
 #, c-format
 msgid "Page %d of %d"
+msgstr ""
+
+#. TRANSLATORS: Files' Trash with no entry in it (after Empty trash, or before anything was deleted): one
+#. line, 44 px in bold, centred, at most about 1400 px.
+#: rust/src/browser.rs
+msgid "The trash is empty."
+msgstr ""
+
+#. TRANSLATORS: a folder in the file picker with nothing in it a PDF import can use (one line, 44 px,
+#. centred).
+#: rust/src/browser.rs
+msgid "Nothing here to use."
 msgstr ""
 
 #. TRANSLATORS: Files' Sort chip on its path bar while the newest files come first (one word of about
@@ -1548,6 +1596,12 @@ msgstr ""
 #. TRANSLATORS: the staying notice while the file picker reads a big folder (one line, about 600 px at 44 px).
 #: rust/src/browser.rs
 msgid "Loading..."
+msgstr ""
+
+#. TRANSLATORS: the staying notice while Empty trash deletes the entries of Files' Trash for good (one line,
+#. about 700 px at 44 px).
+#: rust/src/browser.rs
+msgid "Emptying the trash..."
 msgstr ""
 
 #. TRANSLATORS: the staying notice while Files makes the previews of the files on screen in its Covers view

@@ -9689,6 +9689,7 @@ fn files_close(a: &mut App, to_library: bool) {
     }
     app_notice_clear(a, NoticeKey::Loading);
     app_notice_clear(a, NoticeKey::Previews);
+    app_notice_clear(a, NoticeKey::Trash);
     if to_library {
         reload(a);
     }
@@ -9846,6 +9847,25 @@ fn files_back(a: &mut App) -> bool {
 
 fn files_tick(a: &mut App, now: u32) {
     with_files(a, |b, a| b.tick(a, now));
+}
+
+/// Files' Empty trash ended (2.3, issue #330: app.rs's poll_jobs, at its last run, done or failed): its toast wherever
+/// the user is (how many entries went, the space freed; or, when its last run failed with nothing deleted, that the
+/// trash was not emptied), its staying notice gone, the Files card's free space read again, and Files, while it is
+/// up, the trash read again (its rows, its sizes, the free space).
+pub fn library_trash_emptied(a: &mut App) {
+    // (its last run's exit status, which bg_poll_job has just noted: 0 when it emptied what it was given)
+    let said = crate::bgwork_empty::empty_finished(crate::bgjob::bg_last_exit() != 0);
+    app_notice_clear(a, NoticeKey::Trash);
+    if let Some(s) = a.lib.as_deref_mut() {
+        if s.files_free.is_some() {
+            s.files_free = crate::browser::files_free_line();
+        }
+        if s.files.open && s.files.mode == BrowseMode::Place {
+            with_files(a, |b, a| b.trash_emptied(a));
+        }
+    }
+    app_toast(a, &said, 4000);
 }
 
 // Two fingers down over the Library (or whatever gestures.ini binds to index-map) open the Graph; a gesture bound to

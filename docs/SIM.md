@@ -479,7 +479,9 @@ answered"): a script waits `wait 500` between the tap that opens one and its ans
 outside; the Library's `delete.yes`), and tests/scenarios/files_18_delete_twice.qs, which taps sooner on purpose,
 runs on the script's clock. In Files: `files.crumb.N` (the Nth part of the
 path bar, from 1: Files, the place, then each folder; the last opens the Go to sheet), `files.sort`,
-`files.show` and `files.view` (its chips), and `files.goto.N` (the Go to sheet's Nth folder or place). Home (2.2,
+`files.show` and `files.view` (its chips), `files.empty` (the Trash place's Empty trash chip, 2.3, issue #330) and
+`files.card.empty` (its question's Empty trash; Cancel is `files.card.cancel`, and the question takes its answer once
+shown, as the Delete question does), and `files.goto.N` (the Go to sheet's Nth folder or place). Home (2.2,
 issue #160): `files.goto.home` (the Go to sheet's first row, "Home: ..."), `files.card.sethome` and
 `files.card.resethome` (Set as home and Reset home to Notebooks, on the Go to sheet and on a folder's card), and in
 the Library `fmore.home` (a folder's menu's Set as home, or Reset home to Notebooks on the folder that is home). In
@@ -493,7 +495,8 @@ the Covers view `files.row.N` and `files.item.NAME` tap a tile (it has no `...`)
 | `files.ready` | `1` once the folder is read; `files.rows` the rows in all, `files.page`, `files.pages`, `files.per_page` |
 | `files.hidden` | entries left out of the folder (links, refused folders, paths too long); `files.capped` `1` at 5,000 entries |
 | `files.row.N`, `files.item.NAME` | a row's name as drawn; `files.sub.N` its second line (`files.sub.NAME` the row of that name's: `files.sub.Trash` the root's Trash row, its path and, once the trash's walk is through, its size); `files.kind.N` (`place`, `folder`, `pdf`, `look`, `show` for "Show Files in Library", and in Files `picture`, `font`, `other`, `link`, `trashed`); `files.status.N` (`waiting`, `importing`, `failed`, `imported` or empty); `files.notes.N` (`1` with "has notes"); `files.keyed.N` (`1` once the PDF's book key was read, which an idle tick does for the rows on screen: `files.notes.N` is settled then); `files.pictures.N` (a folder's count, empty before it is counted) |
-| `files.card` | the open card: `pdf`, `folder`, in Files `picture`, `font`, `other`, `trashed` (a trash entry's), `delete` (the Delete question a card's Delete opens) or `goto` (the Go to sheet), or empty; `files.card.details` its first line (the Go to sheet's title, the question's `Delete "name"?`), `files.card.rows` its rows joined by `|` |
+| `files.card` | the open card: `pdf`, `folder`, in Files `picture`, `font`, `other`, `trashed` (a trash entry's), `delete` (the Delete question a card's Delete opens), `empty` (Empty trash's question, 2.3) or `goto` (the Go to sheet), or empty; `files.card.details` its first line (the Go to sheet's title, the question's `Delete "name"?` or `Empty the trash?`), `files.card.rows` its rows joined by `|`, `files.card.text` what Empty trash's question says under its title (`3 entries (4 KB) will be deleted for good.`) |
+| `files.empty`, `files.none` | `1` while the Trash place's path bar has Empty trash as last drawn (an entry listed, the trash's size known, no Empty trash queued or running), else `0`; what the screen says in place of rows in a folder read with none (`The trash is empty.` in the Trash place, `Nothing here to use.` elsewhere), empty while there are rows (2.3, issue #330) |
 | `files.keyboard`, `files.text` | `1` while Files' rename keyboard is up, else `0`; the name it holds (empty when it is not up) |
 | `files.sort`, `files.show` | Files' order (`name`, `newest`, `size`) and what it lists (`usable`, `all`), as settings.ini has them; `files.sorting` `1` while a new order's stats come in |
 | `files.order`, `files.drawn` | the rows' names in order, joined by `|`; the rows' names as last drawn on the screen (a new order shows there once, when ready) |
@@ -552,7 +555,7 @@ shows what the app holds.
 | `toast` | the toast showing, empty if none |
 | `toast.rect` | where the visible toast is, `x y w h` in screen pixels, empty if none |
 | `notice` | the staying notice on the panel (`app_notice`, 2.1: a job's progress drawn in the toast's place until its user clears it), empty if none; a toast goes over it for its time and it comes back after |
-| `notice.key` | which key that notice is: `book` (KOReader's book being added, every screen), `import` (the Library), `fontcheck`, `loading` or `previews` (the screen that asked), empty if none. Its redraws are `ui` presents of its rect in `display.presents`, at most one every 2 s for a new text, never counted toward the Full |
+| `notice.key` | which key that notice is: `book` (KOReader's book being added, every screen), `import` (the Library), `fontcheck`, `loading`, `previews` or `trash` (Files' Empty trash at work, 2.3) (the screen that asked), empty if none. Its redraws are `ui` presents of its rect in `display.presents`, at most one every 2 s for a new text, never counted toward the Full |
 | `asleep` | `1` while the sleep screen is up, else `0` |
 | `asleep.mode` | while asleep, which sleep screen is up, numbered as `settings.sleep_mode` after fallback/override (native PIN forces `2`; unavailable wallpaper uses `0`) (hosted by KOReader, mode 2 reads `0`; without the `sleep` service of `GRIMOIRE_SIM_NO_SERVICES`, every mode reads `0`); empty while awake |
 | `host` | `koreader` when started as KOReader's Grimoire plugin starts it (`GRIMOIRE_HOST=koreader`), else empty |
@@ -1097,6 +1100,9 @@ first look too, and `GRIMOIRE_WORK_FAIL_STEP` fails a font worker's step: no fon
 Files' previews (same builds): `GRIMOIRE_PREVIEW_MS=N` is the time one preview may take, every kind's (in place of
 3 s for a PDF's page and a font's sample, 6 s for a picture), and `GRIMOIRE_PREVIEWS_MAX=<files>,<bytes>` the
 limits its cache is pruned past; the PDF, picture and font hooks above reach a preview's worker too.
+Files' Empty trash (same builds, 2.3, issue #330): `GRIMOIRE_EMPTY_TEST_BUSY=1` has each of its runs hold the
+trash's staging folder's lock through a descriptor of its own, as another Empty trash at work on the trash holds it,
+so the run deletes nothing and ends 1 (tests/scenarios/files_49_empty_trash_failed.qs).
 `GRIMOIRE_FONT_GLYPH_US=N` is the CPU time one glyph's draw may take in the check, in microseconds (1 to
 999999999; anything else, or unset, is 5 s, which no real font reaches), and
 `GRIMOIRE_FONT_TEST_SLOW=<slow|once|bold|from>:<glyph>:<us>` is the test charge: the draw of glyph `<glyph>`

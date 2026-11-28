@@ -3879,3 +3879,26 @@ Scribe can tell (read grimoire.log over SSH; it names no file):
 6. **The cache**: `du -sh /mnt/us/grimoire/.cache/packages/icons /mnt/us/grimoire/.cache/packages/shots` after the
    checks above (an icon of 64 x 64 px is about 4 kB, a Scribe page's screenshot 4.6 MB; screenshots are held to
    32 files or 48 MiB). Remove an app: its icon's two files are gone from `icons/`.
+
+## 2.3, Empty trash (issue #330): device check
+
+Not run on a Scribe. The Mac's tests cover the rules: `rust/tests/test_empty_trash.rs` (exactly the entries named go
+and nothing outside the trash, links go as links, an entry a restore holds stays, an entry that comes meanwhile stays,
+a run cut short, names that are not the trash's own, the times), `browser.rs`'s unit tests and the scenarios
+`files_44_empty_trash` to `files_48_empty_trash_pl_fit` (docs/DESIGN.md, Files: Empty trash). What only the Scribe can
+tell (read grimoire.log over SSH; it names no file):
+
+1. **Before**: a trash of a few hundred entries (delete pages of a scratch notebook in its Pages view, or notebooks
+   you no longer need). Note `ls /mnt/us/grimoire/trash | wc -l`, `du -sk /mnt/us/grimoire/trash`, and the free space
+   Settings > System > About says.
+2. **The chip and the question**: Files > Trash. Empty trash shows at the path bar's right once the rows have their
+   sizes: note how long after the place opened. Tap it: "Empty the trash?" says how many entries (the `ls` count) and
+   their size (close to the `du` figure: `du` counts blocks).
+3. **Empty trash**: its Empty trash. "Emptying the trash..." shows while it works and the pen stays quick; note the time
+   from the tap to the toast ("Deleted N entries, freed X."), and send grimoire.log's `bg: the trash's emptying: ...`
+   lines (one a run, each run at most 2 s). The place says "The trash is empty."; `ls -a /mnt/us/grimoire/trash` shows
+   nothing (no `.grimoire-emptying`), and `/mnt/us/grimoire/.cache/trash-emptied` is gone (it stays only after a job
+   Grimoire's exit left to finish, until the next Empty trash). The log has no
+   `files: the storage keeps no advisory locks` line (if it has, send it).
+4. **The free space**: Settings > System > About right after: the free space grew by about the toast's figure (the
+   storage rounds each file up to its blocks, so About may show a little more).
