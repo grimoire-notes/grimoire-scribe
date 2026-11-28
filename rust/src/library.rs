@@ -5540,7 +5540,11 @@ fn wifi_sheet_scroll(a: &mut App, ph: i32, ev: &InEvent) -> bool {
         }
         lib(a).wifi.scroll_drag = Some(d);
         if repaint {
-            redraw(a, RefreshMode::Fast);
+            // (its fast frames below the status bar alone: black and white only, they would dither its gray band,
+            // #337; the lift's grays refresh is the whole screen)
+            draw_front(a);
+            let top = gui_status_h();
+            app_invalidate(a, Rect::new(0, top, a.w, a.h - top), RefreshMode::Fast);
         }
         true
     } else if d.on {
