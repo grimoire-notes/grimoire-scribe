@@ -4785,13 +4785,13 @@ msgstr "変更するには、ページ上でそれを押し続けます。"
 
 #: rust/src/looks/cassette.rs
 msgid "Style (Cassette)"
-msgstr ""
+msgstr "スタイル（カセット）"
 
 #. TRANSLATORS: a style in Settings > Display > Style: monospace type, corner brackets, dot-matrix
 #. icons (cassette futurism).
 #: rust/src/looks/cassette.rs
 msgid "Cassette"
-msgstr ""
+msgstr "カセット"
 
 #: rust/src/looks/classic.rs
 msgid "Style (Classic)"
