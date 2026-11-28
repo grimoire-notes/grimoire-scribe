@@ -1759,9 +1759,10 @@ fn art_notes(c: &mut Canvas, r: Rect) {
     art_fill(c, r, &[sh_rect(7.0, 7.0, 10.0, LINE, 0.0), sh_rect(7.0, 11.0, 10.0, LINE, 0.0), sh_rect(7.0, 15.0, 5.5, LINE, 0.0)]);
 }
 fn art_journal(c: &mut Canvas, r: Rect) {
-    // a hardcover: a line, its spine a line 2 inside its left side, and a solid bookmark hanging from its top
-    art_line(c, r, &[sh_round(&[(5.0, 2.0, 1.0), (19.5, 2.0, 2.0), (19.5, 22.0, 2.0), (5.0, 22.0, 1.0)])]);
-    art_fill(c, r, &[sh_rect(9.0, 3.0, LINE, 18.0, 0.0), sh_poly(&[(13.0, 3.0), (16.0, 3.0), (16.0, 10.0), (14.5, 8.5), (13.0, 10.0)])]);
+    // a hardcover: a line, its spine a line 2 inside its left side, and a solid bookmark ribbon hanging out of its
+    // foot (from inside the bottom line), so its outline is not the notebook's
+    art_line(c, r, &[sh_round(&[(5.0, 2.0, 1.0), (19.5, 2.0, 2.0), (19.5, 19.5, 2.0), (5.0, 19.5, 1.0)])]);
+    art_fill(c, r, &[sh_rect(9.0, 3.0, LINE, 15.5, 0.0), sh_poly(&[(13.0, 18.5), (16.0, 18.5), (16.0, 22.5), (14.5, 21.0), (13.0, 22.5)])]);
 }
 fn art_calendar(c: &mut Canvas, r: Rect) {
     // a line with a header line across it, two binding rings on top (square where they end on the top line's
@@ -1803,8 +1804,9 @@ fn art_work(c: &mut Canvas, r: Rect) {
     art_cut(c, r, &[sh_rect(10.0, 5.0, 4.0, 2.0, 0.0)]);
 }
 fn art_archive(c: &mut Canvas, r: Rect) {
-    // a lid bar, too thin to hold a hollow, solid over a box drawn as a line, with a solid handle slot
-    art_fill(c, r, &[sh_rect(2.0, 3.5, 20.0, 5.0, 1.0)]);
+    // a lid drawn as a line (5.5 tall, just enough for a hollow of 1.5) over a box drawn as a line, with a solid
+    // handle slot
+    art_line(c, r, &[sh_rect(2.0, 3.0, 20.0, 5.5, 1.0)]);
     art_line(c, r, &[sh_rect(3.5, 10.0, 17.0, 10.5, 2.0)]);
     art_fill(c, r, &[sh_rect(9.0, 14.0, 6.0, LINE, 1.0)]);
 }
@@ -1853,18 +1855,17 @@ fn art_music(c: &mut Canvas, r: Rect) {
     art_fill(c, r, &ink);
 }
 fn art_headphones(c: &mut Canvas, r: Rect) {
-    // the band a line already; the cups, too narrow to hold a hollow, solid
+    // the band a line already; each cup a line (5.5 wide, just enough for a hollow of 1.5)
+    art_line(c, r, &[sh_rect(2.5, 12.0, 5.5, 9.0, 2.0), sh_rect(16.0, 12.0, 5.5, 9.0, 2.0)]);
     art_fill(
         c,
         r,
         &[
-            // the band's ends run straight down into the cups from where the band ends (above that its outer edge
-            // curves in, and a straight piece would stand past it)
+            // the band's ends run straight down into the cups' outer lines from where the band ends (above that its
+            // outer edge curves in, and a straight piece would stand past it)
             sh_band(12.0, 13.0, 9.5, 7.5, 180.0, 360.0),
             sh_rect(2.5, 13.0, 2.0, 2.5, 0.0),
             sh_rect(19.5, 13.0, 2.0, 2.5, 0.0),
-            sh_rect(2.5, 12.0, 5.5, 9.0, 2.0),
-            sh_rect(16.0, 12.0, 5.5, 9.0, 2.0),
         ],
     );
 }
@@ -1900,16 +1901,16 @@ fn art_writing(c: &mut Canvas, r: Rect) {
     art_fill(c, r, &ink);
 }
 fn art_code(c: &mut Canvas, r: Rect) {
-    // a window drawn as a line, with </> inside in lines as wide: brackets small enough, and the slash steep enough,
-    // to keep 1.5 from each other and from the window
+    // a window drawn as a line, with </> inside in lines as wide: the slash steep, so the brackets can be 6.5 tall and
+    // still keep 1.5 from it and from the window. The slash stays: two brackets alone would read as the page arrows
     art_line(c, r, &[sh_rect(2.0, 3.5, 20.0, 17.0, 2.0)]);
     art_fill(
         c,
         r,
         &[
-            sh_path(&[(8.2, 9.5), (6.7, 12.0), (8.2, 14.5)], LINE),
-            sh_path(&[(15.8, 9.5), (17.3, 12.0), (15.8, 14.5)], LINE),
-            sh_strip(12.875, 7.25, 11.125, 16.75, LINE),
+            sh_path(&[(8.2, 8.75), (6.7, 12.0), (8.2, 15.25)], LINE),
+            sh_path(&[(15.8, 8.75), (17.3, 12.0), (15.8, 15.25)], LINE),
+            sh_strip(12.5, 7.25, 11.5, 16.75, LINE),
         ],
     );
 }
@@ -1954,10 +1955,12 @@ fn art_math(c: &mut Canvas, r: Rect) {
     );
 }
 fn art_language(c: &mut Canvas, r: Rect) {
-    // a globe, all lines: the rim, a meridian ring meeting it at the poles, the equator and the centre meridian
+    // a globe, all lines: the rim, a meridian ring meeting it at the poles, and the equator. No centre meridian: it
+    // would part the ring's hollow into two slivers that taper to points at the poles, and the lines would merge into
+    // black wedges there
     let ring = sh_oval(12.0, 12.0, 5.5, 10.0);
     art_line(c, r, &[ring]);
-    art_fill(c, r, &[sh_band(12.0, 12.0, 10.0, 10.0 - LINE, 0.0, 360.0), sh_rect(3.0, 11.0, 18.0, LINE, 0.0), sh_rect(11.0, 3.0, LINE, 18.0, 0.0)]);
+    art_fill(c, r, &[sh_band(12.0, 12.0, 10.0, 10.0 - LINE, 0.0, 360.0), sh_rect(3.0, 11.0, 18.0, LINE, 0.0)]);
 }
 fn art_star(c: &mut Canvas, r: Rect) {
     // a five-pointed star drawn as a line, its arms wide enough (inner radius 5.75) for the hollow to reach into them
@@ -2080,8 +2083,10 @@ fn art_gift(c: &mut Canvas, r: Rect) {
         r,
         &[
             sh_rect(11.0, 8.0, LINE, 13.0, 0.0),
-            sh_turn(sh_oval(9.0, 5.0, 3.5, 1.9), 9.0, 5.0, 30.0),
-            sh_turn(sh_oval(15.0, 5.0, 3.5, 1.9), 15.0, 5.0, -30.0),
+            // the loops sit low enough on the lid to meet its top line in a short, wide join, with no thin wedge of
+            // white between loop and lid
+            sh_turn(sh_oval(9.0, 5.6, 3.5, 1.9), 9.0, 5.6, 30.0),
+            sh_turn(sh_oval(15.0, 5.6, 3.5, 1.9), 15.0, 5.6, -30.0),
             sh_disc(12.0, 6.25, 1.5),
         ],
     );
@@ -2122,23 +2127,26 @@ fn art_garden(c: &mut Canvas, r: Rect) {
     );
 }
 fn art_pets(c: &mut Canvas, r: Rect) {
-    // a paw print, solid: the toes are too small to hold a hollow, and a hollow pad under solid toes reads as a face
+    // a paw print, solid: the toes are too small to hold a hollow, and a hollow pad under solid toes reads as a face.
+    // Pad and toes are kept small, so the paw is no heavier than the line icons round it
     art_fill(
         c,
         r,
         &[
-            sh_turn(sh_oval(4.75, 10.5, 2.0, 2.5), 4.75, 10.5, -30.0),
-            sh_turn(sh_oval(9.0, 5.75, 2.0, 2.5), 9.0, 5.75, -10.0),
-            sh_turn(sh_oval(15.0, 5.75, 2.0, 2.5), 15.0, 5.75, 10.0),
-            sh_turn(sh_oval(19.25, 10.5, 2.0, 2.5), 19.25, 10.5, 30.0),
-            sh_oval(12.0, 16.0, 5.25, 4.25),
+            sh_turn(sh_oval(5.25, 10.75, 1.75, 2.25), 5.25, 10.75, -30.0),
+            sh_turn(sh_oval(9.25, 6.25, 1.75, 2.25), 9.25, 6.25, -10.0),
+            sh_turn(sh_oval(14.75, 6.25, 1.75, 2.25), 14.75, 6.25, 10.0),
+            sh_turn(sh_oval(18.75, 10.75, 1.75, 2.25), 18.75, 10.75, 30.0),
+            sh_oval(12.0, 16.0, 4.5, 3.5),
         ],
     );
 }
 fn art_baby(c: &mut Canvas, r: Rect) {
-    // a pacifier: its ring a line already; the nipple and the shield, too thin to hold a hollow, solid. The nipple
-    // sits a unit deep in the shield, so the two meet in a wide neck, not a pinch
-    art_fill(c, r, &[sh_disc(12.0, 5.75, 2.75), sh_oval(12.0, 10.25, 7.5, 2.75), sh_band(12.0, 16.75, 4.5, 2.5, 0.0, 360.0)]);
+    // a pacifier: the shield a line (round-ended, so its hollow is as wide all along), the ring a line already
+    // hanging from the shield's bottom line, and the nipple, too small to hold a hollow, solid, its foot inside the
+    // shield's top line
+    art_line(c, r, &[sh_rect(4.5, 7.5, 15.0, 5.5, 2.75)]);
+    art_fill(c, r, &[sh_disc(12.0, 6.0, 2.25), sh_band(12.0, 16.75, 4.5, 2.5, 0.0, 360.0)]);
 }
 fn art_tools(c: &mut Canvas, r: Rect) {
     // a wrench, solid: its handle is a stroke. Nearer upright than the pencil's and the key's 45 degrees, so the
@@ -2201,9 +2209,9 @@ fn art_microphone(c: &mut Canvas, r: Rect) {
     art_fill(c, r, &[sh_band(12.0, 11.0, 7.0, 5.0, 0.0, 180.0), sh_rect(11.0, 17.5, 2.0, 3.0, 0.0), sh_rect(7.5, 20.0, 9.0, 2.0, 1.0)]);
 }
 fn art_search(c: &mut Canvas, r: Rect) {
-    // a magnifier: its ring a line already, its handle a stroke
-    art_fill(c, r, &[sh_disc(9.5, 9.5, 7.0), sh_bar(14.0, 14.0, 19.75, 19.75, 3.5)]);
-    art_cut(c, r, &[sh_disc(9.5, 9.5, 4.5)]);
+    // a magnifier: its ring a line as wide as the others', its handle a stroke a little heavier
+    art_fill(c, r, &[sh_disc(9.5, 9.5, 7.0), sh_bar(14.0, 14.0, 19.75, 19.75, 3.0)]);
+    art_cut(c, r, &[sh_disc(9.5, 9.5, 7.0 - LINE)]);
 }
 fn art_flag(c: &mut Canvas, r: Rect) {
     // a swallowtail flag drawn as a line whose left side is the pole
@@ -12586,11 +12594,14 @@ mod tests {
 
     // Every gap of a folder icon holds at the smallest size it is drawn (#339; the icon sheet's tiles, a box of 193 px,
     // 8 px a unit): its cut-outs, its hollows and the white between a detail and the line round it are 1.5 units
-    // (12 px) or more, so with every black pixel grown by 5 px (a gap of 10 px or less closes, 2 px of dot gain far
-    // less) each white part is still one part and no two black parts join.
+    // (12 px) or more, so with every black pixel grown by a disc of 5.5 px (a gap of 10 px or less closes along a row
+    // or a column, of about 11 px or less on a slant; 2 px of dot gain far less) each white part is still one part and
+    // no two black parts join.
     #[test]
     fn folder_icons_keep_their_gaps_at_the_smallest_size() {
-        let (size, pad, grow) = (193, 12, 5i32);
+        // the disc's radius, in half px
+        let (size, pad, grow2) = (193, 12, 11i32);
+        let grow = grow2 / 2;
         let side = size + 2 * pad;
         let n = (side * side) as usize;
         // the parts of the pixels whose value is `of`, 4-connected (8-connected for black): each pixel's part, and how
@@ -12634,7 +12645,7 @@ mod tests {
                 for dy in -grow..=grow {
                     for dx in -grow..=grow {
                         let (nx, ny) = (x + dx, y + dy);
-                        if dx * dx + dy * dy <= grow * grow && nx >= 0 && ny >= 0 && nx < side && ny < side {
+                        if 4 * (dx * dx + dy * dy) <= grow2 * grow2 && nx >= 0 && ny >= 0 && nx < side && ny < side {
                             grown[(ny * side + nx) as usize] = true;
                         }
                     }
@@ -12651,10 +12662,10 @@ mod tests {
             for (k, s) in seen.iter().enumerate() {
                 let i = white.iter().position(|&w| w == k).unwrap();
                 let at = ((i as i32) % side - pad, (i as i32) / side - pad);
-                assert!(!s.is_empty(), "{}: a white part (from {at:?} px) is narrower than 11 px", def.name);
-                assert!(s.len() == 1, "{}: a white part (from {at:?} px) is parted by a gap of 10 px or less", def.name);
+                assert!(!s.is_empty(), "{}: a white part (from {at:?} px) is narrower than the rule's 12 px", def.name);
+                assert!(s.len() == 1, "{}: a white part (from {at:?} px) is parted by a gap under the rule's 12 px", def.name);
             }
-            assert_eq!(parts(&ink, true).1, parts(&grown, true).1, "{}: two black parts are 10 px or less apart", def.name);
+            assert_eq!(parts(&ink, true).1, parts(&grown, true).1, "{}: two black parts are closer than the rule's 12 px", def.name);
         }
     }
 
