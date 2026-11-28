@@ -1,3 +1,4 @@
+# settings: status_size=1
 # env: GRIMOIRE_SIM_CLOCK=script
 # rust-only
 # The status bar's time is the platform's clock, the one a script's `clock` line sets and holds still

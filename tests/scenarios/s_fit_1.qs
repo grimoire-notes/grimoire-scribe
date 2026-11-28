@@ -5,6 +5,7 @@
 # it is zoomed or moved, and a turn lands on it.
 # settings: shortcuts_enabled=1
 # settings: mirror_pdf=0
+# settings: status_size=1
 # copy: tests/fixtures/index-keys .
 # (the clock corner held still: its minute's refresh would land among the counted ones)
 clock 1700000000

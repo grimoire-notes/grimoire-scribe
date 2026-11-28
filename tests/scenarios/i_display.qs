@@ -1,4 +1,5 @@
 # settings: status_mode=1
+# settings: status_size=1
 # Toolbar clear (no confirmation), Display sheet: brightness/warmth sliders; Dark mode is Settings' row
 # rust-only
 wait 200

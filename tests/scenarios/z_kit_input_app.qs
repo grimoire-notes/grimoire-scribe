@@ -2,6 +2,7 @@
 # rust-only
 # env: GRIMOIRE_SIM_CLOCK=script TZ=UTC
 # copy: tests/fixtures/kitinput .
+# settings: status_size=1
 # The package kit's input in an app (issue #272), with the packages of tests/fixtures/kitinput (written by
 # rust/tests/kitfix: `make kit-fixtures`). Each app counts in its status line its drawing passes (p), the calls of
 # app_pointer (n), the kit's events by kind (t TAP, r PRESS, s DRAG_START, m DRAG_MOVE, e DRAG_END, k KEY, g SETTINGS),

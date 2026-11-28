@@ -1,6 +1,7 @@
 # settings: status_mode=1
 # settings: status_on=1
 # settings: status_in_notebooks=1
+# settings: status_size=1
 # env: TZ=UTC
 # env: GRIMOIRE_SIM_LIGHT_SENSOR=1
 # rust-only

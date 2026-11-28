@@ -285,9 +285,10 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   and softer edge, less valley filling at full pressure, and loose specks up to 0.4 r past the
   edge, hashed on page position and the stroke seed. brush_max_radius accounts for all of it.
 - Blend: "deposit" darkens only: dst = dst - (dst - ink) * a, applied per dab.
-- Ink edges (2.3, #320; Settings > Pen, settings.ini `ink_edges`): Smooth draws as above. Solid draws the solid
-  pens' strokes in pure black with hard edges. The rule is one function, brush.rs `brush_ink_solid`: ink with no
-  graphite (not the pencils or charcoal), untextured (no more grain than the marker's own 0.15,
+- Ink edges (2.3, #320; Settings > Pen, settings.ini `ink_edges`): Smooth draws as above, as every version before
+  2.3 did. Solid, the default (#329), draws the solid pens' strokes in pure black with hard edges. The rule is
+  one function, brush.rs `brush_ink_solid`: ink with no graphite (not the pencils or charcoal), untextured (no
+  more grain than the marker's own 0.15,
   `SOLID_GRAIN_MOST`, and no Tilt lightens), no colour of a palette (a stroke's ext[0] 0), and a darkest ink of
   black or a dark gray (`255 - (255 - ink) * max(opacity_min, opacity_max) <= 64`): at the defaults the
   ballpoint, fineliner, fountain pen, marker and calligraphy pen, never the highlighter, the eraser or an erase
@@ -299,8 +300,10 @@ A desktop simulator (SDL3) and an SDL-free headless script runner exist for deve
   live sample by sample or replayed, whole, in tiles, from a paste's first stroke or in compaction's pieces
   (which share the stroke's shadow), the pixels are the same. The setting is read where a
   brush begins (`brush_begin`, page.rs `stroke_brush_begin`, a thread-local `ink_edges()` that app_init and the
-  row set), so every picture on the screen follows it: the live frames, the settled page, a page drawn whole,
-  undo, the lasso, the Pages view, previews, cards and Live view. Exports draw inside
+  row set; Smooth until app_init sets it from settings.ini, before the first screen is drawn and before any
+  background job is forked, each child starting with the main thread's, so a test that draws without settings
+  draws at Smooth), so every picture on the screen follows it: the live frames, the settled page, a page drawn
+  whole, undo, the lasso, the Pages view, previews, cards and Live view. Exports draw inside
   `ink_edges_as(InkEdges::Smooth, ..)` (export.rs `render_page_links`, which every PDF, PNG, share and mirror
   page comes through, and a page made into a template's picture); grimoire-export never sets it. The renderer's
   fingerprint is Smooth's whatever the setting (`page_ink_fingerprint` draws in the Smooth scope); Solid's is

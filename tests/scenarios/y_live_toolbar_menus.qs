@@ -1,5 +1,6 @@
 # rust-only
 # settings: status_mode=1
+# settings: status_size=1
 # env: GRIMOIRE_SIM_ADDRS=en0=192.168.0.20
 # Live view's toolbar under the editor's menus (2.0.0, issue #16, reported by nebuff: "Toolbar disappears in live
 # view when a popup menu (settings, display settings) is opened then comes back after closing menu"): the browser
