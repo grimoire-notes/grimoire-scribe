@@ -10854,8 +10854,10 @@ pub fn library_tick(a: &mut App, now: u32) {
     crate::userfonts::userfonts_tick(a, now); // (a font check that ended with no verdict is queued again after its wait)
     // The home's status bar keeps the clock: one redraw when the minute changes (nothing behind a
     // sheet or the keyboard is laying itself out again). The minute is the platform's clock's, as
-    // the bar's own time is (gui_status_bar).
-    if !files_shown(a) && !graph_shown(a) && lib(a).modal == Modal::None {
+    // the bar's own time is (gui_status_bar). Under a press it waits for the lift, as a picture does
+    // (pictures_due_draw): drawn at once it would take the pressed look away under the finger, and the
+    // lift's invert would then leave the control black on the new frame.
+    if !files_shown(a) && !graph_shown(a) && lib(a).modal == Modal::None && lib(a).pressed.is_none() {
         let min = sys_wall_clock() / 60;
         if lib(a).status_min != min {
             lib(a).status_min = min;
@@ -11026,9 +11028,10 @@ pub fn library_tick(a: &mut App, now: u32) {
     // template's picture made for a notebook since may be on its first page, whose card the job drew
     // again (bgwork_template.c: its thumb.pgm is another file now), or a card drawn from a
     // notebook's own picture (picture_card) drew it white meanwhile. Any other job (the templates'
-    // previews) changes no card, and the Library is not drawn again for it.
+    // previews) changes no card, and the Library is not drawn again for it. Under a press it waits for
+    // the lift, as the minute does.
     let s = lib(a);
-    if s.card_gen != bgimage_generation() {
+    if s.card_gen != bgimage_generation() && s.pressed.is_none() {
         s.card_gen = bgimage_generation();
         let mut changed = false;
         for i in 0..s.books.len().min(s.card_stamp.len()) {
@@ -12549,6 +12552,46 @@ mod tests {
         a.dirty = RECT_EMPTY;
         library_tick(&mut a, 300);
         assert!(rect_is_empty(a.dirty) || lib(&mut a).status_min != sys_wall_clock() / 60);
+        library_free(&mut a);
+        canvas_free(&mut a.screen);
+    }
+
+    // A redraw of the home under a held press waits for the lift: the minute's redraw (or a background job's cards')
+    // would take the pressed look away under the finger, and the lift's invert would then leave the control black on
+    // the new frame. Held, nothing is drawn; lifted away (no tap), the next ticks draw the minute and read the job's
+    // cards, and the control is as it was.
+    #[test]
+    fn the_homes_minute_waits_for_a_held_press_to_lift() {
+        let mut a = pen_record_app();
+        a.scr = ScreenId::Library;
+        settings_default(&mut a.settings);
+        lib(&mut a).modal = Modal::None;
+        lib(&mut a).items.clear();
+        redraw(&mut a, RefreshMode::Ui);
+        let sq = lib(&mut a).home.squares[1];
+        let hit = lib(&mut a).hits.h.iter().find(|h| h.id == H_APP && rect_contains(h.r, sq.x + 10, sq.y + 10)).map(|h| h.r).expect("a square's hit");
+        let pixels = |a: &App| (hit.y..hit.y + hit.h).flat_map(|y| a.screen.px[(y * a.screen.stride + hit.x) as usize..(y * a.screen.stride + hit.x + hit.w) as usize].to_vec()).collect::<Vec<u8>>();
+        let rest = pixels(&a);
+        let ev = |type_: InType, x: i32, y: i32, t_ms: u32| InEvent { type_, x: x as f32, y: y as f32, t_ms, ..Default::default() };
+        library_event_in(&mut a, &ev(InType::TouchDown, sq.x + sq.w / 2, sq.y + sq.h / 2, 1000));
+        assert!(lib(&mut a).pressed.is_some() && pixels(&a) != rest, "pressed");
+        // the minute turns while the finger is down, and a background job ends: nothing is drawn, and the job's
+        // cards wait to be read again
+        lib(&mut a).status_min -= 1;
+        lib(&mut a).card_gen = bgimage_generation().wrapping_add(1);
+        a.dirty = RECT_EMPTY;
+        library_tick(&mut a, 1100);
+        assert!(rect_is_empty(a.dirty), "drawn under the finger: {:?}", a.dirty);
+        assert_ne!(lib(&mut a).card_gen, bgimage_generation(), "the job's cards wait for the lift");
+        // lifted away from it: the press's look is taken off, and the next tick draws the minute
+        library_event_in(&mut a, &ev(InType::TouchMove, 900, 1500, 1200));
+        library_event_in(&mut a, &ev(InType::TouchUp, 900, 1500, 1250));
+        assert_eq!(lib(&mut a).modal, Modal::None, "no tap");
+        library_tick(&mut a, 1300);
+        assert_eq!(lib(&mut a).status_min, sys_wall_clock() / 60, "the minute drawn after the lift");
+        assert!(pixels(&a) == rest, "the square as it was");
+        library_tick(&mut a, 1400);
+        assert_eq!(lib(&mut a).card_gen, bgimage_generation(), "the job's cards read after the lift");
         library_free(&mut a);
         canvas_free(&mut a.screen);
     }
