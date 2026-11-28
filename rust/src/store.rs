@@ -5018,7 +5018,7 @@ pub fn settings_default(s: &mut Settings) {
     s.before_eraser = -1;
     s.status_on = true;
     s.status_in_notebooks = true;
-    s.status_size = 0; // small (2.3, #329; medium from 2.0.0-rc.12 to 2.3.0-beta.1)
+    s.status_size = 0; // small (2.3, #329; medium from 2.0.0-rc.12 to 2.2)
     s.status_corner = 0;
     s.clock_12h = false;
     s.rotation_lock = 0;
@@ -5516,7 +5516,7 @@ fn settings_upgrade(s: &mut Settings) {
         return;
     }
     // Version 5 (2.3, #329): the status bar is small by default. A file a Grimoire saved before it (it has
-    // settings_version) that holds medium, the default from 2.0.0-rc.12 to 2.3.0-beta.1, moves to small; small and
+    // settings_version) that holds medium, the default from 2.0.0-rc.12 to 2.2, moves to small; small and
     // large stay. A file without settings_version keeps the size it names: every version that wrote status_size
     // wrote settings_version too, so such a file was written by hand.
     if s.version >= 1 && s.status_size == 1 {
@@ -5682,8 +5682,9 @@ fn put_unless_default(b: &mut Vec<u8>, k: &str, v: &str, default: &str) {
     }
 }
 
-/// A settings.ini value that must be one of `names` exactly (2.2's Files keys): its index, else 0 (the
-/// default) with the value kept to be written back as it was.
+/// A settings.ini value that must be one of `names` exactly (2.2's Files keys): its index, else 0 (the first
+/// name, the default for every caller but ink_edges, whose unknown values read as Smooth) with the value kept to be
+/// written back as it was.
 fn keep_named(k: &str, v: &[u8], names: &[&str]) -> i32 {
     match names.iter().position(|n| n.as_bytes() == v) {
         Some(i) => {

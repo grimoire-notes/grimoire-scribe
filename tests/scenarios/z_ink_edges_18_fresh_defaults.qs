@@ -2,7 +2,8 @@
 # The defaults of #329 on a fresh data root (no settings.ini): Ink edges is Solid and the status bar is small. The
 # brushes follow Solid from the start (app_init sets it from the settings before the first screen is drawn); Settings
 # > Pen's Ink edges row says Solid, and its list keeps it; the Status bar page has the small size, and so has the bar
-# over a notebook's page. The first save writes neither an ink_edges line nor a size but small.
+# over a notebook's page. (That the first save writes no ink_edges line and status_size=0 is test_store's
+# fresh_settings_are_solid_and_small: the runner has no probe of the file.)
 wait 3600
 expect settings.ink_edges is solid
 expect ink_edges is solid

@@ -1067,10 +1067,10 @@ fn ink_edges_saved_only_at_smooth() {
 
 // A settings.ini as 2.2.0 writes it (its settings_save of the defaults, after a load: tests/fixtures/
 // settings_2_2_0.ini) has no ink_edges line and settings_version=4 and holds status_size=1, 2.2's default. 2.3 reads
-// it as Solid and small: medium moves to small once (version 5); small and large stay, and so does a Smooth chosen in
-// a 2.3 beta (2.2 keeps the line as one it does not know). A medium chosen after the update stays: the file is
-// version 5 from then on, and 2.2 keeps a newer settings_version when it saves. A file without settings_version is
-// one written by hand, and keeps the size it names.
+// it as Solid and small: medium moves to small once (version 5); small and large stay, and so does Smooth once chosen
+// (the line ink_edges=smooth, which 2.2 keeps as one it does not know). A medium chosen after the update stays: the
+// file is version 5 from then on, and 2.2 keeps a newer settings_version when it saves. A file without
+// settings_version is one written by hand, and keeps the size it names.
 fn settings_from_2_2_are_solid_and_small() {
     let path = format!("{}/settings.ini", store_root());
     let file = include_str!("fixtures/settings_2_2_0.ini");
