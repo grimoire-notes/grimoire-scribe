@@ -12955,6 +12955,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // The editor's Paper sheet (and the Templates and Photos sheets, which take its place) starts under a notebook's
+    // status bar band too (#337: sideways it started at y 27, its title half under the band at the large bar), whole
+    // on the screen and its tiles fitted to the room left, upright and sideways at every status bar size. Upright it
+    // stays where it was.
+    #[test]
+    fn the_paper_sheet_starts_under_the_status_bars_band() {
+        let mut a = pen_record_app();
+        for size in 0..crate::status::STATUS_SIZES {
+            crate::globalui::gui_status_style(size, false);
+            let band = gui_status_h();
+            for (w, h) in [(1860, 2480), (2480, 1860), (1986, 2648), (2648, 1986)] {
+                let at = format!("size {size} {w}x{h}");
+                a.w = w;
+                a.h = h;
+                let mut g = crate::tplsheet::PaperGrid::default();
+                let paper = crate::tplsheet::paper_sheet_rect(&a, &mut g);
+                assert!(paper.y >= band + ui_px(20.0) && paper.y + paper.h <= h, "{at}: the Paper sheet at {paper:?}");
+                assert!(g.rows >= 1 && g.th > ui_px(200.0), "{at}: its tiles {g:?}");
+                if (w, h) == (1860, 2480) {
+                    assert_eq!(paper.y, 267, "{at}");
+                }
+            }
+        }
+        crate::globalui::gui_status_style(1, false);
+    }
+
     // The page arrows and "Page N of M" stand on the + button's centre line (#332; they were 27 px under it), upright
     // and sideways at every status bar size, in the layout and in what the home drew, whose hits are those rects.
     #[test]
