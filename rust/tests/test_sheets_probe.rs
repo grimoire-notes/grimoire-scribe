@@ -1190,6 +1190,9 @@ fn penset_events(p: &mut Probe) {
 // (canvas_hash_below: the bar shows the time of the run). With the bar a landscape screen holds 9 Index
 // rows for 10, so twenty names take a third screen there: "many index 2" is "(screen 2)". The Pages
 // view's probes and event results are still the C's.)
+// (#337: the status bar's band is drawn over everything on its rows, so the sheets start under it: the Paper
+// sheet's landscape grid, Custom music's landscape place and the sheets over New notebook's card, which starts
+// lower. Their lines were recorded from this build, in sheets_probe_c.txt and sheets_probe_rust_templates.txt.)
 fn recorded(name: &str) -> String {
     let all = if cfg!(feature = "sim") && name == "penset events" {
         include_str!("fixtures/sheets_probe_c_tilt.txt")

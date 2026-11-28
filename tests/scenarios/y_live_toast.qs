@@ -36,13 +36,13 @@ expect live.pairing is 0
 # the card gone and the toast still up: it comes now
 expect live.toast is 476 2250 907 110
 expect live.toast.stale is 0
-# above the New sheet's buttons, and back
+# above the New sheet's buttons, and back (the sheet starts under the status bar's band since #337, 32 px lower)
 tap library add
 tap library add.new-notebook
 wait 100
 expect library.sheet is new
-expect toast.rect is 476 2050 907 110
-expect live.toast is 476 2050 907 110
+expect toast.rect is 476 2082 907 110
+expect live.toast is 476 2082 907 110
 expect live.toast.stale is 0
 tap 300 2250
 wait 100

@@ -1,18 +1,18 @@
 == labels
 grid 0 cols 6 rows 3 tw 249 th 332 cell 432
-grid 1 cols 6 rows 3 tw 274 th 365 cell 465
+grid 1 cols 6 rows 3 tw 259 th 345 cell 445
 grid 2 cols 6 rows 3 tw 248 th 330 cell 430
 grid 3 cols 6 rows 3 tw 249 th 332 cell 432
 grid 4 cols 6 rows 3 tw 192 th 256 cell 356
 grid 5 cols 6 rows 3 tw 196 th 261 cell 361
-labels en gothic 8d24a291ad6ad9ef
-labels en classic 2d79fb97be86a4a1
-labels es gothic 09dd77e8971fa3b8
-labels es classic 8bb94f4d4a3dd0b7
-labels ja gothic 5a76352a7532a147
-labels ja classic 4662da7a5d189228
-labels pl gothic 2fbadab7d5766299
-labels pl classic 732c096fbbdf8b51
+labels en gothic b4e5645e74cbbbb6
+labels en classic 99ba15b8bddf3ec4
+labels es gothic 4a76e4caaa2f9d40
+labels es classic e24c326679a45f8b
+labels ja gothic 360768ee67c998aa
+labels ja classic 5384fdc5d29e2384
+labels pl gothic ac0f1a3c8dd757e6
+labels pl classic 81b23712cf26f6de
 == music
 music pg L0 rect 60 217 1740 1827 systems 5 hash fdb27b1c8f8fb58a
 music pg L1 rect 60 217 1740 1827 systems 2 hash abc74dcb6e69db4b
@@ -22,14 +22,14 @@ music pc L0 rect 60 217 1740 1827 systems 5 hash 607a38df4dde4768
 music pc L1 rect 60 217 1740 1827 systems 2 hash 1b29b7abc9836d0e
 music pc L2 rect 60 217 1740 1827 systems 1 hash 9520bb4d22e97bcb
 music pc L3 rect 60 217 1740 1827 systems 4 hash b5b7c9755d6a4d1c
-music lg L0 rect 370 29 1740 1772 systems 5 hash b75c537786a3daed
-music lg L1 rect 370 29 1740 1772 systems 2 hash ecb15d526db6bf3c
-music lg L2 rect 370 29 1740 1772 systems 1 hash 2f83bb41048992a1
-music lg L3 rect 370 29 1740 1772 systems 4 hash 13299476e98d1a81
-music lc L0 rect 370 29 1740 1772 systems 5 hash f9d9de4bd7af722c
-music lc L1 rect 370 29 1740 1772 systems 2 hash 90716fea99aeefba
-music lc L2 rect 370 29 1740 1772 systems 1 hash 15cecdb50caaa6cc
-music lc L3 rect 370 29 1740 1772 systems 4 hash 52410ef2db9024ac
+music lg L0 rect 370 86 1740 1761 systems 5 hash 15e96bd3183238bc
+music lg L1 rect 370 86 1740 1761 systems 2 hash aa02173c5b8852c2
+music lg L2 rect 370 86 1740 1761 systems 1 hash 7093bfd2650c1143
+music lg L3 rect 370 86 1740 1761 systems 4 hash cc4534e8e30bc137
+music lc L0 rect 370 86 1740 1761 systems 5 hash 0d306d7bb492f4b3
+music lc L1 rect 370 86 1740 1761 systems 2 hash 0e817efcd4e23264
+music lc L2 rect 370 86 1740 1761 systems 1 hash 049d642b20dff028
+music lc L3 rect 370 86 1740 1761 systems 4 hash 680a1c06c638aa90
 music tap 4 2 -> 1 dirty 60 217 1740 1827 systems 3 n 4 kind 1124084001 hash 57eb8006049f0f98
 music tap 4 11 -> 1 dirty 60 217 1740 1827 systems 3 n 5 kind 1124804897 hash a85e4c303714df74
 music tap 2 0 -> 1 dirty 60 217 1740 1827 systems 3 n 5 kind 1124804882 hash ee3522c6848254ad
