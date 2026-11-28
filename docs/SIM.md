@@ -379,7 +379,8 @@ actions that need them (actions.rs, `action_offered`). Without `sleep` the Sleep
 `display.keep_on`, and the sleep screen is the page whatever `sleep_mode` says. The scenario harness
 clears it between runs.
 `GRIMOIRE_SIM_NO_LIGHT=1` makes it a device without a front light: the Display sheet says so where
-its sliders would be, and Settings calls the row Display. The scenario harness clears it between runs.
+its sliders would be, Settings calls the row Display, and the pull from the top opens no quick settings
+panel (`quick` stays 0). The scenario harness clears it between runs.
 `GRIMOIRE_SIM_LIGHT_SENSOR=1` makes it a Kindle with an ambient-light sensor (the Scribe's two are in
 its wide bezel): the Display page has its Auto brightness row, and `light.auto` follows it (0 off,
 1 on). Ticking it also sets the simulated front light to 18, as the power service would from its

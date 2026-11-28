@@ -5,6 +5,10 @@
 //! the screen sees them, and app_flush overlays the panel for the present, putting the screen's own
 //! pixels back afterwards (as the toast and the staying notice do). So it works on the home screen,
 //! in an app, in Settings, and over a notebook alike.
+//!
+//! Its controls are mostly the front light's, so a platform without one (light_available() false)
+//! has no panel: the pull is still taken to its end, so the screen does not see it, and it opens
+//! nothing. A tap in the top strip of a notebook still hides or shows the status bar.
 
 use crate::globalui::gui_status_h;
 use crate::prelude::*;
@@ -385,8 +389,12 @@ pub fn quick_event(a: &mut App, ev: &InEvent) -> bool {
                     (ev.x - q.press.x0, ev.y - q.press.y0)
                 };
                 if dy >= ui_px(64.0) as f32 && dy > dx.abs() * 1.2 {
-                    a.quick.tracking = false;
-                    quick_open(a);
+                    // Without a front light there is no panel: the finger stays tracked to its
+                    // end, and the pull does nothing.
+                    if light_available() {
+                        a.quick.tracking = false;
+                        quick_open(a);
+                    }
                 } else if dy < -ui_px(8.0) as f32 || dx.abs() > ui_px(160.0) as f32 {
                     a.quick.tracking = false;
                 }

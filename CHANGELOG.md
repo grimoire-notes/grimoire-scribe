@@ -146,6 +146,10 @@
 - Settings > Updates says "Version 2.2.0 to 2.3.0" where it had an arrow, which Classic's fonts do not have; and
   the home's Sort select shows its value alone where the caption and value do not fit even small, as in Japanese
   (#316).
+- **Quick settings without a front light** (#326). Where the device has no front light, the pull from the top
+  opens nothing: the panel's controls are mostly the light's, which had nothing to set there. Settings is still
+  on the home screen, Rotation lock is still an action for a button or gesture, and in a notebook a tap at the
+  top still hides or shows the status bar.
 - Housekeeping: the Buttons and Gestures lists offer an action only where it acts (#282). On a platform kept in
   another crate whose system owns sleep (rust/PORTING.md), the Sleep settings page has one switch, Keep the screen
   on while Grimoire is open, the sleep screen is the page, and Sleep now, Sleep screen and Sleep after are not
