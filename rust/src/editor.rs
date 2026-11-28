@@ -16101,6 +16101,74 @@ mod tests {
         crate::status::status_bar_back();
     }
 
+    // A pen stroke as tall as the screen at x 600 on the open page of `bar_app`, the screen drawn again.
+    #[cfg(feature = "sim")]
+    fn tall_stroke(a: &mut App) {
+        let s = ed(a);
+        let (mut x0, mut y0, mut x1, mut y1) = (0.0, 0.0, 0.0, 0.0);
+        to_page(s, 600.0, 150.0, &mut x0, &mut y0);
+        to_page(s, 600.0, 2420.0, &mut x1, &mut y1);
+        let ip = s.page_ix().unwrap();
+        let page = s.hist[ip].page.as_deref_mut().unwrap();
+        let mut prm = ToolParams::default();
+        tool_params_default(TOOL_BALLPOINT, &mut prm);
+        let mut st = stroke_new(TOOL_BALLPOINT, &prm, 0x337);
+        for i in 0..60 {
+            let t = i as f32 / 59.0;
+            stroke_append(&mut st, &PenSample { x: x0, y: y0 + (y1 - y0) * t, pressure: 0.7, ..Default::default() }, 300.0);
+        }
+        page_add(page, st);
+        render_page_full(a);
+        compose_all(a, RefreshMode::Ui);
+        app_flush(a);
+        let _ = bar_presents();
+    }
+
+    // A pen lasso round the tall stroke: Select mode entered, a ring from above the stroke's top to below its foot.
+    #[cfg(feature = "sim")]
+    fn select_tall_stroke(a: &mut App) {
+        sel_toggle(a);
+        assert_eq!(ed_ref(a).sel.state, SelState::Armed);
+        let ring = [(520.0, 110.0), (700.0, 110.0), (700.0, 1200.0), (700.0, 2450.0), (520.0, 2450.0), (520.0, 1200.0), (520.0, 115.0)];
+        let t = now_ms();
+        pen_event(a, InType::PenDown, false, ring[0].0, ring[0].1, t);
+        for (k, &(x, y)) in ring.iter().enumerate().skip(1) {
+            pen_event(a, InType::PenMove, false, x, y, t + 10 * k as u32);
+        }
+        pen_event(a, InType::PenUp, false, 520.0, 115.0, t + 100);
+        app_flush(a);
+        let _ = bar_presents();
+        assert_eq!(ed_ref(a).sel.state, SelState::Selected);
+    }
+
+    // The selection's bar keeps out of the top strip, which is the status bar's (#337: a finger there shows or hides
+    // the bar, and while it is shown its band is drawn over what lies under it): a selection as tall as the screen,
+    // with no room for the bar under it, gets it over its box no higher than under the band, every button whole on
+    // the screen, with the bar shown or hidden.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn the_selection_bar_keeps_under_the_status_bars_band() {
+        let mut a = bar_app();
+        let band = gui_status_h();
+        tall_stroke(&mut a);
+        select_tall_stroke(&mut a);
+        let s = ed_ref(&a);
+        assert!(s.sel.bar.y >= band && !s.sel.btns.is_empty(), "the bar at {:?}", s.sel.bar);
+        assert!(s.sel.btns.iter().all(|(r, _)| r.y >= band), "{:?}", s.sel.btns);
+        assert!(s.sel.bar.y < 300, "over the box, at the top: {:?}", s.sel.bar);
+        // its buttons drawn whole under the band: dark pixels in each button's top row
+        let copy = s.sel.btns.iter().find(|(_, k)| *k == SelBtn::Copy).map(|(r, _)| *r).unwrap();
+        assert!((copy.x..copy.x + copy.w).any(|x| screen_px(&a, x, copy.y + 2) < 128), "Copy's frame at {copy:?}");
+        // hidden by a tap, the bar still keeps out of the strip
+        crate::status::status_toggle(&mut a);
+        app_flush(&mut a);
+        compose_all(&mut a, RefreshMode::Ui);
+        app_flush(&mut a);
+        let _ = bar_presents();
+        assert!(ed_ref(&a).sel.bar.y >= band, "{:?}", ed_ref(&a).sel.bar);
+        crate::status::status_bar_back();
+    }
+
     // A tap on a notebook's bar hides it while that notebook is open (#337, the owner: "user dismisses to access that
     // part of the screen"), and a tap brings it back; each refreshes the bar's strip alone, in grays (no flash of the
     // whole screen). The next notebook opened, or this one opened again, shows it; a status_on=0 an earlier version

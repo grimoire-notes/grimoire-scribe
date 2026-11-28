@@ -492,7 +492,9 @@ fn redraw(a: &mut App, r: Rect, m: RefreshMode) {
 /// The bar's place and buttons for the state now (screen px).
 fn layout_bar(a: &mut App) {
     let (aw, ah) = (a.w, a.h);
-    let top = status_reserved(a);
+    // Never in the top strip: it is the status bar's (a finger there shows or hides the bar), and while the bar is
+    // shown its band is drawn over whatever lies under it (#337).
+    let top = status_reserved(a).max(gui_status_h());
     let has_clip = clipboard_has();
     let s = ed(a);
     let st = s.sel.state;
