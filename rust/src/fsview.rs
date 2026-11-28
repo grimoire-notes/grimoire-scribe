@@ -1327,14 +1327,17 @@ impl Budget<'_> {
 /// Removes everything inside the folder open at `dfd` (`depth` folders down from the trash), never through a link: each
 /// name looked at with no link followed, a folder entered by its descriptor (O_DIRECTORY|O_NOFOLLOW, on `dev` only, at
 /// most EMPTY_DEPTH down) and removed once empty, anything else (a file, a link, a pipe) unlinked as itself. The bytes of
-/// the regular files removed go into `bytes`. The time is looked at after each name (each run removes something).
-fn clear_dir(dfd: i32, depth: usize, dev: u64, bytes: &mut u64, budget: &mut Budget) -> Cleared {
+/// the regular files removed go into `bytes`, but for the record of a `files-...` entry (`record`: the folder is that
+/// entry's own), which the trash's size walk leaves out too, so the toast frees what the question said. The time is
+/// looked at after each name (each run removes something).
+fn clear_dir(dfd: i32, depth: usize, dev: u64, record: bool, bytes: &mut u64, budget: &mut Budget) -> Cleared {
     let Some(names) = names_in(dfd) else { return Cleared::Left };
     let mut left = false;
     for (i, n) in names.into_iter().enumerate() {
         if i > 0 && budget.up() {
             return Cleared::OutOfTime;
         }
+        let counted = !(record && n == TRASH_RECORD.as_bytes());
         let Ok(c) = CString::new(n) else {
             left = true;
             continue;
@@ -1348,7 +1351,7 @@ fn clear_dir(dfd: i32, depth: usize, dev: u64, bytes: &mut u64, budget: &mut Bud
                     continue;
                 }
                 match open_sub(dfd, &c) {
-                    Ok(sub) if fstat_fd(sub.as_raw_fd()).is_ok_and(|s| s.dev == dev) => match clear_dir(sub.as_raw_fd(), depth + 1, dev, bytes, budget) {
+                    Ok(sub) if fstat_fd(sub.as_raw_fd()).is_ok_and(|s| s.dev == dev) => match clear_dir(sub.as_raw_fd(), depth + 1, dev, false, bytes, budget) {
                         Cleared::Done => left |= !unlinked(dfd, &c, libc::AT_REMOVEDIR),
                         Cleared::Left => left = true,
                         Cleared::OutOfTime => return Cleared::OutOfTime,
@@ -1361,7 +1364,7 @@ fn clear_dir(dfd: i32, depth: usize, dev: u64, bytes: &mut u64, budget: &mut Bud
             }
             Ok(st) => {
                 if unlinked(dfd, &c, 0) {
-                    if st.kind() == FsKind::File {
+                    if st.kind() == FsKind::File && counted {
                         *bytes += st.size;
                     }
                 } else {
@@ -1944,7 +1947,7 @@ impl FsStorage {
         }
         let mut done = Emptied { next: from.min(names.len()), ..Emptied::default() };
         // what a run before left in it (cut short, or out of time inside an entry) goes first
-        if clear_dir(s, 1, self.dev, &mut done.bytes, &mut budget) == Cleared::OutOfTime {
+        if clear_dir(s, 1, self.dev, false, &mut done.bytes, &mut budget) == Cleared::OutOfTime {
             done.more = true;
             sync_dir(s);
             return Ok(done);
@@ -2050,7 +2053,7 @@ impl FsStorage {
             return Cleared::Left;
         }
         done.entries += 1;
-        match clear_dir(f, 1, self.dev, &mut done.bytes, budget) {
+        match clear_dir(f, 1, self.dev, c.as_bytes().starts_with(TRASH_FILES), &mut done.bytes, budget) {
             Cleared::Done if unlinked(s, &to, libc::AT_REMOVEDIR) => Cleared::Done,
             Cleared::OutOfTime => Cleared::OutOfTime,
             _ => {

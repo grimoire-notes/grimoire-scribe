@@ -106,10 +106,16 @@ fn only_the_named_entries_go() {
     check!(all.len() == 5);
     let named: Vec<Vec<u8>> = all.iter().filter(|n| n.as_slice() != b"20261101-000000-0002-1790000900").cloned().collect();
     let bytes: u64 = named.iter().map(|n| files_bytes(&format!("{t}/{}", String::from_utf8_lossy(n)))).sum();
-    check!(bytes == 18 + 3 * 1000 + 8 + 1000 + 700 + 3 + 5 + files_bytes(&format!("{t}/{}/.grimoire-trash", String::from_utf8_lossy(&entry))));
+    let record = files_bytes(&format!("{t}/{}/.grimoire-trash", String::from_utf8_lossy(&entry)));
+    check!(record > 0 && bytes == 18 + 3 * 1000 + 8 + 1000 + 700 + 3 + 5 + record);
+    // (the size walk's figure, which the question says: the `files-` entry's record left out)
+    let mut sizes = st.trash_sizes().unwrap();
+    while !sizes.step(FS_SLICE_MS) {}
+    check!(sizes.sum_of(named.iter().map(|n| n.as_slice())) == Some(bytes - record));
     let done = st.empty_trash(&named, 0, u32::MAX, &mut all_time()).unwrap();
     check!(done.entries == 4 && done.skipped == 0 && !done.more);
-    check!(done.bytes == bytes);
+    // the bytes said are the files' removed, the record left out as the question leaves it out
+    check!(done.bytes == bytes - record);
     check!(names(&t) == ["20261101-000000-0002-1790000900"]);
     check!(std::fs::metadata(&t).unwrap().ino() == trash_ino);
     check!(names(&format!("{g}/notebooks/20261101-000000-0009")) == ["notebook.ini"]);

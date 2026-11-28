@@ -3280,7 +3280,8 @@ Grimoire's removes anything there (docs/FORMAT.md, The trash). Before 2.3 the ow
   no half notebook can be restored into the Library; the next Empty trash removes what that folder holds first. Its
   bytes count in the root's Trash size meanwhile.
 - **Its end.** Each run adds what it did to `root/.cache/trash-emptied` (entries, bytes of their files, names left,
-  the next name) under its request's tag (`job=`: the process, the time and the requests made before, given by
+  the next name; a `files-...` entry's record is not counted, as the size walk leaves it out, so the toast frees what
+  the question said) under its request's tag (`job=`: the process, the time and the requests made before, given by
   `empty_request`); a run reads only a count under its own tag, so a count another request's runs wrote (the detached
   child of a session before, still at work) never moves this request's next name or its toast's figures. At the last
   run's end (done or failed) `poll_jobs` reads it (`empty_finished`, which removes its own), and the toast says
@@ -3306,7 +3307,8 @@ Grimoire's removes anything there (docs/FORMAT.md, The trash). Before 2.3 the ow
   emptied: the toast, the place empty, the Library as it was), `files_45_empty_trash_cancel` (Cancel and a tap outside,
   in Classic), `files_46_empty_trash_es_fit`, `files_47_empty_trash_ja_fit` and `files_48_empty_trash_pl_fit` (each
   text checked for fit), `files_49_empty_trash_failed` (the staging folder held: "Couldn't empty the trash.", both
-  entries still listed and restorable) and `files_50` to `files_52` (that toast's fit in es, ja and pl).
+  entries still listed and restorable), `files_50` to `files_52` (that toast's fit in es, ja and pl) and
+  `files_53_empty_trash_size` (a photo of 3 KB: its row, the question and the toast each say 3 KB).
 
 ## Files: previews and the Covers view (2.2, issue #145)
 
