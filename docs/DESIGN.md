@@ -1505,7 +1505,9 @@ moves everything under the header with it, and upright the cards stay two rows a
   a package's 64 px icon is scaled by whole pixels. The Apps page lays its launchers out in the same columns.
 - **A long name** (`gui_app_label_fit`) is never cut short: one line at the small size; else one line at a smaller
   size down to four fifths of it where the face has sizes between (Classic's faces; Gothic's pixel face has none);
-  else two lines at the small size, broken at a space or between CJK characters. The row keeps two lines' room under
+  else two lines at the small size, broken at a space or between CJK characters. A name has the row's step to fill,
+  centred on its square; in the first and last columns only as much as stays inside the margins (`launcher_label_w`),
+  so a long name there takes the smaller size or the second line sooner. The row keeps two lines' room under
   every square; a launcher's hit is what `gui_app_square` drew, its square and the box its name's lines take (never
   wider than the step), so a tap on any letter lands on it and a press covers the whole name. A name two lines cannot
   hold is broken or cut by font_draw_wrapped, which tells the fit check (make l10n-check runs every language and

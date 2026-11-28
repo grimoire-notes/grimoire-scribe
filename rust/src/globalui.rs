@@ -531,7 +531,8 @@ pub fn gui_app_label_fit(label: &str, w: i32) -> (f32, i32) {
 }
 
 /// An app's name under its square `sq`, centred in `label_w` (the row's step, so a long name may reach into the
-/// paper beside its square, never into the next name), set as `gui_app_label_fit` says. Returns the box its lines
+/// paper beside its square, never into the next name; less in the first and last columns, so it stays inside the
+/// margins: library.rs launcher_label_w), set as `gui_app_label_fit` says. Returns the box its lines
 /// take, as wide as the widest of them (never wider than `label_w`), and how many lines it took.
 fn gui_app_label(c: &mut Canvas, sq: Rect, label_w: i32, label: &str) -> (Rect, i32) {
     let lw = label_w.max(sq.w);

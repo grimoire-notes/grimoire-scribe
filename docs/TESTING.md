@@ -3738,8 +3738,9 @@ shows:
    left margin and Show All at the right one, upright and sideways; an installed app's own icon is sharp, its pixels
    even (drawn at twice their size). The Apps page's squares stand in the same columns.
 4. **A long app name.** Settings > General > Language > Polski: Show All's name (Pokaż wszystko) is whole, on two
-   lines in Gothic and on one line in Classic's Terminess; in 日本語 the Package Store's name is whole. An
-   installed app with a long name (two words) shows both, on two lines if need be, never cut short. In English, hold
+   lines in Gothic and on one smaller line in Classic's Terminess, and ends inside the right margin, where the rules
+   end; in 日本語 the Package Store's name is whole. An installed app with a long name (two words) shows both, on two
+   lines if need be, never cut short. In English, hold
    the Package Store's square: the pressed black covers its whole name and stops under it; a tap on the name's first
    or last letter opens the Package Store.
 5. **Classic's +.** Settings > Display > Style > Classic: the + at the bottom right is a black rectangle with the

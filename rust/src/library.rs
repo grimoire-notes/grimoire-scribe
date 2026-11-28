@@ -655,6 +655,13 @@ fn app_row_slots(aw: i32) -> (i32, i32, i32) {
     let step = side + ((room - n * side) / (n - 1)).max(0);
     (n, step, margin() + (room - (n - 1) * step - side) / 2)
 }
+/// The width an app's name may take under its square `sq` on a screen `aw` wide (#332): the row's `step`, centred on
+/// the square, held inside the margins in the first and last columns, so a long name there takes a smaller size or a
+/// second line instead of running into the margin past the rules' ends.
+fn launcher_label_w(aw: i32, sq: Rect, step: i32) -> i32 {
+    let cx = sq.x + sq.w / 2;
+    step.min(2 * (cx - margin()).min(aw - margin() - cx)).max(sq.w)
+}
 /// The home row's squares for `apps` launchers on a screen `aw` wide, left to right: as many of the apps as fit
 /// before Show All, then Show All's in the last slot, at the right margin, however few apps there are.
 fn home_row_squares(aw: i32, apps: usize) -> Vec<Rect> {
@@ -2107,12 +2114,12 @@ fn draw_base(a: &mut App) {
     let mut squares = home_row_squares(aw, apps.len());
     let all = squares.pop().unwrap_or_default();
     for (app, &sq) in apps.iter().zip(squares.iter()) {
-        let (hit, lines) = gui_app_square(c, sq, step, &app.icon, &app.label, false);
+        let (hit, lines) = gui_app_square(c, sq, launcher_label_w(aw, sq, step), &app.icon, &app.label, false);
         hits_add(&mut s.hits, hit, H_APP, app.arg);
         drawn.squares.push(sq);
         drawn.label_lines.push(lines);
     }
-    let (hit, lines) = gui_app_show_all(c, all, step, tr("Show All"));
+    let (hit, lines) = gui_app_show_all(c, all, launcher_label_w(aw, all, step), tr("Show All"));
     hits_add(&mut s.hits, hit, H_APPS, 0);
     drawn.squares.push(all);
     drawn.label_lines.push(lines);
@@ -6855,7 +6862,7 @@ fn draw_apps(a: &mut App) {
     let step = app_row_slots(aw).1;
     for (i, app) in apps.iter().skip(first).take(per).enumerate() {
         let sq = apps_page_square(aw, ah, i as i32);
-        let (hit, _) = gui_app_square(c, sq, step, &app.icon, &app.label, false);
+        let (hit, _) = gui_app_square(c, sq, launcher_label_w(aw, sq, step), &app.icon, &app.label, false);
         hits_add(&mut s.hits, hit, H_APP, app.arg);
     }
     let bw = ui_px(380.0);
@@ -12290,7 +12297,8 @@ mod tests {
     // Store's name is wider than its square) and in Polish (Show All's takes two lines in Gothic). Every pixel drawn
     // in a launcher's column, from its square's top to the foot of its name's room, lies in its hit, so a tap on any
     // letter lands on it and a press covers the whole name; the hit holds the square, is never wider than the step,
-    // and ends with the name's last line, and no two hits overlap.
+    // ends with the name's last line and stays inside the margins (a long name in the first or last column takes a
+    // smaller size or two lines there), and no two hits overlap.
     #[test]
     fn a_launchers_hit_holds_its_square_and_its_whole_name() {
         let root = std::env::temp_dir().join(format!("grimoire-home-names-{}", std::process::id()));
@@ -12337,6 +12345,7 @@ mod tests {
                             for (i, (&hit, &sq)) in hits.iter().zip(squares.iter()).enumerate() {
                                 assert_eq!(rect_union(hit, sq), hit, "{at} {i}: the hit holds the square");
                                 assert!(hit.w <= step && hit.y == sq.y && hit.h <= apps_h(), "{at} {i}: {hit:?}");
+                                assert!(hit.x >= margin() && hit.x + hit.w <= w - margin(), "{at} {i}: inside the margins: {hit:?}");
                                 assert!(hit.h == sq.h + crate::globalui::gui_app_label_gap() + crate::globalui::gui_app_label_line_h() || hit.h == apps_h(), "{at} {i}: one line or two: {hit:?}");
                                 // (the launcher's column: its step centred on the square, from its top to its room's foot)
                                 let col = Rect::new(sq.x + (sq.w - step) / 2, sq.y, step, apps_h());
