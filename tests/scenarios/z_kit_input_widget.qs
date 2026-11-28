@@ -2,6 +2,7 @@
 # rust-only
 # env: GRIMOIRE_SIM_CLOCK=script TZ=UTC
 # copy: tests/fixtures/kitinput .
+# settings: status_size=1
 # The package kit's input in a widget's frame (issue #272), with the packages of tests/fixtures/kitinput (written by
 # rust/tests/kitfix: `make kit-fixtures`). Each widget counts in its status line what z_kit_input_app.qs's apps do,
 # with widget_tap's calls for n, and fills a black square about the place of its last touch (200, 200 at first),

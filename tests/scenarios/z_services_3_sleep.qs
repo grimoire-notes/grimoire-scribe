@@ -81,10 +81,10 @@ expect library.ui_has.display.size is 1
 expect library.ui_has.display.keep_on is 0
 expect library.ui_has.display.sleep is 0
 expect library.ui_has.display.sleep_after is 0
-expect settings.status_size is 1
+expect settings.status_size is 0
 tap library display.size
 wait 200
-expect settings.status_size is 2
+expect settings.status_size is 1
 shot 04-status-bar
 # Pen's rows, Ink edges among them (2.3, #320): it belongs to no service
 tap library display.back

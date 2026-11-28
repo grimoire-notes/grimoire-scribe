@@ -1,6 +1,7 @@
 # settings: status_mode=1
 # settings: mirror_pdf=0
 # settings: eraser_mode=1
+# settings: ink_edges=smooth
 # rust-only
 # Issue #204: a selection made larger or smaller by its corner keeps its erasing in scale. A resize scales each
 # stroke's widths with its points, black ink, white ink and the erasing that goes with it alike (lasso.rs

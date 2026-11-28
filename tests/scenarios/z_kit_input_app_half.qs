@@ -5,6 +5,7 @@
 # z_kit_input_app.qs with app time started 3,648 ms before 2^31 ms (24.8 days awake): it passes 2^31 in the launch's
 # wait, so every press and drag below comes past it, with the same passes and refreshes (issue #272). From the next
 # line on this file is z_kit_input_app.qs from its fifth line on (rust/tests/test_kit_input.rs checks it).
+# settings: status_size=1
 # The package kit's input in an app (issue #272), with the packages of tests/fixtures/kitinput (written by
 # rust/tests/kitfix: `make kit-fixtures`). Each app counts in its status line its drawing passes (p), the calls of
 # app_pointer (n), the kit's events by kind (t TAP, r PRESS, s DRAG_START, m DRAG_MOVE, e DRAG_END, k KEY, g SETTINGS),

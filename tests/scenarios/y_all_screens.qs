@@ -429,7 +429,7 @@ wait 50
 rotate 0
 wait 100
 expect library.sheet is settings
-expect settings.ink_edges is smooth
+expect settings.ink_edges is solid
 tap library settings.cat.1
 wait 50
 tap library rotate

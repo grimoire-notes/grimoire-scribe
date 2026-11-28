@@ -1,3 +1,4 @@
+# settings: status_size=1
 # rust-only
 # generate: tests/previews_fixture.py
 # env: GRIMOIRE_KEEP_RENDER_MS=0

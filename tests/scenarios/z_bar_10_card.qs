@@ -1,4 +1,5 @@
 # settings: status_mode=1
+# settings: status_size=1
 # rust-only
 # root: z_bar_0_make
 # A press held on a Links bar row (PHASE2 8.10, D1): the long-press card for all of the entry's links on the page,

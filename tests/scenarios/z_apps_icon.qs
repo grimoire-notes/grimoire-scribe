@@ -1,4 +1,5 @@
 # settings: status_mode=1
+# settings: status_size=1
 # rust-only
 # copy: tests/fixtures/apppkg .
 # env: GRIMOIRE_BG_DELAY_MS=5000

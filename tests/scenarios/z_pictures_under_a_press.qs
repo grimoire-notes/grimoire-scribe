@@ -1,4 +1,5 @@
 # settings: status_mode=1
+# settings: status_size=1
 # rust-only
 # env: GRIMOIRE_PACKAGE_STORE_OFFLINE=1 GRIMOIRE_BG_DELAY_MS=4500
 # copy: tests/fixtures/package-updates .

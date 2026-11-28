@@ -1,4 +1,5 @@
 # settings: status_mode=1
+# settings: status_size=1
 # The maintainer's handwriting stays centered and erasable as its original 32 strokes.
 # env: GRIMOIRE_CHECK_FIT=1
 # rust-only (it opens Pen feel by its Settings row's name: the rows moved in 2.0.0-beta.2)
