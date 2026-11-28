@@ -3677,7 +3677,10 @@ They check the headless runner's panel; on the Kindle, check what the screen sho
 The first beta of 2.3, from `release/2.3.0`: cut from `main` at `ef80193a` on 2026-11-26, after the owner chose a
 beta before 2.3.0 ("a 2.3 beta 1 is fine -- full release can have the strings"), with the work merged into it
 since: the home's app row, the bat and the small status bar (#319), Ink edges (#320), and `main` again through
-#310 and the steadier scenarios of #323 (#302), which brought a page a little smaller than the screen at 100% (#303), even paper lines below 100%
+#310 and the steadier scenarios of #323 (#302), then, after the owner's device test below, Solid and the small status bar
+as the defaults (#329), Empty trash (#330), the folder icons drawn filled (#331), the home without the bat, with
+Search before Settings, even app squares and ruled parts (#332), and no Quick settings panel on a device without a
+front light (#326, which a Scribe never is), which brought a page a little smaller than the screen at 100% (#303), even paper lines below 100%
 (#308) and six changes for platforms kept in other crates (#274, #275, #278, #280, #281, #282), of which a Kindle
 shows one toast (Warmth down or up on a light without warmth says "This Kindle has no warmth control."). It holds
 everything in CHANGELOG's 2.3.0-beta.1 section: the home redesign, Apps and the Package Store
@@ -3694,7 +3697,15 @@ release commit with the pinned toolchain. Crate ages: wasmi, wasmi_collections, 
 build `725feb9851ea`), from before the work above was merged, was installed on the owner's Scribe (firmware
 5.20.1.0.2) on 2026-11-26 after a backup, with the notebooks unchanged and KOReader left alone; the owner asked
 for the home's row, the bat and the smaller status bar (#319) and for Ink edges (#320) before the beta is
-published. The release commit's own build is not yet on a Kindle.
+published. The build of `c0132632` (build `73491137bcb4`), the release before #326 and #329 to #332, was installed on
+the owner's Scribe on 2026-11-27 after a backup, with the notebooks unchanged and KOReader left alone; the owner
+looked at What's new from the bat, the home's row, the status bar's small size, papers sideways, the Package Store
+and an older notebook, and ran the thirteen Ink edges device checks (docs/TESTING.md, 2.3, Ink edges): "the checks
+all look good". The Scribe's log over the session had none of the checks' failure lines in dmesg, the settles
+"quiet 30, part 5, whole 0" with no failed refresh and no whole answer, and five single pen samples dropped by the
+kernel, each right after a long step (an undo's redraw, a pen lift, a rotation), none at a settle, with no stroke
+missing its start. The owner then asked for the changes above. The release commit's own build is not yet on a
+Kindle.
 
 ## 2.2.0
 
