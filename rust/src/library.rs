@@ -1892,9 +1892,10 @@ fn art_garden(c: &mut Canvas, r: Rect) {
         c,
         r,
         &[
-            // the right leaf starts at the stem's left edge and covers the stem's round top, so both leaves spring
-            // from the stem, with no gap and no bud between them
-            sh_bar(12.0, 12.0, 12.0, 19.0, 2.0),
+            // the right leaf starts at the stem's left edge, and the stem's square top runs inside both leaves (its
+            // left corner in the left leaf, its top edge in the right one), so both leaves spring from the stem with
+            // no gap, no bud and no speck between them, and the right leaf's underside meets the stem's straight side
+            sh_poly(&[(11.0, 11.5), (13.0, 11.0), (13.0, 19.5), (11.0, 19.5)]),
             sh_leaf(11.5, 12.5, 3.0, 7.5, 4.5),
             sh_leaf(11.0, 11.5, 21.0, 3.0, 5.5),
             sh_rect(4.0, 18.5, 16.0, 2.5, 1.25),
@@ -1953,9 +1954,9 @@ fn art_key(c: &mut Canvas, r: Rect) {
     art_cut(c, r, &[place(sh_disc(5.0, 12.0, 1.75))]);
 }
 fn art_cloud(c: &mut Canvas, r: Rect) {
-    // the right puff is the cloud's right end: it holds the base's round end inside it and touches the base's foot,
-    // so the right side is one curve with no dent where puff and base meet
-    art_fill(c, r, &[sh_disc(8.0, 13.5, 4.0), sh_disc(13.0, 10.25, 5.25), sh_disc(17.75, 15.25, 4.25), sh_rect(2.5, 13.0, 18.5, 6.5, 3.25)]);
+    // the two side puffs are the cloud's ends, one the mirror of the other: each holds the base's round end on its
+    // side inside it and touches the base's foot, so each side is one curve with no dent where puff and base meet
+    art_fill(c, r, &[sh_disc(6.25, 15.25, 4.25), sh_disc(13.0, 10.25, 5.25), sh_disc(17.75, 15.25, 4.25), sh_rect(3.0, 13.0, 18.0, 6.5, 3.25)]);
 }
 fn art_computer(c: &mut Canvas, r: Rect) {
     art_fill(c, r, &[sh_rect(2.0, 3.0, 20.0, 14.0, 2.0), sh_rect(10.5, 16.5, 3.0, 3.5, 0.0), sh_rect(7.0, 19.5, 10.0, 2.0, 1.0)]);
