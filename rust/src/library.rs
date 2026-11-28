@@ -12960,7 +12960,7 @@ mod tests {
                 let light = (0..w).filter(|&x| px(x, band - 1) > crate::globalui::GUI_GRAY_STATUS_BAND).count();
                 assert_eq!(light, 0, "{at}: Custom music's sheet in the band's rows");
                 let mb = &lib(&mut a).mb;
-                assert!(mb.rect.y >= band + ui_px(20.0) && mb.rect.y + mb.rect.h <= h, "{at}: Custom music at {:?}", mb.rect);
+                assert!(mb.rect.y >= band + ui_px(8.0) && mb.rect.y + mb.rect.h <= h - ui_px(8.0), "{at}: Custom music at {:?}", mb.rect);
                 lib(&mut a).modal = Modal::None;
             }
         }
