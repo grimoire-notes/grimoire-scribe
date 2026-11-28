@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Grimoire 2.3.0-beta.1\n"
 "Report-Msgid-Bugs-To: https://github.com/ganten1998/grimoire-scribe/issues\n"
-"POT-Creation-Date: 2026-11-27 18:07-0600\n"
+"POT-Creation-Date: 2026-11-27 18:18-0600\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1036,14 +1036,6 @@ msgstr ""
 msgid "Couldn't empty the trash."
 msgstr ""
 
-#. TRANSLATORS: (also) Empty trash's toast and its question, for a size of nothing: "0 KB".
-#. TRANSLATORS: a file's size in kilobytes, in the file picker's rows and cards (small text).
-#. TRANSLATORS: (also) Empty trash's question and its toast, for a size of nothing: "0 KB".
-#: rust/src/bgwork_empty.rs rust/src/browser.rs
-#, c-format
-msgid "%d KB"
-msgstr ""
-
 #. TRANSLATORS: a toast in Files' Trash (or wherever the user is) once Empty trash has ended: %d is how many
 #. entries of the trash were deleted for good, %s the space that freed ("Deleted 12 entries, freed 3.4 MB."). One
 #. line of about 1500 px at 44 px.
@@ -1224,6 +1216,13 @@ msgstr ""
 #. place it names is not one Grimoire writes in). One line.
 #: rust/src/browser.rs
 msgid "Couldn't restore."
+msgstr ""
+
+#. TRANSLATORS: a file's size in kilobytes, in the file picker's rows and cards (small text).
+#. TRANSLATORS: (also) Empty trash's question and its toast, for a size of nothing: "0 KB".
+#: rust/src/browser.rs
+#, c-format
+msgid "%d KB"
 msgstr ""
 
 #. TRANSLATORS: a file's size in megabytes with one decimal ("14.2 MB"), in the file picker's rows and cards.

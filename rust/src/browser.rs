@@ -676,6 +676,17 @@ pub fn size_label(b: u64) -> String {
     }
 }
 
+/// A size as Empty trash says it (2.3, issue #330), in its question and in its toast: 0 KB for nothing, where a size
+/// label rounds every size up to at least 1 KB; any other size as the rows show it.
+pub(crate) fn empty_size(b: u64) -> String {
+    if b == 0 {
+        // TRANSLATORS: (also) Empty trash's question and its toast, for a size of nothing: "0 KB".
+        cformat!(tr("%d KB"), 0)
+    } else {
+        size_label(b)
+    }
+}
+
 fn u(v: f32) -> i32 {
     ui_px(v)
 }
@@ -2516,22 +2527,12 @@ impl Browser {
 
     /// What the question says under its title: how many entries go, and their bytes.
     fn empty_text(card: &Card) -> String {
-        let size = Self::empty_size(card.empty_bytes);
+        let size = empty_size(card.empty_bytes);
         // TRANSLATORS: Files' Trash: the line under the title of the question Empty trash asks (on two lines at most
         // of about 1400 px at 44 px): %d is how many entries it lists, %s their size ("12 entries (3.4 MB) will be
         // deleted for good."); they cannot be restored after.
         let text = ng_("%d entry (%s) will be deleted for good.", "%d entries (%s) will be deleted for good.", card.empty_n as i64);
         cformat!(text, card.empty_n as i32, size.as_str())
-    }
-
-    /// A size as Empty trash says it: 0 KB for nothing (a size label rounds every size up to at least 1 KB).
-    fn empty_size(b: u64) -> String {
-        if b == 0 {
-            // TRANSLATORS: (also) Empty trash's question and its toast, for a size of nothing: "0 KB".
-            cformat!(tr("%d KB"), 0)
-        } else {
-            size_label(b)
-        }
     }
 
     /// The chip's tap: the question, with the entries the place lists now and their bytes (the size walk's). Nothing
@@ -4584,9 +4585,10 @@ mod tests {
     }
 
     // Empty trash's question counts the entries the place lists and their bytes, and says so; closing it (its Cancel,
-    // or a tap outside) asks nothing of the job and deletes nothing. Its Empty trash asks the job for the names listed,
-    // and while that is queued the place offers no Empty trash and no entry's card (Restore). No child is forked: the
-    // first child counts as busy (bg_test_hold), so the job waits in the queue.
+    // or a tap outside, each once the question was shown) asks nothing of the job and deletes nothing. Its Empty trash
+    // asks the job for the names listed, and while that is queued the place offers no Empty trash and no entry's card
+    // (Restore). Everything is tapped as the user taps it: the chip, Cancel, outside, Empty trash. No child is forked:
+    // the first child counts as busy (bg_test_hold), so the job waits in the queue.
     #[test]
     fn cancel_deletes_nothing_and_the_job_is_asked_for_the_rows() {
         let (base, _g) = storage("emptyask");
@@ -4596,34 +4598,65 @@ mod tests {
         std::fs::write(format!("{t}/20261101-000000-0001-p3-1790000500"), vec![b'p'; 2048]).unwrap();
         std::fs::write(format!("{t}/notes"), b"").unwrap();
         i18n_set("en");
+        let mut a = screen_app();
+        #[cfg(feature = "sim")]
+        {
+            let (mut w, mut h) = (a.w, a.h);
+            crate::sim_sdl::display_set_orientation(0, &mut w, &mut h);
+        }
         let mut b = Browser::default();
         assert!(b.open(PickSpec::place(), FilesPrefs { card: true, ..Default::default() }));
         assert!(b.go(sp("grimoire/trash")));
         for _ in 0..8 {
             b.work(2480, now_ms());
         }
-        assert!(b.empty_ask(RECT_EMPTY));
+        crate::bgjob::bg_test_hold(true);
+        b.draw(&mut a);
+        // (the chip opens the question; the question answers once it has been shown, as the Delete question does)
+        let ask = |b: &mut Browser, a: &mut App| -> u32 {
+            let chip = b.point("empty").expect("the chip");
+            tap_at(b, a, chip, now_ms(), 0);
+            assert!(b.card.as_ref().is_some_and(|c| c.empty), "the chip asks");
+            app_flush(a);
+            let Asked::Shown(shown) = a.asked else { panic!("the flush presents it: {:?}", a.asked) };
+            shown.wrapping_add(PEN_REOPEN_MS)
+        };
+        let seen = ask(&mut b, &mut a);
         let card = b.card.clone().unwrap();
         assert!(card.empty && card.empty_n == 3 && card.empty_bytes == 7 * 1024);
         assert_eq!(Browser::empty_text(&card), "3 entries (7 KB) will be deleted for good.");
         let (title, rows) = b.card_lines(&card);
         assert_eq!(title, "Empty the trash?");
         assert_eq!(rows.iter().map(|r| (r.0, r.3.as_str())).collect::<Vec<_>>(), [(B_EMPTY_YES, "Empty trash"), (B_CARD_CANCEL, "Cancel")]);
-        // Cancel: the question goes (close_card), and nothing else happens
-        crate::bgjob::bg_test_hold(true);
-        b.card = None;
+        // Cancel: the question goes, and nothing else happens
+        let cancel = b.point("card.cancel").expect("its Cancel");
+        tap_at(&mut b, &mut a, cancel, seen, 0);
+        assert!(b.card.is_none(), "Cancel closes it");
         assert_eq!(bg_kind_count(BgKind::EmptyTrash), 0);
         assert_eq!(names_in(&t).len(), 3);
         assert!(b.empty_offered() && b.has_card(0));
+        // a tap outside the question: the same
+        b.draw(&mut a);
+        let seen = ask(&mut b, &mut a);
+        tap_at(&mut b, &mut a, (930.0, 60.0), seen, 0);
+        assert!(b.card.is_none(), "a tap outside closes it");
+        assert_eq!(bg_kind_count(BgKind::EmptyTrash), 0);
+        assert_eq!(names_in(&t).len(), 3);
         // Empty trash: the job, for the names listed, and the place waits on it
-        assert!(b.empty_ask(RECT_EMPTY) && b.empty_confirm());
+        b.draw(&mut a);
+        let seen = ask(&mut b, &mut a);
+        let yes = b.point("card.empty").expect("its Empty trash");
+        tap_at(&mut b, &mut a, yes, seen, 0);
         assert!(b.card.is_none());
         assert_eq!(bg_kind_count(BgKind::EmptyTrash), 1);
         assert!(!b.empty_offered() && !b.has_card(0));
+        b.draw(&mut a);
+        assert!(b.point("empty").is_none(), "no chip while it is queued");
         assert!(!b.empty_ask(RECT_EMPTY) && !b.empty_confirm(), "one at a time");
         crate::bgjob::bg_test_hold(false);
         assert!(b.empty_offered() && b.has_card(0));
         assert_eq!(names_in(&t).len(), 3);
+        canvas_free(&mut a.screen);
     }
 
     fn names_in(dir: &str) -> Vec<String> {

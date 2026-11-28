@@ -189,13 +189,8 @@ pub fn empty_said(entries: usize, bytes: u64, failed: bool) -> String {
         // of about 1500 px at 44 px.
         return tr("Couldn't empty the trash.").to_string();
     }
-    // (nothing freed says 0 KB: a size label rounds every size up to at least 1 KB)
-    let size = if bytes == 0 {
-        // TRANSLATORS: (also) Empty trash's toast and its question, for a size of nothing: "0 KB".
-        cformat!(tr("%d KB"), 0)
-    } else {
-        crate::browser::size_label(bytes)
-    };
+    // (nothing freed says 0 KB, as the question does)
+    let size = crate::browser::empty_size(bytes);
     // TRANSLATORS: a toast in Files' Trash (or wherever the user is) once Empty trash has ended: %d is how many
     // entries of the trash were deleted for good, %s the space that freed ("Deleted 12 entries, freed 3.4 MB."). One
     // line of about 1500 px at 44 px.
