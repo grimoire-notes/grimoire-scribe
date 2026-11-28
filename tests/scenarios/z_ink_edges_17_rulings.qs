@@ -1,4 +1,5 @@
 # settings: status_mode=1
+# settings: ink_edges=smooth
 # The Seyes notebook of y_rulings_1_sideways (issue #308) written with the ballpoint, shown sideways with Ink edges
 # at Smooth and then at Solid (2.3, #320): the whole page rests at 0.75 with its paper drawn at the screen's scale
 # under either setting, so wherever no ink is the screen holds the same lines (display.dark over two bands the ink

@@ -1,4 +1,5 @@
 # settings: status_mode=1
+# settings: ink_edges=smooth
 # Ink edges (2.3, #320) changed with a notebook open under Settings (the quick settings' Settings button): the open
 # page is drawn again at once with the new setting, so it shows the strokes as the setting draws them, and an undo of
 # a step from before the change draws its region again (the step's patch, pixels of the other setting, is gone:

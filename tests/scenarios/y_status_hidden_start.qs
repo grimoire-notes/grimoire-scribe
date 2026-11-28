@@ -1,5 +1,6 @@
 # settings: status_on=0
 # settings: status_in_notebooks=0
+# settings: status_size=1
 # rust-only
 # The status bar's hidden state is a notebook state: a start with status_on=0 (and notebooks off)
 # keeps the home screen's bar, while a notebook hides it. The top strip still opens quick settings.

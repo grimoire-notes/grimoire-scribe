@@ -1,3 +1,4 @@
+# settings: status_size=1
 # rust-only
 # env: GRIMOIRE_SIM_CLOCK=script
 # generate: tests/drag_pages_fixture.py

@@ -383,7 +383,7 @@ pub enum InkEdges {
     Solid = 1,
 }
 impl InkEdges {
-    /// settings.ini's values, by index (absent at "smooth").
+    /// settings.ini's values, by index (absent at "solid", Settings' default since #329).
     pub const NAMES: [&'static str; 2] = ["smooth", "solid"];
     /// The setting at index i (Settings.ink_edges); any other index is Smooth.
     pub fn from_index(i: i32) -> InkEdges {
@@ -400,7 +400,10 @@ impl InkEdges {
 
 thread_local! {
     // (each thread has its own, Smooth until set: the app's one thread, its forked children with it, and each
-    // test's thread)
+    // test's thread. app_init sets it from settings.ini, where Solid is the default (#329), before the first screen
+    // is drawn and before any background job is forked, in the app and in the headless runner alike; the children
+    // forked later (bgjob's, the share server's) start with the main thread's, and the sandbox's workers, a fresh
+    // exec, draw no ink. A test or a golden that draws without settings draws at Smooth, as it always has.)
     static INK_EDGES: std::cell::Cell<InkEdges> = const { std::cell::Cell::new(InkEdges::Smooth) };
 }
 /// The Ink edges setting the brushes begun on this thread follow.

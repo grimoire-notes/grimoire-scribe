@@ -1,6 +1,8 @@
 # settings: status_mode=1
+# settings: ink_edges=smooth
 # Ink edges (2.3, #320): Settings > Pen's last row says Smooth and opens its list of two; Back changes nothing; Solid is
-# picked, saved at once, the row says it and every brush begun from then on follows it; Smooth again.
+# picked, saved at once, the row says it and every brush begun from then on follows it; Smooth again. (Smooth is
+# named in settings.ini: Solid is the default since #329, z_ink_edges_18_fresh_defaults.)
 # rust-only
 wait 3600
 tap library settings

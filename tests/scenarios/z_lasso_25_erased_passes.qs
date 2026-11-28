@@ -6,6 +6,7 @@
 # settings: current_tool=7
 # settings: marker.size_min_mm=2.8
 # settings: marker.size_max_mm=2.8
+# settings: ink_edges=smooth
 # rust-only
 # Issue #187: ink erased by several passes of the precise eraser, none of which alone covers the width of the ink.
 # The page shows nothing there, and a selection's halo goes as the page shows ink (lasso.rs stroke_shown_runs),

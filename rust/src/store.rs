@@ -53,7 +53,7 @@ impl NotebookInfo {
     }
 }
 
-pub const SETTINGS_VERSION: i32 = 4;
+pub const SETTINGS_VERSION: i32 = 5;
 /// pens pinned to the editor's panel, at most
 pub const PANEL_PINS_MAX: usize = 3;
 
@@ -137,8 +137,8 @@ pub struct Settings {
     /// hides it there, and another tap on the top strip brings it back; the state is saved. Settings
     /// > Sleep & Clock > Status bar can also turn it back on. The other screens' bars are always shown.
     pub status_on: bool,
-    /// and how large it is: 0 small, 1 medium, 2 large (settings.ini status_size). The size scales
-    /// the whole top status bar too, not just the corner clock (globalui.rs).
+    /// and how large it is: 0 small (the default since 2.3, #329), 1 medium, 2 large (settings.ini status_size). The
+    /// size scales the whole top status bar too, not just the corner clock (globalui.rs).
     pub status_size: i32,
     /// and in which corner of the page it sits: 0 top left (the default), 1 top right, 2 bottom right,
     /// 3 bottom left (settings.ini status_corner; the tap zone follows it)
@@ -227,8 +227,9 @@ pub struct Settings {
     /// this build does not have is Off and is written back as it was).
     pub pdf_gamma: i32,
     /// Ink edges (2.3, #320): how the solid pens draw, by `InkEdges`' index (settings.ini `ink_edges`,
-    /// `InkEdges::NAMES`: absent at smooth, the default; a value this build does not have is Smooth and is written back
-    /// as it was). brush.rs reads it from ink_edges(), which app_init and the Settings row set.
+    /// `InkEdges::NAMES`: absent at solid, the default (#329), so a file without the line, 2.2's among them, reads as
+    /// Solid; a value this build does not have is Smooth and is written back as it was). brush.rs reads it from
+    /// ink_edges(), which app_init and the Settings row set.
     pub ink_edges: i32,
 }
 
@@ -5017,7 +5018,7 @@ pub fn settings_default(s: &mut Settings) {
     s.before_eraser = -1;
     s.status_on = true;
     s.status_in_notebooks = true;
-    s.status_size = 1;
+    s.status_size = 0; // small (2.3, #329; medium from 2.0.0-rc.12 to 2.2)
     s.status_corner = 0;
     s.clock_12h = false;
     s.rotation_lock = 0;
@@ -5038,7 +5039,7 @@ pub fn settings_default(s: &mut Settings) {
     s.hints = 0;
     s.recent_apps.set("files,share,settings,store");
     s.link_areas = false;
-    s.ink_edges = 0; // Smooth: as before 2.3
+    s.ink_edges = 1; // Solid (2.3, #329)
 }
 
 /// pen.panel / touch.panel: the panel the calibration was made on, "WxH" (1.1 on). A value that does
@@ -5514,6 +5515,14 @@ fn settings_upgrade(s: &mut Settings) {
     if s.version >= SETTINGS_VERSION {
         return;
     }
+    // Version 5 (2.3, #329): the status bar is small by default. A file a Grimoire saved before it (it has
+    // settings_version) that holds medium, the default from 2.0.0-rc.12 to 2.2, moves to small; small and
+    // large stay. A file without settings_version keeps the size it names: every version that wrote status_size
+    // wrote settings_version too, so such a file was written by hand.
+    if s.version >= 1 && s.status_size == 1 {
+        qlog!("settings: status bar size updated medium -> small");
+        s.status_size = 0;
+    }
     if s.version < 4 {
         for &(tool, lo, hi) in SIZES_V4.iter() {
             let p = &mut s.tools[tool.0 as usize];
@@ -5673,8 +5682,9 @@ fn put_unless_default(b: &mut Vec<u8>, k: &str, v: &str, default: &str) {
     }
 }
 
-/// A settings.ini value that must be one of `names` exactly (2.2's Files keys): its index, else 0 (the
-/// default) with the value kept to be written back as it was.
+/// A settings.ini value that must be one of `names` exactly (2.2's Files keys): its index, else 0 (the first
+/// name, the default for every caller but ink_edges, whose unknown values read as Smooth) with the value kept to be
+/// written back as it was.
 fn keep_named(k: &str, v: &[u8], names: &[&str]) -> i32 {
     match names.iter().position(|n| n.as_bytes() == v) {
         Some(i) => {
@@ -5847,8 +5857,9 @@ pub fn settings_save(s: &Settings) -> i32 {
     } else {
         put(&mut b, "recent_apps", s.recent_apps.as_str());
     }
-    // 2.3: Ink edges (#320), a line only at Solid (or a value this build does not have, written back as it was).
-    put_unless_default(&mut b, "ink_edges", InkEdges::from_index(s.ink_edges).name(), InkEdges::Smooth.name());
+    // 2.3: Ink edges (#320), a line only at Smooth, Solid being the default (#329) (or a value this build does not
+    // have, written back as it was).
+    put_unless_default(&mut b, "ink_edges", InkEdges::from_index(s.ink_edges).name(), InkEdges::Solid.name());
     // Lines this build does not know, as they were; but a pen.panel or touch.panel this build could
     // not read goes once the calibration's panel is recorded (written above in its place).
     let unknown = with(|st| st.g_set_unknown.clone());

@@ -63,11 +63,13 @@ fn gesture_keys_follow_the_older_ones() {
     check!(settings_save(&s) == 0);
     let got = read_file(&format!("{}/settings.ini", store_root())).unwrap_or_default();
     // Keep the historic ordering fixture frozen; apply only the deliberate later default changes.
-    let head = include_str!("fixtures/settings_default_head.ini").replace("status_on=0", "status_on=1\nstatus_in_notebooks=1").replace("status_size=0", "status_size=1")
+    // (status_size: 0 again since 2.3, #329, after 1 from 2.0.0-rc.12; the fixture's line stays as it is)
+    let head = include_str!("fixtures/settings_default_head.ini").replace("status_on=0", "status_on=1\nstatus_in_notebooks=1")
         .replace("highlighter.size_min_mm=3.0000", "highlighter.size_min_mm=5.6000")
         .replace("highlighter.size_max_mm=3.0000", "highlighter.size_max_mm=5.6000")
-        // 2.1's quick sizes: settings_version 4, the pens' widths on the pen-width series
-        .replace("settings_version=3", "settings_version=4")
+        // 2.1's quick sizes: settings_version 4, the pens' widths on the pen-width series; 2.3's small status bar
+        // (#329): settings_version 5
+        .replace("settings_version=3", "settings_version=5")
         .replace("pencil.size_min_mm=0.1200", "pencil.size_min_mm=0.1300")
         .replace("pencil.size_max_mm=0.3200", "pencil.size_max_mm=0.3500")
         .replace("ballpoint.size_min_mm=0.3000", "ballpoint.size_min_mm=0.3100")

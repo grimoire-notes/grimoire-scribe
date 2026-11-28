@@ -1,5 +1,6 @@
 # rust-only
 # settings: status_on=1
+# settings: status_size=1
 # root: z_bar_0_make
 # env: GRIMOIRE_CHECK_FIT=1
 # The long-press card (PHASE2 8): a finger held on a link shows its heavy border by four DU strips, then the card
