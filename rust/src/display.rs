@@ -120,6 +120,18 @@ pub fn display_present(screen: &Canvas, r: Rect, mode: RefreshMode) {
 pub fn display_unasked(on: bool) {
     active().display_unasked(on)
 }
+/// The rows at the top of the logical screen the app keeps out of every fast refresh now, 0 for none (#337: a
+/// notebook's bar drawn over the page, status.rs status_band_rows); app_flush says it before each present. Only
+/// the Kindle's padded pen mode reads it (display_fbink.rs): the refresh region it grows a small frame to is kept
+/// clear of these rows (fbpack_pen_region_clear). The frames themselves never reach them.
+static KEEP_TOP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub fn display_keep_top(rows: i32) {
+    KEEP_TOP.store(rows.max(0), std::sync::atomic::Ordering::Relaxed);
+}
+/// What display_keep_top said last.
+pub fn display_kept_top() -> i32 {
+    KEEP_TOP.load(std::sync::atomic::Ordering::Relaxed)
+}
 /// Device rotation (quarter turns clockwise): the logical screen the app draws is mapped onto
 /// the panel accordingly. Fills the logical width/height (swapped for 1 and 3).
 #[inline]

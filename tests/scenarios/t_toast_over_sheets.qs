@@ -13,8 +13,9 @@ tap library add
 tap library add.new-notebook
 wait 100
 expect library.sheet is new
-# above Cancel and Create (their tops at 2180), in the space under "In: Library"
-expect toast.rect is 476 2050 907 110
+# above Cancel and Create (their tops at 2212: the sheet starts under the status bar's band, #337), in the space
+# under "In: Library"
+expect toast.rect is 476 2082 907 110
 shot 01-new-sheet-toast-above-its-buttons
 tap 300 2250
 wait 100
@@ -38,13 +39,13 @@ tap library add
 tap library add.new-notebook
 wait 100
 expect library.sheet is new
-expect toast.rect is 786 1496 907 110
+expect toast.rect is 786 1510 907 110
 shot 03-new-sheet-landscape-toast-above-its-buttons
 # Custom music over it: the toast clears the music sheet's own controls
 tap library paper.custom
 wait 200
 expect library.sheet is music
-expect toast.rect is 786 895 907 110
+expect toast.rect is 786 946 907 110
 shot 04-music-landscape-toast-clear-of-its-controls
 tap 100 900
 wait 200

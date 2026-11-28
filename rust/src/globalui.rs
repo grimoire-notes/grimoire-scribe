@@ -90,6 +90,16 @@ pub const GUI_GRAY_RULE: u8 = 140;
 /// bar is 72, 78 and 92 px tall (small was 0.82, 64 px, before #319).
 const STATUS_SCALE: [f32; 3] = [0.92, 1.0, 1.18];
 
+/// The gray of the status bar's band (#337), behind the whole bar on every screen: one of the panel's sixteen
+/// levels (11 x 17), so a grays refresh shows it flat. It is one level darker than the desk a notebook's page
+/// lies on (205, which the panel shows as 204), so sideways the band stays apart from the desk beside the page.
+pub const GUI_GRAY_STATUS_BAND: u8 = 187;
+
+/// The gray of a status bar icon whose radio is off (Wi-Fi or Bluetooth): a panel level (6 x 17) five levels
+/// darker than the band and six lighter than the black of one that is on, so it reads on the band and tells
+/// off from on.
+pub const GUI_GRAY_STATUS_OFF: u8 = 102;
+
 struct StatusUnder {
     w: i32,
     h: i32,
@@ -99,29 +109,18 @@ struct StatusUnder {
 thread_local! {
     /// The Status bar settings the top status bar draws with (size, 12-hour time).
     static STATUS_STYLE: Cell<(i32, bool)> = const { Cell::new((1, false)) };
-    /// Whether tapping the bar hid it (settings.ini status_on, unchanged by a restart).
-    static STATUS_SHOWN: Cell<bool> = const { Cell::new(true) };
     /// The screen as it was under the bar when it was last drawn (Live view's tiles show this while
     /// the bar itself is its own layer: LIVE_LAYER_STATUS).
     static STATUS_UNDER: RefCell<StatusUnder> = const { RefCell::new(StatusUnder { w: 0, h: 0, px: Vec::new() }) };
+    /// The bar as it was last drawn on its band (#337): a notebook's flush puts it back where anything drew into
+    /// its rows since (gui_status_drawn_put).
+    static STATUS_DRAWN: RefCell<StatusUnder> = const { RefCell::new(StatusUnder { w: 0, h: 0, px: Vec::new() }) };
 }
 
 /// Applies the Status bar settings to every top status bar (Settings > Sleep & Clock > Status bar).
 /// The main page and the Status bar page call this when either choice changes.
 pub fn gui_status_style(size: i32, twelve: bool) {
     STATUS_STYLE.with(|s| s.set((clampi(size, 0, STATUS_SIZES - 1), twelve)));
-}
-
-/// Shows or hides the notebook's top status bar. A tap on a notebook's bar sets it (status_toggle): a
-/// shown bar hides, a hidden one comes back; the Status bar page's "Hide status bar inside Notebooks"
-/// row changes it too, and settings.ini status_on keeps it across restarts. The other screens' bars are
-/// always drawn: only a notebook can hide it.
-pub fn gui_status_shown(on: bool) {
-    STATUS_SHOWN.with(|s| s.set(on));
-}
-
-pub fn gui_status_visible() -> bool {
-    STATUS_SHOWN.with(|s| s.get())
 }
 
 fn status_style() -> (i32, bool) {
@@ -136,6 +135,12 @@ fn status_scale() -> f32 {
 /// page's size.
 pub fn gui_status_h() -> i32 {
     ui_px(78.0 * status_scale())
+}
+
+/// The highest a sheet's card starts (library.rs sheet_rect, the editor's Paper sheet): a gap under the status
+/// bar's band, which is drawn over everything on its rows (#337), so the band never covers a card's top or title.
+pub fn gui_sheet_top() -> i32 {
+    gui_status_h() + ui_px(20.0)
 }
 
 /// The header under the status bar: its title and its round action buttons.
@@ -933,15 +938,16 @@ fn battery_cached() -> Option<Battery> {
 }
 
 /// The status bar's battery: the pixel-art kind of shape (a body with its terminal and a fill by
-/// percent), drawn here rather than taken from the icon font, which need not carry a battery.
-pub fn gui_battery(c: &mut Canvas, r: Rect, percent: i32) {
+/// percent), drawn here rather than taken from the icon font, which need not carry a battery. The body
+/// is filled with `paper`, the gray of what it stands on (the bar's band).
+pub fn gui_battery(c: &mut Canvas, r: Rect, percent: i32, paper: u8) {
     // The art keeps its proportions at every status bar size (34 px tall is the medium bar's).
     let k = r.h.max(1) / 34;
     let rad = (if gui_gothic() { 5 * k } else { 10 * k }).max(1);
     let tw = (8 * k).max(2);
     let gap = (5 * k).max(1);
     let body = Rect::new(r.x, r.y, r.w - tw - gap, r.h);
-    ui_frame(c, body, rad, 255, true, 0);
+    ui_frame(c, body, rad, paper, true, 0);
     ui_frame(c, body, rad, 0, false, (3 * k).max(1));
     let term = Rect::new(body.x + body.w + (2 * k).max(1), r.y + r.h * 30 / 100, tw, r.h * 40 / 100);
     ui_frame(c, term, tw / 2, 0, true, 0);
@@ -954,21 +960,22 @@ pub fn gui_battery(c: &mut Canvas, r: Rect, percent: i32) {
 }
 
 /// The app's status bar: the time and date at the left, then (when the device has them) Wi-Fi,
-/// Bluetooth and the battery percent at the right. Every screen draws it above its header; a tap in
-/// it is a tap on no control (the caller adds no hit). `now` is the platform's clock (light.rs
-/// sys_wall_clock), as the minute checks that draw it again read it (library_tick,
-/// library_app_minute): the simulator's script holds that clock still (docs/SIM.md, `clock`), and a
-/// bar that read the machine's own would refresh in the middle of a scenario that counts refreshes.
+/// Bluetooth and the battery percent at the right, on a band of gray the bar's full width and height
+/// (#337: `GUI_GRAY_STATUS_BAND`, every item drawn in black, or in `GUI_GRAY_STATUS_OFF` for a radio
+/// that is off). Every screen draws it above its header; a tap in it is a tap on no control (the
+/// caller adds no hit). `now` is the platform's clock (light.rs sys_wall_clock), as the minute checks
+/// that draw it again read it (library_tick, library_app_minute): the simulator's script holds that
+/// clock still (docs/SIM.md, `clock`), and a bar that read the machine's own would refresh in the
+/// middle of a scenario that counts refreshes.
 pub fn gui_status_bar(c: &mut Canvas, aw: i32, now: i64) {
     gui_status_bar_in(c, aw, now, true, true);
 }
 
-/// The notebook's key status bar: the same time, connections and battery with no white background, so
-/// what is drawn under it (the page) still shows through.
-pub fn gui_status_bar_transparent(c: &mut Canvas, aw: i32, now: i64) {
-    if gui_status_visible() {
-        gui_status_bar_in(c, aw, now, true, false);
-    }
+/// The notebook's status bar (#337): the same band, drawn over the page and anything else there. The
+/// page goes on beneath it (ink written there stays in the page), and a tap on the bar hides it for as
+/// long as the notebook is open (status.rs), which shows that part of the page.
+pub fn gui_status_bar_over_page(c: &mut Canvas, aw: i32, now: i64) {
+    gui_status_bar_in(c, aw, now, true, true);
 }
 
 /// The same bar with only the connection icons at the right: kept for the retired corner's callers.
@@ -979,6 +986,24 @@ pub fn gui_status_bar_connections(c: &mut Canvas, aw: i32, now: i64) {
 /// The screen under the bar, saved before the bar is drawn: Live view's page tiles take these pixels
 /// where the bar covers them, so hiding the bar's layer (LIVE_LAYER_STATUS) shows the page, not the bar.
 fn status_under_save(c: &Canvas, w: i32, h: i32) {
+    strip_save(&STATUS_UNDER, c, w, h);
+}
+
+/// Puts the saved screen under the bar into c at r (the part of the bar r covers). False when there
+/// is no matching saved bar: the caller leaves the screen as it is.
+pub fn gui_status_under_put(c: &mut Canvas, r: Rect) -> bool {
+    strip_put(&STATUS_UNDER, c, r)
+}
+
+/// Puts the bar as it was last drawn on its band into c at r, the part of the strip r covers (#337: a notebook's
+/// flush, where something drew into the bar's rows since: app.rs band_keep). False when no bar of that size was
+/// drawn: the caller draws it again.
+pub fn gui_status_drawn_put(c: &mut Canvas, r: Rect) -> bool {
+    strip_put(&STATUS_DRAWN, c, r)
+}
+
+/// Keeps the top w x h of c in `cell`.
+fn strip_save(cell: &'static std::thread::LocalKey<RefCell<StatusUnder>>, c: &Canvas, w: i32, h: i32) {
     if w <= 0 || h <= 0 || c.stride < w {
         return;
     }
@@ -986,7 +1011,7 @@ fn status_under_save(c: &Canvas, w: i32, h: i32) {
     if c.px.len() < (h as usize).saturating_mul(stride) {
         return;
     }
-    STATUS_UNDER.with(|u| {
+    cell.with(|u| {
         let mut u = u.borrow_mut();
         let n = (w as usize) * (h as usize);
         if u.px.len() != n {
@@ -1001,9 +1026,8 @@ fn status_under_save(c: &Canvas, w: i32, h: i32) {
     });
 }
 
-/// Puts the saved screen under the bar into c at r (the part of the bar r covers). False when there
-/// is no matching saved bar: the caller leaves the screen as it is.
-pub fn gui_status_under_put(c: &mut Canvas, r: Rect) -> bool {
+/// Puts what `cell` keeps into c at r. False when r is not inside what it keeps.
+fn strip_put(cell: &'static std::thread::LocalKey<RefCell<StatusUnder>>, c: &mut Canvas, r: Rect) -> bool {
     if r.w <= 0 || r.h <= 0 || r.x < 0 || r.y < 0 || r.x + r.w > c.w || r.y + r.h > c.h || c.stride < c.w {
         return false;
     }
@@ -1011,7 +1035,7 @@ pub fn gui_status_under_put(c: &mut Canvas, r: Rect) -> bool {
     if c.px.len() < (c.h as usize).saturating_mul(stride) {
         return false;
     }
-    STATUS_UNDER.with(|u| {
+    cell.with(|u| {
         let u = u.borrow();
         if r.x + r.w > u.w || r.y + r.h > u.h || u.px.len() < (u.w as usize).saturating_mul(u.h as usize) {
             return false;
@@ -1025,14 +1049,37 @@ pub fn gui_status_under_put(c: &mut Canvas, r: Rect) -> bool {
     })
 }
 
+/// What the bar's right end shows: the battery when it can be read, and each radio the device has, on or off.
+#[derive(Clone, Copy, Debug, Default)]
+struct StatusItems {
+    battery: Option<Battery>,
+    /// Bluetooth's helper is there, and whether it runs
+    bluetooth: Option<bool>,
+    /// Wi-Fi's helper is there, and whether the radio is on
+    wifi: Option<bool>,
+}
+
+fn status_items() -> StatusItems {
+    StatusItems {
+        battery: battery_cached(),
+        bluetooth: bt_present().then(|| bt_state() != BtState::Stopped),
+        wifi: wifi_available().then(|| wifi_status().is_some_and(|s| s.enabled)),
+    }
+}
+
 fn gui_status_bar_in(c: &mut Canvas, aw: i32, now: i64, clock: bool, fill: bool) {
+    gui_status_bar_items(c, aw, now, clock, fill, status_items());
+}
+
+fn gui_status_bar_items(c: &mut Canvas, aw: i32, now: i64, clock: bool, fill: bool, items: StatusItems) {
     let scale = status_scale();
     let u = |v: f32| ui_px(v * scale);
     let h = gui_status_h();
     let m = gui_margin();
+    let band = GUI_GRAY_STATUS_BAND;
     status_under_save(c, aw, h);
     if fill {
-        canvas_fill(c, Rect::new(0, 0, aw, h), 255);
+        canvas_fill(c, Rect::new(0, 0, aw, h), band);
     }
     if clock {
         let mut time = String::new();
@@ -1043,23 +1090,24 @@ fn gui_status_bar_in(c: &mut Canvas, aw: i32, now: i64, clock: bool, fill: bool)
         let mut date = String::new();
         format_date_short(now, &mut date, 64);
         let date_x = m + time_w + u(18.0);
+        // (black on the band, as the time is: the face tells the date from the time)
         font_draw_left(
             c,
             FontFace::Regular,
             u(32.0) as f32,
             Rect::new(date_x, 0, (aw / 2 - date_x).max(0), h),
             &date,
-            90,
+            0,
         );
     }
     let isz = u(48.0);
     let mut x = aw - m;
     if clock {
-        if let Some(b) = battery_cached() {
+        if let Some(b) = items.battery {
             let bw = u(56.0);
             let bh = u(34.0);
             x -= bw + u(8.0);
-            gui_battery(c, Rect::new(x, (h - bh) / 2, bw, bh), b.percent);
+            gui_battery(c, Rect::new(x, (h - bh) / 2, bw, bh), b.percent, if fill { band } else { 255 });
             x -= u(10.0);
             let mut pct = String::new();
             csnprintf!(&mut pct, 16, "%d%%", clampi(b.percent, 0, 100));
@@ -1070,16 +1118,17 @@ fn gui_status_bar_in(c: &mut Canvas, aw: i32, now: i64, clock: bool, fill: bool)
             x -= u(28.0);
         }
     }
-    if bt_present() {
+    if let Some(on) = items.bluetooth {
         x -= isz;
-        let fg = if bt_state() == BtState::Stopped { 170 } else { 0 };
-        ui_icon(c, IconKind::Bluetooth, Rect::new(x, (h - isz) / 2, isz, isz), fg);
+        ui_icon(c, IconKind::Bluetooth, Rect::new(x, (h - isz) / 2, isz, isz), if on { 0 } else { GUI_GRAY_STATUS_OFF });
         x -= u(22.0);
     }
-    if wifi_available() {
+    if let Some(on) = items.wifi {
         x -= isz;
-        let fg = if wifi_status().is_some_and(|s| s.enabled) { 0 } else { 170 };
-        ui_icon(c, IconKind::Wifi, Rect::new(x, (h - isz) / 2, isz, isz), fg);
+        ui_icon(c, IconKind::Wifi, Rect::new(x, (h - isz) / 2, isz, isz), if on { 0 } else { GUI_GRAY_STATUS_OFF });
+    }
+    if fill && clock {
+        strip_save(&STATUS_DRAWN, c, aw, h);
     }
 }
 
@@ -1333,6 +1382,74 @@ mod tests {
         ui_set_theme(UiTheme::Gothic);
         assert_eq!(gui_radius(), 16);
         assert!(gui_gothic());
+        ui_set_theme(UiTheme::Gothic);
+    }
+
+    // The status bar stands on a band of gray 187 (#337, the owner's pick: "204 or even a step darker") its full
+    // width and height, at every size, in both themes, upright and sideways, and on nothing below it: a panel level,
+    // so a grays refresh shows it flat. The time and the date are black on it, an off radio's icon gray 102 (five
+    // levels darker than the band: it reads, and tells off from the black of on), the battery's body the band's gray.
+    #[test]
+    fn the_status_bar_stands_on_a_band_of_one_panel_gray_its_full_width_and_height() {
+        ui_init(300.0);
+        assert_eq!(font_init(), 0);
+        assert_eq!(GUI_GRAY_STATUS_BAND % 17, 0);
+        assert_eq!(GUI_GRAY_STATUS_OFF % 17, 0);
+        assert!(GUI_GRAY_STATUS_BAND - GUI_GRAY_STATUS_OFF >= 4 * 17 && GUI_GRAY_STATUS_OFF >= 4 * 17);
+        let off = StatusItems {
+            battery: Some(Battery { percent: 87, charging: false }),
+            bluetooth: Some(false),
+            wifi: Some(true),
+        };
+        for theme in [UiTheme::Gothic, UiTheme::Classic] {
+            ui_set_theme(theme);
+            for size in 0..STATUS_SIZES {
+                gui_status_style(size, false);
+                for aw in [1860, 2480] {
+                    let mut c = Canvas::default();
+                    assert_eq!(canvas_init(&mut c, aw, 300), 0);
+                    canvas_fill(&mut c, Rect::new(0, 0, aw, 300), 255);
+                    gui_status_bar_items(&mut c, aw, 1_795_772_460, true, true, off);
+                    let h = gui_status_h();
+                    let at = |x: i32, y: i32| c.px[(y * c.stride + x) as usize];
+                    let at_ = format!("{theme:?} size {size} {aw}");
+                    // the band: every column at its top and bottom rows, both ends of every row
+                    for x in 0..aw {
+                        assert_eq!((at(x, 0), at(x, h - 1)), (GUI_GRAY_STATUS_BAND, GUI_GRAY_STATUS_BAND), "{at_}: column {x}");
+                        assert_eq!(at(x, h), 255, "{at_}: nothing under the band, column {x}");
+                    }
+                    for y in 0..h {
+                        assert_eq!((at(0, y), at(aw - 1, y)), (GUI_GRAY_STATUS_BAND, GUI_GRAY_STATUS_BAND), "{at_}: row {y}");
+                    }
+                    // nothing on the band is lighter than it; the time and the date are black
+                    let row: Vec<u8> = (0..h).flat_map(|y| (0..aw).map(move |x| (x, y))).map(|(x, y)| at(x, y)).collect();
+                    assert!(row.iter().all(|&v| v <= GUI_GRAY_STATUS_BAND), "{at_}");
+                    // (each in its own box: the time from the margin, the date after it, as gui_status_bar_items lays them)
+                    let u = |v: f32| ui_px(v * status_scale());
+                    let mut time = String::new();
+                    format_clock_short(1_795_772_460, false, &mut time, 64);
+                    let date_x = gui_margin() + font_measure(FontFace::Bold, u(38.0) as f32, &time) + u(2.0) + u(18.0);
+                    let black = |x0: i32, x1: i32| (0..h).flat_map(|y| (x0..x1).map(move |x| (x, y))).filter(|&(x, y)| at(x, y) < 17).count();
+                    assert!(black(gui_margin(), date_x) > 100, "{at_}: the time in black");
+                    assert!(black(date_x, aw / 2) > 100, "{at_}: the date in black");
+                    // Bluetooth off: its glyph's box holds gray 102 at its core and nothing darker; Wi-Fi on holds black
+                    let isz = ui_px(48.0 * status_scale());
+                    let pct_w = font_measure(FontFace::Regular, u(30.0) as f32, "87%");
+                    let bt_right = aw - gui_margin() - u(56.0) - u(8.0) - u(10.0) - pct_w - u(28.0);
+                    let glyph = |x0: i32| -> Vec<u8> {
+                        (0..h).flat_map(|y| (x0..x0 + isz).map(move |x| (x, y))).map(|(x, y)| at(x, y)).collect()
+                    };
+                    let bt = glyph(bt_right - isz);
+                    let (lo, hi) = (bt.iter().copied().min().unwrap_or(255), bt.iter().copied().max().unwrap_or(0));
+                    // (its core at the off gray's panel level: the glyph's edge blends round it by a value or so)
+                    assert!(lo >> 4 == GUI_GRAY_STATUS_OFF >> 4 && hi <= GUI_GRAY_STATUS_BAND, "{at_}: Bluetooth off, {lo} to {hi}");
+                    let wifi = glyph(bt_right - isz - u(22.0) - isz);
+                    assert!(wifi.iter().any(|&v| v < 17), "{at_}: Wi-Fi on");
+                    canvas_free(&mut c);
+                }
+            }
+        }
+        gui_status_style(1, false);
         ui_set_theme(UiTheme::Gothic);
     }
 }

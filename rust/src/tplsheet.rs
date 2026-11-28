@@ -103,12 +103,14 @@ pub fn paper_grid_cols(n: i32, avail_w: i32, avail_h: i32, gap: i32, label_h: i3
 pub fn paper_sheet_rect(a: &App, g: &mut PaperGrid) -> Rect {
     let m = ui_px(70.0);
     let gap = ui_px(30.0);
-    // Beside the tiles: the title (120), the sheet's insets (72), its buttons (190), a margin (80).
+    // Beside the tiles: the title (120), the sheet's insets (72), its buttons (190), the status bar's band and a
+    // margin above (#337: the band is drawn over everything on its rows), a margin below (40).
+    let top = crate::globalui::gui_sheet_top();
     let avail_w = a.w - 2 * m - ui_px(72.0);
-    let avail_h = a.h - ui_px(120.0) - ui_px(72.0) - ui_px(190.0) - ui_px(80.0);
+    let avail_h = a.h - ui_px(120.0) - ui_px(72.0) - ui_px(190.0) - top - ui_px(40.0);
     *g = paper_grid_cols(PAPER_SHEET_EDITOR_TILES, avail_w, avail_h, gap, ui_px(100.0), a.w / 6, PAPER_PICKER_COLS);
     let sheet_h = ui_px(120.0) + ui_px(72.0) + g.rows * g.cell_h + ui_px(190.0);
-    Rect { x: m, y: (a.h - sheet_h) / 3, w: a.w - 2 * m, h: sheet_h }
+    Rect { x: m, y: ((a.h - sheet_h) / 3).max(top), w: a.w - 2 * m, h: sheet_h }
 }
 /// The Templates (and Photos) sheet's place: the paper picker's, and its rows exactly (issue #195: six columns,
 /// three rows, the same tiles), so More layouts... opens the paper picker's grid with the templates in it. Over the

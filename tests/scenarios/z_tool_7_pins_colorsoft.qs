@@ -32,6 +32,11 @@ expect size is 2648x1986
 expect editor.panel_rect is 2093 31 128 1955
 expect editor.panel_button is 100
 shot 02-sideways-three-pins
+# Its top row (the grip, the collapse button's middle) is under the status bar's band here, which covers what is
+# under it (#337: a pen contact there is the page's): a tap on the bar hides it while the notebook is open.
+tap 600 30
+wait 300
+expect status.visible is 0
 # Collapsed sideways: the same square, where the panel's top right was
 pentap panel collapse
 wait 300

@@ -1512,8 +1512,10 @@ moves everything under the header with it, and upright the cards stay two rows a
   lines take (never wider than the step), so a tap on any letter lands on it and a press covers the whole name. A name
   two lines cannot hold is broken or cut by font_draw_wrapped, which tells the fit check (make l10n-check runs every
   language and style).
-- **The rules** (`gui_title_rule`, `gui_section_break`, `gui_hair_rule`, `gui_foot_rule`), margin to margin, each in
-  the paper between two parts: under the header the title rule (Gothic: 4 px black, 5 px of paper, 2 px black;
+- **The rules** (`gui_title_rule`, `gui_section_break`, `gui_hair_rule`, `gui_foot_rule`), each in the paper between
+  two parts, the title rule and the foot rule from the screen's left edge to its right (#337, the owner: "The outer
+  ones at least need to go all the way across the screen") and the two between them from margin to margin, the
+  section break's lozenge on the screen's centre: under the header the title rule (Gothic: 4 px black, 5 px of paper, 2 px black;
   Classic: one 3 px line), as much paper over it as under it; between the app row and the sorting line the section
   break, centred in the paper between the foot of the row's lowest name (one line or two) and the chips, which do not
   move with it (Gothic: the divider under a Gothic sheet's title, a 2 px rule broken by a 16 px lozenge between two of
@@ -1528,6 +1530,54 @@ moves everything under the header with it, and upright the cards stay two rows a
 - **The cards**: a card's picture (a notebook's page, a folder's picture) is held to the frame's shape, Gothic's cut
   corners or Classic's round ones: `card_frame` paints the paper back outside the shape (`ui_frame_outside`) before
   the outline, so nothing of a picture shows past the frame.
+
+## The status bar's band, and a notebook's bar over the page (2.3, issue #337)
+
+`globalui.rs` `gui_status_bar_items`, `status.rs`, `editor.rs` `compose`, `app.rs` `band_keep`. The owner, after the
+2.3 beta on the Scribe: "try a gray background below the status items, and make them darker so the're still visible
+in the status bar. Status bar background drawn over any elements below but still drawable beneath, user dismisses to
+access that part of the screen."
+
+- **The band.** Every screen's status bar stands on one gray, `GUI_GRAY_STATUS_BAND` (187, a panel level: 11 x 17),
+  its full width and height. The owner chose "204 or even a step darker": 187 is one level darker than the desk a
+  notebook's page lies on (205, which the panel shows as 204), so sideways the band stays apart from the desk beside
+  the page. On it the time (Bold) and the date (Regular) are black, the percent black, the battery black with its
+  body the band's gray, Wi-Fi and Bluetooth black while on and `GUI_GRAY_STATUS_OFF` (102, 6 x 17: five levels
+  darker than the band, six lighter than black) while off.
+- **Over a notebook's page.** `compose` draws the bar last, over the page and whatever else reaches the strip (the
+  toolbar dragged to the top, a card, a menu); `status_reserved` stays 0, so the page keeps the whole screen beneath
+  it. Ink written in the strip goes into the page, neither refused nor moved, and shows when the bar is hidden. A
+  finger's contact in the strip while the bar is drawn is the bar's (quick.rs), even over a control under it. A pen's
+  contact there is the page's (`editor_event_in`'s `covered`): ink, a lasso, a selection's drag, never a control the
+  band covers (the toolbar or a widget's frame dragged to the top, the selection bar's buttons), and a tool picker
+  or Widgets popup that is up closes, as at a contact outside it. Hidden by a tap, the band covers nothing and those
+  controls take the pen again. What the app places by itself keeps out of the strip: a sheet starts a gap under it
+  (`gui_sheet_top`: `sheet_rect`, `paper_sheet_rect`) and the selection bar under the bar's height (`layout_bar`).
+- **No fast refresh reaches the band** while the bar is drawn over the page (`status_band_rows`: the bar's height,
+  0 while it is hidden or Settings, the Pages view, the Graph or a picker covers the page; `status_below_band`): the
+  pen's live frames are cut before they are composed (`show`), the lasso draws below it (`lasso_clip`), a press look
+  inverts and sends only what is below it (`app_press_feedback`, the selection bar's `bar_press_show`), and at every
+  flush `band_keep` puts the bar as it was last drawn back where anything reached its rows since
+  (`gui_status_drawn_put`: a copy of the strip kept at the end of each draw of the bar; nothing else is drawn again)
+  and cuts a fast refresh's rect to below them, and again just before the present, after Live view's chip, the
+  staying notice or the toast joined it (the chip stands level with the toolbar's head, so it can cross the band's
+  lower edge). So a fast refresh (black and white only) never dithers the band, and on the Kindle
+  the framebuffer, the RAM shadow `g_shown`, `g_previous` and the live area `g_live_area` never hold a fast frame
+  there; Solid's settle (`display_settle_area`) compares the screen with `g_shown` and finds the band as it was, and
+  Smooth's settle (a GL16 of the stroke's rect) drives only pixels that changed. The padded pen mode grows a small
+  frame's refresh region to 6400 pixels (`fbpack_pen_region`); `app_flush` tells the display the rows to keep
+  (`display_keep_top`) and the region is moved off them, its size kept (`fbpack_pen_region_clear`).
+- **Hiding it.** A tap on the bar hides it while that notebook is open (`DISMISSED`, never saved); a tap on the top
+  strip brings it back. The next notebook opened, or this one opened again, shows it (`editor_open_notebook` calls
+  `status_bar_back`). Settings > Sleep & Clock > Status bar's "Hide status bar inside Notebooks" (`status_in_notebooks`)
+  is the lasting way; a tap that brings the bar back while that row hides it turns the row off and saves. A
+  `status_on=0` an earlier version saved (when a tap's hiding lasted) no longer hides the bar. Each tap draws the
+  strip again and refreshes it alone, in grays (`editor_bar_toggled`; Link to..., docked under the bar at the top,
+  follows it in the same refresh); until #337 it was `app_redraw`, a flashing refresh of the whole screen. Nothing
+  else moves when the bar comes and goes: what lies under the strip stays, covered by the band while it is shown. A
+  tap over Settings, the Pages view, the Graph or a picker changes nothing.
+- **The minute** is as before: a grays refresh of the strip, which in a notebook waits for the pen (`status_busy`),
+  counted toward the cleaning full refresh like any other.
 
 ## What's new, the About sheet (2.0.0; every version's notes, 2.1.0)
 

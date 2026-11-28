@@ -3131,7 +3131,8 @@ impl Browser {
             return 0;
         }
         let (down, up) = (keep.y + keep.h - row.y, keep.y - (row.y + row.h));
-        let fits = |dy: i32| sheet.y + dy >= u(40.0) && sheet.y + sheet.h + dy <= ah - u(40.0);
+        // (never up under the status bar's band, which is drawn over everything on its rows: #337)
+        let fits = |dy: i32| sheet.y + dy >= crate::globalui::gui_sheet_top() && sheet.y + sheet.h + dy <= ah - u(40.0);
         match (fits(down), fits(up)) {
             (true, true) if down <= -up => down,
             (true, false) => down,

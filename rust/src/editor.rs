@@ -3853,11 +3853,54 @@ fn compose(a: &mut App, r: Rect) {
     draw_menus(a, r);
     sel_draw(a, r);
     let strip = Rect::new(0, 0, a.w, gui_status_h());
-    if a.settings.status_on && a.settings.status_in_notebooks && rect_overlaps(r, strip) {
-        // The page continues beneath the bar. It is drawn without a background, so the ink under it
-        // still shows; a tap hides it, and another on the top strip brings it back (status.rs).
-        // A draw of part of the strip repeats the time the whole strip was drawn with (status_bar_time).
-        crate::globalui::gui_status_bar_transparent(&mut a.screen, a.w, status_bar_time(rect_contains_rect(r, strip)));
+    if crate::status::status_notebook_bar(a) && rect_overlaps(r, strip) {
+        // The bar is drawn over everything here, on its band (#337): the page continues beneath it, and
+        // ink written there goes into the page, shown once a tap hides the bar (status.rs); another tap
+        // on the top strip brings it back. A draw of part of the strip repeats the time the whole strip
+        // was drawn with (status_bar_time).
+        crate::globalui::gui_status_bar_over_page(&mut a.screen, a.w, status_bar_time(rect_contains_rect(r, strip)));
+    }
+}
+
+/// Whether compose draws the notebook's page now, and so the bar over it (#337): not while Settings, the picture
+/// pick, the destination picker, the Graph or the Pages view (but its overlay) covers the screen. Each of those but
+/// the destination picker (Link to...'s notebooks, which fills the screen from its top with no bar) draws its own bar.
+pub fn editor_page_composed(a: &App) -> bool {
+    !crate::library::library_settings_active(a)
+        && a.ed.as_deref().is_some_and(|s| {
+            s.open && !s.files.open && !s.destination.open && !s.map.open && !(s.pv.open && !s.pv.overlay)
+        })
+}
+
+/// A tap hid the notebook's bar or brought it back (status.rs status_toggle, #337): the bar's strip is composed
+/// again and refreshed alone, in grays, with no flash: the page's ink under it shows, or the band covers it again.
+/// Link to..., docked under the bar when it is at the top, follows it: its old place and its new one go in the
+/// same refresh. Whatever else is under the strip (the toolbar, a card) stays where it is, covered by the band
+/// while the bar is shown.
+pub fn editor_bar_toggled(a: &mut App) {
+    let strip = Rect::new(0, 0, a.w, gui_status_h());
+    let lt = |a: &App| ed_ref(a).lt.open.then(|| ed_ref(a).lt.rect).unwrap_or(RECT_EMPTY);
+    let before = lt(a);
+    compose(a, strip);
+    let after = lt(a);
+    let mut r = strip;
+    if before != after {
+        let moved = rect_union(before, after);
+        compose(a, moved);
+        r = rect_union(r, moved);
+    }
+    app_invalidate(a, r, RefreshMode::Ui);
+}
+
+/// The bar over the page again where r reaches its rows (app.rs app_flush, #337): something may have drawn there
+/// since the bar was (a selection's outline, a press let go), and the band must hold the bar when it goes out. The
+/// bar as it was last drawn is put back there (gui_status_drawn_put), nothing else drawn again; only where no bar of
+/// this size was drawn yet is that part composed.
+pub fn editor_bar_over(a: &mut App, r: Rect) {
+    let band = crate::status::status_band_rows(a);
+    let r = rect_intersect(r, Rect::new(0, 0, a.w, band));
+    if !rect_is_empty(r) && !crate::globalui::gui_status_drawn_put(&mut a.screen, r) {
+        compose(a, r);
     }
 }
 
@@ -4081,7 +4124,15 @@ pub fn editor_live_under_panel(a: &mut App, r: Rect, push: Rect) {
 
 // A page-space change: recompose what it covers on screen and refresh it.
 fn show(a: &mut App, page_rect: Rect, m: RefreshMode) {
-    let r = page_to_screen(a, page_rect);
+    let mut r = page_to_screen(a, page_rect);
+    if m == RefreshMode::Fast {
+        // A pen's live frames (ink, an erase, a shape's preview) keep below the bar while it is drawn over the
+        // page (#337): the ink goes into the page there, the screen and the panel keep the bar, and no fast
+        // refresh (black and white only) ever dithers its band. The settle's grays refresh of the stroke's rect
+        // finds the bar as the panel shows it. (Cut here, before the compose, the bar is not drawn again for
+        // each frame.)
+        r = crate::status::status_below_band(a, r);
+    }
     if rect_is_empty(r) {
         return;
     }
@@ -4987,6 +5038,7 @@ pub fn editor_open_notebook(a: &mut App, id: &str) {
         return;
     }
     s.open = true;
+    crate::status::status_bar_back(); // (a bar a tap hid in the notebook before shows again, #337)
     nav_load(s.nb.id.as_str(), &mut s.nav);
     s.dl = doclinks_load(s.nb.id.as_str());
     doclinks_prune(&mut s.dl, &s.nb); // (a tab to a page deleted since the last write is not a tab)
@@ -7237,10 +7289,11 @@ fn lasso_screen_pt(s: &EditorState, p: (f32, f32)) -> (f32, f32) {
     ((p.0 - s.ox) * s.zoom, (p.1 - s.oy) * s.zoom)
 }
 
-/// Where the lasso may draw on the screen: the page, below the status bar.
+/// Where the lasso may draw on the screen: the page, below the status bar while it is drawn over the page
+/// (#337: status_band_rows; the lasso's line goes on under the bar, where the band covers it).
 fn lasso_clip(a: &App) -> Rect {
     let s = ed_ref(a);
-    let top = status_reserved(a);
+    let top = status_reserved(a).max(crate::status::status_band_rows(a));
     let page = page_to_screen(a, Rect { x: 0, y: 0, w: s.pgw, h: s.pgh ,
         },
     );
@@ -12755,6 +12808,11 @@ fn editor_event_in(a: &mut App, ev: &InEvent) {
             }
             lasso_cancel(a);
         }
+        // While a notebook's bar is drawn over the page its band covers whatever lies under it (#337, the owner:
+        // "drawn over any elements below but still drawable beneath, user dismisses to access that part of the
+        // screen"): a pen contact there is never a control's (the toolbar, a widget's frame, a menu's row, the
+        // selection's bar), it is the page's, as anywhere else on it. (A finger there is the bar's: quick.rs.)
+        let covered = pen && (ev.y as i32) < crate::status::status_band_rows(a);
         let s = ed(a);
         s.owner_is_pen = pen;
         // A contact made while the toolbar's batch was being written: let go, down to its lift. Then the
@@ -12901,6 +12959,15 @@ fn editor_event_in(a: &mut App, ev: &InEvent) {
         }
         // The Widgets popup takes every contact while it is up: a row opens or raises, anything else
         // closes it with nothing else done (the panel included).
+        // (Either, under the band, as outside it: closed at once, the pen's stroke swallowed.)
+        if covered && (s.widgets_open || s.tools_open) {
+            s.owner = Owner::Outside;
+            close_widgets(a);
+            if ed_ref(a).tools_open {
+                close_tools(a);
+            }
+            return;
+        }
         if s.widgets_open {
             s.owner = Owner::Widgets;
             press_begin(&mut s.widgets_press, ev.x, ev.y, ev.t_ms);
@@ -12960,11 +13027,11 @@ fn editor_event_in(a: &mut App, ev: &InEvent) {
             }
             s.owner = Owner::Modal;
             ui_pointer(a, 0, ev, true);
-        } else if (s.lm.state == LmState::Armed || s.lm.state == LmState::Lasso) && rect_contains(s.lm.strip, ev.x as i32, ev.y as i32) {
+        } else if !covered && (s.lm.state == LmState::Armed || s.lm.state == LmState::Lasso) && rect_contains(s.lm.strip, ev.x as i32, ev.y as i32) {
             // The strip takes a finger or the pen: its Cancel, or nothing (never the lasso).
             s.owner = Owner::Strip;
             strip_pointer(a, 0, ev);
-        } else if rect_contains(s.panel, ev.x as i32, ev.y as i32) {
+        } else if !covered && rect_contains(s.panel, ev.x as i32, ev.y as i32) {
             s.owner = Owner::Panel;
             // A stroke just ended: Undo/Clear may have become available, but the panel (and its
             // hit list) is only rebuilt at the settle. Settle now so the tap finds the live buttons.
@@ -12972,7 +13039,7 @@ fn editor_event_in(a: &mut App, ev: &InEvent) {
                 settle_now(a);
             }
             ui_pointer(a, 0, ev, false);
-        } else if let Some((index, part)) = s.widgets.hit(ev.x.round_ties_even() as i32, ev.y.round_ties_even() as i32) {
+        } else if let Some((index, part)) = s.widgets.hit(ev.x.round_ties_even() as i32, ev.y.round_ties_even() as i32).filter(|_| !covered) {
             widget_down(a, index, part, ev, pen);
         } else if s.lm.state == LmState::Off && sel_takes(s, pen, ev.x, ev.y) {
             // Select mode: the bar, a drag of the selection, or the pen's lasso (never ink).
@@ -15390,7 +15457,7 @@ mod tests {
         }
         let mut a = app(w, h, w, h);
         a.scr = ScreenId::Editor;
-        a.settings.status_on = false;
+        a.settings.status_in_notebooks = false; // (no bar over the page: the page alone)
         a.settings.status_mode = 2;
         a.settings.gestures = true;
         a.settings.hints |= HINT_FSHAPE;
@@ -15899,6 +15966,429 @@ mod tests {
         assert!(!std::path::Path::new(&stamp).exists());
         assert!(preview_is_the_canvas(s));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // A notebook's page on the simulated panel's 1860 x 2480 screen with its bar drawn over it (#337), composed and on
+    // the panel, with the refreshes read so far.
+    #[cfg(feature = "sim")]
+    fn bar_app() -> App {
+        let mut a = fshape_app_of(1860, 2480);
+        a.settings.status_in_notebooks = true;
+        crate::status::status_bar_back();
+        compose_all(&mut a, RefreshMode::Full);
+        app_flush(&mut a);
+        let _ = bar_presents();
+        a
+    }
+    #[cfg(feature = "sim")]
+    fn bar_presents() -> String {
+        crate::sim_sdl::display_probe_read("display.presents").unwrap_or_default()
+    }
+    // The rects of the fast refreshes in a display.presents answer.
+    #[cfg(feature = "sim")]
+    fn fast_rects(p: &str) -> Vec<Rect> {
+        p.split(", ")
+            .filter_map(|e| e.strip_prefix("fast "))
+            .map(|e| {
+                let n: Vec<i32> = e.split(' ').map(|v| v.parse().unwrap()).collect();
+                Rect::new(n[0], n[1], n[2], n[3])
+            })
+            .collect()
+    }
+    #[cfg(feature = "sim")]
+    fn screen_px(a: &App, x: i32, y: i32) -> u8 {
+        a.screen.px[(y * a.screen.stride + x) as usize]
+    }
+
+    // In a notebook the bar is drawn over the page (#337, the owner: "Status bar background drawn over any elements
+    // below but still drawable beneath"): a stroke written in the bar's rows goes into the page there, not refused
+    // and not moved, while its live frames stop at the band's lower edge, so the screen and the panel keep the bar
+    // and no fast refresh (black and white only) dithers its gray.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn ink_written_under_the_bar_goes_into_the_page_and_its_live_frames_stop_at_the_band() {
+        let mut a = bar_app();
+        let band = gui_status_h();
+        assert_eq!(crate::status::status_band_rows(&a), band);
+        tool_params_default(TOOL_BALLPOINT, &mut a.settings.tools[TOOL_BALLPOINT.0 as usize]);
+        a.settings.current_tool = TOOL_BALLPOINT;
+        a.settings.draw_tool = TOOL_BALLPOINT;
+        let before = ed_ref(&a).open_page().unwrap().strokes.len();
+        // a zigzag from inside the bar's rows down across its lower edge and up again, each move flushed as the main
+        // loop does
+        let t = now_ms();
+        let mut ev = InEvent { type_: InType::PenDown, x: 300.0, y: 20.0, pressure: 0.6, t_ms: t, ..Default::default() };
+        editor_event(&mut a, &ev);
+        app_flush(&mut a);
+        let mut fast = fast_rects(&bar_presents());
+        ev.type_ = InType::PenMove;
+        for k in 1..=24 {
+            ev.x = 300.0 + 25.0 * k as f32;
+            ev.y = if k % 2 == 1 { band as f32 + 40.0 } else { 15.0 };
+            ev.t_ms = t + 8 * k;
+            editor_event(&mut a, &ev);
+            app_flush(&mut a);
+            fast.extend(fast_rects(&bar_presents()));
+        }
+        ev.type_ = InType::PenUp;
+        app_pen_feedback_end(&mut a);
+        editor_event(&mut a, &ev);
+        app_flush(&mut a);
+        fast.extend(fast_rects(&bar_presents()));
+        // (show cuts each frame before it is composed, which spares drawing the bar again for every frame that
+        // reaches its rows, and band_keep cuts it again at the flush: this holds what the two make together)
+        assert!(!fast.is_empty() && fast.iter().all(|r| r.y >= band), "the live frames start under the band: {fast:?}");
+        assert!(fast.iter().any(|r| r.y == band), "{fast:?}");
+        // the stroke is in the page, its points in the bar's rows where they were written
+        let s = ed_ref(&a);
+        let page = s.open_page().unwrap();
+        assert_eq!(page.strokes.len(), before + 1);
+        let top = page.strokes.last().unwrap().pts.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+        assert!((top - s.oy) * s.zoom < 25.0, "written at the top of the screen: {top}");
+        // the screen holds the band in the bar's rows, and the panel shows what the screen holds there
+        for y in [0, 20, band - 1] {
+            assert_eq!((screen_px(&a, 1, y), screen_px(&a, 1859, y)), (crate::globalui::GUI_GRAY_STATUS_BAND, crate::globalui::GUI_GRAY_STATUS_BAND), "row {y}");
+        }
+        assert_eq!(crate::sim_sdl::display_stale_read(&mut a, &format!("display.stale.0.0.1860.{band}")).as_deref(), Some("0"));
+    }
+
+    // Every fast refresh in a notebook stops at the bar's band while the bar is drawn over the page (#337), whoever
+    // asks for it: one that reached into its rows (a selection's outline, a press let go, drawn over again at the
+    // flush), a whole screen of them (a pinch: compose_all_fast), a press look on a control under the bar
+    // (app_press_feedback), the toolbar dragged up under it (move_panel_to), the lasso (lasso_clip). Grays
+    // refreshes are not cut. With the bar hidden fast refreshes reach the top again.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn every_fast_refresh_in_a_notebook_stops_at_the_bars_band() {
+        let mut a = bar_app();
+        let band = gui_status_h();
+        let stale = |a: &mut App| crate::sim_sdl::display_stale_read(a, "display.stale.0.0.1860.2480").unwrap_or_default();
+        // drawn into the bar's rows and refreshed fast: the band holds the bar again, and the refresh starts under it
+        canvas_fill(&mut a.screen, Rect::new(100, 10, 300, 100), 0);
+        app_invalidate(&mut a, Rect::new(100, 10, 300, 100), RefreshMode::Fast);
+        app_flush(&mut a);
+        assert_eq!(bar_presents(), format!("fast 100 {band} 300 {}", 110 - band));
+        assert_eq!(screen_px(&a, 150, 20), crate::globalui::GUI_GRAY_STATUS_BAND);
+        assert_eq!(stale(&mut a), "0");
+        // the whole screen at once
+        compose_all_fast(&mut a);
+        app_flush(&mut a);
+        assert_eq!(bar_presents(), format!("fast 0 {band} 1860 {}", 2480 - band));
+        assert_eq!(stale(&mut a), "0");
+        // a press on a control the bar covers: its look below the bar alone, and its lift drawn over again
+        crate::app::app_press_feedback(&mut a, Rect::new(100, 0, 200, 150));
+        assert_eq!(bar_presents(), format!("fast 100 {band} 200 {}", 150 - band));
+        assert_eq!(screen_px(&a, 150, 20), crate::globalui::GUI_GRAY_STATUS_BAND);
+        let mut pressed = Some(Rect::new(100, 0, 200, 150));
+        let back = crate::app::app_press_release(&mut a, &mut pressed);
+        app_invalidate(&mut a, back, RefreshMode::Ui);
+        app_flush(&mut a);
+        assert_eq!(bar_presents(), "ui 100 0 200 150");
+        assert_eq!(screen_px(&a, 150, 20), crate::globalui::GUI_GRAY_STATUS_BAND);
+        assert_eq!(stale(&mut a), "0");
+        // a selection bar button's press look, sent at once (layout_bar keeps the bar under the band, and a pen
+        // contact the band covers presses none: this is the guard behind those), below the band alone
+        bar_press_show(&mut a, Rect::new(300, 0, 200, 150));
+        assert_eq!(bar_presents(), format!("fast 300 {band} 200 {}", 150 - band));
+        assert_eq!(stale(&mut a), "0");
+        // the toolbar dragged up to the top: the band covers its top, and its frames stop at the band
+        let x = ed_ref(&a).panel.x;
+        move_panel_to(&mut a, x, 0, RefreshMode::Fast);
+        app_flush(&mut a);
+        let frames = fast_rects(&bar_presents());
+        assert!(!frames.is_empty() && frames.iter().all(|r| r.y >= band), "{frames:?}");
+        assert_eq!(ed_ref(&a).panel.y, 0);
+        assert_eq!(screen_px(&a, x + 10, 10), crate::globalui::GUI_GRAY_STATUS_BAND);
+        // (its fast frames leave the toolbar's grays dithered until the drag's grays refresh; the band's rows are as
+        // the screen holds them)
+        let band_stale = crate::sim_sdl::display_stale_read(&mut a, &format!("display.stale.0.0.1860.{band}"));
+        assert_eq!(band_stale.as_deref(), Some("0"));
+        // the lasso draws below the bar
+        assert_eq!(lasso_clip(&a).y, band);
+        // a grays refresh is not cut
+        app_invalidate(&mut a, Rect::new(0, 0, 500, 200), RefreshMode::Ui);
+        app_flush(&mut a);
+        assert_eq!(bar_presents(), "ui 0 0 500 200");
+        // the bar hidden by a tap: fast refreshes and the lasso reach the top again
+        crate::status::status_toggle(&mut a);
+        app_flush(&mut a);
+        let _ = bar_presents();
+        assert_eq!(crate::status::status_band_rows(&a), 0);
+        assert!(lasso_clip(&a).y < band);
+        canvas_fill(&mut a.screen, Rect::new(100, 10, 300, 100), 0);
+        app_invalidate(&mut a, Rect::new(100, 10, 300, 100), RefreshMode::Fast);
+        app_flush(&mut a);
+        assert_eq!(bar_presents(), "fast 100 10 300 100");
+        crate::status::status_bar_back();
+    }
+
+    // Live view's chip stands level with the toolbar's head, so with the toolbar near the top it crosses the band's
+    // lower edge; a fast refresh below the band that meets it is joined with it at the flush (the chip is drawn over
+    // what it covers for each present), and is cut at the band again after that join, so no fast refresh reaches the
+    // band's rows beside the chip.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn live_views_chip_never_takes_a_fast_refresh_into_the_band() {
+        let mut a = bar_app();
+        let band = gui_status_h();
+        let x = ed_ref(&a).panel.x;
+        move_panel_to(&mut a, x, 40, RefreshMode::Ui);
+        app_flush(&mut a);
+        assert_eq!(crate::live::live_start(a.w, a.h), 0);
+        app_flush(&mut a);
+        let _ = bar_presents();
+        let chip = a.chip_at;
+        assert!(chip.y < band && chip.y + chip.h > band, "the chip across the band's lower edge: {chip:?}");
+        let r = Rect::new(chip.x, band, 300, 40);
+        canvas_fill(&mut a.screen, r, 0);
+        app_invalidate(&mut a, r, RefreshMode::Fast);
+        app_flush(&mut a);
+        let fast = fast_rects(&bar_presents());
+        crate::live::live_stop();
+        assert!(!fast.is_empty() && fast.iter().all(|f| f.y >= band), "{fast:?}");
+        let beside = format!("display.stale.{}.0.250.{band}", chip.x + chip.w + 2);
+        assert_eq!(crate::sim_sdl::display_stale_read(&mut a, &beside).as_deref(), Some("0"));
+    }
+
+    // Link to..., docked under the bar at the top, follows a tap that hides or brings back the bar: its old place and
+    // its new one go in the same grays refresh as the strip, so the screen shows it where it takes its taps.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn link_to_docked_at_the_top_follows_the_bars_tap() {
+        let mut a = bar_app();
+        let band = gui_status_h();
+        lt_open_for(&mut a, 2000, "", false);
+        app_flush(&mut a);
+        let _ = bar_presents();
+        let before = ed_ref(&a).lt.rect;
+        assert!(ed_ref(&a).lt.open && ed_ref(&a).lt.top && before.y > band, "{before:?}");
+        crate::status::status_toggle(&mut a);
+        let after = ed_ref(&a).lt.rect;
+        assert!(after.y < band, "up into the strip: {after:?}");
+        let r = rect_union(Rect::new(0, 0, a.w, band), rect_union(before, after));
+        app_flush(&mut a);
+        assert_eq!(bar_presents(), format!("ui {} {} {} {}", r.x, r.y, r.w, r.h));
+        assert!(layers_ok(&mut a), "Link to... drawn where it is, nothing of it left where it was");
+        crate::status::status_toggle(&mut a);
+        app_flush(&mut a);
+        assert_eq!(ed_ref(&a).lt.rect, before);
+        assert_eq!(bar_presents(), format!("ui {} {} {} {}", r.x, r.y, r.w, r.h));
+        assert!(layers_ok(&mut a));
+        crate::status::status_bar_back();
+    }
+
+    // A pen stroke as tall as the screen at x 600 on the open page of `bar_app`, the screen drawn again.
+    #[cfg(feature = "sim")]
+    fn tall_stroke(a: &mut App) {
+        let s = ed(a);
+        let (mut x0, mut y0, mut x1, mut y1) = (0.0, 0.0, 0.0, 0.0);
+        to_page(s, 600.0, 150.0, &mut x0, &mut y0);
+        to_page(s, 600.0, 2420.0, &mut x1, &mut y1);
+        let ip = s.page_ix().unwrap();
+        let page = s.hist[ip].page.as_deref_mut().unwrap();
+        let mut prm = ToolParams::default();
+        tool_params_default(TOOL_BALLPOINT, &mut prm);
+        let mut st = stroke_new(TOOL_BALLPOINT, &prm, 0x337);
+        for i in 0..60 {
+            let t = i as f32 / 59.0;
+            stroke_append(&mut st, &PenSample { x: x0, y: y0 + (y1 - y0) * t, pressure: 0.7, ..Default::default() }, 300.0);
+        }
+        page_add(page, st);
+        render_page_full(a);
+        compose_all(a, RefreshMode::Ui);
+        app_flush(a);
+        let _ = bar_presents();
+    }
+
+    // A pen lasso round the tall stroke: Select mode entered, a ring from above the stroke's top to below its foot.
+    #[cfg(feature = "sim")]
+    fn select_tall_stroke(a: &mut App) {
+        sel_toggle(a);
+        assert_eq!(ed_ref(a).sel.state, SelState::Armed);
+        let ring = [(520.0, 110.0), (700.0, 110.0), (700.0, 1200.0), (700.0, 2450.0), (520.0, 2450.0), (520.0, 1200.0), (520.0, 115.0)];
+        let t = now_ms();
+        pen_event(a, InType::PenDown, false, ring[0].0, ring[0].1, t);
+        for (k, &(x, y)) in ring.iter().enumerate().skip(1) {
+            pen_event(a, InType::PenMove, false, x, y, t + 10 * k as u32);
+        }
+        pen_event(a, InType::PenUp, false, 520.0, 115.0, t + 100);
+        app_flush(a);
+        let _ = bar_presents();
+        assert_eq!(ed_ref(a).sel.state, SelState::Selected);
+    }
+
+    // The selection's bar keeps out of the top strip, which is the status bar's (#337: a finger there shows or hides
+    // the bar, and while it is shown its band is drawn over what lies under it): a selection as tall as the screen,
+    // with no room for the bar under it, gets it over its box no higher than under the band, every button whole on
+    // the screen, with the bar shown or hidden.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn the_selection_bar_keeps_under_the_status_bars_band() {
+        let mut a = bar_app();
+        let band = gui_status_h();
+        tall_stroke(&mut a);
+        select_tall_stroke(&mut a);
+        let s = ed_ref(&a);
+        assert!(s.sel.bar.y >= band && !s.sel.btns.is_empty(), "the bar at {:?}", s.sel.bar);
+        assert!(s.sel.btns.iter().all(|(r, _)| r.y >= band), "{:?}", s.sel.btns);
+        assert!(s.sel.bar.y < 300, "over the box, at the top: {:?}", s.sel.bar);
+        // its buttons drawn whole under the band: dark pixels in each button's top row
+        let copy = s.sel.btns.iter().find(|(_, k)| *k == SelBtn::Copy).map(|(r, _)| *r).unwrap();
+        assert!((copy.x..copy.x + copy.w).any(|x| screen_px(&a, x, copy.y + 2) < 128), "Copy's frame at {copy:?}");
+        // hidden by a tap, the bar still keeps out of the strip
+        crate::status::status_toggle(&mut a);
+        app_flush(&mut a);
+        compose_all(&mut a, RefreshMode::Ui);
+        app_flush(&mut a);
+        let _ = bar_presents();
+        assert!(ed_ref(&a).sel.bar.y >= band, "{:?}", ed_ref(&a).sel.bar);
+        crate::status::status_bar_back();
+    }
+
+    // A pen contact the bar's band covers is the page's, never a control's (#337, the owner: "drawn over any elements
+    // below but still drawable beneath, user dismisses to access that part of the screen"): over the toolbar dragged
+    // up under the band it writes ink where it touches and leaves the toolbar alone, and with the bar hidden by a tap
+    // the same contact is the toolbar's again. A selection bar's button under the band takes no pen contact there,
+    // and a menu that is up closes, as at a contact outside it.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn a_pen_contact_under_the_band_is_the_pages_never_a_controls() {
+        let mut a = bar_app();
+        let band = gui_status_h();
+        tool_params_default(TOOL_BALLPOINT, &mut a.settings.tools[TOOL_BALLPOINT.0 as usize]);
+        a.settings.current_tool = TOOL_BALLPOINT;
+        a.settings.draw_tool = TOOL_BALLPOINT;
+        let x = ed_ref(&a).panel.x;
+        move_panel_to(&mut a, x, 0, RefreshMode::Ui);
+        app_flush(&mut a);
+        let p = ed_ref(&a).panel;
+        assert_eq!(p.y, 0);
+        // the toolbar's collapse button, under the band
+        let (cx, cy) = (p.x..p.x + p.w)
+            .map(|x| (x, band / 2))
+            .find(|&(x, y)| panel_hit_at(ed_ref(&a), x as f32, y as f32).is_some_and(|h| h.id == P_COLLAPSE))
+            .expect("the collapse button under the band");
+        let strokes = |a: &App| ed_ref(a).open_page().unwrap().strokes.len();
+        let before = strokes(&a);
+        let t = now_ms();
+        pen_event(&mut a, InType::PenDown, false, cx as f32, cy as f32, t);
+        pen_event(&mut a, InType::PenUp, false, cx as f32, cy as f32, t + 40);
+        app_flush(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.panel, s.collapsed, s.tools_open), (p, false, false), "the toolbar left alone");
+        assert_eq!(strokes(&a), before + 1, "a dot of ink on the page under the band");
+        // the tool picker the toolbar opens beside it, its top under the band too: a pen contact on its row there
+        // closes it, as one outside it does, and presses nothing
+        open_tools(&mut a);
+        app_flush(&mut a);
+        let (tool, pin) = (a.settings.current_tool, ed_ref(&a).pin_mode);
+        let (mx, my) = ed_ref(&a).tools_hits.h.iter().find(|h| h.r.y + 8 < band).map(|h| (h.r.x + h.r.w / 2, (h.r.y.max(0) + band) / 2)).expect("a control of the picker's under the band");
+        pen_event(&mut a, InType::PenDown, false, mx as f32, my as f32, t + 100);
+        pen_event(&mut a, InType::PenUp, false, mx as f32, my as f32, t + 140);
+        app_flush(&mut a);
+        assert_eq!((ed_ref(&a).tools_open, a.settings.current_tool, ed_ref(&a).pin_mode), (false, tool, pin));
+        assert_eq!(strokes(&a), before + 1, "its stroke swallowed");
+        // the bar hidden by a tap: the same contact is the toolbar's
+        crate::status::status_toggle(&mut a);
+        app_flush(&mut a);
+        assert!(panel_hit_at(ed_ref(&a), cx as f32, cy as f32).is_some());
+        pen_event(&mut a, InType::PenDown, false, cx as f32, cy as f32, t + 200);
+        pen_event(&mut a, InType::PenUp, false, cx as f32, cy as f32, t + 240);
+        app_flush(&mut a);
+        assert!(ed_ref(&a).collapsed, "the toolbar collapsed");
+        assert_eq!(strokes(&a), before + 1, "no ink");
+        crate::status::status_bar_back();
+        // a selection's bar button put under the band (layout_bar keeps it under the band): a pen there presses
+        // nothing
+        let mut a = bar_app();
+        tall_stroke(&mut a);
+        select_tall_stroke(&mut a);
+        let strokes = |a: &App| ed_ref(a).open_page().unwrap().strokes.len();
+        let before = strokes(&a);
+        ed(&mut a).sel.btns = vec![(Rect::new(100, 0, 250, band + 20), SelBtn::Delete)];
+        pen_event(&mut a, InType::PenDown, false, 150.0, (band / 2) as f32, t + 300);
+        pen_event(&mut a, InType::PenUp, false, 150.0, (band / 2) as f32, t + 340);
+        app_flush(&mut a);
+        assert_eq!(strokes(&a), before, "Delete under the band did not act");
+        crate::status::status_bar_back();
+    }
+
+    // A tap on a notebook's bar hides it while that notebook is open (#337, the owner: "user dismisses to access that
+    // part of the screen"), and a tap brings it back; each refreshes the bar's strip alone, in grays (no flash of the
+    // whole screen). The next notebook opened, or this one opened again, shows it; a status_on=0 an earlier version
+    // saved does not hide it; Settings > Sleep & Clock > Status bar's "Hide status bar inside Notebooks" does, for
+    // good, and a tap that brings the bar back then turns that row off. Over the Pages view a tap changes nothing.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn a_tap_on_the_bar_hides_it_while_its_notebook_is_open_and_refreshes_its_strip_alone() {
+        let root = std::env::temp_dir().join(format!("grimoire-bar-dismiss-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(store_init(root.to_str().unwrap()), 0);
+        let mut nb = NotebookInfo::default();
+        assert_eq!(store_create("Under the bar", "", PAPER_BLANK, &mut nb), 0);
+        let (mut w, mut h) = (0, 0);
+        crate::sim_sdl::display_set_orientation(0, &mut w, &mut h);
+        let mut a = app(1860, 2480, 1860, 2480);
+        settings_default(&mut a.settings);
+        assert!(a.settings.status_on && a.settings.status_in_notebooks, "on by default");
+        a.scr = ScreenId::Editor;
+        nav_init(&mut ed(&mut a).nav);
+        editor_open_notebook(&mut a, nb.id.as_str());
+        assert!(ed_ref(&a).open);
+        compose_all(&mut a, RefreshMode::Full);
+        app_flush(&mut a);
+        let _ = bar_presents();
+        let visible = |a: &App| crate::status::status_bar_visible(a);
+        let band = gui_status_h();
+        let strip = Rect::new(0, 0, 1860, band);
+        assert!(visible(&a) && crate::status::status_band_rows(&a) == band);
+        // a tap hides it: its strip alone, in grays, the page there shown; nothing saved
+        crate::status::status_toggle(&mut a);
+        assert!(!visible(&a) && crate::status::status_band_rows(&a) == 0);
+        assert_eq!((a.dirty, a.dirty_mode), (strip, RefreshMode::Ui));
+        app_flush(&mut a);
+        assert_eq!(bar_presents(), format!("ui 0 0 1860 {band}"));
+        assert_ne!(screen_px(&a, 930, 10), crate::globalui::GUI_GRAY_STATUS_BAND);
+        assert!(a.settings.status_on && a.settings.status_in_notebooks);
+        // another brings it back, the same way
+        crate::status::status_toggle(&mut a);
+        assert!(visible(&a));
+        assert_eq!((a.dirty, a.dirty_mode), (strip, RefreshMode::Ui));
+        app_flush(&mut a);
+        assert_eq!(bar_presents(), format!("ui 0 0 1860 {band}"));
+        assert_eq!(screen_px(&a, 930, 2), crate::globalui::GUI_GRAY_STATUS_BAND);
+        // hidden, then the notebook opened again: shown
+        crate::status::status_toggle(&mut a);
+        assert!(!visible(&a));
+        editor_open_notebook(&mut a, nb.id.as_str());
+        assert!(visible(&a));
+        // a status_on=0 an earlier version saved does not hide it, nor turn Settings > Sleep & Clock > Status bar's
+        // "Hide status bar inside Notebooks" on: a tap on that row hides the bar
+        a.settings.status_on = false;
+        assert!(visible(&a));
+        let mut m = crate::dispmenu::DispMenu::default();
+        crate::dispmenu::dispmenu_open_statusbar(&mut m, &mut a);
+        crate::dispmenu::dispmenu_draw(&mut m, &mut a);
+        let (x, y) = crate::dispmenu::dispmenu_control_point(&m, "notebooks").expect("the row");
+        let mut d = RECT_EMPTY;
+        crate::dispmenu::dispmenu_pointer(&mut m, &mut a, 0, x, y, 1, &mut d);
+        crate::dispmenu::dispmenu_pointer(&mut m, &mut a, 2, x, y, 2, &mut d);
+        assert!(!a.settings.status_in_notebooks && !visible(&a), "the row's tap hid the bar");
+        // the row hides it for good, through a reopen
+        editor_open_notebook(&mut a, nb.id.as_str());
+        assert!(!visible(&a) && crate::status::status_band_rows(&a) == 0);
+        // and a tap brings it back then, turning the row off
+        crate::status::status_toggle(&mut a);
+        assert!(visible(&a) && a.settings.status_in_notebooks);
+        // over the Pages view (which draws its own bar) no rows are the band's, and a tap changes nothing
+        ed(&mut a).pv.open = true;
+        assert_eq!(crate::status::status_band_rows(&a), 0);
+        app_flush(&mut a);
+        crate::status::status_toggle(&mut a);
+        ed(&mut a).pv.open = false;
+        assert!(visible(&a));
+        ed(&mut a).info_dirty = false;
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn fshape_event(a: &mut App, type_: InType, x: f32, y: f32, t_ms: u32) {
@@ -17817,7 +18307,7 @@ mod tests {
         paper_set_panel_ppi(0.0, 300.0);
         let mut a = app(aw, ah, pw, ph);
         a.scr = ScreenId::Editor;
-        a.settings.status_on = false;
+        a.settings.status_in_notebooks = false; // (no bar over the page: the page alone)
         a.settings.landscape_fit = true;
         let s = ed(&mut a);
         nav_init(&mut s.nav);

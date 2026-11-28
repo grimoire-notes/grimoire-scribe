@@ -781,7 +781,6 @@ pub fn app_init(a: &mut App, w: i32, h: i32, dpi: f32) -> i32 {
     }
     ui_init(dpi);
     crate::globalui::gui_status_style(a.settings.status_size, a.settings.clock_12h);
-    crate::globalui::gui_status_shown(a.settings.status_on);
     if font_init() != 0 {
         return -1;
     }
@@ -2647,6 +2646,7 @@ fn app_flush_in(a: &mut App) {
     if a.asleep {
         return; // the sleep screen stays up until wake
     }
+    band_keep(a);
     live_chip_sync(a);
     if rect_is_empty(a.dirty) && rect_is_empty(with(|s| s.self_dirty)) {
         live_presented(a.live_processed, a.live_processed_ms);
@@ -2722,6 +2722,11 @@ fn app_flush_in(a: &mut App) {
         }
     }
     live_toast_sync(a, overlay, reached, noticed.is_some());
+    // The chip, the notice and the toast joined in after band_keep cut a fast refresh to below a notebook bar's band:
+    // cut again, so the band is never in one (the chip's own pixels there went out in grays: live_chip_sync).
+    if m == RefreshMode::Fast {
+        a.dirty = crate::status::status_below_band(a, a.dirty);
+    }
     // (never the cleaning Full, nor a refresh with anything asked for in it)
     // (said only with its present: a flush that sends nothing, as after a settle with nothing to send, says nothing;
     // a Solid settle held back a pass for its stroke's frames, settle_waits_for_flush, says nothing until it is taken)
@@ -2756,6 +2761,28 @@ fn app_flush_in(a: &mut App) {
     status_flush(a); // (a refresh of the corner this one did not hold)
     notice_flush(a); // (and of the staying notice)
     crate::userfonts::userfonts_screen_drawn(); // (a custom font's first screen is on the panel: its guard mark goes)
+}
+
+// A notebook's bar drawn over the page (#337, status.rs status_band_rows) is in every present as the band and the
+// bar, never anything drawn into its rows since the bar was (a selection's outline, a press let go: the bar as it was
+// last drawn is put back over them, editor_bar_over), and a fast refresh (black and white only, which would dither its gray)
+// stops at its band: the panel keeps the bar from the last grays refresh, which the screen holds too. The
+// display then never has the band in a fast frame (display_fbink.rs, the RAM shadow and the settle's record agree),
+// and the padded pen mode's refresh region keeps clear of its rows (display_keep_top).
+fn band_keep(a: &mut App) {
+    let band = crate::status::status_band_rows(a);
+    display_keep_top(band);
+    if band <= 0 {
+        return;
+    }
+    let touched = rect_union(a.dirty, with(|s| s.self_dirty));
+    if rect_is_empty(touched) || touched.y >= band {
+        return;
+    }
+    crate::editor::editor_bar_over(a, touched);
+    if a.dirty_mode == RefreshMode::Fast {
+        a.dirty = crate::status::status_below_band(a, a.dirty);
+    }
 }
 
 // Live view's toast layer (live.rs, LIVE_LAYER_TOAST) as the present app_flush is about to send leaves
@@ -2797,8 +2824,15 @@ pub fn app_switch(a: &mut App, s: ScreenId) {
     app_invalidate_all(a, RefreshMode::Full); // a visible toast is overlaid again at the flush
 }
 
-/// Pressed-state feedback for a tapped control: invert + FAST refresh now.
+/// Pressed-state feedback for a tapped control: invert + FAST refresh now. In a notebook whose bar is drawn over
+/// the page (#337) only the part below the bar: a control under the band is covered by it, and the band is never
+/// inverted nor in a fast refresh (its lift, app_press_release or the caller's own invert, is drawn over again at
+/// the flush: band_keep).
 pub fn app_press_feedback(a: &mut App, r: Rect) {
+    let r = crate::status::status_below_band(a, r);
+    if rect_is_empty(r) {
+        return;
+    }
     canvas_invert(&mut a.screen, r);
     live_push_screen(a, r);
     display_present(&a.screen, r, RefreshMode::Fast);

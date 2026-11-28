@@ -3,10 +3,12 @@
 //! The old floating clock-and-battery corner is retired: a notebook page keeps the one status bar the
 //! whole app draws (globalui.rs), showing the time, date, connections and battery at the top of the
 //! page. The settings.ini fields (status_on, status_size, status_corner) are still read and written so
-//! an owner's file keeps its meaning: `status_on` is whether a notebook's bar is shown (a tap there
-//! hides it, another brings it back, and the state survives a restart), `status_size` scales the bar,
-//! and the corner has no place on the page. The Display sheet's "Status bar" page changes the size,
-//! the 12-hour clock, and whether a notebook hides the bar (its background there is transparent).
+//! an owner's file keeps its meaning: `status_size` scales the bar, and the corner has no place on the
+//! page. A notebook draws its bar over the page on the bar's gray band (#337); a tap there hides it
+//! while that notebook is open, another brings it back, and the next notebook opened shows it again
+//! (status_on no longer hides it: a `status_on=0` an earlier version saved shows the bar). The Display
+//! sheet's "Status bar" page changes the size, the 12-hour clock, and whether a notebook hides the bar
+//! for good (status_in_notebooks).
 //!
 //! The functions here that app.rs, editor.rs and the shortcuts still call are kept as no-ops
 //! (status_cover and friends) so the editor's event and flush paths do not need a second flag for a
@@ -111,36 +113,88 @@ pub fn status_cycle_mode(a: &mut App) {
     status_toggle(a);
 }
 
-/// Turns the shared status bar on or off inside a notebook. A shown bar hides; a hidden one comes
-/// back, whether a tap hid it or the Status bar page's "Hide status bar inside Notebooks" row did.
-/// `status_on` and `status_in_notebooks` are saved, so the state survives a restart. Taps elsewhere
-/// leave it alone: only a notebook can toggle the bar.
+thread_local! {
+    /// A tap hid the bar in the notebook open now (#337): it lasts while that notebook is open, and the
+    /// next notebook opened, or this one opened again, shows the bar (status_bar_back). Never
+    /// saved.
+    static DISMISSED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// A bar a tap hid shows again: a notebook opened (editor.rs editor_open_notebook), or the Status bar page's
+/// "Hide status bar inside Notebooks" row was turned off. That row is the lasting way to hide it.
+pub fn status_bar_back() {
+    DISMISSED.with(|d| d.set(false));
+}
+
+/// Turns the shared status bar on or off inside a notebook's page. A shown bar hides until the notebook
+/// closes (#337: the next notebook opened, or this one opened again, shows it); a hidden one comes
+/// back, whether a tap hid it or the Status bar page's "Hide status bar inside Notebooks" row did (that
+/// row is turned off then, and saved). Only the bar's strip is drawn again and refreshed, in grays, with no
+/// flash (editor.rs editor_bar_toggled). Taps elsewhere leave it alone: only a notebook's page, with
+/// nothing that covers the screen in front of it (Settings, the Pages view, the Graph, a picker), can
+/// toggle the bar.
 pub fn status_toggle(a: &mut App) {
-    if a.scr != ScreenId::Editor {
+    if a.scr != ScreenId::Editor || !crate::editor::editor_page_composed(a) {
         return;
     }
     a.settings.status_mode = 1;
     if status_bar_visible(a) {
-        a.settings.status_on = false;
+        DISMISSED.with(|d| d.set(true));
     } else {
-        a.settings.status_on = true;
-        a.settings.status_in_notebooks = true;
+        DISMISSED.with(|d| d.set(false));
+        if !a.settings.status_in_notebooks || !a.settings.status_on {
+            a.settings.status_on = true;
+            a.settings.status_in_notebooks = true;
+            settings_save(&a.settings);
+        }
     }
-    settings_save(&a.settings);
-    crate::globalui::gui_status_shown(a.settings.status_on);
-    app_redraw(a);
-    qlog!("status: the shared bar is %s", if a.settings.status_on { "shown" } else { "hidden" });
+    crate::editor::editor_bar_toggled(a);
+    qlog!("status: the shared bar is %s", if status_bar_visible(a) { "shown" } else { "hidden" });
 }
 
-/// Whether the shared bar is drawn on the screen in front. Only a notebook can hide it: `status_on`
-/// and the Status bar page's "Hide status bar inside Notebooks" row (its inverse, stored as
-/// status_in_notebooks). Every other screen keeps its bar. An app that asks for no bar gets none.
+/// Whether a notebook's page has its bar drawn over it (#337): unless the Status bar page's "Hide status
+/// bar inside Notebooks" row is on (status_in_notebooks off) or a tap hid it in this notebook. A
+/// `status_on=0` an earlier version saved (when a tap's hiding lasted) no longer hides it.
+pub fn status_notebook_bar(a: &App) -> bool {
+    a.settings.status_in_notebooks && !DISMISSED.with(|d| d.get())
+}
+
+/// The rows at the top of the screen a notebook's bar covers now: its height while it is drawn over
+/// the page, 0 while it is hidden or a screen that covers the page is in front (Settings, the Pages
+/// view, the Graph, a picker: they draw their own bar, or none). Every fast refresh in the notebook stops at
+/// them (status_below_band), so the bar's gray is never dithered.
+pub fn status_band_rows(a: &App) -> i32 {
+    if a.scr == ScreenId::Editor && status_notebook_bar(a) && crate::editor::editor_page_composed(a) {
+        crate::globalui::gui_status_h()
+    } else {
+        0
+    }
+}
+
+/// The part of screen rect r below the rows a notebook's bar covers now (status_band_rows): r itself
+/// while the bar is hidden or another screen is in front, empty when r lies within the bar. A fast
+/// refresh (black and white only) in a notebook keeps to it: the pen's live frames (editor.rs show),
+/// the lasso (lasso_clip), a press look (app.rs app_press_feedback, the selection bar's bar_press_show)
+/// and every other one at the flush (app.rs app_flush), so the band is never in one.
+pub fn status_below_band(a: &App, r: Rect) -> Rect {
+    let top = status_band_rows(a);
+    if top <= 0 || rect_is_empty(r) || r.y >= top {
+        return r;
+    }
+    let bottom = r.y + r.h;
+    if bottom <= top {
+        return RECT_EMPTY;
+    }
+    Rect { x: r.x, y: top, w: r.w, h: bottom - top }
+}
+
+/// Whether the shared bar is drawn on the screen in front. Only a notebook can hide it: a tap on it
+/// while that notebook is open (status_notebook_bar) and the Status bar page's "Hide status bar inside
+/// Notebooks" row (its inverse, stored as status_in_notebooks). Every other screen keeps its bar, and
+/// so does Settings over a notebook. An app that asks for no bar gets none.
 pub fn status_bar_visible(a: &App) -> bool {
     match a.scr {
-        ScreenId::Editor => {
-            a.settings.status_on
-                && (crate::library::library_settings_active(a) || a.settings.status_in_notebooks)
-        }
+        ScreenId::Editor => crate::library::library_settings_active(a) || status_notebook_bar(a),
         ScreenId::Library if a.app_view.open => a.app_view.status_bar,
         _ => true,
     }

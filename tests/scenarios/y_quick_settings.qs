@@ -7,8 +7,8 @@
 # rust-only
 # Quick settings is the app's: a one-finger pull from the top works on the home screen, over an app,
 # and in a notebook. It has brightness and warmth, Settings, rotation lock and auto brightness.
-# The status bar has no background in a notebook; only there can it be hidden, and the Status bar
-# page's one row is Hide status bar inside Notebooks.
+# In a notebook the status bar is drawn over the page on its gray band (#337); only there can it be
+# hidden, and the Status bar page's one row is Hide status bar inside Notebooks.
 wait 3800
 clock 1700000000
 battery 87
@@ -71,7 +71,7 @@ wait 300
 expect editor.settings.sheet is none
 expect status.visible is 1
 shot 02-status-back
-# Into a notebook. Its bar is the one shared bar, drawn transparent over the page (nothing reserved).
+# Into a notebook. Its bar is the one shared bar, drawn over the page on its gray band (nothing reserved, #337).
 tap library add
 wait 100
 tap library add.new-notebook
@@ -148,10 +148,11 @@ expect status.visible is 1
 expect status.zone is 0 0 1860 78
 expect quick is 0
 shot 05-notebook-status-back-from-row
-# A tap on the notebook's bar hides it; another tap on the top strip brings it back.
+# A tap on the notebook's bar hides it; another tap on the top strip brings it back. (Since #337 the
+# hiding lasts while the notebook is open and is not saved: status_on stays 1.)
 tap 930 40
 wait 300
-expect settings.status_on is 0
+expect settings.status_on is 1
 expect status.visible is 0
 expect quick is 0
 shot 06-notebook-bar-hidden

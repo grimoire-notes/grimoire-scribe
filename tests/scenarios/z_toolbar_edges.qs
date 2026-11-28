@@ -3,7 +3,8 @@
 # settings: status_mode=1
 # The toolbar goes wherever it is dragged, up to the screen's very edges: its top at y 0 (no 12 px
 # band above it) and its foot on the bottom edge, upright and sideways, where its buttons still take
-# their taps. A drag the pen's coming near cancels leaves it where it was last drawn.
+# their taps (at the top with the status bar hidden: while it is shown its band covers the toolbar's
+# top, #337). A drag the pen's coming near cancels leaves it where it was last drawn.
 wait 300
 tap library card.1
 wait 300
@@ -20,6 +21,12 @@ expect editor.modal is display
 tap panel display.done
 wait 300
 expect editor.modal is none
+# The status bar is drawn over the page (#337), so it covers the toolbar's top at y 0, and a contact there is the
+# bar's: a tap hides the bar while the notebook is open, and the grip under it takes the drag.
+tap 1737 40
+wait 300
+expect status.visible is 0
+expect editor.panel_rect is 1704 0 128 1734
 # The foot on the bottom edge (2480 less the panel's 1734).
 drag touch 1737 40 1737 2470 5
 wait 300

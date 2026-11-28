@@ -1500,6 +1500,13 @@ fn display_stale(a: Option<&mut App>, key: &[u8], out: &mut String, cap: usize) 
     })
 }
 
+/// display_stale for a unit test, which has its App at hand: None where the key has no answer.
+#[cfg(test)]
+pub(crate) fn display_stale_read(a: &mut App, key: &str) -> Option<String> {
+    let mut got = String::new();
+    display_stale(Some(a), key.as_bytes(), &mut got, GOT_CAP).then_some(got)
+}
+
 /// The rect a probe key's tail names: exactly four numbers, X.Y.W.H (display.dark).
 fn probe_rect(rest: &[u8]) -> Option<Rect> {
     let v = std::str::from_utf8(rest).ok()?.split('.').map(|t| t.parse::<i32>().ok()).collect::<Option<Vec<i32>>>()?;

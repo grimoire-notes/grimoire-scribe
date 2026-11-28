@@ -78,18 +78,33 @@ if [ "$(uname)" = Darwin ] && command -v swiftc >/dev/null 2>&1; then
     check "QR decoder builds (swiftc)" "[ $BUILD/host/qrdecode -nt tools/qrdecode.swift ]"
     QRDEC=$BUILD/host/qrdecode
 fi
-# The gray of a screenshot's top-left pixel: white, or black when the colors are inverted (the first
-# pixel of the first row needs no PNG unfiltering).
-corner() {
+# The gray of a screenshot's pixel X,Y (an 8-bit PNG's first channel), every row's filter undone up to row Y: the
+# paper's white, or black when the colors are inverted.
+pixel() {
     python3 -I -c "
 import struct, sys, zlib
 d = open(sys.argv[1], 'rb').read()
-p, z = 8, b''
+x, y = int(sys.argv[2]), int(sys.argv[3])
+p, z, w, ch = 8, b'', 0, 1
 while p < len(d):
     n, t = struct.unpack('>I4s', d[p:p + 8])
+    if t == b'IHDR':
+        w, ch = struct.unpack('>I', d[p + 8:p + 12])[0], {0: 1, 2: 3, 4: 2, 6: 4}[d[p + 17]]
     z += d[p + 8:p + 8 + n] if t == b'IDAT' else b''
     p += n + 12
-print(zlib.decompressobj().decompress(z, 2)[1])" "$1" 2>/dev/null || echo none
+raw, stride, prev = zlib.decompress(z), w * ch, bytearray(w * ch)
+for r in range(y + 1):
+    f, row = raw[r * (stride + 1)], bytearray(raw[r * (stride + 1) + 1:(r + 1) * (stride + 1)])
+    for i in range(stride):
+        a, b, c = row[i - ch] if i >= ch else 0, prev[i], prev[i - ch] if i >= ch else 0
+        if f == 1: row[i] = (row[i] + a) & 255
+        elif f == 2: row[i] = (row[i] + b) & 255
+        elif f == 3: row[i] = (row[i] + (a + b) // 2) & 255
+        elif f == 4:
+            pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+            row[i] = (row[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+    prev = row
+print(prev[x * ch])" "$1" "$2" "$3" 2>/dev/null || echo none
 }
 curl -fsS "$URL/" -o "$B/index.html"
 check "index html" "grep -q 'Grimoire</h1>' $B/index.html"
@@ -325,7 +340,8 @@ GRIMOIRE_ROOT="$V" GRIMOIRE_SCRIPT=tests/scenarios/q_share_rotate.qs GRIMOIRE_SH
 APP=$!
 await "$B/app-invert.log" 02-share-landscape
 stop_app
-check "Invert: the screen is white on black" "[ \"\$(corner $BUILD/shots/q_share_invert/01-share-portrait.png)\" = 0 ]"
+# (read under the status bar, whose band is gray, #337: the corner is the band, shown as its inverse)
+check "Invert: the screen is white on black" "[ \"\$(pixel $BUILD/shots/q_share_invert/01-share-portrait.png 5 100)\" = 0 ]"
 if [ -z "$QRDEC" ]; then
     echo "skip Invert QR code read back (needs macOS and swiftc)"
 elif ! grep -q 'share: QR code for ' "$B/app-invert.log"; then

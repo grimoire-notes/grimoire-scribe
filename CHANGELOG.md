@@ -9,8 +9,9 @@
   All, Notebooks and Folders chips beside Sort (Name (A-Z), Name (Z-A), Newest first, Oldest first), both kept across
   restarts, and the cards. A name too long for one line under its square takes a smaller size or a second line, so
   Grimoire's own names are whole in every language. The parts are ruled apart as a printed page is: a rule under the
-  title, an ornament between the apps and the chips (a plain gray line in Classic), a light gray rule under the chips
-  and a rule over the foot. Inside a folder Back and the folder's name are at the left. Settings is not in the row:
+  title and a rule over the foot, each across the whole width of the screen (#337), and between them, from margin to
+  margin, an ornament between the apps and the chips (a plain gray line in Classic) and a light gray rule under the
+  chips. Inside a folder Back and the folder's name are at the left. Settings is not in the row:
   the button at the top right and Quick settings open it. The + button at the bottom right (a rounded rectangle in
   Classic) makes a New notebook or a New folder, or opens Share (Import over Wi-Fi); the page arrows and "Page N of M"
   stand level with it. A card's picture keeps to the card's corners. Search opens the keyboard and shows, as you type,
@@ -26,13 +27,17 @@
   too, opens Brightness and Warmth, Settings, Rotation lock (the screen stays turned as it is) and Auto
   brightness. A notebook's toolbar has no Display button any more: brightness and warmth are here, and the rest
   of its sheet is Settings > Display > Display: brightness, warmth.
-- **A status bar** (#225, nebuff). The clock and battery corner is replaced by a bar on every screen (an app may
-  hide it): the time and date at the left, Wi-Fi, Bluetooth and the battery's percent at the right. In a
-  notebook it lies over the page's top margin with the page showing through; a tap on it hides it, and a tap on
-  the top strip brings it back. There its minute's refresh waits while the pen is writing or near the screen,
-  and comes once the pen has left (#242). Settings > Sleep & Clock > Status bar (was Clock settings) has Hide
-  status bar inside Notebooks, Display time as 12 hour and its size: small (92% of medium, #319; the default,
-  #329), medium or large; the corner rows are gone. After the update from 2.2 or earlier a bar at medium (the
+- **A status bar** (#225, nebuff; #337). The clock and battery corner is replaced by a bar on every screen (an app
+  may hide it): the time and date at the left, Wi-Fi, Bluetooth and the battery's percent at the right, all dark on a
+  band of gray across the top (a radio that is off in a lighter gray). In a notebook the bar is drawn over the page,
+  on by default: what is under it stays hidden, and you can still write there (the pen there writes on the page,
+  even over a toolbar dragged under the bar, which a finger reaches by tapping the bar away). Sheets and the
+  selection's bar open below it. A tap on it hides it, showing that part of the page, until the notebook is closed (the next notebook opened, or this one opened again, shows it), and
+  a tap on the top strip brings it back; neither flashes the screen. There its minute's refresh waits while the pen
+  is writing or near the screen, and comes once the pen has left (#242). Settings > Sleep & Clock > Status bar (was
+  Clock settings) has Hide status bar inside Notebooks (hidden in every notebook until it is turned off again),
+  Display time as 12 hour and its size: small (92% of medium, #319; the default, #329), medium or large; the corner
+  rows are gone. After the update from 2.2 or earlier a bar at medium (the
   size 2.0 to 2.2 start with) becomes small; small and large stay as they were.
 - **Apps** (#225, nebuff; #238, #259). Full-screen programs packaged for Grimoire, installed from the Package
   Store. One opens from the home's app row or Apps, and two fingers swiped up from the bottom of the screen to

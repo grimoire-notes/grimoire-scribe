@@ -492,7 +492,9 @@ fn redraw(a: &mut App, r: Rect, m: RefreshMode) {
 /// The bar's place and buttons for the state now (screen px).
 fn layout_bar(a: &mut App) {
     let (aw, ah) = (a.w, a.h);
-    let top = status_reserved(a);
+    // Never in the top strip: it is the status bar's (a finger there shows or hides the bar), and while the bar is
+    // shown its band is drawn over whatever lies under it (#337).
+    let top = status_reserved(a).max(gui_status_h());
     let has_clip = clipboard_has();
     let s = ed(a);
     let st = s.sel.state;
@@ -856,9 +858,11 @@ pub(super) fn sel_down(a: &mut App, ev: &InEvent, pen: bool) {
         return;
     }
     let (x, y) = (ev.x as i32, ev.y as i32);
+    // (the bar keeps under the band, layout_bar; a contact the band covers is never its, #337)
+    let covered = y < crate::status::status_band_rows(a);
     let s = ed(a);
     s.owner = Owner::Select;
-    if let Some(&(r, b)) = s.sel.btns.iter().find(|(r, _)| rect_contains(*r, x, y)) {
+    if let Some(&(r, b)) = s.sel.btns.iter().find(|(r, _)| !covered && rect_contains(*r, x, y)) {
         // The press shows at once (the panel's buttons' pressed look, a DU of its own) and acts at the
         // lift, so a button that changes nothing visible (Copy) still answers the tap (issue #50).
         // (the rest of the contact is swallowed)
@@ -867,7 +871,7 @@ pub(super) fn sel_down(a: &mut App, ev: &InEvent, pen: bool) {
         bar_press_show(a, r);
         return;
     }
-    if rect_contains(s.sel.bar, x, y) {
+    if !covered && rect_contains(s.sel.bar, x, y) {
         s.owner = Owner::Select;
         return;
     }
@@ -1032,7 +1036,9 @@ fn button_pointer(a: &mut App, ph: i32, ev: &InEvent) {
 /// A bar button's pressed look, shown now: the button drawn as the panel's pressed buttons are (the
 /// draw reads `pressed`) and its rect sent as a Fast refresh, so a tap answers as a panel button's does
 /// even when what it does changes nothing on the screen (Copy: issue #50).
-fn bar_press_show(a: &mut App, r: Rect) {
+pub(super) fn bar_press_show(a: &mut App, r: Rect) {
+    // (below a notebook's bar drawn over the page: the band is never in a fast refresh, #337)
+    let r = crate::status::status_below_band(a, r);
     if rect_is_empty(r) {
         return;
     }

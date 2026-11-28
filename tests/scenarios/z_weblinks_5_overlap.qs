@@ -1,5 +1,5 @@
 # settings: status_mode=1
-# settings: status_on=0
+# settings: status_in_notebooks=0
 # settings: shortcuts_enabled=1
 # settings: mirror_pdf=0
 # env: GRIMOIRE_IMPORT_STABLE=fast GRIMOIRE_PDF_SLICE_PAGES=2
