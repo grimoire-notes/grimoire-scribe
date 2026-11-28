@@ -90,7 +90,7 @@ expect library.ui_at.472.472 is app.store
 expect library.ui_at.253.472 is
 expect library.ui_at.1721.472 is apps
 expect library.ui_at.1721.500 is
-expect library.home.marks is title 227 11, break 534 32, light 703 2, foot 2235 11
+expect library.home.marks is title 227 11, break 527 32, light 703 2, foot 2235 11
 expect library.home.marks_in_hits is 0
 expect library.home.foot_axis is 2358 2358 2358 2358
 expect library.home.fab is 1666 2286 144 144 cut 22
@@ -173,7 +173,7 @@ expect library.home.header is title search settings
 expect library.home.squares is 52 270 176 176, 272 270 176 176, 492 270 176 176, 712 270 176 176, 932 270 176 176, 1152 270 176 176, 1372 270 176 176, 1592 270 176 176, 2252 270 176 176
 expect library.home.step is 220
 expect library.home.labels is 1 1 1 1 1 1 1 2 1
-expect library.home.marks is title 227 11, break 534 32, light 703 2, foot 1615 11
+expect library.home.marks is title 227 11, break 545 32, light 703 2, foot 1615 11
 expect library.home.marks_in_hits is 0
 expect library.home.foot_axis is 1738 1738 1738 1738
 expect library.home.fab is 2286 1666 144 144 cut 22
@@ -185,7 +185,7 @@ wait 300
 expect library.home.header is back title search settings
 expect library.ui_at.98.153 is back
 expect library.ui_has.app.whats-new is 0
-expect library.home.marks is title 227 11, break 534 32, light 703 2, foot 2235 11
+expect library.home.marks is title 227 11, break 527 32, light 703 2, foot 2235 11
 expect library.home.marks_in_hits is 0
 expect library.home.foot_axis is 2358 2358 2358 2358
 shot 04-gothic-folder
@@ -218,7 +218,7 @@ tap library done
 wait 300
 expect library.home.header is title search settings
 expect library.home.squares is 51 270 176 176, 277 270 176 176, 503 270 176 176, 729 270 176 176, 955 270 176 176, 1181 270 176 176, 1407 270 176 176, 1633 270 176 176
-expect library.home.marks is title 231 3, break 549 2, light 703 2, foot 2243 3
+expect library.home.marks is title 231 3, break 542 2, light 703 2, foot 2243 3
 expect library.home.marks_in_hits is 0
 expect library.home.fab is 1666 2286 144 144 round 24
 expect display.dark.1666.2286.24.24 is 451
@@ -230,7 +230,7 @@ shot 02-classic
 rotate 1
 wait 300
 expect library.home.labels is 1 1 1 1 1 1 1 1 1
-expect library.home.marks is title 231 3, break 549 2, light 703 2, foot 1623 3
+expect library.home.marks is title 231 3, break 542 2, light 703 2, foot 1623 3
 expect library.home.marks_in_hits is 0
 expect library.home.fab is 2286 1666 144 144 round 24
 expect display.dark.2286.1666.24.24 is 451
@@ -268,7 +268,7 @@ wait 300
 expect library.sheet is none
 expect library.pages is 2
 expect library.home.squares is 51 290 176 176, 277 290 176 176, 503 290 176 176, 729 290 176 176, 955 290 176 176, 1181 290 176 176, 1407 290 176 176, 1633 290 176 176
-expect library.home.marks is title 251 3, break 569 2, light 723 2, foot 2243 3
+expect library.home.marks is title 251 3, break 562 2, light 723 2, foot 2243 3
 expect library.home.marks_in_hits is 0
 expect library.home.foot_axis is 2358 2358 2358 2358
 shot 08-classic-large
@@ -282,13 +282,13 @@ expect settings.theme is gothic
 tap library done
 wait 300
 expect library.home.squares is 51 290 176 176, 277 290 176 176, 503 290 176 176, 729 290 176 176, 955 290 176 176, 1181 290 176 176, 1407 290 176 176, 1633 290 176 176
-expect library.home.marks is title 247 11, break 554 32, light 723 2, foot 2235 11
+expect library.home.marks is title 247 11, break 547 32, light 723 2, foot 2235 11
 expect library.home.marks_in_hits is 0
 expect library.home.foot_axis is 2358 2358 2358 2358
 shot 09-gothic-large
 rotate 1
 wait 300
-expect library.home.marks is title 247 11, break 554 32, light 723 2, foot 1615 11
+expect library.home.marks is title 247 11, break 565 32, light 723 2, foot 1615 11
 expect library.home.marks_in_hits is 0
 expect library.home.foot_axis is 1738 1738 1738 1738
 shot 10-gothic-large-sideways

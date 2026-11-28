@@ -1490,7 +1490,7 @@ that would cross the limit (`clean_line`).
 ## The home: its header, app squares and rules (2.3, issues #319, #332)
 
 `library.rs` `draw_base`, with the kit's pieces in `globalui.rs`. Every band under the header is placed by one
-function from the band above it (`apps_top`, `title_rule_y`, `section_break_cy`, `filters_top`, `hair_rule_y`,
+function from the band above it (`apps_top`, `title_rule_y`, `filters_top`, `section_break_cy`, `hair_rule_y`,
 `grid_top`; at the foot `fab_rect`, `foot_rule_y` and `pager_rects`), and the drawing, the hits and the
 scenarios' `library.home.*` keys (docs/SIM.md) all read them, so a tap lands where its control is drawn, upright and
 sideways, at every status bar size. The layout is the same in both themes and in a folder; the status bar's size
@@ -1515,13 +1515,13 @@ moves everything under the header with it, and upright the cards stay two rows a
 - **The rules** (`gui_title_rule`, `gui_section_break`, `gui_hair_rule`, `gui_foot_rule`), margin to margin, each in
   the paper between two parts: under the header the title rule (Gothic: 4 px black, 5 px of paper, 2 px black;
   Classic: one 3 px line), as much paper over it as under it; between the app row and the sorting line the section
-  break (Gothic: the divider under a Gothic sheet's title, a 2 px rule broken by a 16 px lozenge between two of 8,
-  `ui_ornament`; Classic: one plain 2 px line of gray 102, a panel level darker than the light rule, no dots, which a
-  screen that pages could take for page dots); under the sorting line the light rule, 2 px of gray 136 (a panel level)
-  in both; and over the foot the title rule
-  turned over (Classic: one 3 px line), placed from the + button so 40 px of paper stay between them. No mark lies in
-  a hit's rectangle, so a press's fast refresh (black and white only, `app_press_feedback`) never sends one; they
-  change only when the whole home is drawn again.
+  break, centred in the paper between the foot of the row's lowest name (one line or two) and the chips, which do not
+  move with it (Gothic: the divider under a Gothic sheet's title, a 2 px rule broken by a 16 px lozenge between two of
+  8, `ui_ornament`; Classic: one plain 2 px line of gray 102, a panel level darker than the light rule, no dots, which
+  a screen that pages could take for page dots); under the sorting line the light rule, 2 px of gray 136 (a panel
+  level) in both; and over the foot the title rule turned over (Classic: one 3 px line), placed from the + button so
+  40 px of paper stay between them. No mark lies in a hit's rectangle, so a press's fast refresh (black and white
+  only, `app_press_feedback`) never sends one; they change only when the whole home is drawn again.
 - **The foot**: the page arrows and "Page N of M" stand on the + button's centre line. The + button
   (`gui_fab`) is Gothic's carved black square and, in Classic, a black rectangle with the theme's round corners
   (`gui_radius`), the same size; an app's `fab` (docs/APPS.md) is drawn by the same function.

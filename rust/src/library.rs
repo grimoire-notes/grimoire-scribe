@@ -689,14 +689,18 @@ fn title_rule_y() -> i32 {
     let buttons_end = gui_status_h() + (head_h() + gui_top_button_h()) / 2;
     (buttons_end + apps_top() - gui_title_rule_h()) / 2
 }
-/// The section break's centre line: under the app row's names (their two lines' room), 8 px of paper and half the
-/// break's tallest mark, Gothic's 32 px lozenge (Classic's line takes the same place).
-fn section_break_cy() -> i32 {
-    apps_top() + apps_h() + ui_px(8.0) + ui_px(16.0)
-}
-/// The chips' and the Sort select's top: 30 px of paper under the section break's lozenge.
+/// The chips' and the Sort select's top: under the app row's names (their two lines' room) the section break's band,
+/// 8 px of paper, the break's tallest mark (Gothic's 32 px lozenge) and 30 px of paper.
 fn filters_top() -> i32 {
-    section_break_cy() + ui_px(16.0) + ui_px(30.0)
+    apps_top() + apps_h() + ui_px(8.0) + ui_px(16.0) + ui_px(16.0) + ui_px(30.0)
+}
+/// The section break's centre line: the middle of the paper between the foot of the row's lowest name (`lines`, one
+/// or two: the most any of its names took) and the chips, so it has as much paper over it as under it whatever the
+/// names take (37 px each side of Gothic's lozenge under names of one line at 300 dpi, 19 under a name of two). The
+/// chips stay where they are; Classic's line takes the same centre.
+fn section_break_cy(lines: i32) -> i32 {
+    let name_foot = apps_top() + gui_app_square_side() + crate::globalui::gui_app_label_gap() + lines.clamp(1, 2) * crate::globalui::gui_app_label_line_h();
+    (name_foot + filters_top()) / 2
 }
 fn grid_top() -> i32 {
     filters_top() + filters_h() + gui_gap() + ui_px(16.0)
@@ -2095,15 +2099,9 @@ fn draw_base(a: &mut App) {
     // app row and the sorting line, the light rule between the sorting line and the cards, and the foot rule over the
     // pager and the + button, each from margin to margin in the paper between two parts (the bands above draw_base).
     let (rx0, rx1) = (m, aw - m);
+    // (the section break is drawn after the row, centred under its lowest name: section_break_cy)
     gui_title_rule(c, rx0, rx1, title_rule_y());
     drawn.marks.push(("title", title_rule_y(), gui_title_rule_h()));
-    gui_section_break(c, rx0, rx1, section_break_cy());
-    let half = gui_section_break_half();
-    drawn.marks.push(("break", section_break_cy() - half, 2 * half));
-    gui_hair_rule(c, rx0, rx1, hair_rule_y());
-    drawn.marks.push(("light", hair_rule_y(), gui_hair_rule_h()));
-    gui_foot_rule(c, rx0, rx1, foot_rule_y(aw, ah));
-    drawn.marks.push(("foot", foot_rule_y(aw, ah), gui_title_rule_h()));
 
     // The app row (#332): even squares, every one the same size with the same paper between every two
     // (app_row_slots), the icon in the middle of each and its name under it: Files, Package Store and Share, then
@@ -2124,6 +2122,17 @@ fn draw_base(a: &mut App) {
     hits_add(&mut s.hits, hit, H_APPS, 0);
     drawn.squares.push(all);
     drawn.label_lines.push(lines);
+
+    // The section break in the paper between the row's lowest name and the chips, then the light rule and the foot
+    // rule (their order in the record is top to bottom).
+    let cy = section_break_cy(drawn.label_lines.iter().copied().max().unwrap_or(1));
+    gui_section_break(c, rx0, rx1, cy);
+    let half = gui_section_break_half();
+    drawn.marks.push(("break", cy - half, 2 * half));
+    gui_hair_rule(c, rx0, rx1, hair_rule_y());
+    drawn.marks.push(("light", hair_rule_y(), gui_hair_rule_h()));
+    gui_foot_rule(c, rx0, rx1, foot_rule_y(aw, ah));
+    drawn.marks.push(("foot", foot_rule_y(aw, ah), gui_title_rule_h()));
 
     // The filter chips and the Sort select: the global elements' chip and select.
     let sort_r = sort_rect(aw);
@@ -12387,8 +12396,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    // The home's bands at every status bar size, upright and sideways, in both themes (#332): the title rule has as
-    // much paper over it as under it, the foot rule leaves 40 px of paper over the + button, every mark lies outside
+    // The home's bands at every status bar size, upright and sideways, in both themes, in English and in Polish (whose
+    // Show All takes two lines in Gothic) (#332): the title rule has as much paper over it as under it, and so has the
+    // section break between the row's lowest name and the chips; the foot rule leaves 40 px of paper over the + button,
+    // every mark lies outside
     // every hit (a press's fast refresh sends a hit's rect, black and white), the cards end above the foot rule, and
     // upright the cards are two rows at every size.
     #[test]
@@ -12405,8 +12416,10 @@ mod tests {
         settings_default(&mut a.settings);
         lib(&mut a).modal = Modal::None;
         reload(&mut a);
-        for size in 0..crate::status::STATUS_SIZES {
+        let mut seen_lines = [false; 3];
+        for (size, lang) in (0..crate::status::STATUS_SIZES).flat_map(|n| [(n, "en"), (n, "pl")]) {
             crate::globalui::gui_status_style(size, false);
+            i18n_set(lang);
             for theme in [UiTheme::Gothic, UiTheme::Classic] {
                 ui_set_theme(theme);
                 for (w, h) in [(1860, 2480), (2480, 1860), (1986, 2648), (2648, 1986)] {
@@ -12415,7 +12428,7 @@ mod tests {
                     canvas_free(&mut a.screen);
                     assert_eq!(canvas_init(&mut a.screen, w, h), 0);
                     redraw(&mut a, RefreshMode::Ui);
-                    let at = format!("{theme:?} size {size} {w}x{h}");
+                    let at = format!("{lang} {theme:?} size {size} {w}x{h}");
                     let buttons_end = gui_status_h() + (gui_head_h() + gui_top_button_h()) / 2;
                     let (over, under) = (title_rule_y() - buttons_end, apps_top() - title_rule_y() - gui_title_rule_h());
                     assert!((over - under).abs() <= 1, "{at}: the title rule {over} {under}");
@@ -12426,6 +12439,13 @@ mod tests {
                     let marks = lib(&mut a).home.marks.clone();
                     assert_eq!(marks.iter().map(|m| m.0).collect::<Vec<_>>(), ["title", "break", "light", "foot"], "{at}");
                     assert!(marks.windows(2).all(|p| p[0].1 + p[0].2 < p[1].1), "{at}: top to bottom: {marks:?}");
+                    // The section break has as much paper over it, to the foot of the row's lowest name, as under it,
+                    // to the chips, whether the names take one line or two.
+                    let lines = lib(&mut a).home.label_lines.iter().copied().max().unwrap_or(1);
+                    seen_lines[lines as usize] = true;
+                    let name_foot = apps_top() + gui_app_square_side() + crate::globalui::gui_app_label_gap() + lines * crate::globalui::gui_app_label_line_h();
+                    let (over, under) = (marks[1].1 - name_foot, filters_top() - (marks[1].1 + marks[1].2));
+                    assert!((over - under).abs() <= 1 && over >= ui_px(16.0), "{at}: the section break's paper {over} {under} ({lines} lines)");
                     let (cols, rows, _, _) = grid_geom(w, h);
                     let last = card_rect(w, h, cols * rows - 1);
                     assert!(last.y + last.h + gui_gap() <= foot_rule_y(w, h), "{at}: the cards end above the foot rule: {last:?}");
@@ -12436,6 +12456,8 @@ mod tests {
                 }
             }
         }
+        assert!(seen_lines[1] && seen_lines[2], "rows of one line and of two");
+        i18n_set("en");
         crate::globalui::gui_status_style(1, false);
         ui_set_theme(UiTheme::Gothic);
         library_free(&mut a);

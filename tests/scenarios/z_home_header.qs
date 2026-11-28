@@ -18,7 +18,7 @@ waitfor library.apps.icons is 1
 expect settings.status_size is 1
 # (the medium bar: everything under the header 6 px lower than at the small one, the foot where it was)
 expect library.home.squares is 51 276 176 176, 277 276 176 176, 503 276 176 176, 729 276 176 176, 1633 276 176 176
-expect library.home.marks is title 233 11, break 540 32, light 709 2, foot 2235 11
+expect library.home.marks is title 233 11, break 533 32, light 709 2, foot 2235 11
 expect library.home.marks_in_hits is 0
 expect library.home.header is title search settings
 expect library.ui_has.app.whats-new is 0
