@@ -65,6 +65,13 @@ const D_DONE: i32 = 7;
 const D_STATUS: i32 = 8;
 const D_FIT: i32 = 9;
 
+/// Whether the Status bar page's "Hide status bar inside Notebooks" row is on, which its tap turns round: it is
+/// status_in_notebooks alone (#337). A `status_on=0` an earlier version saved, when a tap's hiding lasted, no longer
+/// hides the bar, so it does not turn the row on either.
+fn hides_in_notebooks(s: &Settings) -> bool {
+    !s.status_in_notebooks
+}
+
 pub fn dispmenu_control_point(m:&DispMenu,name:&str)->Option<(f32,f32)> {
     if !m.open{return None;}
     let id=match name {"size"=>D_STATUS,"done"=>D_DONE,"back"=>D_BACK,"fit"=>D_FIT,"newpage"=>D_NEWPAGE,"time12"=>D_TIME12,"sleep"=>D_SLEEP_MODE,"pin"=>D_PIN,"sleep_after"=>D_SLEEP_AFTER,"brightness"=>D_BRIGHT,"warmth"=>D_WARM,"auto"=>D_AUTO,"notebooks"=>D_NOTEBOOKS,"keep_on"=>D_KEEP_ON,_=>return None};
@@ -333,7 +340,7 @@ pub fn dispmenu_draw(m: &mut DispMenu, a: &mut App) -> Rect {
             rows.push(DRowKind::Check {
                 id: D_NOTEBOOKS,
                 label: tr("Hide status bar inside Notebooks").to_string(),
-                on: !a.settings.status_in_notebooks,
+                on: hides_in_notebooks(&a.settings),
             });
             rows.push(DRowKind::Check {
                 id: D_TIME12,
@@ -512,7 +519,7 @@ pub fn dispmenu_pointer(m: &mut DispMenu, a: &mut App, phase: i32, x: f32, y: f3
         D_NOTEBOOKS => {
             // The row asks to hide, and lasts (#337: a tap's hiding lasts while its notebook is open):
             // turning it off brings the notebook's bar back, whatever hid it before (the row or a tap).
-            if a.settings.status_in_notebooks {
+            if !hides_in_notebooks(&a.settings) {
                 a.settings.status_in_notebooks = false;
             } else {
                 a.settings.status_on = true;

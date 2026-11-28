@@ -1424,11 +1424,16 @@ mod tests {
                     // nothing on the band is lighter than it; the time and the date are black
                     let row: Vec<u8> = (0..h).flat_map(|y| (0..aw).map(move |x| (x, y))).map(|(x, y)| at(x, y)).collect();
                     assert!(row.iter().all(|&v| v <= GUI_GRAY_STATUS_BAND), "{at_}");
-                    let left: Vec<u8> = (0..h).flat_map(|y| (0..aw / 2).map(move |x| (x, y))).map(|(x, y)| at(x, y)).collect();
-                    assert!(left.iter().filter(|&&v| v < 17).count() > 200, "{at_}: the time and the date in black");
+                    // (each in its own box: the time from the margin, the date after it, as gui_status_bar_items lays them)
+                    let u = |v: f32| ui_px(v * status_scale());
+                    let mut time = String::new();
+                    format_clock_short(1_795_772_460, false, &mut time, 64);
+                    let date_x = gui_margin() + font_measure(FontFace::Bold, u(38.0) as f32, &time) + u(2.0) + u(18.0);
+                    let black = |x0: i32, x1: i32| (0..h).flat_map(|y| (x0..x1).map(move |x| (x, y))).filter(|&(x, y)| at(x, y) < 17).count();
+                    assert!(black(gui_margin(), date_x) > 100, "{at_}: the time in black");
+                    assert!(black(date_x, aw / 2) > 100, "{at_}: the date in black");
                     // Bluetooth off: its glyph's box holds gray 102 at its core and nothing darker; Wi-Fi on holds black
                     let isz = ui_px(48.0 * status_scale());
-                    let u = |v: f32| ui_px(v * status_scale());
                     let pct_w = font_measure(FontFace::Regular, u(30.0) as f32, "87%");
                     let bt_right = aw - gui_margin() - u(56.0) - u(8.0) - u(10.0) - pct_w - u(28.0);
                     let glyph = |x0: i32| -> Vec<u8> {

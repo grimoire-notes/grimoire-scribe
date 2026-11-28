@@ -16328,20 +16328,27 @@ mod tests {
         assert!(!visible(&a));
         editor_open_notebook(&mut a, nb.id.as_str());
         assert!(visible(&a));
-        // a status_on=0 an earlier version saved does not hide it
+        // a status_on=0 an earlier version saved does not hide it, nor turn Settings > Sleep & Clock > Status bar's
+        // "Hide status bar inside Notebooks" on: a tap on that row hides the bar
         a.settings.status_on = false;
         assert!(visible(&a));
+        let mut m = crate::dispmenu::DispMenu::default();
+        crate::dispmenu::dispmenu_open_statusbar(&mut m, &mut a);
+        crate::dispmenu::dispmenu_draw(&mut m, &mut a);
+        let (x, y) = crate::dispmenu::dispmenu_control_point(&m, "notebooks").expect("the row");
+        let mut d = RECT_EMPTY;
+        crate::dispmenu::dispmenu_pointer(&mut m, &mut a, 0, x, y, 1, &mut d);
+        crate::dispmenu::dispmenu_pointer(&mut m, &mut a, 2, x, y, 2, &mut d);
+        assert!(!a.settings.status_in_notebooks && !visible(&a), "the row's tap hid the bar");
         // the row hides it for good, through a reopen
-        a.settings.status_on = true;
-        a.settings.status_in_notebooks = false;
-        assert!(!visible(&a));
         editor_open_notebook(&mut a, nb.id.as_str());
         assert!(!visible(&a) && crate::status::status_band_rows(&a) == 0);
         // and a tap brings it back then, turning the row off
         crate::status::status_toggle(&mut a);
         assert!(visible(&a) && a.settings.status_in_notebooks);
-        // over the Pages view a tap changes nothing
+        // over the Pages view (which draws its own bar) no rows are the band's, and a tap changes nothing
         ed(&mut a).pv.open = true;
+        assert_eq!(crate::status::status_band_rows(&a), 0);
         app_flush(&mut a);
         crate::status::status_toggle(&mut a);
         ed(&mut a).pv.open = false;
