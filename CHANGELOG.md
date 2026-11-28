@@ -29,7 +29,7 @@
   and comes once the pen has left (#242). Settings > Sleep & Clock > Status bar (was Clock settings) has Hide
   status bar inside Notebooks, Display time as 12 hour and its size: small (92% of medium, #319; the default,
   #329), medium or large; the corner rows are gone. After the update from 2.2 or earlier a bar at medium (the
-  size those versions start with) becomes small; small and large stay as they were.
+  size 2.0 to 2.2 start with) becomes small; small and large stay as they were.
 - **Apps** (#225, nebuff; #238, #259). Full-screen programs packaged for Grimoire, installed from the Package
   Store. One opens from the home's app row or Apps, and two fingers swiped up from the bottom of the screen to
   the middle bring the home back in every app. Manage apps... at the foot of Apps has each app's settings page,
