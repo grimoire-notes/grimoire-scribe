@@ -1,3 +1,4 @@
+# settings: status_size=1
 # rust-only
 # root: z_bar_0_make
 # copy: tests/fixtures/penbutton/hold-clear .

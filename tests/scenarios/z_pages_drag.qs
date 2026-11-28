@@ -1,3 +1,4 @@
+# settings: status_size=1
 # rust-only
 # generate: tests/drag_pages_fixture.py
 # Drag to reorder (owner, 2026-11-02): a page held until its card opens and then moved without lifting is

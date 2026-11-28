@@ -3723,18 +3723,23 @@ Not run on a Scribe. The Mac's tests cover the drawing and the settle's logic: `
 is the threshold of Smooth over every background, the other tools unchanged, every way of drawing a page the same,
 exports Smooth), `test_fbpack.rs` (a solid word's live frames through the RAM shadow leave nothing to settle,
 `fbpack_level_span` in every rotation), `test_render_keep.rs`, `test_erase.rs` (compaction under both settings),
-`test_store.rs`, `test_tplsheet.rs` (a page made into a template's picture is Smooth), the editor's unit tests of the
+`test_store.rs` (since #329 also the defaults: a fresh start and a 2.2 settings.ini read as Solid and the small status
+bar, medium moved to small once, a save writing `ink_edges=smooth` for Smooth and nothing for Solid),
+`test_tplsheet.rs` (a page made into a template's picture is Smooth), the editor's unit tests of the
 scaled view (black from half the weight, never lighter beside other ink, the page's own paper), of the view that
 draws a paper's lines at the screen's scale (the same rule, the Links bar, the Kindle's own copy of its frames) and
 of the settle's order and its hint, `display.rs`'s unit tests (the scan in strips of 64 rows: every row read once, the pump called after each
 full strip and before an empty answer, the answer one pass gives in every rotation, no answer for a row that would
 leave the record; the log's counts), and the scenarios
-`z_ink_edges_1_row` to `_17_rulings` (zoomed in and sideways, a card that follows a change when its
+`z_ink_edges_1_row` to `_18_fresh_defaults` (zoomed in and sideways, a card that follows a change when its
 notebook is next opened and left, a change over a dense page, a highlight beside a solid word in a scaled view,
-erasing with undo, redo and a reopen, a page a little smaller than the screen at 100%, a widget's timed redraw, and
-line paper sideways). The Kindle's own answer
+erasing with undo, redo and a reopen, a page a little smaller than the screen at 100%, a widget's timed redraw,
+line paper sideways, and Solid and the small status bar on a fresh start). The Kindle's own answer
 (display_fbink.rs `display_settle_area`: its row mapping, inversion, pen mode left when it answers empty) runs only
 on a device: it was read against the driver's rules and compiled, never run.
+
+The defaults (#329): after the update from 2.2, Settings > Pen > Ink edges says Solid and the status bar is small (a
+bar that was large stays large); a fresh start has both too.
 
 The drawing, with Solid (Settings > Pen > Ink edges): a ballpoint word goes on in black and nothing changes
 on the screen at the pause after writing; a pencil word still settles in grays; the status bar's minute still comes
@@ -3768,10 +3773,10 @@ minute and tap a tool, then read it. The first whole answer of each reason in a 
 `settles so far` line may still follow, with the counts that rose before it). This line is what to read for checks
 2, 4, 8 and 10.
 
-1. **Smooth is 2.2.** Ink edges at Smooth: a ballpoint word and a pencil word, a pause after each. Dotted rims
-   while writing, grays at the pause; `ui` in `refreshes so far` rises by one for each pause, and the `settles`
-   counts do not rise (no such line at all in a session that never had Solid on). Failure: anything different from
-   2.2.0.
+1. **Smooth is 2.2.** Ink edges at Smooth (chosen: Solid is the default since #329): a ballpoint word and a pencil
+   word, a pause after each. Dotted rims while writing, grays at the pause; `ui` in `refreshes so far` rises by one
+   for each pause, and the `settles` counts do not rise (no such line at all in a session where nothing was written
+   with Solid on). Failure: anything different from 2.2.0.
 2. **Solid, blank paper, upright.** Ink edges at Solid: five ballpoint words, the pen lifted well away after each.
    Black ink at once, nothing changing at the pause. In the log `quiet` rises by five and `part` and `whole` do not,
    and `display: pen mode off -> 0` follows the first pauses. Failure: a flicker at the pause; `whole` rising (its

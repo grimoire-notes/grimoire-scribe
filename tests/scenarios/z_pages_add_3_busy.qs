@@ -1,3 +1,4 @@
+# settings: status_size=1
 # rust-only
 # generate: tests/move_pages_fixture.py
 # env: GRIMOIRE_CHECK_FIT=1

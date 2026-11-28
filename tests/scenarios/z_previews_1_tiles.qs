@@ -1,3 +1,4 @@
+# settings: status_size=1
 # rust-only
 # generate: tests/previews_fixture.py
 # env: GRIMOIRE_SIM_DENSE_DRAW_MS=4000 GRIMOIRE_SIM_CORES=1

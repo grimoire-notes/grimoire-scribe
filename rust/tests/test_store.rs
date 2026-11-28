@@ -989,24 +989,24 @@ fn pdf_gamma_key() {
     unlink(&path);
 }
 
-// Ink edges (2.3, #320): ink_edges is absent at smooth and written only at solid, after recent_apps; it is read strictly,
-// so only the two known values are taken, and anything else is Smooth, written back as it was until the setting
-// changes. A file of a version without it reads as Smooth.
+// Ink edges (2.3, #320): ink_edges is absent at solid, the default since #329, and written only at smooth, after
+// recent_apps; it is read strictly, so only the two known values are taken, and anything else is Smooth, written back
+// as it was until the setting changes. A file of a version without it reads as Solid.
 fn ink_edges_key() {
     let path = format!("{}/settings.ini", store_root());
     let mut s = Settings::default();
     let any_line = |p: &str| read_file(p).is_some_and(|t| find(&t, "\nink_edges=").is_some());
     check!(write_file_atomic(&path, b"invert=1\n") == 0);
-    check!(settings_load(&mut s) == 0 && s.ink_edges == 0);
-    check!(settings_save(&s) == 0 && !any_line(&path));
-    check!(write_file_atomic(&path, b"ink_edges=solid\n") == 0);
     check!(settings_load(&mut s) == 0 && s.ink_edges == 1);
-    check!(settings_save(&s) == 0 && has_pins_line(&path, "ink_edges=solid"));
-    let text = read_file(&path).unwrap_or_default();
-    check!(find(&text, "\nrecent_apps=").is_some_and(|a| find(&text, "\nink_edges=").is_some_and(|b| a < b)));
-    // Smooth, said as the file says it, is no line
+    check!(settings_save(&s) == 0 && !any_line(&path));
     check!(write_file_atomic(&path, b"ink_edges=smooth\n") == 0);
     check!(settings_load(&mut s) == 0 && s.ink_edges == 0);
+    check!(settings_save(&s) == 0 && has_pins_line(&path, "ink_edges=smooth"));
+    let text = read_file(&path).unwrap_or_default();
+    check!(find(&text, "\nrecent_apps=").is_some_and(|a| find(&text, "\nink_edges=").is_some_and(|b| a < b)));
+    // Solid, said as the file says it, is no line
+    check!(write_file_atomic(&path, b"ink_edges=solid\n") == 0);
+    check!(settings_load(&mut s) == 0 && s.ink_edges == 1);
     check!(settings_save(&s) == 0 && !any_line(&path));
     // anything else is Smooth, and goes back as it was
     for v in ["1", "Solid", "solid ", "hard", ""] {
@@ -1014,11 +1014,95 @@ fn ink_edges_key() {
         check!(settings_load(&mut s) == 0 && s.ink_edges == 0);
         check!(settings_save(&s) == 0 && has_pins_line(&path, &format!("ink_edges={v}")));
     }
-    // changed, it is written as set; set back to Smooth, its line goes
+    // changed, it is written as set (the value kept from the file goes with it); Smooth, its line; Solid again, no
+    // line
     s.ink_edges = 1;
     check!(settings_save(&s) == 0 && has_pins_line(&path, "ink_edges=solid"));
     s.ink_edges = 0;
+    check!(settings_save(&s) == 0 && has_pins_line(&path, "ink_edges=smooth"));
+    s.ink_edges = 1;
     check!(settings_save(&s) == 0 && !any_line(&path));
+    unlink(&path);
+}
+
+// The defaults of #329: a fresh start (no settings.ini) has Ink edges at Solid and the status bar small, in notebooks
+// too, and its first save says so: no ink_edges line, status_size=0.
+fn fresh_settings_are_solid_and_small() {
+    let path = format!("{}/settings.ini", store_root());
+    unlink(&path);
+    let mut s = Settings::default();
+    settings_default(&mut s);
+    check!(s.ink_edges == 1 && s.status_size == 0 && s.status_on && s.status_in_notebooks);
+    let mut t = Settings::default();
+    check!(settings_load(&mut t) != 0 && !exists(&path));
+    check!(t.ink_edges == 1 && t.status_size == 0 && t.status_on && t.status_in_notebooks);
+    check!(t.version == SETTINGS_VERSION && SETTINGS_VERSION == 5);
+    check!(settings_save(&t) == 0 && has_pins_line(&path, "status_size=0") && has_pins_line(&path, "settings_version=5"));
+    check!(read_file(&path).is_some_and(|f| find(&f, "ink_edges").is_none()));
+    let mut u = Settings::default();
+    check!(settings_load(&mut u) == 0 && u.ink_edges == 1 && u.status_size == 0);
+    unlink(&path);
+}
+
+// A save writes ink_edges=smooth for Smooth and no line for Solid, the default, whatever the file said before.
+fn ink_edges_saved_only_at_smooth() {
+    let path = format!("{}/settings.ini", store_root());
+    let lines = |p: &str| read_file(p).map_or(0, |f| String::from_utf8_lossy(&f).lines().filter(|l| l.starts_with("ink_edges")).count());
+    let mut s = Settings::default();
+    settings_default(&mut s);
+    s.ink_edges = 0;
+    check!(settings_save(&s) == 0 && has_pins_line(&path, "ink_edges=smooth") && lines(&path) == 1);
+    s.ink_edges = 1;
+    check!(settings_save(&s) == 0 && lines(&path) == 0);
+    for (before, e, want) in [("ink_edges=smooth\n", 1, 0), ("ink_edges=solid\n", 0, 1), ("ink_edges=solid\n", 1, 0)] {
+        check!(write_file_atomic(&path, before.as_bytes()) == 0);
+        let mut t = Settings::default();
+        check!(settings_load(&mut t) == 0);
+        t.ink_edges = e;
+        check!(settings_save(&t) == 0 && lines(&path) == want);
+        check!(want == 0 || has_pins_line(&path, "ink_edges=smooth"));
+    }
+    unlink(&path);
+}
+
+// A settings.ini as 2.2.0 writes it (its settings_save of the defaults, after a load: tests/fixtures/
+// settings_2_2_0.ini) has no ink_edges line and settings_version=4 and holds status_size=1, 2.2's default. 2.3 reads
+// it as Solid and small: medium moves to small once (version 5); small and large stay, and so does Smooth once chosen
+// (the line ink_edges=smooth, which 2.2 keeps as one it does not know). A medium chosen after the update stays: the
+// file is version 5 from then on, and 2.2 keeps a newer settings_version when it saves. A file without
+// settings_version is one written by hand, and keeps the size it names.
+fn settings_from_2_2_are_solid_and_small() {
+    let path = format!("{}/settings.ini", store_root());
+    let file = include_str!("fixtures/settings_2_2_0.ini");
+    check!(file.contains("\nsettings_version=4\n") && file.contains("\nstatus_size=1\n") && !file.contains("ink_edges"));
+    let load = |text: &str| {
+        let mut s = Settings::default();
+        check!(write_file_atomic(&path, text.as_bytes()) == 0);
+        check!(settings_load(&mut s) == 0);
+        s
+    };
+    let s = load(file);
+    check!(s.ink_edges == 1 && s.status_size == 0 && s.status_on && s.status_in_notebooks && s.version == 5);
+    check!(s.whatsnew_due);
+    check!(settings_save(&s) == 0 && has_pins_line(&path, "status_size=0") && has_pins_line(&path, "settings_version=5"));
+    check!(read_file(&path).is_some_and(|f| find(&f, "ink_edges").is_none()));
+    for (size, want) in [("2", 2), ("0", 0)] {
+        let s = load(&file.replace("\nstatus_size=1\n", &format!("\nstatus_size={size}\n")));
+        check!(s.ink_edges == 1 && s.status_size == want);
+    }
+    let s = load(&format!("{file}ink_edges=smooth\n"));
+    check!(s.ink_edges == 0 && s.status_size == 0);
+    check!(settings_save(&s) == 0 && has_pins_line(&path, "ink_edges=smooth"));
+    // medium chosen after the update: saved at version 5, never moved again
+    let mut s = load(file);
+    s.status_size = 1;
+    check!(settings_save(&s) == 0 && has_pins_line(&path, "status_size=1"));
+    let mut t = Settings::default();
+    check!(settings_load(&mut t) == 0 && t.status_size == 1);
+    check!(load(&file.replace("\nsettings_version=4\n", "\nsettings_version=5\n")).status_size == 1);
+    // no settings_version: kept as written
+    check!(load(&file.replace("\nsettings_version=4\n", "\n")).status_size == 1);
+    check!(load("status_size=1\n").status_size == 1);
     unlink(&path);
 }
 
@@ -1045,12 +1129,12 @@ fn status_corner_keys() {
     let mut s = Settings::default();
     let mut t = Settings::default();
     settings_default(&mut s);
-    // (medium by default since 2.0.0-rc.12)
-    check!(s.status_on && s.status_size == 1 && s.status_corner == 0 && s.status_mode == 1);
+    // (small by default since 2.3, #329; medium from 2.0.0-rc.12)
+    check!(s.status_on && s.status_size == 0 && s.status_corner == 0 && s.status_mode == 1);
     check!(
         settings_save(&s) == 0
             && has_pins_line(&path, "status_on=1")
-            && has_pins_line(&path, "status_size=1")
+            && has_pins_line(&path, "status_size=0")
     );
     let text = read_file(&path).unwrap_or_default();
     let at = |k: &str| text.windows(k.len()).position(|w| w == k.as_bytes());
@@ -1065,7 +1149,7 @@ fn status_corner_keys() {
     check!(settings_load(&mut t) == 0 && t.status_on && t.status_size == 2);
     // a file with neither key: the defaults
     check!(write_file_atomic(&path, b"invert=1\n") == 0);
-    check!(settings_load(&mut t) == 0 && t.status_on && t.status_size == 1);
+    check!(settings_load(&mut t) == 0 && t.status_on && t.status_size == 0);
     // a size past the range is the nearest, a third state is on; both go back as they were
     check!(write_file_atomic(&path, b"status_on=2\nstatus_size=7\n") == 0);
     check!(settings_load(&mut t) == 0 && t.status_on && t.status_size == 2);
@@ -1514,6 +1598,9 @@ fn test_store() {
     run!(home_key);
     run!(pdf_gamma_key);
     run!(ink_edges_key);
+    run!(fresh_settings_are_solid_and_small);
+    run!(ink_edges_saved_only_at_smooth);
+    run!(settings_from_2_2_are_solid_and_small);
     run!(whatsnew_due_after_every_update);
     run!(gesture_keys);
     run!(rotation_lock_key);

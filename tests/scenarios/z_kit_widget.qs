@@ -1,4 +1,5 @@
 # settings: status_mode=1
+# settings: status_size=1
 # rust-only
 # env: TZ=UTC
 # copy: tests/fixtures/kit .

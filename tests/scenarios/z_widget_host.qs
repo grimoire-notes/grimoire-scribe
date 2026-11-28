@@ -1,4 +1,5 @@
 # settings: status_mode=1
+# settings: status_size=1
 # rust-only
 # copy: tests/fixtures/widgethost .
 # What the widget host lets an installed module do (issue #208), with the packages of tests/fixtures/widgethost

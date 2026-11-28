@@ -1,5 +1,6 @@
 # settings: status_mode=1
 # settings: shortcuts_enabled=1
+# settings: status_size=1
 # rust-only
 # env: GRIMOIRE_SIM_CLOCK=script
 # copy: tests/fixtures/widgetruns .
