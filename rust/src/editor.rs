@@ -12808,6 +12808,11 @@ fn editor_event_in(a: &mut App, ev: &InEvent) {
             }
             lasso_cancel(a);
         }
+        // While a notebook's bar is drawn over the page its band covers whatever lies under it (#337, the owner:
+        // "drawn over any elements below but still drawable beneath, user dismisses to access that part of the
+        // screen"): a pen contact there is never a control's (the toolbar, a widget's frame, a menu's row, the
+        // selection's bar), it is the page's, as anywhere else on it. (A finger there is the bar's: quick.rs.)
+        let covered = pen && (ev.y as i32) < crate::status::status_band_rows(a);
         let s = ed(a);
         s.owner_is_pen = pen;
         // A contact made while the toolbar's batch was being written: let go, down to its lift. Then the
@@ -12954,6 +12959,15 @@ fn editor_event_in(a: &mut App, ev: &InEvent) {
         }
         // The Widgets popup takes every contact while it is up: a row opens or raises, anything else
         // closes it with nothing else done (the panel included).
+        // (Either, under the band, as outside it: closed at once, the pen's stroke swallowed.)
+        if covered && (s.widgets_open || s.tools_open) {
+            s.owner = Owner::Outside;
+            close_widgets(a);
+            if ed_ref(a).tools_open {
+                close_tools(a);
+            }
+            return;
+        }
         if s.widgets_open {
             s.owner = Owner::Widgets;
             press_begin(&mut s.widgets_press, ev.x, ev.y, ev.t_ms);
@@ -13013,11 +13027,11 @@ fn editor_event_in(a: &mut App, ev: &InEvent) {
             }
             s.owner = Owner::Modal;
             ui_pointer(a, 0, ev, true);
-        } else if (s.lm.state == LmState::Armed || s.lm.state == LmState::Lasso) && rect_contains(s.lm.strip, ev.x as i32, ev.y as i32) {
+        } else if !covered && (s.lm.state == LmState::Armed || s.lm.state == LmState::Lasso) && rect_contains(s.lm.strip, ev.x as i32, ev.y as i32) {
             // The strip takes a finger or the pen: its Cancel, or nothing (never the lasso).
             s.owner = Owner::Strip;
             strip_pointer(a, 0, ev);
-        } else if rect_contains(s.panel, ev.x as i32, ev.y as i32) {
+        } else if !covered && rect_contains(s.panel, ev.x as i32, ev.y as i32) {
             s.owner = Owner::Panel;
             // A stroke just ended: Undo/Clear may have become available, but the panel (and its
             // hit list) is only rebuilt at the settle. Settle now so the tap finds the live buttons.
@@ -13025,7 +13039,7 @@ fn editor_event_in(a: &mut App, ev: &InEvent) {
                 settle_now(a);
             }
             ui_pointer(a, 0, ev, false);
-        } else if let Some((index, part)) = s.widgets.hit(ev.x.round_ties_even() as i32, ev.y.round_ties_even() as i32) {
+        } else if let Some((index, part)) = s.widgets.hit(ev.x.round_ties_even() as i32, ev.y.round_ties_even() as i32).filter(|_| !covered) {
             widget_down(a, index, part, ev, pen);
         } else if s.lm.state == LmState::Off && sel_takes(s, pen, ev.x, ev.y) {
             // Select mode: the bar, a drag of the selection, or the pen's lasso (never ink).
@@ -16166,6 +16180,74 @@ mod tests {
         app_flush(&mut a);
         let _ = bar_presents();
         assert!(ed_ref(&a).sel.bar.y >= band, "{:?}", ed_ref(&a).sel.bar);
+        crate::status::status_bar_back();
+    }
+
+    // A pen contact the bar's band covers is the page's, never a control's (#337, the owner: "drawn over any elements
+    // below but still drawable beneath, user dismisses to access that part of the screen"): over the toolbar dragged
+    // up under the band it writes ink where it touches and leaves the toolbar alone, and with the bar hidden by a tap
+    // the same contact is the toolbar's again. A selection bar's button under the band takes no pen contact there,
+    // and a menu that is up closes, as at a contact outside it.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn a_pen_contact_under_the_band_is_the_pages_never_a_controls() {
+        let mut a = bar_app();
+        let band = gui_status_h();
+        tool_params_default(TOOL_BALLPOINT, &mut a.settings.tools[TOOL_BALLPOINT.0 as usize]);
+        a.settings.current_tool = TOOL_BALLPOINT;
+        a.settings.draw_tool = TOOL_BALLPOINT;
+        let x = ed_ref(&a).panel.x;
+        move_panel_to(&mut a, x, 0, RefreshMode::Ui);
+        app_flush(&mut a);
+        let p = ed_ref(&a).panel;
+        assert_eq!(p.y, 0);
+        // the toolbar's collapse button, under the band
+        let (cx, cy) = (p.x..p.x + p.w)
+            .map(|x| (x, band / 2))
+            .find(|&(x, y)| panel_hit_at(ed_ref(&a), x as f32, y as f32).is_some_and(|h| h.id == P_COLLAPSE))
+            .expect("the collapse button under the band");
+        let strokes = |a: &App| ed_ref(a).open_page().unwrap().strokes.len();
+        let before = strokes(&a);
+        let t = now_ms();
+        pen_event(&mut a, InType::PenDown, false, cx as f32, cy as f32, t);
+        pen_event(&mut a, InType::PenUp, false, cx as f32, cy as f32, t + 40);
+        app_flush(&mut a);
+        let s = ed_ref(&a);
+        assert_eq!((s.panel, s.collapsed, s.tools_open), (p, false, false), "the toolbar left alone");
+        assert_eq!(strokes(&a), before + 1, "a dot of ink on the page under the band");
+        // the tool picker the toolbar opens beside it, its top under the band too: a pen contact on its row there
+        // closes it, as one outside it does, and presses nothing
+        open_tools(&mut a);
+        app_flush(&mut a);
+        let (tool, pin) = (a.settings.current_tool, ed_ref(&a).pin_mode);
+        let (mx, my) = ed_ref(&a).tools_hits.h.iter().find(|h| h.r.y + 8 < band).map(|h| (h.r.x + h.r.w / 2, (h.r.y.max(0) + band) / 2)).expect("a control of the picker's under the band");
+        pen_event(&mut a, InType::PenDown, false, mx as f32, my as f32, t + 100);
+        pen_event(&mut a, InType::PenUp, false, mx as f32, my as f32, t + 140);
+        app_flush(&mut a);
+        assert_eq!((ed_ref(&a).tools_open, a.settings.current_tool, ed_ref(&a).pin_mode), (false, tool, pin));
+        assert_eq!(strokes(&a), before + 1, "its stroke swallowed");
+        // the bar hidden by a tap: the same contact is the toolbar's
+        crate::status::status_toggle(&mut a);
+        app_flush(&mut a);
+        assert!(panel_hit_at(ed_ref(&a), cx as f32, cy as f32).is_some());
+        pen_event(&mut a, InType::PenDown, false, cx as f32, cy as f32, t + 200);
+        pen_event(&mut a, InType::PenUp, false, cx as f32, cy as f32, t + 240);
+        app_flush(&mut a);
+        assert!(ed_ref(&a).collapsed, "the toolbar collapsed");
+        assert_eq!(strokes(&a), before + 1, "no ink");
+        crate::status::status_bar_back();
+        // a selection's bar button put under the band (layout_bar keeps it under the band): a pen there presses
+        // nothing
+        let mut a = bar_app();
+        tall_stroke(&mut a);
+        select_tall_stroke(&mut a);
+        let strokes = |a: &App| ed_ref(a).open_page().unwrap().strokes.len();
+        let before = strokes(&a);
+        ed(&mut a).sel.btns = vec![(Rect::new(100, 0, 250, band + 20), SelBtn::Delete)];
+        pen_event(&mut a, InType::PenDown, false, 150.0, (band / 2) as f32, t + 300);
+        pen_event(&mut a, InType::PenUp, false, 150.0, (band / 2) as f32, t + 340);
+        app_flush(&mut a);
+        assert_eq!(strokes(&a), before, "Delete under the band did not act");
         crate::status::status_bar_back();
     }
 

@@ -858,9 +858,11 @@ pub(super) fn sel_down(a: &mut App, ev: &InEvent, pen: bool) {
         return;
     }
     let (x, y) = (ev.x as i32, ev.y as i32);
+    // (the bar keeps under the band, layout_bar; a contact the band covers is never its, #337)
+    let covered = y < crate::status::status_band_rows(a);
     let s = ed(a);
     s.owner = Owner::Select;
-    if let Some(&(r, b)) = s.sel.btns.iter().find(|(r, _)| rect_contains(*r, x, y)) {
+    if let Some(&(r, b)) = s.sel.btns.iter().find(|(r, _)| !covered && rect_contains(*r, x, y)) {
         // The press shows at once (the panel's buttons' pressed look, a DU of its own) and acts at the
         // lift, so a button that changes nothing visible (Copy) still answers the tap (issue #50).
         // (the rest of the contact is swallowed)
@@ -869,7 +871,7 @@ pub(super) fn sel_down(a: &mut App, ev: &InEvent, pen: bool) {
         bar_press_show(a, r);
         return;
     }
-    if rect_contains(s.sel.bar, x, y) {
+    if !covered && rect_contains(s.sel.bar, x, y) {
         s.owner = Owner::Select;
         return;
     }

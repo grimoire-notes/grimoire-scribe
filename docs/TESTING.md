@@ -3809,7 +3809,12 @@ was compiled, never run. What only the panel shows:
    below). Remove `/mnt/us/grimoire/pen-mode` after.
 7. **Things under the bar.** Drag the toolbar to the top: the band covers its top, a tap on the bar hides the bar and
    the toolbar's top shows, a tap on the strip brings the bar back over it; while dragging, the band does not turn
-   grainy. Lasso some ink near the top, drawing the lasso up through the bar: its line stops at the band's edge.
+   grainy. With the bar shown, tap the pen on the band where the toolbar's top is under it: the toolbar does nothing
+   (no collapse, no picker), and once the bar is hidden a small dot of ink shows there. Lasso some ink near the top,
+   drawing the lasso up through the bar: its line stops at the band's edge. Write a line from just under the band to
+   the foot of the page and lasso it: the selection's bar sits whole under the band. Open Paper sideways, and New
+   notebook on the home upright and sideways: each sheet starts below the band, its title whole, and the band is
+   unbroken above it.
 
 ## 2.3, Ink edges (issue #320): device checks
 

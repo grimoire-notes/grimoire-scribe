@@ -1548,8 +1548,11 @@ access that part of the screen."
   toolbar dragged to the top, a card, a menu); `status_reserved` stays 0, so the page keeps the whole screen beneath
   it. Ink written in the strip goes into the page, neither refused nor moved, and shows when the bar is hidden. A
   finger's contact in the strip while the bar is drawn is the bar's (quick.rs), even over a control under it. A pen's
-  contact there goes where it went before: ink on the page, or a control the band covers (the toolbar dragged to
-  the top), whose pressed look is drawn below the band alone.
+  contact there is the page's (`editor_event_in`'s `covered`): ink, a lasso, a selection's drag, never a control the
+  band covers (the toolbar or a widget's frame dragged to the top, the selection bar's buttons), and a tool picker
+  or Widgets popup that is up closes, as at a contact outside it. Hidden by a tap, the band covers nothing and those
+  controls take the pen again. What the app places by itself keeps out of the strip: a sheet starts a gap under it
+  (`gui_sheet_top`: `sheet_rect`, `paper_sheet_rect`) and the selection bar under the bar's height (`layout_bar`).
 - **No fast refresh reaches the band** while the bar is drawn over the page (`status_band_rows`: the bar's height,
   0 while it is hidden or Settings, the Pages view, the Graph or a picker covers the page; `status_below_band`): the
   pen's live frames are cut before they are composed (`show`), the lasso draws below it (`lasso_clip`), a press look
