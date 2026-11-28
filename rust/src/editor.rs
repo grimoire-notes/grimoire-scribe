@@ -16115,6 +16115,34 @@ mod tests {
         crate::status::status_bar_back();
     }
 
+    // Live view's chip stands level with the toolbar's head, so with the toolbar near the top it crosses the band's
+    // lower edge; a fast refresh below the band that meets it is joined with it at the flush (the chip is drawn over
+    // what it covers for each present), and is cut at the band again after that join, so no fast refresh reaches the
+    // band's rows beside the chip.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn live_views_chip_never_takes_a_fast_refresh_into_the_band() {
+        let mut a = bar_app();
+        let band = gui_status_h();
+        let x = ed_ref(&a).panel.x;
+        move_panel_to(&mut a, x, 40, RefreshMode::Ui);
+        app_flush(&mut a);
+        assert_eq!(crate::live::live_start(a.w, a.h), 0);
+        app_flush(&mut a);
+        let _ = bar_presents();
+        let chip = a.chip_at;
+        assert!(chip.y < band && chip.y + chip.h > band, "the chip across the band's lower edge: {chip:?}");
+        let r = Rect::new(chip.x, band, 300, 40);
+        canvas_fill(&mut a.screen, r, 0);
+        app_invalidate(&mut a, r, RefreshMode::Fast);
+        app_flush(&mut a);
+        let fast = fast_rects(&bar_presents());
+        crate::live::live_stop();
+        assert!(!fast.is_empty() && fast.iter().all(|f| f.y >= band), "{fast:?}");
+        let beside = format!("display.stale.{}.0.250.{band}", chip.x + chip.w + 2);
+        assert_eq!(crate::sim_sdl::display_stale_read(&mut a, &beside).as_deref(), Some("0"));
+    }
+
     // A pen stroke as tall as the screen at x 600 on the open page of `bar_app`, the screen drawn again.
     #[cfg(feature = "sim")]
     fn tall_stroke(a: &mut App) {

@@ -1559,7 +1559,9 @@ access that part of the screen."
   inverts and sends only what is below it (`app_press_feedback`, the selection bar's `bar_press_show`), and at every
   flush `band_keep` puts the bar as it was last drawn back where anything reached its rows since
   (`gui_status_drawn_put`: a copy of the strip kept at the end of each draw of the bar; nothing else is drawn again)
-  and cuts a fast refresh's rect to below them. So a fast refresh (black and white only) never dithers the band, and on the Kindle
+  and cuts a fast refresh's rect to below them, and again just before the present, after Live view's chip, the
+  staying notice or the toast joined it (the chip stands level with the toolbar's head, so it can cross the band's
+  lower edge). So a fast refresh (black and white only) never dithers the band, and on the Kindle
   the framebuffer, the RAM shadow `g_shown`, `g_previous` and the live area `g_live_area` never hold a fast frame
   there; Solid's settle (`display_settle_area`) compares the screen with `g_shown` and finds the band as it was, and
   Smooth's settle (a GL16 of the stroke's rect) drives only pixels that changed. The padded pen mode grows a small

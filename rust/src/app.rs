@@ -2722,6 +2722,11 @@ fn app_flush_in(a: &mut App) {
         }
     }
     live_toast_sync(a, overlay, reached, noticed.is_some());
+    // The chip, the notice and the toast joined in after band_keep cut a fast refresh to below a notebook bar's band:
+    // cut again, so the band is never in one (the chip's own pixels there went out in grays: live_chip_sync).
+    if m == RefreshMode::Fast {
+        a.dirty = crate::status::status_below_band(a, a.dirty);
+    }
     // (never the cleaning Full, nor a refresh with anything asked for in it)
     // (said only with its present: a flush that sends nothing, as after a settle with nothing to send, says nothing;
     // a Solid settle held back a pass for its stroke's frames, settle_waits_for_flush, says nothing until it is taken)
