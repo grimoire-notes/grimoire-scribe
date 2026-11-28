@@ -30,8 +30,9 @@
 - **A status bar** (#225, nebuff; #337). The clock and battery corner is replaced by a bar on every screen (an app
   may hide it): the time and date at the left, Wi-Fi, Bluetooth and the battery's percent at the right, all dark on a
   band of gray across the top (a radio that is off in a lighter gray). In a notebook the bar is drawn over the page,
-  on by default: what is under it stays hidden, and you can still write there. A tap on it hides it, showing that
-  part of the page, until the notebook is closed (the next notebook opened, or this one opened again, shows it), and
+  on by default: what is under it stays hidden, and you can still write there (the pen there writes on the page,
+  even over a toolbar dragged under the bar, which a finger reaches by tapping the bar away). Sheets and the
+  selection's bar open below it. A tap on it hides it, showing that part of the page, until the notebook is closed (the next notebook opened, or this one opened again, shows it), and
   a tap on the top strip brings it back; neither flashes the screen. There its minute's refresh waits while the pen
   is writing or near the screen, and comes once the pen has left (#242). Settings > Sleep & Clock > Status bar (was
   Clock settings) has Hide status bar inside Notebooks (hidden in every notebook until it is turned off again),

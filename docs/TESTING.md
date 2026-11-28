@@ -3768,16 +3768,20 @@ shows:
 ## 2.3, the status bar's band and the home's rules edge to edge (issue #337): device checks
 
 Not run on a Scribe. The Mac's tests hold the drawing, the refreshes and the taps: globalui.rs's unit tests (the band
-of gray 187 the bar's full width and height at every size, both themes, upright and sideways, the time and date black
-and an off radio in gray 102 on it), library.rs's (the title and foot rules from x 0 to the screen's width and drawn
-to both ends, the two inner marks from margin to margin), editor.rs's (ink written under the bar goes into the page
-while every live frame starts at the band's lower edge; every other fast refresh in a notebook stops there too: one
-that reached into the bar's rows, a whole screen of them, a press under the bar, the toolbar dragged to the top, the
-lasso; a tap hides the bar until the notebook is opened again, each tap one grays refresh of the strip alone; a saved
-`status_on=0` does not hide it), test_fbpack.rs (the padded pen mode's grown region kept off the bar's rows wherever
-the rotation puts them, its size kept), and the scenarios `y_status_band_over_page` (writing under the bar, dismissed,
-back, a lasso through the bar's rows, reopened, sideways, Settings and Files) and `z_home_ruled` (the marks' ends, the
-panel dark at both ends of the outer rules). The Kindle's own part, the padded region's move in display_fbink.rs,
+of gray 187 the bar's full width and height at every size, both themes, upright and sideways, the time and the date
+each black in its own box, and an off radio in gray 102 on it), library.rs's (the title and foot rules from x 0 to
+the screen's width and drawn to both ends, the two inner marks from margin to margin; the home's sheets and the
+editor's Paper sheet starting under the band, New notebook leaving it whole), editor.rs's (ink written under the bar
+goes into the page while every live frame starts at the band's lower edge; every other fast refresh in a notebook
+stops there too: one that reached into the bar's rows, a whole screen of them, a press under the bar, a selection
+bar button's press, the toolbar dragged to the top, the lasso, a frame that meets Live view's chip; a pen contact
+under the band writes on the page and presses no control there; the selection's bar under the band; a tap hides the
+bar until the notebook is opened again, each tap one grays refresh of the strip alone, Link to... docked at the top
+following it; a saved `status_on=0` does not hide it, nor turn the Status bar row on), test_fbpack.rs (the padded pen
+mode's grown region kept off the bar's rows wherever the rotation puts them, its size kept), and the scenarios
+`y_status_band_over_page` (writing under the bar, dismissed, back, a lasso through the bar's rows, reopened,
+sideways, Settings and Files), `y_status_band_wifi_scroll` (Settings > Wi-Fi's list scrolled with the band never in
+a fast frame) and `z_home_ruled` (the marks' ends, the panel dark at both ends of the outer rules). The Kindle's own part, the padded region's move in display_fbink.rs,
 was compiled, never run. What only the panel shows:
 
 1. **The band on the panel.** On the home, Settings and Files, in Gothic and Classic: the bar on one flat gray from
