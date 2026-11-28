@@ -16035,6 +16035,8 @@ mod tests {
         editor_event(&mut a, &ev);
         app_flush(&mut a);
         fast.extend(fast_rects(&bar_presents()));
+        // (show cuts each frame before it is composed, which spares drawing the bar again for every frame that
+        // reaches its rows, and band_keep cuts it again at the flush: this holds what the two make together)
         assert!(!fast.is_empty() && fast.iter().all(|r| r.y >= band), "the live frames start under the band: {fast:?}");
         assert!(fast.iter().any(|r| r.y == band), "{fast:?}");
         // the stroke is in the page, its points in the bar's rows where they were written
@@ -16083,6 +16085,11 @@ mod tests {
         app_flush(&mut a);
         assert_eq!(bar_presents(), "ui 100 0 200 150");
         assert_eq!(screen_px(&a, 150, 20), crate::globalui::GUI_GRAY_STATUS_BAND);
+        assert_eq!(stale(&mut a), "0");
+        // a selection bar button's press look, sent at once (layout_bar keeps the bar under the band, and a pen
+        // contact the band covers presses none: this is the guard behind those), below the band alone
+        bar_press_show(&mut a, Rect::new(300, 0, 200, 150));
+        assert_eq!(bar_presents(), format!("fast 300 {band} 200 {}", 150 - band));
         assert_eq!(stale(&mut a), "0");
         // the toolbar dragged up to the top: the band covers its top, and its frames stop at the band
         let x = ed_ref(&a).panel.x;
@@ -16141,6 +16148,33 @@ mod tests {
         assert!(!fast.is_empty() && fast.iter().all(|f| f.y >= band), "{fast:?}");
         let beside = format!("display.stale.{}.0.250.{band}", chip.x + chip.w + 2);
         assert_eq!(crate::sim_sdl::display_stale_read(&mut a, &beside).as_deref(), Some("0"));
+    }
+
+    // Link to..., docked under the bar at the top, follows a tap that hides or brings back the bar: its old place and
+    // its new one go in the same grays refresh as the strip, so the screen shows it where it takes its taps.
+    #[cfg(feature = "sim")]
+    #[test]
+    fn link_to_docked_at_the_top_follows_the_bars_tap() {
+        let mut a = bar_app();
+        let band = gui_status_h();
+        lt_open_for(&mut a, 2000, "", false);
+        app_flush(&mut a);
+        let _ = bar_presents();
+        let before = ed_ref(&a).lt.rect;
+        assert!(ed_ref(&a).lt.open && ed_ref(&a).lt.top && before.y > band, "{before:?}");
+        crate::status::status_toggle(&mut a);
+        let after = ed_ref(&a).lt.rect;
+        assert!(after.y < band, "up into the strip: {after:?}");
+        let r = rect_union(Rect::new(0, 0, a.w, band), rect_union(before, after));
+        app_flush(&mut a);
+        assert_eq!(bar_presents(), format!("ui {} {} {} {}", r.x, r.y, r.w, r.h));
+        assert!(layers_ok(&mut a), "Link to... drawn where it is, nothing of it left where it was");
+        crate::status::status_toggle(&mut a);
+        app_flush(&mut a);
+        assert_eq!(ed_ref(&a).lt.rect, before);
+        assert_eq!(bar_presents(), format!("ui {} {} {} {}", r.x, r.y, r.w, r.h));
+        assert!(layers_ok(&mut a));
+        crate::status::status_bar_back();
     }
 
     // A pen stroke as tall as the screen at x 600 on the open page of `bar_app`, the screen drawn again.
