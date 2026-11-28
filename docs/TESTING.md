@@ -3893,6 +3893,6 @@ tell (read grimoire.log over SSH; it names no file):
    time from the tap to the toast ("Deleted N entries, freed X."), and send grimoire.log's
    `bg: the trash's emptying: ...` lines (one a run, each run at most 2 s). The place says "The trash is empty.";
    `ls -a /mnt/us/grimoire/trash` shows nothing (no `.grimoire-emptying`), and `/mnt/us/grimoire/.cache/trash-emptied`
-   is gone. The log has no `files: the storage keeps no advisory locks` line (if it has, send it).
+   is gone (it stays only after a job Grimoire's exit left to finish, until the next Empty trash). The log has no `files: the storage keeps no advisory locks` line (if it has, send it).
 4. **The free space**: Settings > System > About right after: the free space grew by about the toast's figure (the
    storage rounds each file up to its blocks, so About may show a little more).

@@ -3280,7 +3280,10 @@ Grimoire's removes anything there (docs/FORMAT.md, The trash). Before 2.3 the ow
   no half notebook can be restored into the Library; the next Empty trash removes what that folder holds first. Its
   bytes count in the root's Trash size meanwhile.
 - **Its end.** Each run adds what it did to `root/.cache/trash-emptied` (entries, bytes of their files, names left,
-  the next name). At the last run's end (done or failed) `poll_jobs` reads it (`empty_finished`), and the toast says
+  the next name) under its request's tag (`job=`: the process, the time and the requests made before, given by
+  `empty_request`); a run reads only a count under its own tag, so a count another request's runs wrote (the detached
+  child of a session before, still at work) never moves this request's next name or its toast's figures. At the last
+  run's end (done or failed) `poll_jobs` reads it (`empty_finished`, which removes its own), and the toast says
   what went and what was freed ("Deleted 12 entries, freed 3.4 MB.", 0 KB for nothing), wherever the user is; when
   that last run failed (its exit status, `bg_last_exit`, not 0: the trash could not be opened or written, or another
   Empty trash held its staging folder) and no run deleted anything, it says "Couldn't empty the trash." instead. Files,

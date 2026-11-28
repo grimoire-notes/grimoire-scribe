@@ -4,8 +4,9 @@
 // restore is at work on (its lock held) stays, and a restore leaves one Empty trash is at work on; an entry that came
 // into the trash during the job stays; a run whose time is up stops inside an entry with that entry out of the
 // listing, and the next run removes it first; names that are not one of the trash's own, and a trash that is a link,
-// are refused; a job that finds the trash held by another Empty trash deletes nothing and its toast says so. Then the
-// times for 10, 1,000 and 5,000 entries (printed: docs/TESTING.md has the device check).
+// are refused; a job that finds the trash held by another Empty trash deletes nothing and its toast says so; a count
+// another request's runs wrote is not read as this request's. Then the times for 10, 1,000 and 5,000 entries
+// (printed: docs/TESTING.md has the device check).
 #![cfg(feature = "sim")]
 mod testlib;
 use grimoire::fsview::*;
@@ -333,6 +334,35 @@ fn a_job_that_finds_the_trash_held() {
     drop(held);
 }
 
+// The count file is the request's own: a count another request's runs wrote after this request let the file go (the
+// detached child of a session before, still at work on its own list) is not read as this one's. This request's next
+// run starts from its first name, deletes its entries and writes its count under its own tag, and its toast says its
+// own entries and bytes, never the other's.
+fn a_count_of_another_request_is_not_this_ones() {
+    let (root, g) = tree();
+    let t = format!("{g}/trash");
+    trashed_notebook(&t, "20261101-000000-0001-1790000000", 1, 1000);
+    trashed_notebook(&t, "20261101-000000-0002-1790000100", 1, 1000);
+    let named = listed(&open(&root, &g));
+    // (its first run, forked as the app runs it, finds the trash held by the other job and ends 1)
+    let held = hold_staging(&t);
+    check!(grimoire::bgwork_empty::empty_request(named));
+    check!(jobs_end() && bg_last_exit() == 1);
+    drop(held);
+    // the other job's count, at a name past this request's last
+    let count = format!("{g}/.cache/trash-emptied");
+    std::fs::create_dir_all(format!("{g}/.cache")).unwrap();
+    std::fs::write(&count, b"job=1.2.0\nentries=2500\nbytes=9000000\nleft=0\nnext=3000\n").unwrap();
+    // this request's next run (here: this process has the request's names and tag, as a fork of it does)
+    check!(grimoire::bgwork_empty::bg_empty_trash(grimoire::bgwork_empty::EMPTY_JOB_PATH) == 0);
+    check!(names(&t).is_empty());
+    let kept = String::from_utf8_lossy(&std::fs::read(&count).unwrap_or_default()).into_owned();
+    check!(kept.starts_with("job=") && !kept.starts_with("job=1.2.0\n") && kept.contains("\nentries=2\n"));
+    // (each notebook: notebook.ini 18 bytes, a page and a picture of 1000, bg/index.ini 8)
+    check!(grimoire::bgwork_empty::empty_finished(false) == grimoire::bgwork_empty::empty_said(2, 2 * 2026, false));
+    check!(!std::path::Path::new(&count).exists());
+}
+
 /// A trash of `n` entries as a long use leaves it: four in five a page's file (2 KB), about one in seven a notebook's
 /// folder (four pages of 2 KB and a picture), the rest a file trashed from Grimoire's folders (its folder, its record
 /// and a 3 KB picture).
@@ -393,6 +423,7 @@ fn test_empty_trash() {
     run!(a_run_cut_short);
     run!(only_inside_the_trash);
     run!(a_job_that_finds_the_trash_held);
+    run!(a_count_of_another_request_is_not_this_ones);
     run!(the_times);
     std::env::remove_var("GRIMOIRE_STORAGE");
     let _ = std::fs::remove_dir_all(format!("{}/empty-storage", tl_tmp()));

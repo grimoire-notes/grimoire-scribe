@@ -72,7 +72,7 @@ root/PDFs/                              the PDF mirror (an export, not data)
 root/.cache/pdf/<id>/                   the notebook PDF's page streams, disposable (2.1.0-beta.2)
 root/.cache/files/                      Files' previews of the files its Covers view shows, disposable (2.2; Files' previews)
 root/.cache/packages/                   the worker's pictures of installed apps' icons and of the Package Store's icons and screenshots, disposable (2.3; Packages' pictures)
-root/.cache/trash-emptied               Empty trash's count while it runs, read and removed at its end (2.3; The trash)
+root/.cache/trash-emptied               Empty trash's count while it runs, under its request's tag (2.3; The trash)
 ```
 
 `root` is `/mnt/us/grimoire` on the Kindle. A notebook id is the folder's name: letters, digits,
@@ -2249,9 +2249,13 @@ run cut short (the power, a killed process) leaves the trash with fewer entries,
 half removed in that folder, which no listing shows and nothing restores from; the next Empty trash removes it
 first. While a restore, a delete writing a `files-...` folder or Empty trash works on a folder entry it holds an
 advisory lock on that folder (`flock`), and the others leave an entry whose lock is held; on a storage with no such
-locks nothing is held. Its count while it runs is `root/.cache/trash-emptied`, plain lines `entries=`, `bytes=`,
-`left=` and `next=` (the entries removed, the bytes of their files, the names left, the next name to look at),
-read and removed when it ends. An older version lists no dot-name, so it never shows the folder or the file.
+locks nothing is held. Its count while it runs is `root/.cache/trash-emptied`, plain lines `job=`, `entries=`,
+`bytes=`, `left=` and `next=` (the request's tag, the entries removed, the bytes of their files, the names left, the
+next name to look at). A run reads a count only under its own request's tag (a count another request's runs wrote,
+such as the detached child of a session before, is not its own: it starts from the first name and writes over it),
+and Grimoire reads and removes its own when the job ends. A job the detached child finishes after Grimoire exits
+leaves the file, which the next Empty trash asked removes first. An older version lists no dot-name, so it never
+shows the folder or the file.
 
 What older versions do with the trash as 2.2 leaves it: none of them reads `trash/` at all (they only rename
 into it), so a `files-...` folder is never looked at, moved or changed by them, and their own deletes go on

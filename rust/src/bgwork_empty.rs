@@ -5,9 +5,11 @@
 //! entry a restore or a delete is at work on left, an entry that came since never taken), a slice of at most
 //! EMPTY_SLICE_MS a run: a run whose time is up ends CODE_MORE and is queued again behind whatever ranks higher (an
 //! export, the mirror), so a big trash never holds the one background child for long. Each run adds what it did to a
-//! small result file in Grimoire's own `.cache` folder (`trash-emptied`: the entries it took out, the bytes of their
-//! files, the names left, the first name the next run looks at: each name is looked at once), which the UI reads once the last run has ended (`empty_finished`) for its toast. The log
-//! has counts and times, never a name.
+//! small result file in Grimoire's own `.cache` folder (`trash-emptied`: the request's tag, the entries it took out,
+//! the bytes of their files, the names left, the first name the next run looks at: each name is looked at once), which
+//! the UI reads once the last run has ended (`empty_finished`) for its toast. A count under another request's tag
+//! (the detached child of a session before, still at work) is never this request's. The log has counts and times,
+//! never a name.
 
 use crate::fsview::*;
 use crate::prelude::*;
@@ -19,11 +21,22 @@ pub const EMPTY_JOB_PATH: &str = "trash";
 pub const EMPTY_SLICE_MS: u32 = 2000;
 /// A run's exit status when names are left for the next (bgjob.rs queues it again).
 pub const CODE_MORE: i32 = 3;
-/// The result file's largest size (four short lines).
+/// The result file's largest size (five short lines).
 const RESULT_MAX: usize = 256;
 
-/// The names the request was given: the UI's; a child reads its own copy, as it was when it was forked.
-static NAMES: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
+/// The request the UI made last: the names it was given, and its tag (`empty_request`), which the result file carries
+/// (`job=`) while the count in it is this request's. A child reads its own copy, as it was when it was forked.
+struct Request {
+    names: Vec<Vec<u8>>,
+    tag: String,
+}
+static REQUEST: std::sync::Mutex<Request> = std::sync::Mutex::new(Request { names: Vec::new(), tag: String::new() });
+/// (the requests made in this process, for their tags)
+static REQUESTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+fn request() -> std::sync::MutexGuard<'static, Request> {
+    REQUEST.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn result_path() -> String {
     format!("{}/.cache/trash-emptied", store_root())
@@ -36,25 +49,33 @@ pub fn empty_pending() -> bool {
 }
 
 /// Empty trash confirmed on these entries of the trash (their names, as the Trash place listed them): the job is
-/// queued as one the user waits on, and a result an earlier one left is let go. False, with nothing asked, when one
-/// is queued or running already or no name is given.
+/// queued as one the user waits on, under a tag of its own (this process, the time, the requests made before), and a
+/// result an earlier one left is let go. False, with nothing asked, when one is queued or running already or no name
+/// is given.
 pub fn empty_request(names: Vec<Vec<u8>>) -> bool {
     if empty_pending() || names.is_empty() {
         return false;
     }
     let _ = std::fs::remove_file(result_path());
-    *NAMES.lock().unwrap_or_else(|e| e.into_inner()) = names;
+    let n = REQUESTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    *request() = Request { names, tag: format!("{}.{}.{n}", std::process::id(), real_now_ms()) };
     bg_queue(BgKind::EmptyTrash, None, Some(EMPTY_JOB_PATH), 0.0, true);
     true
 }
 
-/// What the result file says, the runs before together: the entries taken out, their bytes, the names left, and the
-/// first name no run has looked at yet. Zeros for none, or one that does not read (the run then looks at every name
-/// again: one done already is passed over).
-fn result_read() -> Emptied {
+/// What the result file says, the runs before together, when it is this request's (it carries the request's tag):
+/// the entries taken out, their bytes, the names left, and the first name no run has looked at yet. None for no file,
+/// one another request's runs wrote, or one that does not read: a run then starts from the first name (one done
+/// already is passed over) and counts from nothing.
+fn result_read() -> Option<Emptied> {
+    let t = read_file_max(&result_path(), RESULT_MAX)?;
+    let tag = request().tag.clone();
+    let text = String::from_utf8_lossy(&t);
+    if tag.is_empty() || !text.lines().any(|l| l.strip_prefix("job=") == Some(tag.as_str())) {
+        return None;
+    }
     let mut r = Emptied::default();
-    let Some(t) = read_file_max(&result_path(), RESULT_MAX) else { return r };
-    for line in String::from_utf8_lossy(&t).lines() {
+    for line in text.lines() {
         match line.split_once('=') {
             Some(("entries", v)) => r.entries = v.parse().unwrap_or(0),
             Some(("bytes", v)) => r.bytes = v.parse().unwrap_or(0),
@@ -63,7 +84,7 @@ fn result_read() -> Emptied {
             _ => {}
         }
     }
-    r
+    Some(r)
 }
 
 /// The job (in the child): one run over the names the request kept. 0 when every name is done (deleted, gone, or
@@ -73,7 +94,10 @@ pub fn bg_empty_trash(path: &str) -> i32 {
     if path != EMPTY_JOB_PATH {
         return 1;
     }
-    let names = NAMES.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let (names, tag) = {
+        let r = request();
+        (r.names.clone(), r.tag.clone())
+    };
     let t0 = real_now_ms();
     let Some(root) = crate::pdfimport::storage_root() else {
         qlog!("bg: the trash was not emptied: no storage");
@@ -88,13 +112,15 @@ pub fn bg_empty_trash(path: &str) -> i32 {
     };
     #[cfg(feature = "sim")]
     let _held = test_busy();
-    let before = result_read();
+    let before = result_read().unwrap_or_default();
     match st.empty_trash(&names, before.next, EMPTY_SLICE_MS, &mut real_now_ms) {
         Ok(e) => {
-            // (each run adds what it did to the runs' before it, and says where the next goes on)
+            // (each run adds what it did to the runs' before it, and says where the next goes on, under its request's
+            // tag: a count another request's runs left in the file is written over)
             let (entries, bytes, left) = (before.entries + e.entries, before.bytes + e.bytes, before.skipped + e.skipped);
             let _ = crate::util::mkdir_p(&format!("{}/.cache", store_root()));
-            if write_file_atomic(&result_path(), format!("entries={entries}\nbytes={bytes}\nleft={left}\nnext={}\n", e.next).as_bytes()) != 0 {
+            let count = format!("job={tag}\nentries={entries}\nbytes={bytes}\nleft={left}\nnext={}\n", e.next);
+            if write_file_atomic(&result_path(), count.as_bytes()) != 0 {
                 qlog!("bg: the trash's emptying could not keep its count");
             }
             qlog!(
@@ -132,13 +158,17 @@ fn test_busy() -> Option<std::fs::File> {
     Some(f)
 }
 
-/// What the Empty trash that just ended did, read from its result file (removed here), the names it was given
-/// forgotten: the toast that says it (`empty_said`). `failed`: its last run ended without emptying the trash (its exit
-/// status was not 0: the trash could not be opened or written, or another Empty trash held it).
+/// What the Empty trash that just ended did, read from its result file (removed here when it is this request's; one
+/// another request's runs keep is left to them), the names it was given forgotten: the toast that says it
+/// (`empty_said`). `failed`: its last run ended without emptying the trash (its exit status was not 0: the trash could
+/// not be opened or written, or another Empty trash held it).
 pub fn empty_finished(failed: bool) -> String {
-    let r = result_read();
-    let _ = std::fs::remove_file(result_path());
-    NAMES.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    let mine = result_read();
+    if mine.is_some() {
+        let _ = std::fs::remove_file(result_path());
+    }
+    let r = mine.unwrap_or_default();
+    request().names.clear();
     qlog!(
         "files: the trash's emptying ended: %d entries, %s KB, %d left%s",
         r.entries as i32,
