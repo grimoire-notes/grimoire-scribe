@@ -2111,9 +2111,10 @@ fn art_garden(c: &mut Canvas, r: Rect) {
         c,
         r,
         &[
-            // the right leaf starts at the stem's left edge and covers the stem's round top, so both leaves spring
-            // from the stem, with no gap and no bud between them
-            sh_bar(12.0, 12.0, 12.0, 19.0, 2.0),
+            // the right leaf starts at the stem's left edge, and the stem's square top runs inside both leaves (its
+            // left corner in the left leaf, its top edge in the right one), so both leaves spring from the stem with
+            // no gap, no bud and no speck between them, and the right leaf's underside meets the stem's straight side
+            sh_poly(&[(11.0, 11.5), (13.0, 11.0), (13.0, 19.5), (11.0, 19.5)]),
             sh_leaf(11.5, 12.5, 3.0, 7.5, 4.5),
             sh_leaf(11.0, 11.5, 21.0, 3.0, 5.5),
             sh_rect(4.0, 18.5, 16.0, 2.5, 1.25),
@@ -2178,10 +2179,11 @@ fn art_key(c: &mut Canvas, r: Rect) {
     art_cut(c, r, &[place(sh_disc(5.0, 12.0, 1.75))]);
 }
 fn art_cloud(c: &mut Canvas, r: Rect) {
-    // three puffs over a round-ended base, one line: the outline runs from the base's left end round the puffs to
-    // the right puff, which holds the base's right end and touches its foot, so the right side is one curve, then
-    // back along the base's foot
-    art_line(c, r, &[sh_puffs(&[(5.75, 16.25, 3.25), (8.0, 13.5, 4.0), (13.0, 10.25, 5.25), (17.75, 15.25, 4.25)], 90.0, 90.0)]);
+    // three puffs over a round-ended base, one line. The two side puffs are the cloud's ends, one the mirror of the
+    // other: each holds the base's round end on its side inside it and touches the base's foot, so the outline runs
+    // from the foot under the left puff round the three puffs to the foot under the right one, each side one curve,
+    // then back along the foot
+    art_line(c, r, &[sh_puffs(&[(6.25, 15.25, 4.25), (13.0, 10.25, 5.25), (17.75, 15.25, 4.25)], 90.0, 90.0)]);
 }
 fn art_computer(c: &mut Canvas, r: Rect) {
     // a monitor drawn as a line, on a solid neck and base
