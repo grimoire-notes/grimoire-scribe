@@ -7,8 +7,11 @@
 # folders, one with an icon and one with a picture, and notebooks with ink on different papers): no bat and nothing
 # on the home that opens What's new (the Apps page's foot button does); Search, then Settings at the far right;
 # the app row in even squares with Show All its last, a name too long for one line (Sudoku Puzzles) on two; the
-# title rule, the section break, the light rule and the foot rule, every one outside every hit; the page arrows and
-# their line on the + button's centre line; Classic's + a rounded rectangle. Gothic and Classic, upright and
+# title rule, the section break, the light rule and the foot rule, every one outside every hit, the title and foot
+# rules from the screen's left edge to its right and the two between them from margin to margin (#337: the owner,
+# "The outer ones at least need to go all the way across the screen", chose the inner two as they were), the
+# panel dark at both ends of the outer two and paper at both ends of the inner two; the page arrows and their line
+# on the + button's centre line; Classic's + a rounded rectangle. Gothic and Classic, upright and
 # sideways, in a folder, the Apps page, at the small status bar and then the large one. Each notebook on the first
 # screen, and School's, is opened and left once, so that its card is drawn from its page. The clock is held still,
 # so the shots are the same on every run.
@@ -94,6 +97,13 @@ expect library.home.marks is title 227 11, break 527 32, light 703 2, foot 2235 
 expect library.home.marks_in_hits is 0
 expect library.home.foot_axis is 2358 2358 2358 2358
 expect library.home.fab is 1666 2286 144 144 cut 22
+expect library.home.mark_ends is title 0 1860, break 50 1810, light 50 1810, foot 0 1860
+expect display.dark.0.227.4.11 is 24
+expect display.dark.1856.227.4.11 is 24
+expect display.dark.0.2235.4.11 is 24
+expect display.dark.1856.2235.4.11 is 24
+expect display.dark.0.527.4.32 is 0
+expect display.dark.1856.527.4.32 is 0
 # (the +'s top left corner as the panel shows it: Gothic's cut corner and inner line; Classic's quarter of a
 # rounded rectangle at 24 px, which a disc would leave mostly paper)
 expect display.dark.1666.2286.24.24 is 281
@@ -175,6 +185,7 @@ expect library.home.step is 220
 expect library.home.labels is 1 1 1 1 1 1 1 2 1
 expect library.home.marks is title 227 11, break 545 32, light 703 2, foot 1615 11
 expect library.home.marks_in_hits is 0
+expect library.home.mark_ends is title 0 2480, break 50 2430, light 50 2430, foot 0 2480
 expect library.home.foot_axis is 1738 1738 1738 1738
 expect library.home.fab is 2286 1666 144 144 cut 22
 shot 03-gothic-sideways
@@ -221,6 +232,12 @@ expect library.home.squares is 51 270 176 176, 277 270 176 176, 503 270 176 176,
 expect library.home.marks is title 231 3, break 542 2, light 703 2, foot 2243 3
 expect library.home.marks_in_hits is 0
 expect library.home.fab is 1666 2286 144 144 round 24
+expect library.home.mark_ends is title 0 1860, break 50 1810, light 50 1810, foot 0 1860
+expect display.dark.0.231.4.3 is 12
+expect display.dark.1856.231.4.3 is 12
+expect display.dark.0.2243.4.3 is 12
+expect display.dark.1856.2243.4.3 is 12
+expect display.dark.0.542.4.2 is 0
 expect display.dark.1666.2286.24.24 is 451
 expect library.home.foot_axis is 2358 2358 2358 2358
 expect library.ui_at.266.472 is app.store
@@ -232,6 +249,7 @@ wait 300
 expect library.home.labels is 1 1 1 1 1 1 1 1 1
 expect library.home.marks is title 231 3, break 542 2, light 703 2, foot 1623 3
 expect library.home.marks_in_hits is 0
+expect library.home.mark_ends is title 0 2480, break 50 2430, light 50 2430, foot 0 2480
 expect library.home.fab is 2286 1666 144 144 round 24
 expect display.dark.2286.1666.24.24 is 451
 expect library.home.foot_axis is 1738 1738 1738 1738
@@ -284,6 +302,9 @@ wait 300
 expect library.home.squares is 51 290 176 176, 277 290 176 176, 503 290 176 176, 729 290 176 176, 955 290 176 176, 1181 290 176 176, 1407 290 176 176, 1633 290 176 176
 expect library.home.marks is title 247 11, break 547 32, light 723 2, foot 2235 11
 expect library.home.marks_in_hits is 0
+expect library.home.mark_ends is title 0 1860, break 50 1810, light 50 1810, foot 0 1860
+expect display.dark.0.247.4.11 is 24
+expect display.dark.1856.2235.4.11 is 24
 expect library.home.foot_axis is 2358 2358 2358 2358
 shot 09-gothic-large
 rotate 1

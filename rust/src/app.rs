@@ -781,7 +781,6 @@ pub fn app_init(a: &mut App, w: i32, h: i32, dpi: f32) -> i32 {
     }
     ui_init(dpi);
     crate::globalui::gui_status_style(a.settings.status_size, a.settings.clock_12h);
-    crate::globalui::gui_status_shown(a.settings.status_on);
     if font_init() != 0 {
         return -1;
     }

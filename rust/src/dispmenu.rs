@@ -518,7 +518,6 @@ pub fn dispmenu_pointer(m: &mut DispMenu, a: &mut App, phase: i32, x: f32, y: f3
                 a.settings.status_on = true;
                 a.settings.status_in_notebooks = true;
                 crate::status::status_bar_back();
-                crate::globalui::gui_status_shown(true);
             }
             settings_save(&a.settings);
         }

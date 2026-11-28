@@ -146,7 +146,6 @@ pub fn status_toggle(a: &mut App) {
             settings_save(&a.settings);
         }
     }
-    crate::globalui::gui_status_shown(true);
     app_redraw(a);
     qlog!("status: the shared bar is %s", if status_bar_visible(a) { "shown" } else { "hidden" });
 }

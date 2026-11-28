@@ -3,7 +3,7 @@
 
 use crate::prelude::*;
 use crate::appicon::AppIcon;
-use crate::globalui::{gui_app_h, gui_app_show_all, gui_app_square, gui_app_square_side, gui_button, gui_chip, gui_chip_h, gui_fab, gui_foot_rule, gui_gap, gui_hair_rule, gui_hair_rule_h, gui_head_h, gui_header, gui_icon_button, gui_inner_rules_edge, gui_margin, gui_popup, gui_radius, gui_row_h, gui_row_min_h, gui_section_break, gui_section_break_half, gui_select, gui_select_h, gui_status_bar, gui_status_h, gui_title_rule, gui_title_rule_h, gui_top_button_h, GuiFabShape, GuiPopupItem};
+use crate::globalui::{gui_app_h, gui_app_show_all, gui_app_square, gui_app_square_side, gui_button, gui_chip, gui_chip_h, gui_fab, gui_foot_rule, gui_gap, gui_hair_rule, gui_hair_rule_h, gui_head_h, gui_header, gui_icon_button, gui_margin, gui_popup, gui_radius, gui_row_h, gui_row_min_h, gui_section_break, gui_section_break_half, gui_select, gui_select_h, gui_status_bar, gui_status_h, gui_title_rule, gui_title_rule_h, gui_top_button_h, GuiFabShape, GuiPopupItem};
 use crate::settingsmenu;
 use crate::ui::{ui_row, ui_row_page, ui_row_pager, Row as UiRow};
 use crate::browser::{BrowseMode, Browser, BrowserResult, FilesPrefs, PickSpec};
@@ -602,14 +602,14 @@ pub struct LibraryState {
 
 /// What draw_base drew where, for the scenarios' library.home.* keys (docs/SIM.md, #332): the header's parts left
 /// to right by name (`back`, `title`, `search`, `settings`), the app row's squares left to right (Show All the last)
-/// and the lines each one's name took, each mark's name with its top row and height (`title`, `break`, `light`,
-/// `foot`), the + button and the corners gui_fab drew it with, and the page arrows with the page line between them.
+/// and the lines each one's name took, each mark's name with its top row, its height and its ends, the first column
+/// and the one past its last (`title`, `break`, `light`, `foot`), the + button and the corners gui_fab drew it with, and the page arrows with the page line between them.
 #[derive(Default, Clone, Debug)]
 struct HomeDrawn {
     header: Vec<(&'static str, Rect)>,
     squares: Vec<Rect>,
     label_lines: Vec<i32>,
-    marks: Vec<(&'static str, i32, i32)>,
+    marks: Vec<(&'static str, i32, i32, i32, i32)>,
     fab: Rect,
     fab_shape: GuiFabShape,
     pager: [Rect; 3],
@@ -2417,14 +2417,14 @@ fn draw_base(a: &mut App) {
     // The home is ruled as a printed page is (#332): the title rule under the header, the section break between the
     // app row and the sorting line, the light rule between the sorting line and the cards, and the foot rule over the
     // pager and the + button, each in the paper between two parts (the bands above draw_base). The title and foot
-    // rules run from the screen's left edge to its right (#337), closing the page across its whole width; the two
-    // inner marks run from margin to margin, or edge to edge too (gui_inner_rules_edge), the section break's
-    // lozenge centred either way.
+    // rules run from the screen's left edge to its right (#337, the owner: "The outer ones at least need to go all
+    // the way across the screen"), closing the page across its whole width; the two inner marks run from margin to
+    // margin, the section break's lozenge on the screen's centre.
     let (ex0, ex1) = (0, aw);
-    let (rx0, rx1) = if gui_inner_rules_edge() { (0, aw) } else { (m, aw - m) };
+    let (rx0, rx1) = (m, aw - m);
     // (the section break is drawn after the row, centred under its lowest name: section_break_cy)
     gui_title_rule(c, ex0, ex1, title_rule_y());
-    drawn.marks.push(("title", title_rule_y(), gui_title_rule_h()));
+    drawn.marks.push(("title", title_rule_y(), gui_title_rule_h(), ex0, ex1));
 
     // The app row (#332): even squares, every one the same size with the same paper between every two
     // (app_row_slots), the icon in the middle of each and its name under it: Files, Package Store and Share, then
@@ -2451,11 +2451,11 @@ fn draw_base(a: &mut App) {
     let cy = section_break_cy(drawn.label_lines.iter().copied().max().unwrap_or(1));
     gui_section_break(c, rx0, rx1, cy);
     let half = gui_section_break_half();
-    drawn.marks.push(("break", cy - half, 2 * half));
+    drawn.marks.push(("break", cy - half, 2 * half, rx0, rx1));
     gui_hair_rule(c, rx0, rx1, hair_rule_y());
-    drawn.marks.push(("light", hair_rule_y(), gui_hair_rule_h()));
+    drawn.marks.push(("light", hair_rule_y(), gui_hair_rule_h(), rx0, rx1));
     gui_foot_rule(c, ex0, ex1, foot_rule_y(aw, ah));
-    drawn.marks.push(("foot", foot_rule_y(aw, ah), gui_title_rule_h()));
+    drawn.marks.push(("foot", foot_rule_y(aw, ah), gui_title_rule_h(), ex0, ex1));
 
     // The filter chips and the Sort select: the global elements' chip and select.
     let sort_r = sort_rect(aw);
@@ -11532,10 +11532,11 @@ fn card_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i32 {
 /// The library.home.* keys (docs/SIM.md, #332): what the home's last draw put where (HomeDrawn). `header` its parts left
 /// to right; `squares` the app row's squares (`x y w h`, joined by `, `), `step` the steps between neighbours, a jump
 /// over empty slots before Show All counted as the steps it spans (one number when they are all the same), `labels` the lines each square's name took; `marks` each mark's name, top row
-/// and height; `marks_in_hits` how many of the screen's hits cross a mark's rows (a hit is what a press's fast refresh
-/// sends); `foot_axis` the centre rows of the + button, the two page arrows and the page line; `fab` the + button's
+/// and height; `mark_ends` each mark's name, first column and the column past its last (#337: the title and foot rules
+/// from 0 to the screen's width, the two inner marks from margin to margin); `marks_in_hits` how many of the screen's
+/// hits cross a mark where it is drawn (a hit is what a press's fast refresh sends); `foot_axis` the centre rows of the + button, the two page arrows and the page line; `fab` the + button's
 /// rect and its shape as ui_frame draws it (`cut` and the corners' cut in Gothic, `round` and the radius in Classic).
-fn home_probe(s: &LibraryState, aw: i32, key: &str) -> Option<String> {
+fn home_probe(s: &LibraryState, key: &str) -> Option<String> {
     let h = &s.home;
     let rect = |r: Rect| format!("{} {} {} {}", r.x, r.y, r.w, r.h);
     let centre = |r: Rect| r.y + r.h / 2;
@@ -11553,8 +11554,9 @@ fn home_probe(s: &LibraryState, aw: i32, key: &str) -> Option<String> {
         }
         "labels" => h.label_lines.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(" "),
         "marks" => h.marks.iter().map(|m| format!("{} {} {}", m.0, m.1, m.2)).collect::<Vec<_>>().join(", "),
+        "mark_ends" => h.marks.iter().map(|m| format!("{} {} {}", m.0, m.3, m.4)).collect::<Vec<_>>().join(", "),
         "marks_in_hits" => {
-            let bands: Vec<Rect> = h.marks.iter().map(|m| Rect::new(margin(), m.1 - 1, aw - 2 * margin(), m.2 + 2)).collect();
+            let bands: Vec<Rect> = h.marks.iter().map(|m| Rect::new(m.3, m.1 - 1, m.4 - m.3, m.2 + 2)).collect();
             let n = s.hits.h.iter().filter(|hit| bands.iter().any(|&b| !rect_is_empty(rect_intersect(b, hit.r)))).count();
             n.to_string()
         }
@@ -12263,8 +12265,7 @@ pub fn library_probe(a: &mut App, key: &str, out: &mut String, cap: usize) -> i3
         return card_probe(a, rest, out, cap);
     } else if let Some(k) = key.strip_prefix("home.") {
         // (after home.pending, above)
-        let aw = a.w;
-        let Some(text) = home_probe(lib(a), aw, k) else { return -1 };
+        let Some(text) = home_probe(lib(a), k) else { return -1 };
         csnprintf!(out, cap, "%s", &text);
     } else {
         return -1;
@@ -12815,6 +12816,19 @@ mod tests {
                     let marks = lib(&mut a).home.marks.clone();
                     assert_eq!(marks.iter().map(|m| m.0).collect::<Vec<_>>(), ["title", "break", "light", "foot"], "{at}");
                     assert!(marks.windows(2).all(|p| p[0].1 + p[0].2 < p[1].1), "{at}: top to bottom: {marks:?}");
+                    // The title rule and the foot rule run from the screen's left edge to its right (#337), drawn
+                    // there to the first and the last column; the section break and the light rule from margin to
+                    // margin, paper beside them.
+                    let mg = margin();
+                    let ends: Vec<(i32, i32)> = marks.iter().map(|k| (k.3, k.4)).collect();
+                    assert_eq!(ends, [(0, w), (mg, w - mg), (mg, w - mg), (0, w)], "{at}");
+                    let px = |x: i32, y: i32| a.screen.px[(y * a.screen.stride + x) as usize];
+                    for k in [&marks[0], &marks[3]] {
+                        let y = (k.1..k.1 + k.2).find(|&y| px(w / 2, y) == 0).unwrap_or(-1);
+                        assert!(y >= 0 && px(0, y) == 0 && px(w - 1, y) == 0, "{at}: {} at row {y}", k.0);
+                    }
+                    let light = marks[2].1;
+                    assert_eq!((px(mg - 1, light), px(mg, light), px(w - mg, light)), (255, 136, 255), "{at}: the light rule");
                     // The section break has as much paper over it, to the foot of the row's lowest name, as under it,
                     // to the chips, whether the names take one line or two.
                     let lines = lib(&mut a).home.label_lines.iter().copied().max().unwrap_or(1);
