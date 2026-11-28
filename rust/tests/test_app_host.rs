@@ -133,7 +133,9 @@ fn kit(c: &mut Canvas, body: Rect, cmds: &[Cmd]) {
             Cmd::Surface(x, y, w, h, filled, thick) => gui_surface(c, at(x, y, w, h), filled != 0, thick),
             Cmd::Select(x, y, w, h, caption, value) => gui_select(c, at(x, y, w, h), caption, value),
             Cmd::AppTile(x, y, w, h, icon, label, selected) => gui_app_tile(c, at(x, y, w, h), &AppIcon::glyph(widget_icon(icon)), label, selected != 0),
-            Cmd::Fab(x, y, w, h, icon) => gui_fab(c, at(x, y, w, h), widget_icon(icon)),
+            Cmd::Fab(x, y, w, h, icon) => {
+                gui_fab(c, at(x, y, w, h), widget_icon(icon));
+            }
             Cmd::Card(x, y, w, h, st) => ui_card(c, at(x, y, w, h), style(st)),
             Cmd::TextField(x, y, w, h, icon, text, hint) => {
                 gui_text_field(c, at(x, y, w, h), icon_of(icon), text, hint);
